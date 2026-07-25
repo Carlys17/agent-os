@@ -756,6 +756,8 @@ class TelegramChannel:
         username = sender.get("username")
         if username:
             metadata["sender_username"] = str(username)
+        if self.bot_username:
+            metadata["bot_username"] = self.bot_username
         display_name = " ".join(
             str(sender.get(key) or "").strip() for key in ("first_name", "last_name")
         ).strip()
@@ -770,6 +772,10 @@ class TelegramChannel:
                 metadata[key] = msg[key]
 
         content = msg.get("text") or msg.get("caption") or ""
+        content_entity_key = "entities" if msg.get("text") else "caption_entities"
+        content_entities = msg.get(content_entity_key)
+        if isinstance(content_entities, list):
+            metadata["content_entities"] = content_entities
         attachments = self._telegram_media_attachments(msg)
         if not content:
             for media_key in ("document", "photo", "video", "audio", "voice", "sticker"):
@@ -793,7 +799,10 @@ class TelegramChannel:
             return False
         mention = f"@{username}".lower()
         text = msg.content or ""
-        entities = msg.metadata.get("entities") or []
+        entities = msg.metadata.get("content_entities")
+        if not isinstance(entities, list):
+            entities = msg.metadata.get("entities") or msg.metadata.get("caption_entities") or []
+        has_mismatched_bot_command = False
         if isinstance(entities, list):
             for entity in entities:
                 if not isinstance(entity, dict):
@@ -808,6 +817,18 @@ class TelegramChannel:
                     user = entity.get("user") or {}
                     if str(user.get("id", "")) == str(self.bot_user_id or ""):
                         return True
+                if entity_type == "bot_command":
+                    offset = int(entity.get("offset", 0))
+                    length = int(entity.get("length", 0))
+                    command = text[offset : offset + length]
+                    _, separator, target = command.partition("@")
+                    if not separator:
+                        return True
+                    if target.casefold() == username.lstrip("@").casefold():
+                        return True
+                    has_mismatched_bot_command = True
+        if has_mismatched_bot_command:
+            return False
         return mention in text.lower()
 
     def build_reply_message(self, content: str, inbound: IncomingMessage) -> OutgoingMessage:

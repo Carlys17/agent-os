@@ -123,6 +123,69 @@ def test_dm_pairing_does_not_grant_group_access(tmp_path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("command", "entity_type", "expected"),
+    [
+        ("/status", "bot_command", True),
+        ("/status@AgentBot", "bot_command", True),
+        ("/status@agentbot", "bot_command", True),
+        ("/status@OtherBot", "bot_command", False),
+        ("/status@AgentBotExtra", "bot_command", False),
+        ("/status@AgentBot_2", "bot_command", False),
+    ],
+)
+def test_telegram_group_bot_command_entity_is_mention_aware(
+    command: str,
+    entity_type: str,
+    expected: bool,
+) -> None:
+    channel = TelegramChannel(TelegramChannelConfig(access_mode="open"))
+    channel.bot_username = "AgentBot"
+    message = channel.parse_incoming(
+        {
+            "message": {
+                "message_id": 8,
+                "from": {"id": 42, "username": "alice"},
+                "chat": {"id": -100, "type": "supergroup"},
+                "text": command,
+                "entities": [{"type": entity_type, "offset": 0, "length": len(command)}],
+            }
+        }
+    )
+
+    assert message.metadata["bot_username"] == "AgentBot"
+    assert channel.is_group_mentioned(message) is expected
+
+
+def test_telegram_group_bot_command_in_media_caption_is_mention_aware() -> None:
+    channel = TelegramChannel(TelegramChannelConfig(access_mode="open"))
+    channel.bot_username = "AgentBot"
+    command = "/status"
+    message = channel.parse_incoming(
+        {
+            "message": {
+                "message_id": 8,
+                "from": {"id": 42, "username": "alice"},
+                "chat": {"id": -100, "type": "supergroup"},
+                "caption": command,
+                "caption_entities": [{"type": "bot_command", "offset": 0, "length": len(command)}],
+                "photo": [
+                    {
+                        "file_id": "photo-1",
+                        "file_unique_id": "unique-1",
+                        "width": 100,
+                        "height": 100,
+                    }
+                ],
+            }
+        }
+    )
+
+    assert message.content == command
+    assert message.metadata["content_entities"] == message.metadata["caption_entities"]
+    assert channel.is_group_mentioned(message) is True
+
+
 def test_populated_legacy_allowlist_remains_strict_without_explicit_flag() -> None:
     policy = ChannelAccessPolicy(allowlist=frozenset({"allowed"}))
 
