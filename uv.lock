@@ -3721,7 +3721,7 @@ wheels = [
 
 [[package]]
 name = "use-agent-os"
-version = "2026.7.23"
+version = "2026.7.25"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
