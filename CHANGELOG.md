@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.7.25] - 2026-07-25
+
 ### Added
 
 - Added one fail-closed Control UI build contract,
@@ -13,7 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Docker, wheel/sdist publication, and wheelhouse releases. It requires
   Node.js 22 or newer, performs a clean locked npm install, enforces bundle
   budgets, generates an exact third-party license ledger, and verifies the
-  resulting React bundle before packaging.
+   resulting React bundle before packaging.
+- OpenRouter's `openai/gpt-5.6-luna` is now the default LLM model.
 
 ### Changed
 
@@ -60,6 +63,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Removed the retired Jinja Control UI template and its hand-maintained
   JavaScript, CSS, fonts, images, and vendored browser libraries. There is no
   legacy frontend fallback at runtime or in release artifacts.
+
+### Fixed
+
+- Control UI settings preserve the active configuration state, Bankr icons
+  render correctly, and resetting a session reliably clears its client state.
+- The collapsed Control UI sidebar toggle has improved interaction and layout.
+- CLI onboarding prompts wrap correctly instead of overflowing narrow terminals.
 
 ## [2026.7.23] - 2026-07-23
 
