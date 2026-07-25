@@ -55,11 +55,7 @@ class CommandRegistry:
         command_name, separator, target = bare.partition("@")
         if separator:
             expected_target = str(envelope.metadata.get("bot_username") or "").strip()
-            if (
-                not target
-                or not expected_target
-                or target.casefold() != expected_target.casefold()
-            ):
+            if not target or not expected_target or target.casefold() != expected_target.casefold():
                 return None
             bare = command_name
         command = self._commands.get(bare)

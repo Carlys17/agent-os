@@ -41,14 +41,9 @@ from agentos.cli.install_method import InstallMethod
         ),
     ],
 )
-def test_detect_install_method(
-    exe: str, pkg: str, expected: InstallMethod
-) -> None:
+def test_detect_install_method(exe: str, pkg: str, expected: InstallMethod) -> None:
     # Empty env so a real UV_TOOL_DIR in the test host cannot skew classification.
-    assert (
-        im.detect_install_method(executable=exe, package_dir=Path(pkg), env={})
-        == expected
-    )
+    assert im.detect_install_method(executable=exe, package_dir=Path(pkg), env={}) == expected
 
 
 def test_uv_tool_dir_override_classified_as_uv_tool(tmp_path: Path) -> None:
@@ -80,7 +75,10 @@ def test_uv_tool_dir_symlinked_bin_classified_as_uv_tool(tmp_path: Path) -> None
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     link = bin_dir / "agentos"
-    link.symlink_to(real_exe)
+    try:
+        link.symlink_to(real_exe)
+    except OSError as e:
+        pytest.skip(f"Symlinks are not allowed or supported: {e}")
     # package_dir is elsewhere (a shim location) so only the symlink target ties
     # the install to the tools tree.
     pkg = tmp_path / "shim" / "agentos"
@@ -100,17 +98,13 @@ def test_uv_tool_dir_unset_leaves_default_behavior(tmp_path: Path) -> None:
     exe = "/home/u/venv/bin/python"
     pkg = tmp_path / "venv" / "lib" / "python3.12" / "site-packages" / "agentos"
     pkg.mkdir(parents=True)
-    assert (
-        im.detect_install_method(executable=exe, package_dir=pkg, env={})
-        == InstallMethod.PIP
-    )
+    assert im.detect_install_method(executable=exe, package_dir=pkg, env={}) == InstallMethod.PIP
     # And the default ~/.local/share/uv/tools path still matches on the heuristic.
     assert (
         im.detect_install_method(
             executable="/home/u/.local/share/uv/tools/use-agent-os/bin/python",
             package_dir=Path(
-                "/home/u/.local/share/uv/tools/use-agent-os/lib/python3.12/"
-                "site-packages/agentos"
+                "/home/u/.local/share/uv/tools/use-agent-os/lib/python3.12/site-packages/agentos"
             ),
             env={},
         )
@@ -156,9 +150,7 @@ def test_hardened_path_no_duplicates() -> None:
     reason="hardened login-dir PATH semantics are POSIX-specific; "
     "Windows resolution uses standard which/PATHEXT",
 )
-def test_resolve_tool_uses_hardened_path(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_resolve_tool_uses_hardened_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # uv lives in a login dir NOT on the base PATH.
     brew = tmp_path / "opt" / "homebrew" / "bin"
     brew.mkdir(parents=True)
@@ -210,7 +202,7 @@ def test_build_plan_uv_tool_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     plan = im.build_upgrade_plan(method=InstallMethod.UV_TOOL)
     assert plan.delegated is True
     assert plan.tool == "/abs/uv"
-    assert plan.command == ["/abs/uv", "tool", "upgrade", "use-agent-os"]
+    assert plan.command == ["/abs/uv", "tool", "upgrade", "use-agent-os", "--reinstall"]
 
 
 def test_build_plan_uv_tool_missing_uv_not_delegated(
@@ -227,7 +219,7 @@ def test_build_plan_pipx_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(im, "resolve_tool", lambda tool, env=None: "/abs/pipx")
     plan = im.build_upgrade_plan(method=InstallMethod.PIPX)
     assert plan.delegated is True
-    assert plan.command == ["/abs/pipx", "upgrade", "use-agent-os"]
+    assert plan.command == ["/abs/pipx", "upgrade", "use-agent-os", "--force"]
 
 
 def test_build_plan_pip_never_delegates() -> None:

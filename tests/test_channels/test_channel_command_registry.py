@@ -111,7 +111,13 @@ def test_command_registry_normalizes_commands_addressed_to_current_bot(
 
 @pytest.mark.parametrize(
     "command",
-    ["/status@OtherBot", "/status@", "/status@AgentBot@OtherBot"],
+    [
+        "/status@OtherBot",
+        "/status@AgentBotExtra",
+        "/status@AgentBot_2",
+        "/status@",
+        "/status@AgentBot@OtherBot",
+    ],
 )
 def test_command_registry_rejects_commands_addressed_to_another_bot(command: str) -> None:
     assert DEFAULT_COMMAND_REGISTRY.match(_envelope(bot_username="AgentBot"), command) is None

@@ -341,6 +341,7 @@ _PRICING_TABLE: list[tuple[str, PriceEntry]] = [
     ("z-ai/glm-4.5-air", PriceEntry(0.13, 0.85)),
     ("minimax/minimax-m2.5", PriceEntry(0.118, 0.99)),
     ("minimax/minimax-m3", PriceEntry(0.0825, 0.33)),
+    ("openai/gpt-5.6-luna", PriceEntry(0.20, 1.25)),
     ("deepseek/deepseek-v4-flash", PriceEntry(0.14, 0.28)),
     ("deepseek/deepseek-v4-pro", PriceEntry(1.74, 3.48)),
     ("deepseek/deepseek-v3.2", PriceEntry(0.26, 0.38)),

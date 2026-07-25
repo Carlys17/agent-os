@@ -71,7 +71,7 @@
 
 [llm]
 provider = "openrouter"
-model = "deepseek/deepseek-v4-flash"
+model = "openai/gpt-5.6-luna"
 # api_key = ""          # OpenRouter API key; env OPENROUTER_API_KEY also works
 base_url = "https://openrouter.ai/api/v1"
 # proxy = ""            # e.g. http://127.0.0.1:7890
@@ -289,8 +289,8 @@ safety_net_threshold = 0.5
 
 [agentos_router.tiers.c0]
 provider = "openrouter"
-model = "deepseek/deepseek-v4-flash"
-description = "Fast DeepSeek V4 Flash route for trivial chat, short rewrites, extraction, and low-risk simple Q&A"
+model = "openai/gpt-5.6-luna"
+description = "Fast GPT-5.6 Luna route for trivial chat, short rewrites, extraction, and low-risk simple Q&A"
 supports_image = false
 thinking_level = "high"
 

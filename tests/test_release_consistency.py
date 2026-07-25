@@ -3,7 +3,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-CURRENT_VERSION = "2026.7.20"
+CURRENT_VERSION = "2026.7.25"
 CURRENT_TAG = f"v{CURRENT_VERSION}"
 PREVIEW_VERSION = "0.0.1rc1"
 PREVIEW_TAG = f"v{PREVIEW_VERSION}"
@@ -62,17 +62,22 @@ def test_default_recommended_install_contract_covers_embedding_and_channels() ->
     } <= recommended
     assert not {"lightgbm", "scikit-learn", "joblib"} & recommended
     assert {
-        "cryptography",  # WeCom callback crypto
-        "dingtalk-stream",
-        "httpx",  # Slack, Telegram, WeCom HTTP calls
+        "httpx",  # Slack and Telegram HTTP calls
         "python-telegram-bot",
-        "qq-botpy",
         "websockets",  # Discord gateway transport
     } <= dependencies
-    for alias in ("telegram", "dingtalk", "wecom", "qq"):
+    assert not {"cryptography", "dingtalk-stream", "matrix-nio", "qq-botpy"} & dependencies
+    for alias in (
+        "dingtalk",
+        "discord",
+        "matrix",
+        "matrix-e2e",
+        "qq",
+        "slack",
+        "telegram",
+        "wecom",
+    ):
         assert alias not in extras
-
-    assert "matrix-nio" in "\n".join(extras["matrix"])
 
 
 def test_core_dependencies_support_default_pptx_skill() -> None:

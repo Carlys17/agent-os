@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import warnings
 from enum import StrEnum
@@ -101,7 +102,10 @@ class RateLimitConfig(BaseSettings):
 
 
 class ControlUiConfig(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AGENTOS_CONTROL_UI_")
+    model_config = SettingsConfigDict(
+        env_prefix="AGENTOS_CONTROL_UI_",
+        validate_assignment=True,
+    )
 
     enabled: bool = True
     base_path: str = "/control"
@@ -109,8 +113,26 @@ class ControlUiConfig(BaseSettings):
 
     @field_validator("base_path")
     @classmethod
-    def _strip_trailing_slash(cls, v: str) -> str:
-        return v.rstrip("/")
+    def _validate_base_path(cls, value: str) -> str:
+        base_path = value.rstrip("/")
+        if not base_path:
+            raise ValueError("control_ui.base_path cannot be empty or root-mounted")
+        if not base_path.startswith("/") or base_path.startswith("//"):
+            raise ValueError("control_ui.base_path must start with one '/'")
+
+        segments = base_path.removeprefix("/").split("/")
+        if any(
+            not segment
+            or segment in {".", ".."}
+            or re.fullmatch(r"[A-Za-z0-9._~-]+", segment) is None
+            for segment in segments
+        ):
+            raise ValueError(
+                "control_ui.base_path must contain only safe URL path segments"
+            )
+        if base_path in {"/api", "/ws"} or base_path.startswith(("/api/", "/ws/")):
+            raise ValueError("control_ui.base_path cannot overlap gateway API or WebSocket routes")
+        return base_path
 
 
 class SkillsConfig(BaseSettings):
@@ -233,7 +255,7 @@ class LlmProviderConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENTOS_LLM_")
 
     provider: str = "openrouter"
-    model: str = "deepseek/deepseek-v4-flash"
+    model: str = "openai/gpt-5.6-luna"
     api_key: str = ""
     api_key_env: str = ""
     base_url: str = "https://openrouter.ai/api/v1"
@@ -254,6 +276,7 @@ class LlmProviderConfig(BaseSettings):
         aliases = {
             "deepseek/deepseek-v4-flash": "deepseek-v4-flash",
             "deepseek/deepseek-v4-pro": "deepseek-v4-pro",
+            "openai/gpt-5.6-luna": "gpt-5.6-luna",
         }
         model = str(self.model or "").strip()
         if model in aliases:
@@ -676,9 +699,9 @@ def _openrouter_tiers() -> dict:
     return {
         "c0": {
             "provider": "openrouter",
-            "model": "deepseek/deepseek-v4-flash",
+            "model": "openai/gpt-5.6-luna",
             "description": (
-                "fast DeepSeek V4 Flash route for trivial chat, short rewrites, "
+                "fast GPT-5.6 Luna route for trivial chat, short rewrites, "
                 "extraction, and low-risk simple Q&A"
             ),
             "supports_image": False,
@@ -1208,11 +1231,13 @@ class MCPServerEntry(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENTOS_MCP_SERVER_")
 
     name: str = ""
-    transport: str = "stdio"  # "stdio" | "sse"
+    transport: Literal["stdio", "sse", "streamable_http"] = "stdio"
     command: str | None = None  # for stdio
     args: list[str] = Field(default_factory=list)  # for stdio
-    url: str | None = None  # for sse
+    url: str | None = None  # for HTTP transports
     env: dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
+    oauth: bool = False
     tool_timeout_seconds: float = 30.0
 
 
@@ -1407,35 +1432,6 @@ class DiscordChannelEntry(ConfiguredChannelEntry):
     intents: int = 33281
 
 
-class DingTalkChannelEntry(ConfiguredChannelEntry):
-    """Gateway config entry for a DingTalk channel."""
-
-    type: Literal["dingtalk"] = "dingtalk"
-    client_id: str
-    client_secret: str
-
-
-class WeComChannelEntry(ConfiguredChannelEntry):
-    """Gateway config entry for a WeCom corp-app channel."""
-
-    type: Literal["wecom"] = "wecom"
-    corp_id: str
-    corp_secret: str
-    agent_id_int: int
-    token: str
-    encoding_aes_key: str
-    webhook_path: str = "/wecom/events"
-    api_base: str = "https://qyapi.weixin.qq.com"
-
-
-class QQChannelEntry(ConfiguredChannelEntry):
-    """Gateway config entry for a QQ Bot channel."""
-
-    type: Literal["qq"] = "qq"
-    app_id: str
-    app_secret: str
-
-
 class MSTeamsChannelEntry(ConfiguredChannelEntry):
     """Gateway config entry for an MS Teams channel."""
 
@@ -1443,18 +1439,6 @@ class MSTeamsChannelEntry(ConfiguredChannelEntry):
     app_id: str
     app_password: str
     webhook_path: str = "/msteams/messages"
-
-
-class MatrixChannelEntry(ConfiguredChannelEntry):
-    """Gateway config entry for a Matrix channel."""
-
-    type: Literal["matrix"] = "matrix"
-    homeserver_url: str
-    user_id: str
-    password: str = ""
-    access_token: str = ""
-    device_id: str = ""
-    encryption: Literal["off", "required", "best_effort"] = "off"
 
 
 class TelegramChannelEntry(ConfiguredChannelEntry):
@@ -2023,6 +2007,26 @@ class GatewayConfig(BaseSettings):
     def inherit_runtime_secrets(self, other: GatewayConfig) -> None:
         self._runtime_secret_paths = set(other._runtime_secret_paths)
 
+    def mark_env_sourced_auth_secrets(self, source_payload: dict[str, Any]) -> None:
+        """Keep auth credentials supplied only by environment out of TOML.
+
+        The source payload distinguishes an environment value from an
+        intentionally persisted/provisioned credential. This is deliberately
+        provenance-based: matching a value alone could erase a credential the
+        CLI explicitly wrote.
+        """
+        auth_payload = source_payload.get("auth")
+        auth_payload = auth_payload if isinstance(auth_payload, dict) else {}
+        env_names = {
+            "token": ("AGENTOS_AUTH_TOKEN", "AGENTOS_GATEWAY_AUTH__TOKEN"),
+            "password": ("AGENTOS_AUTH_PASSWORD", "AGENTOS_GATEWAY_AUTH__PASSWORD"),
+        }
+        for field_name, candidates in env_names.items():
+            if field_name in auth_payload:
+                continue
+            if any(name in os.environ for name in candidates):
+                self.mark_runtime_secret(f"auth.{field_name}")
+
     @classmethod
     def load_from_toml(cls, path: str | Path) -> GatewayConfig:
         """Load config from a TOML file."""
@@ -2033,6 +2037,7 @@ class GatewayConfig(BaseSettings):
             data = tomllib.load(f)
         migration = migrate_config_payload(data)
         cfg = cls(**migration.payload)
+        cfg.mark_env_sourced_auth_secrets(migration.payload)
         if migration.changed:
             backup_and_write_migrated_config(target, migration.payload, migration)
         return cfg
@@ -2059,12 +2064,15 @@ class GatewayConfig(BaseSettings):
                     data = tomllib.load(f)
                 migration = migrate_config_payload(data)
                 cfg = cls(**migration.payload)
+                cfg.mark_env_sourced_auth_secrets(migration.payload)
                 if migration.changed:
                     backup_and_write_migrated_config(path, migration.payload, migration)
                 cfg.config_path = str(path)
                 return cfg
 
-        return cls()
+        cfg = cls()
+        cfg.mark_env_sourced_auth_secrets({})
+        return cfg
 
 
 # --- bind-address resolution ----------------------------------------------

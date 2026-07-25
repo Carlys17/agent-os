@@ -6,6 +6,128 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.7.25] - 2026-07-25
+
+### Added
+
+- Added one fail-closed Control UI build contract,
+  `python scripts/build_control_ui.py build`, for local source installs, CI,
+  Docker, wheel/sdist publication, and wheelhouse releases. It requires
+  Node.js 22 or newer, performs a clean locked npm install, enforces bundle
+  budgets, generates an exact third-party license ledger, and verifies the
+   resulting React bundle before packaging.
+- OpenRouter's `openai/gpt-5.6-luna` is now the default LLM model.
+
+### Changed
+
+- The production Control UI is now the React 19 + Vite application on every
+  route. Release wheels, source distributions, Docker images, and wheelhouse
+  archives carry the same prebuilt, verified bundle; a missing or invalid
+  bundle returns an actionable `503` instead of silently serving a different
+  interface.
+- Repository source builds and the provided source-install scripts now require
+  Node.js 22 or newer and npm so they can build the Control UI before
+  installing the Python package. Published wheels remain ready to run without
+  Node.js.
+- The SPA shell and runtime bootstrap are uncached while fingerprinted Vite
+  assets are served with immutable caching. A runtime-injected base element
+  lets one artifact serve `/control` and safe non-root custom prefixes,
+  including deep-link refreshes; root, `/api`, and `/ws` prefixes are rejected
+  because they overlap gateway routes.
+- Guided setup and advanced configuration now share one Agent Setup workspace
+  at `/control/settings`; the existing `/control/setup` and `/control/config`
+  URLs remain compatibility routes, while adapter onboarding and credential
+  validation now live with channel status and access management.
+- Configuration clients now read one redacted `config.snapshot` and submit
+  optimistic `expectedRevision` writes through a shared persist-first
+  transaction. The gateway reports cumulative restart reasons, preserves
+  write-only secret semantics, and provides explicit recovery when runtime and
+  on-disk state diverge.
+
+### Security
+
+- The packaged Control UI now uses a same-origin Content Security Policy
+  without `unsafe-inline` scripts. Theme initialization runs from a packaged
+  pre-paint script; HTTP requests stay same-origin while explicit `ws:` and
+  `wss:` remote-gateway profiles remain supported.
+- Configuration snapshots never return stored secret values, and stale Control
+  UI drafts fail closed when the active configuration changes on disk instead
+  of overwriting an operator's out-of-band edit.
+
+### Removed
+
+- Retired the DingTalk, Matrix, QQ Bot, and WeCom channel adapters across the
+  runtime, CLI, Web UI, configuration schema, install metadata, and current
+  documentation. Supported messaging adapters are now Slack, Telegram, and
+  Discord.
+- Removed the retired Jinja Control UI template and its hand-maintained
+  JavaScript, CSS, fonts, images, and vendored browser libraries. There is no
+  legacy frontend fallback at runtime or in release artifacts.
+
+### Fixed
+
+- Control UI settings preserve the active configuration state, Bankr icons
+  render correctly, and resetting a session reliably clears its client state.
+- The collapsed Control UI sidebar toggle has improved interaction and layout.
+- CLI onboarding prompts wrap correctly instead of overflowing narrow terminals.
+
+## [2026.7.23] - 2026-07-23
+
+### Added
+
+- Mouse drag selection and copy in the full-screen `agentos chat` transcript:
+  left-drag highlights text in the transcript pane and mouse-up copies the
+  plain text (ANSI stripped, CJK width-aware) to the system clipboard via a
+  cross-platform dispatcher (pbcopy, wl-copy, xclip, xsel, clip, OSC 52
+  fallback) (#76).
+- Rendering for reasoning-model think blocks in the CLI, with hidden tags and
+  boundary markers so partial think content streams cleanly.
+
+### Changed
+
+- The waiting indicator is now turn-lifetime: it persists across the pre-token,
+  mid-stream, and tool-call phases to give a consistent "agent is working"
+  signal. `StreamingRenderer` uses the waiting indicator instead of a Rich
+  `Live` instance, which removes ghost panel artifacts in Windows PowerShell.
+- Markdown streaming keeps block and inline styles intact while preserving the
+  raw buffer for downstream consumers.
+
+### Fixed
+
+- Telegram no longer deletes its persistent native command menu on adapter
+  shutdown. Bot command menus are server-side configuration and must survive
+  gateway restarts and overlapping adapter lifecycles (#74, fixes #52).
+
+## [2026.7.22.post1] - 2026-07-22
+
+### Added
+
+- Managed MCP server configuration in the Web UI, with stdio, SSE, and
+  Streamable HTTP transports, OAuth authorization, dynamic tool discovery, a
+  Robinhood Trading preset, and a bundled safety-focused Robinhood skill (#66).
+- Mouse-wheel scrolling and Home/End and Ctrl+A/Ctrl+E line navigation in the
+  full-screen `agentos chat` interface (#67).
+
+### Changed
+
+- Promoted the MCP SDK to a standard dependency so remote MCP integrations work
+  without installing an optional extra (#71).
+- Renamed the Web UI chat assistant label from `Cap` to `AGENTOS` (#73).
+
+### Fixed
+
+- `agentos chat` full-screen transcript now responds to the first mouse wheel
+  tick instead of needing several scrolls before the pane moves: the wheel step
+  is larger and the tick that releases follow mode is compensated so the
+  wrapped-line cursor leaves the viewport immediately (#69).
+- Unauthenticated OAuth MCP servers no longer connect during gateway startup;
+  authenticated servers continue to reconnect automatically (#72).
+- MCP cancellation cleanup now closes partial Streamable HTTP and discovery
+  state so slow or unavailable remote servers cannot leave open AnyIO contexts
+  or crash gateway startup (#71, #72).
+
+## [2026.7.22] - 2026-07-22
+
 ### Added
 
 - `tools.enabled = false` provides an explicit plain-text mode for Ollama and
@@ -13,6 +135,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- `agentos chat` input frame now supports multiline input instead of
+  submitting on every `Enter` (#62).
 - Ollama multi-turn tool conversations now preserve assistant tool calls,
   correlate tool results by name, normalize native arguments, and retain the
   provider's model and completion reason, preventing repeated searches caused

@@ -30,6 +30,7 @@ _STATIC_FALLBACK: dict[str, tuple[int, int]] = {
     "stepfun/step-3.5-flash": (16_384, 256_000),
     "z-ai/glm-4.5-air": (98_304, 131_072),
     "minimax/minimax-m2.5": (65_536, 196_608),
+    "openai/gpt-5.6-luna": (128_000, 1_050_000),
     "deepseek/deepseek-v4-flash": (16_384, 1_048_576),
     "deepseek/deepseek-v4-pro": (16_384, 1_048_576),
     "deepseek-v4-flash": (393_216, 1_048_576),
