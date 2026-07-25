@@ -992,11 +992,13 @@ def _should_skip_unmentioned(
     from agentos.session.keys import derive_chat_type
 
     is_group = derive_chat_type(session_key) == "group"
+    interaction_type = (msg.metadata or {}).get("interaction_type")
+    is_explicit_interaction = interaction_type == "slash_command"
     policy = getattr(channel, "policy", None)
     custom_evaluator = getattr(channel, "evaluate_access", None)
     if callable(custom_evaluator):
-        mentioned = True
-        if is_group:
+        mentioned = not is_group or is_explicit_interaction
+        if is_group and not is_explicit_interaction:
             hook = getattr(channel, "is_group_mentioned", None)
             if not callable(hook):
                 _warn_missing_mention_hook(channel)
@@ -1026,7 +1028,7 @@ def _should_skip_unmentioned(
                 sender_id=msg.sender_id,
             )
             return _record_access_denial(channel, msg, decision)
-        if not policy.mention_required_in_group:
+        if not policy.mention_required_in_group or is_explicit_interaction:
             decision = evaluate_policy(
                 policy,
                 is_group=True,
@@ -1035,8 +1037,8 @@ def _should_skip_unmentioned(
             )
             return _record_access_denial(channel, msg, decision)
 
-    if not is_group:
-        return False  # DMs always processed for legacy adapters.
+    if not is_group or is_explicit_interaction:
+        return False
 
     hook = getattr(channel, "is_group_mentioned", None)
     if not callable(hook):
