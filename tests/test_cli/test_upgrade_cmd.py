@@ -30,8 +30,8 @@ def _delegated_plan() -> UpgradePlan:
         method=InstallMethod.UV_TOOL,
         delegated=True,
         tool="/abs/uv",
-        command=["/abs/uv", "tool", "upgrade", "use-agent-os"],
-        manual_hint="uv tool upgrade use-agent-os",
+        command=["/abs/uv", "tool", "upgrade", "use-agent-os", "--reinstall"],
+        manual_hint="uv tool upgrade use-agent-os --reinstall",
     )
 
 
@@ -104,7 +104,7 @@ def test_dry_run_touches_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     result = runner.invoke(_app(), ["upgrade", "--dry-run"])
     assert result.exit_code == 0
-    assert "Would run: /abs/uv tool upgrade use-agent-os" in result.stdout
+    assert "Would run: /abs/uv tool upgrade use-agent-os --reinstall" in result.stdout
     assert ran["run"] is False
 
 

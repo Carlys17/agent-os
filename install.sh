@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-default_version="v2026.7.22.post1"
+default_version="v2026.7.25"
 repo_slug="${AGENTOS_REPOSITORY:-use-agent-os/agent-os}"
 python_version="${AGENTOS_PYTHON_VERSION:-3.12}"
 original_path="${PATH:-}"
@@ -18,12 +18,12 @@ cli_extras=""
 
 usage() {
     cat <<HELP
-Usage: bash install.sh [--version v2026.7.22.post1|latest] [--profile recommended|core] [--extras name[,name]]
+Usage: bash install.sh [--version v2026.7.25|latest] [--profile recommended|core] [--extras name[,name]]
 
 Environment equivalents:
-  AGENTOS_VERSION=v2026.7.22.post1
+  AGENTOS_VERSION=v2026.7.25
   AGENTOS_INSTALL_PROFILE=recommended|core
-  AGENTOS_INSTALL_EXTRAS=matrix
+  AGENTOS_INSTALL_EXTRAS=document-extras
   AGENTOS_INSTALL_DRY_RUN=1
 HELP
 }
@@ -74,7 +74,7 @@ is_release_version() {
     [[ "$1" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?(\.post[0-9]+)?$ ]]
 }
 
-valid_extras=" matrix matrix-e2e document-extras "
+valid_extras=" document-extras "
 extras_csv="${AGENTOS_INSTALL_EXTRAS:-}"
 if [[ -n "${cli_extras}" ]]; then
     extras_csv="${extras_csv}${extras_csv:+,}${cli_extras}"
@@ -133,7 +133,7 @@ fi
 
 if [[ "${release_selector}" != "latest" && "${release_selector}" != "stable" ]] && ! is_release_version "${release_selector}"; then
     echo "install.sh: unsupported AGENTOS_VERSION='${release_selector}'." >&2
-    echo "install.sh: the release installer only supports latest, stable, or release versions like v2026.7.22.post1." >&2
+    echo "install.sh: the release installer only supports latest, stable, or release versions like v2026.7.25." >&2
     echo "install.sh: use git clone plus scripts/install_source.sh for main, dev, branch, or source installs." >&2
     exit 1
 fi

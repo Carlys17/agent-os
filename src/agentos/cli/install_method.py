@@ -222,39 +222,56 @@ def build_upgrade_plan(
     resolved_method = method if method is not None else detect_install_method()
 
     if resolved_method is InstallMethod.UV_TOOL:
+        # ``--reinstall`` (which implies ``--refresh``) is what makes ``upgrade``
+        # a safe, self-healing operation rather than a fragile in-place bump. A
+        # plain ``uv tool upgrade`` no-ops or fails when the tool venv is in a
+        # broken state — a stale PyPI cache, or an orphaned interpreter after the
+        # base Python moved (e.g. a Homebrew bump). Both leave operators forced
+        # to hand-run ``uv tool install … --force``. ``--reinstall`` rebuilds the
+        # venv from scratch and bypasses the cache, matching install.sh's
+        # ``--force`` posture, while ``upgrade`` (not ``install``) preserves the
+        # extras recorded in uv's tool receipt — ``uv tool upgrade`` takes only a
+        # bare tool NAME and rejects a ``dist[extra]`` spec.
         uv = resolve_tool("uv", env)
         if uv is not None:
             return UpgradePlan(
                 method=resolved_method,
                 delegated=True,
                 tool=uv,
-                command=[uv, "tool", "upgrade", dist],
-                manual_hint=f"uv tool upgrade {dist}",
+                command=[uv, "tool", "upgrade", dist, "--reinstall"],
+                manual_hint=f"uv tool upgrade {dist} --reinstall",
             )
         return UpgradePlan(
             method=resolved_method,
             delegated=False,
             tool=None,
-            command=["uv", "tool", "upgrade", dist],
-            manual_hint=f"uv tool upgrade {dist}",
+            command=["uv", "tool", "upgrade", dist, "--reinstall"],
+            manual_hint=f"uv tool upgrade {dist} --reinstall",
         )
 
     if resolved_method is InstallMethod.PIPX:
+        # ``--force`` is pipx's counterpart to uv's ``--reinstall``: it rebuilds
+        # the managed venv instead of no-op'ing or failing when it is in a broken
+        # state (stale wheel, orphaned interpreter after the base Python moved).
+        # ``pipx upgrade`` (not ``pipx reinstall``) is the right verb — ``upgrade
+        # --force`` still moves to the newest version, whereas ``reinstall`` only
+        # re-lays-down the currently pinned version. Extras are preserved by pipx
+        # across the forced upgrade.
         pipx = resolve_tool("pipx", env)
         if pipx is not None:
             return UpgradePlan(
                 method=resolved_method,
                 delegated=True,
                 tool=pipx,
-                command=[pipx, "upgrade", dist],
-                manual_hint=f"pipx upgrade {dist}",
+                command=[pipx, "upgrade", dist, "--force"],
+                manual_hint=f"pipx upgrade {dist} --force",
             )
         return UpgradePlan(
             method=resolved_method,
             delegated=False,
             tool=None,
-            command=["pipx", "upgrade", dist],
-            manual_hint=f"pipx upgrade {dist}",
+            command=["pipx", "upgrade", dist, "--force"],
+            manual_hint=f"pipx upgrade {dist} --force",
         )
 
     if resolved_method is InstallMethod.EDITABLE:
@@ -264,8 +281,7 @@ def build_upgrade_plan(
             tool=None,
             command=["git", "pull"],
             manual_hint=(
-                "editable / source checkout — pull the repo and reinstall: "
-                "git pull && uv sync"
+                "editable / source checkout — pull the repo and reinstall: git pull && uv sync"
             ),
         )
 

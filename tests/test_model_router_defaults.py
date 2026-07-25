@@ -58,7 +58,7 @@ def test_agentos_router_defaults_match_runtime_router_config() -> None:
     assert not hasattr(cfg, "v4_use_aux_head")
     assert cfg.require_router_runtime is False
 
-    assert cfg.tiers["c0"]["model"] == "deepseek/deepseek-v4-flash"
+    assert cfg.tiers["c0"]["model"] == "openai/gpt-5.6-luna"
     assert cfg.tiers["c0"]["thinking_level"] == "high"
     assert cfg.tiers["c1"]["model"] == "minimax/minimax-m3"
     assert cfg.tiers["c1"]["thinking_level"] == "high"
@@ -419,7 +419,7 @@ def test_example_toml_enables_runtime_router_defaults() -> None:
     agentos_router = data["agentos_router"]
 
     assert data["llm"]["provider"] == "openrouter"
-    assert data["llm"]["model"] == "deepseek/deepseek-v4-flash"
+    assert data["llm"]["model"] == "openai/gpt-5.6-luna"
     assert agentos_router["enabled"] is True
     assert agentos_router["auto_thinking"] is True
     assert agentos_router["rollout_phase"] == "full"
@@ -444,7 +444,7 @@ def test_example_toml_enables_runtime_router_defaults() -> None:
     assert "require_router_runtime" not in agentos_router
 
     tiers = agentos_router["tiers"]
-    assert tiers["c0"]["model"] == "deepseek/deepseek-v4-flash"
+    assert tiers["c0"]["model"] == "openai/gpt-5.6-luna"
     assert tiers["c0"]["thinking_level"] == "high"
     assert tiers["c1"]["model"] == "minimax/minimax-m3"
     assert tiers["c1"]["thinking_level"] == "high"

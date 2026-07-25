@@ -103,7 +103,14 @@ def test_artifact_store_skips_existing_deliverable_with_bad_material(
 
 
 def test_artifact_store_uses_short_material_paths_for_uuid_sessions(tmp_path: Path) -> None:
-    store = ArtifactStore(tmp_path)
+    # A UUID session id and a long unicode artifact name must both collapse into
+    # fixed-width hashed segments, so the path the store appends to the caller's
+    # media root stays far inside the Windows MAX_PATH (260) budget.
+    #
+    # The length check is store-relative on purpose: the absolute path also
+    # carries the host's temp prefix, which the store cannot control and which
+    # alone runs ~120 chars on macOS (/private/var/folders/...). The 100-char
+    # budget is MAX_PATH minus a 160-char allowance for the media root itself.
     long_root = tmp_path / ("deep-root-" + ("x" * 80))
     store = ArtifactStore(long_root)
     session_id = "532d5065-abce-499f-97b0-bbf2a067d5ab"
@@ -120,7 +127,7 @@ def test_artifact_store_uses_short_material_paths_for_uuid_sessions(tmp_path: Pa
     material_path = store.path_for(ref)
     assert material_path.name == "data"
     assert session_id not in str(material_path)
-    assert len(str(material_path)) < 260
+    assert len(str(material_path.relative_to(long_root))) < 100
     resolved_ref, resolved_path = store.resolve_for_download(ref.id, session_id=session_id)
     assert resolved_ref == ref
     assert resolved_path == material_path

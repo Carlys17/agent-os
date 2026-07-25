@@ -134,7 +134,6 @@ class TelegramChannel:
     _update_offset: int | None = field(default=None, init=False, repr=False)
     _dedupe: EventDedupeCache = field(init=False, repr=False)
     _connected: bool = field(default=False, init=False, repr=False)
-    _commands_registered: bool = field(default=False, init=False, repr=False)
     _last_message_at: datetime | None = field(default=None, init=False, repr=False)
     _known_sender_profiles: dict[str, dict[str, str]] = field(
         default_factory=dict, init=False, repr=False
@@ -500,7 +499,6 @@ class TelegramChannel:
         commands = telegram_bot_commands()
         scope = {"type": "default"}
         await self._api("setMyCommands", {"commands": commands, "scope": scope})
-        self._commands_registered = True
         log.info("telegram.commands_registered", count=len(commands))
 
     async def stop(self) -> None:
@@ -512,12 +510,6 @@ class TelegramChannel:
                 await task
             except asyncio.CancelledError:
                 pass
-        if self._commands_registered:
-            try:
-                await self._api("deleteMyCommands", {"scope": {"type": "default"}})
-            except TelegramApiError as exc:
-                log.warning("telegram.commands_cleanup_failed", error=str(exc))
-            self._commands_registered = False
         if self._client is not None and self._owns_client:
             await self._client.aclose()
         self._client = None

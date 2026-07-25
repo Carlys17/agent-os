@@ -137,6 +137,29 @@ branded welcome screen renders at the top of the pane on launch. `PgUp`/`PgDn`
 scroll back through history; the mouse wheel scrolls when the pointer is over
 the transcript. New output re-pins to the newest line.
 
+**Select and copy.** Drag with the left mouse button across the transcript
+to highlight any span (the selection shows in reverse video); releasing the
+button copies the plain text — ANSI styling stripped, CJK width-aware — to
+the system clipboard (`pbcopy` on macOS, `wl-copy`/`xclip`/`xsel` on Linux,
+`clip` on Windows, OSC 52 escape as a fallback). Click anywhere to clear the
+selection. The emulator's own selection gesture (typically `Shift+drag` on
+Linux, `Option+drag` in iTerm2) also still works if you prefer it.
+
+**Markdown rendering.** The assistant's streamed reply is styled inline as
+it arrives: `#`/`##`/`###` headings render in the brand accent, `>`
+quotes get a dimmed bar, `---` becomes a rule, list markers are tinted,
+tables keep their pipes aligned, fenced code blocks stream in a uniform
+code color (no waiting for the closing fence), and inline spans —
+`**bold**`, `*italic*`, `~~strike~~`, inline `` `code` ``, and
+`[text](url)` links —
+are styled in place. File names, branch names, and other important terms
+the model wraps in backticks stand out in the accent color. Reasoning-model
+`<think>…</think>` blocks render as a recessive gray-bar, dim-italic region
+(the tags themselves are hidden) so the chain-of-thought stays visible but
+never competes with the reply. The render is
+write-once (no repaint loop), and `NO_COLOR` (or a non-color terminal)
+downgrades the stream to plain text so piped output stays greppable.
+
 Input navigation follows the current logical line in multiline drafts:
 `Home`/`End` and `Ctrl+A`/`Ctrl+E` move to that line's start/end. On macOS,
 `Cmd+Left`/`Cmd+Right` work when the terminal maps those shortcuts to
@@ -205,9 +228,13 @@ agentos upgrade --timeout 900   # bound the upgrade subprocess (default 600s)
 
 Per install method:
 
-- **uv tool / pipx** — delegated automatically (`uv tool upgrade use-agent-os`
-  / `pipx upgrade use-agent-os`), resolving the tool to an absolute path over a
-  hardened PATH.
+- **uv tool / pipx** — delegated automatically (`uv tool upgrade use-agent-os
+  --reinstall` / `pipx upgrade use-agent-os --force`), resolving the tool to an
+  absolute path over a hardened PATH. Both rebuild the managed venv rather than
+  bumping it in place — `--reinstall` (uv, implies `--refresh`) and `--force`
+  (pipx) self-heal a stale cache or an orphaned interpreter (e.g. after the base
+  Python moves) that would otherwise force a manual reinstall. Extras recorded
+  in the tool receipt are preserved.
 - **pip / editable / source checkout** — not faked: prints the exact manual
   command (e.g. `python -m pip install --upgrade "use-agent-os"`) and exits
   with a distinct code.
@@ -271,6 +298,11 @@ agentos configure search --search-provider duckduckgo
 ```
 
 Channels:
+
+Built-in channel types are `discord`, `slack`, and `telegram`; `agentos
+channels types` is the authoritative catalog. On upgrade, config entries for
+retired built-in channel types are removed only after AgentOS creates the
+normal secure config backup.
 
 ```sh
 agentos channels types

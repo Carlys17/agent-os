@@ -43,6 +43,11 @@ export OPENCAP_API_KEY="ocap_..."
 agentos configure provider --provider opencap --api-key-env OPENCAP_API_KEY
 ```
 
+When testing OpenCAP from a source checkout, prefix both configuration and
+gateway commands with `uv run` (for example, `uv run agentos gateway restart`).
+This keeps the config writer and restarting gateway on the same local schema
+instead of invoking an older globally installed AgentOS.
+
 Direct provider examples:
 
 ```sh

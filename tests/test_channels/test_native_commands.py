@@ -82,7 +82,7 @@ async def test_telegram_registration_pushes_the_unified_command_menu() -> None:
 
 
 @pytest.mark.asyncio
-async def test_telegram_start_registers_and_stop_cleans_up_commands() -> None:
+async def test_telegram_start_and_stop_preserves_registered_commands() -> None:
     channel = TelegramChannel(
         TelegramChannelConfig(
             token="token",
@@ -102,12 +102,9 @@ async def test_telegram_start_registers_and_stop_cleans_up_commands() -> None:
     await channel.start()
     await channel.stop()
 
-    assert [method for method, _ in calls] == [
-        "getMe",
-        "setMyCommands",
-        "setWebhook",
-        "deleteMyCommands",
-    ]
+    methods = [method for method, _ in calls]
+    assert methods == ["getMe", "setMyCommands", "setWebhook"]
+    assert "deleteMyCommands" not in methods
 
 
 @pytest.mark.asyncio
