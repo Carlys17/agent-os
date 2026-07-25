@@ -29,6 +29,11 @@ agentos cron list --agent main
 agentos cron list --json
 ```
 
+Job visibility is scoped to the selected profile, not to the session that
+created each job. Calls from the Control UI, CLI, or a paired channel therefore
+see the same profile-wide schedule list. The creation session is retained as
+delivery metadata and shown as **Created from** when available.
+
 ## Add an Interval Job
 
 Run a prompt every hour:

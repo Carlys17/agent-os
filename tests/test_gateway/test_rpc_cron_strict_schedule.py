@@ -276,3 +276,17 @@ def test_job_to_wire_exposes_status_for_cron_countdown_state() -> None:
     wire = _job_to_wire(job)
 
     assert wire["status"] == "running"
+
+
+def test_job_to_wire_exposes_creator_session_as_display_metadata() -> None:
+    job = CronJob(
+        id="creator-wire",
+        name="Creator metadata",
+        payload={"kind": "reminder", "text": "hello", "agent_id": "main"},
+        creator_session_key="agent:main:telegram:chat-1",
+    )
+
+    wire = _job_to_wire(job)
+
+    assert wire["creatorSessionKey"] == "agent:main:telegram:chat-1"
+    assert wire["createdFrom"] == "agent:main:telegram:chat-1"

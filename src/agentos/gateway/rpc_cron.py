@@ -93,6 +93,8 @@ def _job_to_wire(j: Any) -> dict[str, Any]:
         "run_count": d.get("run_count", 0),
         "error_count": d.get("error_count", 0),
         "created_at": _iso(d.get("created_at")),
+        "creatorSessionKey": d.get("creator_session_key", "") or "",
+        "createdFrom": d.get("creator_session_key", "") or "",
         "schedule_kind": schedule_kind_str,
         "scheduleKind": schedule_kind_str,
         "schedule_raw": d.get("schedule_raw", ""),

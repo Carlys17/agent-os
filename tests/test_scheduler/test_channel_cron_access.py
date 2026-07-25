@@ -6,8 +6,8 @@ Drives the contract:
   model picks up from "提醒我喝水" / "每天早上总结邮件" style prompts.
 - target_session_key and tool_policy are unavailable from the channel
   protocol; Control clients manage cross-session jobs over cron RPC.
-- list / remove / run are scoped to the paired channel caller's identity
-  (sender_id first, session_key fallback). Control contexts see all.
+- list / remove / run are scoped to the current profile, so every connected
+  session sees and manages the same profile-wide jobs.
 - When session storage has not yet captured last_channel for a fresh chat,
   the tool synthesises a ReplyTargetSnapshot from the live ToolContext so the
   first cron call still binds delivery to the calling channel.
@@ -128,12 +128,13 @@ def _channel_ctx(
     sender_id: str = "feishu-user-1",
     channel_kind: str = "feishu",
     channel_id: str = "oc_chat_001",
+    agent_id: str = "main",
 ) -> ToolContext:
     return ToolContext(
         caller_kind=CallerKind.CHANNEL,
         interaction_mode=InteractionMode.INTERACTIVE,
         session_key=session_key,
-        agent_id="main",
+        agent_id=agent_id,
         channel_kind=channel_kind,
         channel_id=channel_id,
         sender_id=sender_id,
@@ -202,12 +203,14 @@ def _seed_job(
     creator_session_key: str = "",
     creator_sender_id: str = "",
     name: str = "x",
+    agent_id: str = "main",
 ) -> None:
     fake_scheduler.jobs.append(
         CronJob(
             id=job_id,
             name=name,
             cron_expr="*/5 * * * *",
+            payload={"kind": "reminder", "text": name, "agent_id": agent_id},
             creator_session_key=creator_session_key,
             creator_sender_id=creator_sender_id,
         )
@@ -304,6 +307,24 @@ async def test_channel_user_can_schedule_isolated_agent_turn(fake_scheduler) -> 
     assert kwargs["handler_key"] == "agent_run"
 
 
+async def test_channel_add_uses_current_profile_instead_of_default_argument(
+    fake_scheduler,
+) -> None:
+    with _with_ctx(
+        _channel_ctx(
+            "agent:research:feishu:user-1",
+            agent_id="research",
+        )
+    ):
+        await cron_tool(
+            action="add",
+            schedule={"kind": "every", "every_seconds": 60},
+            task="profile reminder",
+        )
+
+    assert fake_scheduler.add_calls[-1]["payload"]["agent_id"] == "research"
+
+
 # --- Privilege-only parameters stay blocked (no UX impact on normal calls)
 
 
@@ -369,11 +390,10 @@ async def test_channel_user_without_session_snapshot_falls_back_to_ctx(monkeypat
     assert sched.add_calls[-1]["delivery"].mode.value == "origin"
 
 
-# --- Cross-user privacy isolation ----------------------------------------
+# --- Profile-wide visibility and management -----------------------------
 
 
-async def test_channel_user_list_shows_only_own_jobs(fake_scheduler) -> None:
-    """List filter uses sender_id (preferred) then session_key (fallback)."""
+async def test_channel_user_list_shows_all_jobs_in_current_profile(fake_scheduler) -> None:
     _seed_job(
         fake_scheduler,
         job_id="mine",
@@ -387,30 +407,44 @@ async def test_channel_user_list_shows_only_own_jobs(fake_scheduler) -> None:
         creator_sender_id="feishu-user-9",
     )
     _seed_job(fake_scheduler, job_id="control-job")  # creator fields blank
+    _seed_job(fake_scheduler, job_id="other-profile", agent_id="research")
 
     with _with_ctx(_channel_ctx("agent:main:feishu:user-1", sender_id="feishu-user-1")):
         raw = await cron_tool(action="list")
 
-    ids = [j["job_id"] for j in json.loads(raw)["jobs"]]
-    assert ids == ["mine"]
+    jobs = json.loads(raw)["jobs"]
+    assert [job["job_id"] for job in jobs] == ["mine", "theirs", "control-job"]
+    assert {job["agent_id"] for job in jobs} == {"main"}
+    assert {job["job_id"]: job["created_from"] for job in jobs} == {
+        "mine": "agent:main:feishu:user-1",
+        "theirs": "agent:main:feishu:user-9",
+        "control-job": "",
+    }
 
 
-async def test_channel_user_list_falls_back_to_session_when_sender_missing(
+async def test_creator_session_is_display_metadata_not_list_scope(
     fake_scheduler,
 ) -> None:
-    """Legacy jobs without creator_sender_id are matched on session_key."""
     _seed_job(
         fake_scheduler,
-        job_id="legacy",
+        job_id="same-session",
         creator_session_key="agent:main:feishu:user-1",
+    )
+    _seed_job(
+        fake_scheduler,
+        job_id="other-session",
+        creator_session_key="agent:main:slack:user-9",
     )
     with _with_ctx(_channel_ctx("agent:main:feishu:user-1", sender_id="")):
         raw = await cron_tool(action="list")
-    ids = [j["job_id"] for j in json.loads(raw)["jobs"]]
-    assert ids == ["legacy"]
+    jobs = json.loads(raw)["jobs"]
+    assert [job["job_id"] for job in jobs] == ["same-session", "other-session"]
+    assert jobs[1]["created_from"] == "agent:main:slack:user-9"
 
 
-async def test_channel_user_cannot_remove_others_job(fake_scheduler) -> None:
+async def test_channel_user_can_remove_job_created_from_another_session(
+    fake_scheduler,
+) -> None:
     _seed_job(
         fake_scheduler,
         job_id="theirs",
@@ -418,11 +452,13 @@ async def test_channel_user_cannot_remove_others_job(fake_scheduler) -> None:
         creator_sender_id="feishu-user-9",
     )
     with _with_ctx(_channel_ctx("agent:main:feishu:user-1")):
-        with pytest.raises(Exception, match="only remove cron jobs they created"):
-            await cron_tool(action="remove", job_id="theirs")
+        raw = await cron_tool(action="remove", job_id="theirs")
+    assert json.loads(raw)["status"] == "removed"
 
 
-async def test_channel_user_cannot_run_others_job(fake_scheduler) -> None:
+async def test_channel_user_can_run_job_created_from_another_session(
+    fake_scheduler,
+) -> None:
     _seed_job(
         fake_scheduler,
         job_id="theirs",
@@ -430,8 +466,19 @@ async def test_channel_user_cannot_run_others_job(fake_scheduler) -> None:
         creator_sender_id="feishu-user-9",
     )
     with _with_ctx(_channel_ctx("agent:main:feishu:user-1")):
-        with pytest.raises(Exception, match="only run cron jobs they created"):
-            await cron_tool(action="run", job_id="theirs")
+        raw = await cron_tool(action="run", job_id="theirs")
+    assert json.loads(raw)["action"] == "run"
+
+
+@pytest.mark.parametrize("action", ["remove", "run"])
+async def test_channel_user_cannot_manage_job_from_another_profile(
+    fake_scheduler,
+    action: str,
+) -> None:
+    _seed_job(fake_scheduler, job_id="research-job", agent_id="research")
+    with _with_ctx(_channel_ctx("agent:main:feishu:user-1")):
+        with pytest.raises(Exception, match="different profile"):
+            await cron_tool(action=action, job_id="research-job")
 
 
 async def test_channel_user_can_remove_own_job(fake_scheduler) -> None:
@@ -458,7 +505,7 @@ async def test_channel_user_can_run_own_job(fake_scheduler) -> None:
     assert json.loads(raw)["action"] == "run"
 
 
-# --- Owner path unchanged ------------------------------------------------
+# --- Control path --------------------------------------------------------
 
 
 async def test_control_path_can_target_explicit_session(fake_scheduler) -> None:
@@ -474,9 +521,10 @@ async def test_control_path_can_target_explicit_session(fake_scheduler) -> None:
     assert json.loads(raw)["status"] == "scheduled"
 
 
-async def test_control_can_list_all_jobs(fake_scheduler) -> None:
+async def test_control_list_is_current_profile_scoped(fake_scheduler) -> None:
     _seed_job(fake_scheduler, job_id="ch1", creator_sender_id="feishu-user-1")
     _seed_job(fake_scheduler, job_id="own1")
+    _seed_job(fake_scheduler, job_id="research", agent_id="research")
     with _with_ctx(_control_ctx()):
         raw = await cron_tool(action="list")
     ids = {j["job_id"] for j in json.loads(raw)["jobs"]}

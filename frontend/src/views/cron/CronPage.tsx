@@ -30,6 +30,7 @@ import {
   isOkStatus,
   isUpcomingRun,
   jobDotState,
+  jobCreatedFrom,
   jobKindClass,
   jobKindLabel,
   jobSchedule,
@@ -268,6 +269,7 @@ function JobCard({
   const kind = jobKindLabel(job)
   const kindClass = jobKindClass(job)
   const target = jobTarget(job)
+  const createdFrom = jobCreatedFrom(job)
   const message = String(job.message || job.prompt || '').trim()
 
   return (
@@ -301,6 +303,12 @@ function JobCard({
           <dt className="t-label">Target</dt>
           <dd className="t-data">{target}</dd>
         </div>
+        {createdFrom ? (
+          <div>
+            <dt className="t-label">Created from</dt>
+            <dd className="t-data cron-mono">{createdFrom}</dd>
+          </div>
+        ) : null}
         <div>
           <dt className="t-label">Last run</dt>
           <dd className="t-data">

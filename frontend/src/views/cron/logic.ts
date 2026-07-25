@@ -38,6 +38,10 @@ export interface RawJob {
   target_session_key?: string
   sessionKey?: string
   session_key?: string
+  creatorSessionKey?: string
+  creator_session_key?: string
+  createdFrom?: string
+  created_from?: string
   [key: string]: unknown
 }
 
@@ -85,6 +89,13 @@ export function jobKindClass(job: RawJob): 'is-reminder' | 'is-agent' {
 /** cron.js:622 — the session-target display (camel|snake|—). */
 export function jobTarget(job: RawJob): string {
   return String(job.sessionTarget || job.session_target || '—')
+}
+
+/** Return the session recorded as the job creation source. */
+export function jobCreatedFrom(job: RawJob): string {
+  return String(
+    job.createdFrom || job.created_from || job.creatorSessionKey || job.creator_session_key || '',
+  )
 }
 
 /** cron.js:618 — the schedule expression display (expression|schedule|—). */
@@ -185,8 +196,8 @@ export function sortJobs<T extends RawJob>(list: T[], col: string, asc: boolean)
 
 /**
  * cron.js:562-569 — case-insensitive filter across name / message|prompt /
- * payloadKind / sessionTarget|session_target / expression|schedule. Empty query
- * keeps everything (returns a copy).
+ * payloadKind / sessionTarget|session_target / creation source /
+ * expression|schedule. Empty query keeps everything (returns a copy).
  */
 export function filterJobs<T extends RawJob>(list: T[], search: string): T[] {
   const q = search.toLowerCase()
@@ -199,6 +210,7 @@ export function filterJobs<T extends RawJob>(list: T[], search: string): T[] {
       String(j.sessionTarget || j.session_target || '')
         .toLowerCase()
         .includes(q) ||
+      jobCreatedFrom(j).toLowerCase().includes(q) ||
       (j.expression || j.schedule || '').toLowerCase().includes(q),
   )
 }
