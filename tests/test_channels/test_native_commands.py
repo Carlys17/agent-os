@@ -336,6 +336,9 @@ async def test_slack_start_survives_manifest_sync_failure() -> None:
 class _SlashRequest:
     headers = {"content-type": "application/x-www-form-urlencoded"}
 
+    def __init__(self, channel_id: str = "C1") -> None:
+        self.channel_id = channel_id
+
     async def body(self) -> bytes:
         return b"command=%2Fstatus"
 
@@ -344,19 +347,34 @@ class _SlashRequest:
             "command": "/status",
             "text": "",
             "user_id": "U1",
-            "channel_id": "C1",
+            "channel_id": self.channel_id,
             "channel_name": "general",
         }
 
 
+@pytest.mark.parametrize(
+    ("channel_id", "channel_type", "is_group"),
+    [
+        ("C1", "channel", True),
+        ("G1", "group", True),
+        ("D1", "im", False),
+    ],
+)
 @pytest.mark.asyncio
-async def test_slack_slash_command_form_is_enqueued_for_channel_dispatch() -> None:
+async def test_slack_slash_command_form_uses_channel_id_conversation_type(
+    channel_id: str,
+    channel_type: str,
+    is_group: bool,
+) -> None:
     channel = SlackChannel(token="token", slack_channel_id="C1")
 
-    response = await channel._handle_webhook(_SlashRequest())  # noqa: SLF001
+    response = await channel._handle_webhook(_SlashRequest(channel_id))  # noqa: SLF001
 
     assert response.status_code == 200
     message = await channel.receive()
     assert message.content == "/status"
     assert message.sender_id == "U1"
-    assert message.channel_id == "C1"
+    assert message.channel_id == channel_id
+    assert message.metadata["channel_type"] == channel_type
+    assert message.metadata["is_group"] is is_group
+    assert message.metadata["interaction_type"] == "slash_command"

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from agentos.artifacts import ArtifactStore
+from agentos.channels._util import ChannelAccessPolicy
 from agentos.channels.stream_policy import resolve_channel_stream_policy
 from agentos.channels.telegram import TelegramChannel, TelegramChannelConfig
 from agentos.channels.types import Attachment, IncomingMessage, OutgoingMessage
@@ -37,6 +38,7 @@ from agentos.gateway.channel_dispatch import (
     _run_turn_batch_path,
     _run_turn_with_streaming,
     _RuntimeChannelStreamRelay,
+    _should_skip_unmentioned,
 )
 from agentos.gateway.config import AgentEntryConfig, GatewayConfig
 from agentos.gateway.protocol import make_ok_res
@@ -67,6 +69,59 @@ def _message() -> IncomingMessage:
 
 def _tool_ctx(agent_id: str = "main") -> SimpleNamespace:
     return SimpleNamespace(agent_id=agent_id)
+
+
+def test_explicit_slash_interaction_satisfies_group_mention_policy() -> None:
+    class MentionOnlyChannel:
+        policy = ChannelAccessPolicy(
+            dm_allowed=True,
+            group_allowed=True,
+            mention_required_in_group=True,
+        )
+
+        def is_group_mentioned(self, _msg: IncomingMessage) -> bool:
+            raise AssertionError("explicit interactions must not invoke the mention parser")
+
+    msg = IncomingMessage(
+        sender_id="U1",
+        channel_id="C1",
+        content="/status",
+        metadata={"is_group": True, "interaction_type": "slash_command"},
+    )
+
+    assert (
+        _should_skip_unmentioned(
+            MentionOnlyChannel(),
+            msg,
+            "agent:main:slack:group:C1",
+        )
+        is False
+    )
+
+
+def test_explicit_slash_interaction_does_not_bypass_group_access_policy() -> None:
+    channel = SimpleNamespace(
+        policy=ChannelAccessPolicy(
+            dm_allowed=True,
+            group_allowed=False,
+            mention_required_in_group=True,
+        )
+    )
+    msg = IncomingMessage(
+        sender_id="U1",
+        channel_id="C1",
+        content="/status",
+        metadata={"is_group": True, "interaction_type": "slash_command"},
+    )
+
+    assert (
+        _should_skip_unmentioned(
+            channel,
+            msg,
+            "agent:main:slack:group:C1",
+        )
+        is True
+    )
 
 
 def _exact_pdf(size: int) -> bytes:

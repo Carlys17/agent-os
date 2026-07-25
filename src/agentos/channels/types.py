@@ -47,6 +47,8 @@ class IncomingMessage(BaseModel):
     - ``native_parent_channel_id``: platform-native parent channel id.
     - ``native_root_id``: platform-native root message id.
     - ``reply_target_id``: platform-native message id to reply to.
+    - ``interaction_type``: explicit native interaction kind, such as
+      ``slash_command``.
     - ``is_group``: bool consumed by ``ChannelManager`` for session keys.
     """
 

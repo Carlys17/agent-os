@@ -289,12 +289,14 @@ class SlackChannel:
         thread_ts = event.get("thread_ts")
 
         # channel_type: "channel"/"group" = group, "im"/"mpim" = DM
-        # Fallback: infer from channel ID prefix (C/G = group, D = direct)
+        # Fallback: infer from channel ID prefix (C = public, G = private, D = direct)
         channel_type = event.get("channel_type")
         if channel_type is None:
             ch = event.get("channel", "")
-            if ch.startswith(("C", "G")):
+            if ch.startswith("C"):
                 channel_type = "channel"
+            elif ch.startswith("G"):
+                channel_type = "group"
             elif ch.startswith("D"):
                 channel_type = "im"
 
@@ -305,6 +307,8 @@ class SlackChannel:
             "channel_type": channel_type,
             "is_group": channel_type in {"channel", "group"},
         }
+        if interaction_type := event.get("interaction_type"):
+            metadata["interaction_type"] = interaction_type
 
         # Detect thread root: thread_ts == ts
         if thread_ts is not None and ts is not None:
@@ -731,7 +735,7 @@ class SlackChannel:
                         "user": str(form.get("user_id") or "unknown"),
                         "channel": str(form.get("channel_id") or self.slack_channel_id),
                         "text": f"{command} {text}".strip(),
-                        "channel_type": str(form.get("channel_name") or "channel"),
+                        "interaction_type": "slash_command",
                     }
                 )
             )
