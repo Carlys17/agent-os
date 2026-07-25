@@ -1005,8 +1005,8 @@ def _record_access_decision(
         admission = getattr(decision, "admission", None)
         validator = getattr(decision, "admission_validator", None)
         if route_envelope is not None and admission is not None and callable(validator):
-            route_envelope.metadata["_channel_admission"] = admission
-            route_envelope.metadata["_channel_admission_validator"] = validator
+            route_envelope.runtime_state.channel_admission = admission
+            route_envelope.runtime_state.channel_admission_validator = validator
         return False
     hook = getattr(channel, "record_access_denial", None)
     if callable(hook):
@@ -1081,8 +1081,7 @@ def _should_skip_unmentioned(
     policy = getattr(channel, "policy", None)
     custom_evaluator = getattr(channel, "evaluate_access", None)
     if route_envelope is not None:
-        route_envelope.metadata.pop("_channel_admission", None)
-        route_envelope.metadata.pop("_channel_admission_validator", None)
+        route_envelope.runtime_state.clear_channel_admission()
     if callable(custom_evaluator):
         mentioned = not is_group or is_explicit_interaction
         if is_group and not is_explicit_interaction:

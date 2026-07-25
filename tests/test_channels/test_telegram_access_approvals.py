@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -9,6 +10,7 @@ from agentos.channels._util import ChannelAccessPolicy, evaluate_policy
 from agentos.channels.telegram import TelegramChannel, TelegramChannelConfig
 from agentos.channels.types import IncomingMessage
 from agentos.gateway.channel_dispatch import _should_skip_unmentioned, run_channel_dispatch
+from agentos.gateway.routing import build_channel_route_envelope
 
 
 def _incoming(channel: TelegramChannel, *, sender_id: int = 42, username: str = "alice"):
@@ -89,6 +91,32 @@ def test_pairing_grant_is_invalid_immediately_after_disconnect(tmp_path) -> None
         channel.evaluate_access(message, is_group=False, mentioned=True).reason
         == "not_paired"
     )
+
+
+def test_pairing_runtime_proof_stays_out_of_persisted_route_metadata(tmp_path) -> None:
+    channel = TelegramChannel(
+        TelegramChannelConfig(name="tg"),
+        pairing_store=ChannelPairingStore(tmp_path / "pairing"),
+    )
+    message = _incoming(channel)
+    _should_skip_unmentioned(channel, message, "agent:main:telegram:direct:42")
+    channel.resolve_access_request("42", approved=True)
+    envelope = build_channel_route_envelope(
+        message,
+        session_key="agent:main:telegram:direct:42",
+        session_prefix="tg",
+    )
+
+    assert _should_skip_unmentioned(channel, message, envelope.session_key, envelope) is False
+    assert json.loads(json.dumps(envelope.metadata)) == envelope.metadata
+
+    tool_context = envelope.tool_context()
+    assert tool_context.channel_admission is not None
+    assert tool_context.channel_admission_validator is not None
+    assert tool_context.channel_admission_validator(tool_context.channel_admission) is True
+
+    channel.revoke_sender("42")
+    assert tool_context.channel_admission_validator(tool_context.channel_admission) is False
 
 
 def test_direct_messages_always_require_pairing(tmp_path) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -44,6 +45,18 @@ class ReplyTarget:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class RouteRuntimeState:
+    """In-process route state that must never enter persisted metadata."""
+
+    channel_admission: ChannelAdmission | None = None
+    channel_admission_validator: Callable[[ChannelAdmission], bool] | None = None
+
+    def clear_channel_admission(self) -> None:
+        self.channel_admission = None
+        self.channel_admission_validator = None
+
+
 @dataclass(frozen=True)
 class RouteEnvelope:
     """Canonical routing data for one inbound turn request."""
@@ -64,6 +77,11 @@ class RouteEnvelope:
     delivery_context: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     interaction_mode: InteractionMode = InteractionMode.INTERACTIVE
+    runtime_state: RouteRuntimeState = field(
+        default_factory=RouteRuntimeState,
+        compare=False,
+        repr=False,
+    )
 
     def delivery_fields(self) -> dict[str, Any]:
         """Return session routing fields derived from the reply target."""
@@ -345,10 +363,8 @@ def tool_context_from_envelope(
         denied_tools = set(SUBAGENT_TOOL_DENY)
     source_kind = envelope.metadata.get("tool_source_kind") or envelope.source_kind.value
     source_name = envelope.metadata.get("tool_source_name") or envelope.source_name
-    channel_admission = envelope.metadata.get("_channel_admission")
-    channel_admission_validator = envelope.metadata.get(
-        "_channel_admission_validator"
-    )
+    channel_admission = envelope.runtime_state.channel_admission
+    channel_admission_validator = envelope.runtime_state.channel_admission_validator
     if not isinstance(channel_admission, ChannelAdmission):
         channel_admission = None
         channel_admission_validator = None

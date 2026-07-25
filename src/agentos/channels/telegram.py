@@ -55,6 +55,7 @@ FATAL_ERROR_CLASSES: tuple[str, ...] = (
 )
 
 _DEFAULT_TIMEOUT_S = 30.0
+_POLL_TIMEOUT_HEADROOM_S = 5.0
 _CONNECT_RETRY_DELAYS_S = (0.25, 0.5)
 _DEDUPE_SIZE = 4096
 _ALLOWED_UPDATES = ("message", "edited_message", "channel_post", "edited_channel_post")
@@ -406,11 +407,23 @@ class TelegramChannel:
         if not self.config.token:
             raise ValueError("telegram API call requires token")
         client = self._get_client()
+        request_payload = payload or {}
+        request_timeout: float | None = None
+        if method == "getUpdates":
+            try:
+                poll_timeout = float(request_payload.get("timeout") or 0)
+            except (TypeError, ValueError):
+                poll_timeout = 0.0
+            request_timeout = max(
+                _DEFAULT_TIMEOUT_S,
+                poll_timeout + _POLL_TIMEOUT_HEADROOM_S,
+            )
         for retry_delay in (*_CONNECT_RETRY_DELAYS_S, None):
             try:
-                response = await client.post(
-                    f"/bot{self.config.token}/{method}", json=payload or {}
-                )
+                request_kwargs: dict[str, Any] = {"json": request_payload}
+                if request_timeout is not None:
+                    request_kwargs["timeout"] = request_timeout
+                response = await client.post(f"/bot{self.config.token}/{method}", **request_kwargs)
                 break
             except httpx.ConnectError:
                 if retry_delay is None:
