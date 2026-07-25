@@ -12,7 +12,7 @@ from agentos.tools.types import CallerKind, ToolContext
 
 REMOVED_TOOL_NAMES = {"generate_image", "spawn_subagent", "send_message"}
 CANONICAL_TOOL_NAMES = {"image_generate", "sessions_spawn", "sessions_send"}
-OWNER_ONLY_TOOL_NAMES = {"http_request", "git_commit"}
+OPT_IN_TOOL_NAMES = {"git_commit"}
 
 
 def test_tool_call_boundary_has_canonical_and_stable_exports() -> None:
@@ -49,24 +49,26 @@ def test_default_registry_public_surface_uses_canonical_tool_names() -> None:
     import agentos.tools.builtin  # noqa: F401
 
     registry = get_default_registry()
-    owner_names = {
+    agent_names = {
         tool.name
         for tool in registry.to_tool_definitions(
-            ToolContext(is_owner=True, caller_kind=CallerKind.AGENT)
+            ToolContext(caller_kind=CallerKind.AGENT)
         )
     }
     channel_names = {
         tool.name
         for tool in registry.to_tool_definitions(
-            ToolContext(is_owner=False, caller_kind=CallerKind.CHANNEL)
+            ToolContext(caller_kind=CallerKind.CHANNEL)
         )
     }
 
-    assert REMOVED_TOOL_NAMES.isdisjoint(owner_names)
+    assert REMOVED_TOOL_NAMES.isdisjoint(agent_names)
     assert REMOVED_TOOL_NAMES.isdisjoint(channel_names)
-    assert CANONICAL_TOOL_NAMES <= owner_names
-    assert OWNER_ONLY_TOOL_NAMES <= owner_names
-    assert OWNER_ONLY_TOOL_NAMES.isdisjoint(channel_names)
+    assert CANONICAL_TOOL_NAMES <= agent_names
+    assert "http_request" in agent_names
+    assert "http_request" in channel_names
+    assert OPT_IN_TOOL_NAMES.isdisjoint(agent_names)
+    assert OPT_IN_TOOL_NAMES.isdisjoint(channel_names)
 
 
 async def test_removed_tools_are_not_dispatchable_by_name() -> None:
@@ -74,7 +76,7 @@ async def test_removed_tools_are_not_dispatchable_by_name() -> None:
 
     handler = build_tool_handler(
         get_default_registry(),
-        ToolContext(is_owner=True, caller_kind=CallerKind.AGENT),
+        ToolContext(caller_kind=CallerKind.AGENT),
     )
 
     for name in REMOVED_TOOL_NAMES:

@@ -1241,7 +1241,7 @@ async def test_run_falls_back_to_generic_preflight_after_t3_flush_failed() -> No
 
     runner._maybe_compact_on_t3_upgrade = fake_t3  # type: ignore[method-assign]
     runner._maybe_preflight_compact = spy_preflight  # type: ignore[method-assign]
-    tool_ctx = ToolContext(is_owner=True, caller_kind=CallerKind.CLI)
+    tool_ctx = ToolContext(caller_kind=CallerKind.CLI)
 
     async for _ in runner.run(
         "hello",
@@ -1272,7 +1272,7 @@ async def test_run_forwards_routed_provider_and_model_to_preflight() -> None:
         seen.update(kwargs)
 
     runner._maybe_preflight_compact = spy_preflight  # type: ignore[method-assign]
-    tool_ctx = ToolContext(is_owner=True, caller_kind=CallerKind.CLI)
+    tool_ctx = ToolContext(caller_kind=CallerKind.CLI)
 
     async for _ in runner.run(
         "hello",

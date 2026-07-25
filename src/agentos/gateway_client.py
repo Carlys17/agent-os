@@ -63,10 +63,8 @@ class GatewayRPCClient:
     def __init__(
         self,
         *,
-        scopes: list[str] | None = None,
         request_timeout_s: float | None = 30.0,
     ) -> None:
-        self.scopes = scopes or ["operator.read", "operator.write"]
         self.request_timeout_s = request_timeout_s
         self._ws: Any = None
         self._recv_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -105,8 +103,7 @@ class GatewayRPCClient:
                         "params": {
                             "minProtocol": 1,
                             "maxProtocol": 3,
-                            "role": "operator",
-                            "scopes": self.scopes,
+                            "clientKind": "control",
                         },
                     }
                 )

@@ -308,15 +308,14 @@ def _check_non_executable_arguments(
 def _is_untrusted_caller(ctx: ToolContext | None) -> bool:
     """Return True when the caller cannot be trusted with tool-name disclosure.
 
-    Untrusted callers (CHANNEL surfaces without owner standing, or anonymous
-    callers with no ``ToolContext`` at all) must receive an opaque envelope on
-    a registry miss so they cannot enumerate the tool catalogue by probing
-    names. Owner CHANNEL traffic is treated as trusted because owner promotion
-    happens upstream and the owner already sees the full tool surface.
+    Channel callers and callers with no ``ToolContext`` receive an opaque
+    envelope on a registry miss so they cannot enumerate the tool catalogue by
+    probing names. Pairing admits a sender to the agent; it does not turn the
+    messaging protocol into a Control surface.
     """
     if ctx is None:
         return True
-    return ctx.caller_kind is CallerKind.CHANNEL and not ctx.is_owner
+    return ctx.caller_kind is CallerKind.CHANNEL
 
 
 def _resolve_registry_miss(

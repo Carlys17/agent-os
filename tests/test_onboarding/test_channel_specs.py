@@ -107,13 +107,14 @@ def test_telegram_webhook_fields_are_conditional():
     assert fields["poll_timeout_s"].show_when == {"transport_name": "polling"}
 
 
-def test_telegram_new_setup_defaults_to_account_pairing() -> None:
+def test_telegram_setup_exposes_pairing_safe_group_defaults() -> None:
     spec = get_channel_setup_spec("telegram")
-    field = next(item for item in spec.fields if item.name == "access_mode")
+    fields = {item.name: item for item in spec.fields}
 
-    assert field.field_type == "select"
-    assert field.default == "pairing"
-    assert field.choices == ("pairing", "allowlist", "open", "disabled")
+    assert "access_mode" not in fields
+    assert fields["groups_enabled"].default is False
+    assert fields["group_chat_ids"].default == ""
+    assert fields["group_mention_required"].default is True
 
 
 def test_channel_catalog_payload_exposes_ui_metadata():

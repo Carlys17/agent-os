@@ -1,7 +1,7 @@
 """Ordered chain of policy checks.
 
-The chain order is owner_only first, then
-denied_tools, denied_tools before private_memory_scope, and so on. The
+The chain evaluates configured deny/allow policy, private-memory isolation,
+and the selected tool profile. The
 :func:`run_chain` function returns the first denying decision (the
 "first denial wins" contract codified in
 ``test_dispatch_properties.test_first_denial_wins_*``).
@@ -19,21 +19,19 @@ from typing import cast
 
 from agentos.tools.policy.checks import (
     AllowListPolicy,
+    ChannelAdmissionPolicy,
     DenyListPolicy,
-    OwnerOnlyPolicy,
-    PermissionMatrixPolicy,
     PrivateMemoryScopePolicy,
     ProfilePolicy,
 )
 from agentos.tools.policy.types import DispatchInput, PolicyCheck, PolicyDecision
 
 POLICY_CHAIN: tuple[PolicyCheck, ...] = cast(tuple[PolicyCheck, ...], (
-    OwnerOnlyPolicy(),
+    ChannelAdmissionPolicy(),
     DenyListPolicy(),
     PrivateMemoryScopePolicy(),
     AllowListPolicy(),
     ProfilePolicy(),
-    PermissionMatrixPolicy(),
 ))
 
 PolicyLogEmitter = Callable[[dict], None]

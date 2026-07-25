@@ -14,8 +14,7 @@ from agentos.tools.types import CallerKind, ToolContext
 
 def _ctx(*, replay_depth: int = 0, hold_applied: bool = False) -> ToolContext:
     return ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.AGENT,
+                caller_kind=CallerKind.AGENT,
         session_key="agent:main:test-router-control-tool",
         router_control_config=AgentOSRouterConfig(
             enabled=True,

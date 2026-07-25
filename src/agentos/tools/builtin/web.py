@@ -189,7 +189,6 @@ def _save_http_response_body(raw_body: bytes, output_path: str | None) -> tuple[
         },
     },
     required=["url"],
-    owner_only=True,
     result_budget_class="external",
 )
 @sandboxed(

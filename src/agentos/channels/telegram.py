@@ -6,11 +6,11 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal
 
 import httpx
 import structlog
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
@@ -22,6 +22,7 @@ from agentos.channels._attachment_io import (
     fetch_httpx_bytes_limited,
     preferred_attachment_mime,
 )
+from agentos.channels._telegram_formatting import render_telegram_html
 from agentos.channels._util import AccessDecision, ChannelAccessPolicy, EventDedupeCache
 from agentos.channels.contract import (
     ChannelCapabilities,
@@ -55,6 +56,7 @@ FATAL_ERROR_CLASSES: tuple[str, ...] = (
 )
 
 _DEFAULT_TIMEOUT_S = 30.0
+_POLL_TIMEOUT_HEADROOM_S = 5.0
 _CONNECT_RETRY_DELAYS_S = (0.25, 0.5)
 _DEDUPE_SIZE = 4096
 _ALLOWED_UPDATES = ("message", "edited_message", "channel_post", "edited_channel_post")
@@ -81,24 +83,24 @@ class TelegramChannelConfig(BaseModel):
     poll_idle_sleep_s: float = 0.1
     event_dedupe_size: int = _DEDUPE_SIZE
     allowed_updates: tuple[str, ...] = _ALLOWED_UPDATES
-    access_mode: Literal["pairing", "allowlist", "open", "disabled"] = "pairing"
-    approved_sender_ids: list[str] = Field(default_factory=list)
-    group_access_mode: Literal["allowlist", "open", "disabled"] = "allowlist"
-    group_allowed_sender_ids: list[str] = Field(default_factory=list)
+    groups_enabled: bool = False
+    group_chat_ids: list[str] = Field(default_factory=list)
+    group_mention_required: bool = True
 
     model_config = {}
 
-    @field_validator("access_mode", mode="before")
+    @field_validator("group_chat_ids", mode="before")
     @classmethod
-    def _normalize_legacy_access_mode(cls, value: Any) -> Any:
-        return "pairing" if value == "approval" else value
-
-    @field_validator("approved_sender_ids", "group_allowed_sender_ids", mode="before")
-    @classmethod
-    def _normalize_sender_ids(cls, value: Any) -> list[str]:
+    def _normalize_group_chat_ids(cls, value: Any) -> list[str]:
         values = value.split(",") if isinstance(value, str) else (value or [])
         normalized = (str(item).strip() for item in values)
         return list(dict.fromkeys(item for item in normalized if item))
+
+    @model_validator(mode="after")
+    def _validate_group_configuration(self) -> TelegramChannelConfig:
+        if self.groups_enabled and not self.group_chat_ids:
+            raise ValueError("telegram groups_enabled requires at least one group_chat_id")
+        return self
 
 
 def _coerce_telegram_int(value: Any) -> int | str:
@@ -152,8 +154,8 @@ class TelegramChannel:
         # for adapters without a custom evaluator.
         self.policy = ChannelAccessPolicy(
             dm_allowed=True,
-            group_allowed=True,
-            mention_required_in_group=True,
+            group_allowed=self.config.groups_enabled,
+            mention_required_in_group=self.config.group_mention_required,
         )
 
     @staticmethod
@@ -174,8 +176,7 @@ class TelegramChannel:
     def record_access_denial(self, message: IncomingMessage, reason: str) -> None:
         """Create a durable pairing request for an unauthorized Telegram DM."""
         if (
-            reason != "not_in_allowlist"
-            or self.config.access_mode != "pairing"
+            reason != "not_paired"
             or bool(message.metadata.get("is_group"))
         ):
             return
@@ -217,39 +218,22 @@ class TelegramChannel:
         await self.send(
             self.build_reply_message(
                 "Pairing code: "
-                f"{code}\n\nSend this code to the bot owner. It expires in 1 hour. "
-                f"Approve with: agentos channels pairing approve {self.config.name} {code}",
+                f"{code}\n\nIt expires in 1 hour. Approve this connection in "
+                "AgentOS Control UI or run: "
+                f"agentos channels pairing approve {self.config.name} {code}",
                 message,
             )
         )
 
     def access_snapshot(self) -> dict[str, Any]:
         snapshot = self.pairing_store.snapshot(self.config.name)
-        approved = [dict(item, source="pairing") for item in snapshot["approved"]]
-        approved_ids = {str(item.get("sender_id") or "") for item in approved}
-        for sender_id in self.config.approved_sender_ids:
-            if sender_id in approved_ids:
-                continue
-            approved.append(
-                {
-                    **self._known_sender_profiles.get(
-                        sender_id,
-                        {
-                            "sender_id": sender_id,
-                            "username": "",
-                            "display_name": "",
-                            "chat_id": "",
-                        },
-                    ),
-                    "source": "config",
-                }
-            )
         return {
-            "mode": self.config.access_mode,
-            "group_mode": self.config.group_access_mode,
             "pending": snapshot["pending"],
-            "approved": approved,
+            "paired": snapshot["approved"],
             "locked_until": snapshot["locked_until"],
+            "groups_enabled": self.config.groups_enabled,
+            "group_chat_ids": list(self.config.group_chat_ids),
+            "group_mention_required": self.config.group_mention_required,
         }
 
     def evaluate_access(
@@ -260,23 +244,8 @@ class TelegramChannel:
         mentioned: bool,
     ) -> AccessDecision:
         sender_id = str(message.sender_id or "").strip()
-        if is_group:
-            if self.config.group_access_mode == "disabled":
-                return AccessDecision(admit=False, reason="group_denied")
-            if self.policy.mention_required_in_group and not mentioned:
-                return AccessDecision(admit=False, reason="not_mentioned_in_group")
-            if self.config.group_access_mode == "open":
-                return AccessDecision(admit=True, reason="group_admitted")
-            if sender_id not in self.config.group_allowed_sender_ids:
-                return AccessDecision(admit=False, reason="not_in_allowlist")
-            return AccessDecision(admit=True, reason="group_admitted")
-
-        if self.config.access_mode == "disabled":
-            return AccessDecision(admit=False, reason="dm_denied")
-        if self.config.access_mode == "open":
-            return AccessDecision(admit=True, reason="dm_admitted")
         try:
-            paired = self.pairing_store.is_approved(self.config.name, sender_id)
+            admission = self.pairing_store.admission(self.config.name, sender_id)
         except PairingStoreError as exc:
             log.error(
                 "telegram.pairing_store_error",
@@ -284,19 +253,32 @@ class TelegramChannel:
                 error_type=type(exc).__name__,
                 error=str(exc),
             )
-            paired = False
-        if sender_id in self.config.approved_sender_ids or paired:
-            return AccessDecision(admit=True, reason="dm_admitted")
-        return AccessDecision(admit=False, reason="not_in_allowlist")
+            admission = None
 
-    def set_access_mode(self, mode: str) -> None:
-        normalized = "pairing" if mode == "approval" else mode
-        if normalized not in {"pairing", "allowlist", "open", "disabled"}:
-            raise ValueError("Telegram access mode must be pairing, allowlist, open, or disabled")
-        self.config.access_mode = cast(
-            Literal["pairing", "allowlist", "open", "disabled"], normalized
-        )
-        self._refresh_access_policy()
+        if is_group:
+            if not self.config.groups_enabled:
+                return AccessDecision(admit=False, reason="group_denied")
+            if str(message.channel_id or "") not in self.config.group_chat_ids:
+                return AccessDecision(admit=False, reason="group_not_configured")
+            if self.config.group_mention_required and not mentioned:
+                return AccessDecision(admit=False, reason="not_mentioned_in_group")
+            if admission is None:
+                return AccessDecision(admit=False, reason="not_paired")
+            return AccessDecision(
+                admit=True,
+                reason="group_admitted",
+                admission=admission,
+                admission_validator=self.pairing_store.validate_admission,
+            )
+
+        if admission is not None:
+            return AccessDecision(
+                admit=True,
+                reason="dm_admitted",
+                admission=admission,
+                admission_validator=self.pairing_store.validate_admission,
+            )
+        return AccessDecision(admit=False, reason="not_paired")
 
     def resolve_access_request(self, sender_id: str, *, approved: bool) -> dict[str, Any]:
         sender_id = str(sender_id).strip()
@@ -316,11 +298,6 @@ class TelegramChannel:
 
     def revoke_sender(self, sender_id: str) -> str:
         sender_id = str(sender_id).strip()
-        if sender_id in self.config.approved_sender_ids:
-            self.config.approved_sender_ids = [
-                item for item in self.config.approved_sender_ids if item != sender_id
-            ]
-            return "config"
         self.pairing_store.revoke(self.config.name, sender_id)
         return "pairing"
 
@@ -334,9 +311,9 @@ class TelegramChannel:
         if not chat_id:
             return
         content = (
-            "Your Telegram account was approved. Send your message again to continue."
+            "This Telegram connection is paired. Send your message again to continue."
             if approved
-            else "Your Telegram access request was denied."
+            else "This Telegram pairing request was denied."
         )
         await self.send(
             OutgoingMessage(content=content, reply_to=chat_id, metadata={"chat_id": chat_id})
@@ -431,11 +408,23 @@ class TelegramChannel:
         if not self.config.token:
             raise ValueError("telegram API call requires token")
         client = self._get_client()
+        request_payload = payload or {}
+        request_timeout: float | None = None
+        if method == "getUpdates":
+            try:
+                poll_timeout = float(request_payload.get("timeout") or 0)
+            except (TypeError, ValueError):
+                poll_timeout = 0.0
+            request_timeout = max(
+                _DEFAULT_TIMEOUT_S,
+                poll_timeout + _POLL_TIMEOUT_HEADROOM_S,
+            )
         for retry_delay in (*_CONNECT_RETRY_DELAYS_S, None):
             try:
-                response = await client.post(
-                    f"/bot{self.config.token}/{method}", json=payload or {}
-                )
+                request_kwargs: dict[str, Any] = {"json": request_payload}
+                if request_timeout is not None:
+                    request_kwargs["timeout"] = request_timeout
+                response = await client.post(f"/bot{self.config.token}/{method}", **request_kwargs)
                 break
             except httpx.ConnectError:
                 if retry_delay is None:
@@ -863,7 +852,16 @@ class TelegramChannel:
 
     async def send(self, message: OutgoingMessage) -> dict[str, Any]:
         payload = self._build_send_payload(message)
-        result = await self._api("sendMessage", payload)
+        try:
+            result = await self._api("sendMessage", payload)
+        except TelegramApiError as exc:
+            auto_rendered = "parse_mode" not in message.metadata
+            if not auto_rendered or "parse entities" not in str(exc).lower():
+                raise
+            log.warning("telegram.markdown_fallback", error=str(exc))
+            payload["text"] = message.content
+            payload.pop("parse_mode", None)
+            result = await self._api("sendMessage", payload)
         return result if isinstance(result, dict) else {"result": result}
 
     async def send_file(
@@ -877,7 +875,8 @@ class TelegramChannel:
         path = Path(file_path)
         payload = {"chat_id": str(chat_id)}
         if content:
-            payload["caption"] = content
+            payload["caption"] = render_telegram_html(content)
+            payload["parse_mode"] = "HTML"
         client = self._get_client()
         try:
             with path.open("rb") as f:
@@ -921,8 +920,12 @@ class TelegramChannel:
             payload["reply_parameters"] = {
                 "message_id": _coerce_telegram_int(reply_message_id),
             }
-        if parse_mode := metadata.get("parse_mode"):
-            payload["parse_mode"] = str(parse_mode)
+        if "parse_mode" in metadata:
+            if parse_mode := metadata.get("parse_mode"):
+                payload["parse_mode"] = str(parse_mode)
+        else:
+            payload["text"] = render_telegram_html(message.content)
+            payload["parse_mode"] = "HTML"
         return payload
 
     async def edit(self, message_id: str, content: str) -> None:
@@ -932,7 +935,8 @@ class TelegramChannel:
             {
                 "chat_id": chat_id,
                 "message_id": _coerce_telegram_int(raw_message_id),
-                "text": content,
+                "text": render_telegram_html(content),
+                "parse_mode": "HTML",
             },
         )
 

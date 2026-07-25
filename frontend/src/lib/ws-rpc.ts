@@ -138,6 +138,7 @@ export class WsRpcClient {
             params: {
               minProtocol: 3,
               maxProtocol: 3,
+              clientKind: 'control',
               client: { name: 'agentos-web' },
               ...authParams,
             },

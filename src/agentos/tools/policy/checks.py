@@ -21,12 +21,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from agentos.execution_status import normalize_execution_status
-from agentos.safety.permission_matrix import CHANNEL_WEBUI, Principal, is_tool_allowed
 from agentos.tool_boundary import ToolCall, ToolResult
 from agentos.tools.envelope import build_tool_failure_envelope
 from agentos.tools.policy.types import DispatchInput, PolicyDecision
 from agentos.tools.policy_helpers import private_memory_read_tool_denied
-from agentos.tools.types import CallerKind, ToolContext
+from agentos.tools.types import ToolContext
 
 
 def _denial_envelope(
@@ -88,34 +87,42 @@ def _block_log_event(
     }
 
 # ---------------------------------------------------------------------------
-# Owner-only
+# Channel admission
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class OwnerOnlyPolicy:
-    """Reject ``owner_only`` tools when ``ctx.is_owner`` is False."""
+class ChannelAdmissionPolicy:
+    """Reject tool calls whose channel pairing grant has been revoked."""
 
-    name: str = "owner_only"
+    name: str = "channel_admission"
 
     def evaluate(self, d: DispatchInput) -> PolicyDecision:
         ctx = d.ctx
-        if ctx and d.registered.spec.owner_only and not ctx.is_owner:
+        if (
+            ctx
+            and ctx.channel_admission is not None
+            and ctx.channel_admission_validator is not None
+            and not ctx.channel_admission_validator(ctx.channel_admission)
+        ):
             envelope = _denial_envelope(
                 d.tool_call,
-                exc=PermissionError("owner-only tool"),
-                error_class_override="OwnerOnly",
-                user_message_override=(
-                    f"Tool '{d.tool_call.tool_name}' restricted to owner."
-                ),
+                exc=PermissionError("channel pairing revoked"),
+                error_class_override="PolicyDenied",
+                user_message_override="This channel connection is no longer paired.",
             )
             log_event = _block_log_event(
                 d.tool_call,
                 ctx,
                 event="dispatch.defense_in_depth_block",
-                reason="owner_only",
+                reason="channel_pairing_revoked",
             )
-            return PolicyDecision(allowed=False, envelope=envelope, log_event=log_event)
+            return PolicyDecision(
+                allowed=False,
+                envelope=envelope,
+                log_event=log_event,
+            )
         return PolicyDecision(allowed=True)
+
 
 # ---------------------------------------------------------------------------
 # Deny list
@@ -249,53 +256,4 @@ class ProfilePolicy:
                 "session_key": ctx.session_key,
             }
             return PolicyDecision(allowed=False, envelope=envelope, log_event=log_event)
-        return PolicyDecision(allowed=True)
-
-# ---------------------------------------------------------------------------
-# Permission matrix
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class PermissionMatrixPolicy:
-    """Run the channel permission matrix when ``caller_kind == CHANNEL``."""
-
-    name: str = "permission_matrix"
-
-    def evaluate(self, d: DispatchInput) -> PolicyDecision:
-        ctx = d.ctx
-        if ctx and ctx.caller_kind is CallerKind.CHANNEL:
-            # Defense-in-depth: CHANNEL callers must never reach operator role
-            # regardless of is_owner. Owner promotion happens upstream in the
-            # owner-resolver, not here, so an is_owner=True leak from a future
-            # ctx constructor must not silently widen channel permissions.
-            principal = Principal(
-                role="user",
-                channel_id=ctx.session_key,
-            )
-            channel_kind = (
-                CHANNEL_WEBUI
-                if (ctx.source_kind or "").strip().lower() == CHANNEL_WEBUI
-                else (ctx.channel_kind or "dm")
-            )
-            decision = is_tool_allowed(d.tool_call.tool_name, channel_kind, principal)
-            if not decision.allowed:
-                envelope = _denial_envelope(
-                    d.tool_call,
-                    exc=PermissionError("tool denied"),
-                    error_class_override="UnsupportedSurface",
-                    user_message_override=(
-                        f"Tool '{d.tool_call.tool_name}' denied: {decision.reason}."
-                    ),
-                )
-                log_event = {
-                    "event": "dispatch.permission_matrix_block",
-                    "tool": d.tool_call.tool_name,
-                    "reason": decision.reason,
-                    "tool_use_id": d.tool_call.tool_use_id,
-                    "agent_id": ctx.agent_id if ctx else None,
-                    "session_key": ctx.session_key if ctx else None,
-                }
-                return PolicyDecision(
-                    allowed=False, envelope=envelope, log_event=log_event
-                )
         return PolicyDecision(allowed=True)

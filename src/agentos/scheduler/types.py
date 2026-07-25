@@ -140,9 +140,10 @@ class CronJob:
     schedule_raw: str = ""
     tz: str = ""  # IANA timezone for CRON schedules; empty == UTC
     anchor_at: datetime | None = None  # EVERY+interval anchor (UTC)
-    creator_session_key: str = ""  # Session key of the caller that created the job
-    creator_sender_id: str = ""  # Channel sender id (when created from a channel)
-    creator_is_owner: bool = False
+    # Creation metadata is retained for delivery routing and "created from"
+    # presentation. It does not scope list, remove, or run permissions.
+    creator_session_key: str = ""
+    creator_sender_id: str = ""
     session_target: SessionTarget = SessionTarget.ISOLATED
     session_key: str = ""
     origin_session_key: str = ""

@@ -12,10 +12,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.types import ASGIApp
 
+from agentos.gateway.access import is_loopback_address
 from agentos.gateway.config import GatewayConfig
-from agentos.gateway.scopes import is_loopback_address
 
-# Endpoints that carry no credentials and expose no admin surface; exempt from
+# Endpoints that carry no credentials and expose no Control surface; exempt from
 # both token auth and the cross-origin guard. Kept module-level so the origin
 # guard (defined before AuthMiddleware) and AuthMiddleware share one source.
 _PUBLIC_PATHS = frozenset({"/health", "/healthz", "/ready", "/readyz"})
@@ -53,7 +53,7 @@ class LoopbackHostMiddleware(BaseHTTPMiddleware):
 
     This is the DNS-rebinding guard: when the check is active (loopback
     binds), any literal loopback ``Host`` — the shared
-    ``scopes.is_loopback_address`` predicate, i.e. all of ``127.0.0.0/8``,
+    ``access.is_loopback_address`` predicate, i.e. all of ``127.0.0.0/8``,
     ``::1``, ``localhost``, IPv4-mapped forms; exactly the binds the startup
     guard blesses — is admitted, plus the extra hostnames in
     ``allowed_hosts``. A page that rebinds a hostname to ``127.0.0.1`` still
@@ -101,10 +101,10 @@ class LoopbackOriginMiddleware(BaseHTTPMiddleware):
 
     The sibling of the WS handshake Origin guard (``is_allowed_ws_origin``),
     covering the same browser threat over plain HTTP: with
-    ``auth.mode="none"`` a loopback peer is granted operator scopes and the
+    ``auth.mode="none"`` a loopback peer is admitted to Control and the
     default CORS posture (``["*"]`` + credentials) reflects any page Origin,
     so a malicious page in the victim's browser could otherwise ``fetch()``
-    the same admin RPC surface the WS guard protects (``/api/config``,
+    the same Control RPC surface the WS guard protects (``/api/config``,
     ``/api/sessions``, ``/api/chat``) and read the responses.
 
     Requests without an ``Origin`` header (CLI, curl, browser navigations)
@@ -113,10 +113,10 @@ class LoopbackOriginMiddleware(BaseHTTPMiddleware):
     or a non-wildcard ``cors.allowed_origins`` entry (deliberate operator
     intent; the wildcard default is exactly the posture this guard fences).
     On a non-loopback bind the check is a no-op, matching the WS guard: the
-    gateway only starts there with auth on or an explicit opt-in.
+    gateway only starts there with enforced token authentication.
 
     Public paths are exempt, mirroring ``AuthMiddleware.PUBLIC_PATHS`` and the
-    Control UI prefix: health probes carry no credentials and no admin surface,
+    Control UI prefix: health probes carry no credentials and no Control surface,
     and the Control UI shell is a served page (guarded by CSP /
     ``SecurityHeadersMiddleware``), not an RPC sink. Only the ``/api/*`` and
     RPC surface — the drive-by target — is gated.

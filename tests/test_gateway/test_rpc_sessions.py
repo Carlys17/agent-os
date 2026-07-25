@@ -17,12 +17,13 @@ from agentos.agents.registry import AgentRegistry
 from agentos.attachment_refs import transcript_material_path
 from agentos.engine.types import DoneEvent, ErrorEvent
 from agentos.gateway import rpc_chat, rpc_sessions
+from agentos.gateway.access import ConnectionSurface
 from agentos.gateway.agent_tasks import get_agent_task_registry
 from agentos.gateway.attachment_ingest import (
     MAX_STAGED_PDF_BYTES,
     MAX_TOTAL_ATTACHMENT_BYTES,
 )
-from agentos.gateway.auth import Principal
+from agentos.gateway.auth import AccessContext
 from agentos.gateway.config import AgentEntryConfig, GatewayConfig
 from agentos.gateway.input_normalization import LARGE_PASTE_CHARS, estimate_text_tokens
 from agentos.gateway.rpc import RpcContext, get_dispatcher
@@ -31,10 +32,6 @@ from agentos.gateway.session_streams import get_session_streams
 from agentos.gateway.uploads import set_upload_store
 from agentos.gateway.websocket import SubscriptionManager, get_registry
 from agentos.session.compaction import CompactionConfig
-
-_DEFAULT_PRINCIPAL = Principal(
-    role="operator", scopes=frozenset(["operator.admin"]), is_owner=True, authenticated=True
-)
 
 
 @dataclass
@@ -290,17 +287,8 @@ class SlowCompactionSessionManager(FakeSessionManager):
 
 
 def make_ctx(session_manager=None, **kwargs) -> RpcContext:
-    role = kwargs.pop("role", "operator")
-    scopes = kwargs.pop("scopes", None)
-    if scopes is not None:
-        principal = Principal(
-            role=role, scopes=frozenset(scopes), is_owner=role == "operator", authenticated=True
-        )
-    else:
-        principal = _DEFAULT_PRINCIPAL
     defaults = {
         "conn_id": "test-conn",
-        "principal": principal,
         "config": GatewayConfig(memory={"flush_enabled": False}),
     }
     defaults.update(kwargs)
@@ -600,7 +588,6 @@ class TestSessionsCreate:
             session_manager=session_manager,
             config=cfg,
             agent_registry=registry,
-            scopes=["operator.write"],
         )
 
         res = await dispatcher.dispatch(
@@ -1876,10 +1863,9 @@ class TestSessionsReset:
         assert res.payload["previous_session_id"] == before
 
     @pytest.mark.asyncio
-    async def test_reset_allowed_for_operator_write_scope(self, dispatcher, session):
+    async def test_reset_allowed_for_control_connection(self, dispatcher, session):
         ctx = make_ctx(
             session_manager=FakeSessionManager([session]),
-            scopes=["operator.read", "operator.write"],
         )
 
         res = await dispatcher.dispatch("r1", "sessions.reset", {"key": session.session_key}, ctx)
@@ -2136,10 +2122,9 @@ class TestSessionsCompact:
         assert ctx_with_sessions.session_manager.truncate_calls == []
 
     @pytest.mark.asyncio
-    async def test_compact_allowed_for_operator_write_scope(self, dispatcher, session):
+    async def test_compact_allowed_for_control_connection(self, dispatcher, session):
         ctx = make_ctx(
             session_manager=FakeSessionManager([session]),
-            scopes=["operator.read", "operator.write"],
         )
 
         res = await dispatcher.dispatch("r1", "sessions.compact", {"key": session.session_key}, ctx)
@@ -2880,10 +2865,9 @@ class TestSessionsContextCompact:
         assert res.payload["flush_receipt_status"] == "noop_no_memory"
 
     @pytest.mark.asyncio
-    async def test_context_compact_allowed_for_operator_write_scope(self, dispatcher, session):
+    async def test_context_compact_allowed_for_control_connection(self, dispatcher, session):
         ctx = make_ctx(
             session_manager=FakeSessionManager([session]),
-            scopes=["operator.read", "operator.write"],
         )
 
         res = await dispatcher.dispatch(
@@ -3265,10 +3249,14 @@ class TestSessionsResolve:
         assert res.error.code == "NOT_FOUND"
 
     @pytest.mark.asyncio
-    async def test_scope_enforcement(self, dispatcher, session):
-        """sessions.create requires operator.write."""
+    async def test_connection_enforcement(self, dispatcher, session):
+        """sessions.create requires an admitted Control connection."""
         ctx = make_ctx(
-            scopes=["operator.read"],
+            access=AccessContext(
+                surface=ConnectionSurface.CONTROL,
+                admitted=False,
+                credential_verified=False,
+            ),
             session_manager=FakeSessionManager([session]),
         )
         res = await dispatcher.dispatch("r1", "sessions.create", {"agentId": "test"}, ctx)

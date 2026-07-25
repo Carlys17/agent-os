@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, NoReturn
 
+from agentos.gateway.access import CONTROL_AND_CHANNEL
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, RpcHandlerError, RpcUnavailableError, get_dispatcher
 from agentos.gateway.rpc_memory import memory_health_from_durable_ledger
@@ -67,14 +68,14 @@ def _raw_fallback_rows_for_manager(manager: Any) -> list[dict[str, Any]]:
     return rows
 
 
-@_d.method("wake", scope="operator.write")
+@_d.method("wake")
 async def _handle_wake(params: dict | None, ctx: RpcContext) -> None:
     if not isinstance(params, dict) or "text" not in params:
         raise ValueError("params.text is required")
     _raise_unavailable("wake")
 
 
-@_d.method("send", scope="operator.write")
+@_d.method("send")
 async def _handle_send(params: dict | None, ctx: RpcContext) -> None:
     if not isinstance(params, dict):
         raise ValueError("params required: text, sessionKey")
@@ -85,14 +86,14 @@ async def _handle_send(params: dict | None, ctx: RpcContext) -> None:
     _raise_unavailable("send")
 
 
-@_d.method("agent", scope="operator.write")
+@_d.method("agent")
 async def _handle_agent(params: dict | None, ctx: RpcContext) -> None:
     if not isinstance(params, dict) or "message" not in params:
         raise ValueError("params.message is required")
     _raise_unavailable("agent")
 
 
-@_d.method("agent.wait", scope="operator.write")
+@_d.method("agent.wait")
 async def _handle_agent_wait(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -130,21 +131,21 @@ async def _handle_agent_wait(params: dict | None, ctx: RpcContext) -> dict[str, 
     )
 
 
-@_d.method("system-presence", scope="operator.read")
+@_d.method("system-presence")
 async def _handle_system_presence(params: dict | None, ctx: RpcContext) -> None:
     if not isinstance(params, dict) or "status" not in params:
         raise ValueError("params.status is required")
     _raise_unavailable("system-presence")
 
 
-@_d.method("system-event", scope="operator.admin")
+@_d.method("system-event")
 async def _handle_system_event(params: dict | None, ctx: RpcContext) -> None:
     if not isinstance(params, dict) or "text" not in params:
         raise ValueError("params.text is required")
     _raise_unavailable("system-event")
 
 
-@_d.method("set-heartbeats", scope="operator.admin")
+@_d.method("set-heartbeats")
 async def _handle_set_heartbeats(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if params is None:
         params = {}
@@ -261,7 +262,7 @@ async def _handle_set_heartbeats(params: dict | None, ctx: RpcContext) -> dict[s
     }
 
 
-@_d.method("doctor.memory.status", scope="operator.read")
+@_d.method("doctor.memory.status", CONTROL_AND_CHANNEL)
 async def _handle_doctor_memory_status(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if params is not None and not isinstance(params, dict):
         raise ValueError("params must be an object")

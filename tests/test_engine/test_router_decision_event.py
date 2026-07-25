@@ -262,7 +262,7 @@ async def test_turn_runner_emits_router_decision_event_from_pipeline_metadata(
         async for event in runner.run(
             "hi",
             "agent:main:router-e2e",
-            tool_context=ToolContext(is_owner=True, caller_kind=CallerKind.CLI),
+            tool_context=ToolContext(caller_kind=CallerKind.CLI),
             history_has_persisted_user=False,
             no_memory_capture=True,
         )

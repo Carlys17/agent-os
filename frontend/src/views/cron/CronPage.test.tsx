@@ -65,6 +65,7 @@ const REMINDER_JOB = {
   sessionTarget: 'isolated',
   next_run: FUTURE,
   message: 'time for standup',
+  creatorSessionKey: 'agent:main:telegram:standup',
 }
 const AGENT_JOB = {
   id: 'job-agent',
@@ -175,6 +176,8 @@ describe('CronPage', () => {
     const card = screen.getByLabelText('Cron job Daily standup')
     expect(within(card).getByText('Reminder')).toBeInTheDocument()
     expect(within(card).getByText('0 9 * * 1-5')).toBeInTheDocument()
+    expect(within(card).getByText('Created from')).toBeInTheDocument()
+    expect(within(card).getByText('agent:main:telegram:standup')).toBeInTheDocument()
     // second job renders too
     expect(screen.getByText('Health check')).toBeInTheDocument()
   })

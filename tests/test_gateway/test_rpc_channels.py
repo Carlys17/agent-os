@@ -16,7 +16,6 @@ from agentos.channels.contract import (
 )
 from agentos.channels.telegram import TelegramChannel, TelegramChannelConfig
 from agentos.channels.types import IncomingMessage
-from agentos.gateway.auth import Principal
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 from agentos.onboarding.mutations import upsert_channel
@@ -25,24 +24,12 @@ from agentos.onboarding.mutations import upsert_channel
 def _read_ctx() -> RpcContext:
     return RpcContext(
         conn_id="t",
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.read"}),
-            is_owner=False,
-            authenticated=True,
-        ),
     )
 
 
 def _pairing_ctx(tmp_path) -> RpcContext:
     return RpcContext(
         conn_id="t",
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.pairing"}),
-            is_owner=True,
-            authenticated=True,
-        ),
         config=GatewayConfig(config_path=str(tmp_path / "agentos.toml")),
     )
 
@@ -147,7 +134,7 @@ async def test_channels_status_reports_adapter_capabilities_without_network_prob
 
 
 @pytest.mark.asyncio
-async def test_telegram_access_approval_persists_and_updates_live_adapter(tmp_path):
+async def test_telegram_pairing_persists_and_updates_live_adapter(tmp_path):
     ctx = _pairing_ctx(tmp_path)
     configured = upsert_channel(
         ctx.config,
@@ -155,13 +142,12 @@ async def test_telegram_access_approval_persists_and_updates_live_adapter(tmp_pa
             "type": "telegram",
             "name": "tg",
             "token": "secret",
-            "access_mode": "pairing",
         },
     )
     ctx.config = configured.config
     ctx.config.config_path = str(tmp_path / "agentos.toml")
     adapter = TelegramChannel(
-        TelegramChannelConfig(name="tg", token="secret", access_mode="pairing"),
+        TelegramChannelConfig(name="tg", token="secret"),
         pairing_store=ChannelPairingStore(tmp_path / "pairing"),
     )
     message = IncomingMessage(
@@ -170,7 +156,7 @@ async def test_telegram_access_approval_persists_and_updates_live_adapter(tmp_pa
         content="hello",
         metadata={"sender_username": "alice", "sender_display_name": "Alice"},
     )
-    adapter.record_access_denial(message, "not_in_allowlist")
+    adapter.record_access_denial(message, "not_paired")
     adapter.notify_access_resolution = AsyncMock()  # type: ignore[method-assign]
 
     class FakeManager:
@@ -179,57 +165,71 @@ async def test_telegram_access_approval_persists_and_updates_live_adapter(tmp_pa
 
     ctx.channel_manager = FakeManager()
 
-    listed = await get_dispatcher().dispatch("r1", "channels.access.list", {}, ctx)
+    listed = await get_dispatcher().dispatch("r1", "channels.pairing.list", {}, ctx)
     resolved = await get_dispatcher().dispatch(
         "r2",
-        "channels.access.resolve",
-        {"channel": "tg", "senderId": "42", "approved": True},
+        "channels.pairing.approve",
+        {"channel": "tg", "senderId": "42"},
         ctx,
     )
 
     assert listed.error is None, listed.error
     assert listed.payload["channels"][0]["pending"][0]["username"] == "alice"
     assert resolved.error is None, resolved.error
-    assert resolved.payload == {"channel": "tg", "senderId": "42", "approved": True}
-    assert ctx.config.channels.channels[0].approved_sender_ids == []
+    assert resolved.payload == {"channel": "tg", "senderId": "42", "status": "paired"}
     assert adapter.pairing_store.is_approved("tg", "42") is True
 
     revoked = await get_dispatcher().dispatch(
         "r3",
-        "channels.access.revoke",
+        "channels.pairing.revoke",
         {"channel": "tg", "senderId": "42"},
         ctx,
     )
 
     assert revoked.error is None, revoked.error
-    assert revoked.payload["source"] == "pairing"
+    assert revoked.payload["status"] == "disconnected"
     assert adapter.pairing_store.is_approved("tg", "42") is False
 
 
 @pytest.mark.asyncio
-async def test_telegram_access_mode_updates_without_active_adapter(tmp_path):
+async def test_telegram_pairing_list_exposes_fixed_group_posture_without_adapter(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("AGENTOS_STATE_DIR", str(tmp_path / "state"))
     ctx = _pairing_ctx(tmp_path)
     configured = upsert_channel(
         ctx.config,
-        entry_payload={"type": "telegram", "name": "tg", "token": "secret"},
+        entry_payload={
+            "type": "telegram",
+            "name": "tg",
+            "token": "secret",
+            "groups_enabled": True,
+            "group_chat_ids": ["-100"],
+            "group_mention_required": True,
+        },
     )
     ctx.config = configured.config
     ctx.config.config_path = str(tmp_path / "agentos.toml")
 
     result = await get_dispatcher().dispatch(
         "r1",
-        "channels.access.setMode",
-        {"channel": "tg", "mode": "pairing"},
+        "channels.pairing.list",
+        {},
         ctx,
     )
 
     assert result.error is None, result.error
-    assert result.payload["restartRequired"] is False
-    assert ctx.config.channels.channels[0].access_mode == "pairing"
+    row = result.payload["channels"][0]
+    assert row["pending"] == []
+    assert row["paired"] == []
+    assert row["groups_enabled"] is True
+    assert row["group_chat_ids"] == ["-100"]
+    assert row["group_mention_required"] is True
 
 
 @pytest.mark.asyncio
-async def test_telegram_access_can_be_approved_without_active_adapter(
+async def test_telegram_pairing_can_be_approved_without_active_adapter(
     tmp_path,
     monkeypatch,
 ):
@@ -246,8 +246,8 @@ async def test_telegram_access_can_be_approved_without_active_adapter(
 
     result = await get_dispatcher().dispatch(
         "r1",
-        "channels.access.resolve",
-        {"channel": "tg", "senderId": "42", "approved": True},
+        "channels.pairing.approve",
+        {"channel": "tg", "senderId": "42"},
         ctx,
     )
 

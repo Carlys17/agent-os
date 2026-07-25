@@ -79,11 +79,15 @@ async def test_telegram_send_file_posts_document_upload(tmp_path: Path) -> None:
     channel = TelegramChannel(TelegramChannelConfig(token="token"))
     channel._client = FakeClient()  # type: ignore[assignment]
 
-    result = await channel.send_file("12345", str(file_path), content="done")
+    result = await channel.send_file("12345", str(file_path), content="**done**")
 
     assert result.status == ChannelSendStatus.SENT
     assert result.target_id == "12345"
     assert result.provider_message_id == "42"
     assert result.provider_file_id == "doc-1"
     assert requests[0][0] == "/bottoken/sendDocument"
-    assert requests[0][1]["data"] == {"chat_id": "12345", "caption": "done"}
+    assert requests[0][1]["data"] == {
+        "chat_id": "12345",
+        "caption": "<b>done</b>",
+        "parse_mode": "HTML",
+    }

@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agentos.gateway.auth import Principal
 from agentos.gateway.config import GatewayConfig, MCPServerEntry
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 from agentos.tools.registry import ToolRegistry
@@ -30,12 +29,6 @@ def _ctx(tmp_path) -> RpcContext:
         conn_id="test",
         config=config,
         tool_registry=ToolRegistry(),
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.admin"}),
-            is_owner=True,
-            authenticated=True,
-        ),
     )
 
 

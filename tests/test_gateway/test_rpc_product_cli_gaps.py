@@ -7,10 +7,9 @@ from typing import Any
 
 import pytest
 
-from agentos.gateway.auth import Principal
+from agentos.gateway.access import CONTROL_ONLY
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, get_dispatcher
-from agentos.gateway.scopes import ADMIN_SCOPE, METHOD_SCOPES, READ_SCOPE, WRITE_SCOPE
 from agentos.memory.types import MemorySearchResult, MemorySource, SearchIntent
 from agentos.search.registry import register_provider
 from agentos.search.types import SearchProviderError, SearchProviderSpec, SearchResult
@@ -86,7 +85,7 @@ def _reset_search_config():
 
 
 @pytest.mark.asyncio
-async def test_new_product_rpc_methods_are_classified_read_scope():
+async def test_new_product_rpc_methods_are_control_only():
     dispatcher = get_dispatcher()
     for method in (
         "memory.list",
@@ -95,14 +94,13 @@ async def test_new_product_rpc_methods_are_classified_read_scope():
         "providers.status",
         "search.status",
     ):
-        assert METHOD_SCOPES[method] == READ_SCOPE
         entry = dispatcher.get_entry(method)
         assert entry is not None
-        assert entry.required_scope == READ_SCOPE
+        assert entry.audiences == CONTROL_ONLY
 
 
 @pytest.mark.asyncio
-async def test_memory_admin_rpc_methods_are_classified_admin_scope_and_deny_read_only():
+async def test_memory_management_rpc_methods_are_control_only():
     dispatcher = get_dispatcher()
     for method in (
         "memory.index",
@@ -112,56 +110,21 @@ async def test_memory_admin_rpc_methods_are_classified_admin_scope_and_deny_read
         "memory.repair.run",
         "memory.repair.show",
     ):
-        assert METHOD_SCOPES[method] == ADMIN_SCOPE
         entry = dispatcher.get_entry(method)
         assert entry is not None
-        assert entry.required_scope == ADMIN_SCOPE
-
-    read_only = Principal(
-        role="operator",
-        scopes=frozenset({READ_SCOPE}),
-        is_owner=False,
-        authenticated=True,
-    )
-    manager = FakeMemoryManager(workspace_dir="/tmp/memory")
-    res = await dispatcher.dispatch(
-        "r1",
-        "memory.index",
-        {"agentId": "main", "force": True},
-        _ctx(principal=read_only, memory_managers={"main": manager}),
-    )
-
-    assert res.error is not None
-    assert res.error.code == "UNAUTHORIZED"
+        assert entry.audiences == CONTROL_ONLY
 
 
 @pytest.mark.asyncio
-async def test_search_query_is_classified_write_scope_and_denies_read_only():
+async def test_search_query_is_control_only():
     dispatcher = get_dispatcher()
     entry = dispatcher.get_entry("search.query")
-    assert METHOD_SCOPES["search.query"] == WRITE_SCOPE
     assert entry is not None
-    assert entry.required_scope == WRITE_SCOPE
-
-    read_only = Principal(
-        role="operator",
-        scopes=frozenset({READ_SCOPE}),
-        is_owner=False,
-        authenticated=True,
-    )
-    res = await dispatcher.dispatch(
-        "r1",
-        "search.query",
-        {"query": "hello"},
-        _ctx(principal=read_only),
-    )
-
-    assert res.error is not None
-    assert res.error.code == "UNAUTHORIZED"
+    assert entry.audiences == CONTROL_ONLY
 
 
 @pytest.mark.asyncio
-async def test_memory_search_uses_admin_intent_and_returns_wire_rows(tmp_path):
+async def test_memory_search_uses_control_intent_and_returns_wire_rows(tmp_path):
     manager = FakeMemoryManager(workspace_dir=tmp_path)
     res = await get_dispatcher().dispatch(
         "r1",
@@ -174,7 +137,7 @@ async def test_memory_search_uses_admin_intent_and_returns_wire_rows(tmp_path):
     assert res.payload["count"] == 1
     assert res.payload["results"][0]["chunkId"] == "chunk-1"
     assert manager.search_calls is not None
-    assert manager.search_calls[0][2] is SearchIntent.ADMIN
+    assert manager.search_calls[0][2] is SearchIntent.CONTROL
     assert manager.search_calls[0][1].max_results == 3
     assert manager.search_calls[0][1].min_score == 0.0
 

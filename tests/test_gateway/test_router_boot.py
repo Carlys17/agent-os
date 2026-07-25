@@ -999,20 +999,28 @@ async def test_build_services_registers_session_search_tool(
             session_search.spec.description
         )
         assert "use source=sessions or source=all" in session_search.spec.description
-        owner_names = {
+        default_names = {
             tool["name"]
-            for tool in await registry.list_tools(
-                caller_kind=CallerKind.AGENT,
-                is_owner=True,
+            for tool in await registry.list_tools(caller_kind=CallerKind.AGENT)
+        }
+        configured_names = {
+            tool.name
+            for tool in registry.to_tool_definitions(
+                ToolContext(
+                    caller_kind=CallerKind.AGENT,
+                    surfaced_tools={"session_search"},
+                )
             )
         }
         channel_names = {
             tool.name
             for tool in registry.to_tool_definitions(
-                ToolContext(is_owner=False, caller_kind=CallerKind.CHANNEL)
+                ToolContext(caller_kind=CallerKind.CHANNEL)
             )
         }
-        assert "session_search" in owner_names
+        assert session_search.spec.exposed_by_default is False
+        assert "session_search" not in default_names
+        assert "session_search" in configured_names
         assert "session_search" not in channel_names
 
         await services.session_manager.create("agent:main:main")
@@ -1490,7 +1498,7 @@ async def test_task_runtime_turn_applies_cron_job_tool_policy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_task_runtime_turn_uses_owner_boundary_for_owner_cron_job() -> None:
+async def test_task_runtime_turn_keeps_cron_tool_boundary() -> None:
     class RecordingTurnRunner:
         def __init__(self) -> None:
             self.calls: list[dict[str, Any]] = []
@@ -1503,11 +1511,10 @@ async def test_task_runtime_turn_uses_owner_boundary_for_owner_cron_job() -> Non
         return None
 
     job = CronJob(
-        id="cron-owner",
-        name="Owner",
+        id="cron-restricted",
+        name="Restricted",
         payload={"kind": "agent_turn", "agent_id": "ops"},
-        creator_is_owner=True,
-        tool_policy={
+                tool_policy={
             "profile": "minimal",
             "also_allow": ["memory_search", "exec_command"],
             "deny": ["web_fetch"],
@@ -1542,7 +1549,6 @@ async def test_task_runtime_turn_uses_owner_boundary_for_owner_cron_job() -> Non
     )
 
     tool_context = runner.calls[0]["tool_context"]
-    assert tool_context.is_owner is True
-    assert tool_context.allowed_tools is None
+    assert tool_context.allowed_tools == {"session_status"}
     assert tool_context.tool_policy == job.tool_policy
-    assert "exec_command" not in tool_context.denied_tools
+    assert "exec_command" in tool_context.denied_tools

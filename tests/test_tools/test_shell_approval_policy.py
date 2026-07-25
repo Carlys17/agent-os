@@ -31,7 +31,7 @@ def reset_approval_state(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(shell, "_sandbox_effectively_off", lambda: True)
     elevate_token = shell._elevate_current_call.set(False)
     token = current_tool_context.set(
-        ToolContext(is_owner=True, caller_kind=CallerKind.CLI, session_key="agent:main:test")
+        ToolContext(caller_kind=CallerKind.CLI, session_key="agent:main:test")
     )
     yield
     current_tool_context.reset(token)
@@ -419,7 +419,7 @@ def test_tool_definitions_include_scratch_guidance_when_configured(tmp_path: Pat
     from agentos.tools.registry import get_default_registry
 
     scratch = tmp_path / "scratch"
-    ctx = ToolContext(is_owner=True, scratch_dir=str(scratch))
+    ctx = ToolContext(scratch_dir=str(scratch))
 
     tools = get_default_registry().to_tool_definitions(ctx)
     descriptions = {tool.name: tool.description for tool in tools}

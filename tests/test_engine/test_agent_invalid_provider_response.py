@@ -484,7 +484,7 @@ async def test_turn_runner_drops_unpaired_tool_use_from_incomplete_stream_transc
             async for event in runner.run(
                 "hello",
                 session_key,
-                ToolContext(is_owner=True, caller_kind=CallerKind.CLI),
+                ToolContext(caller_kind=CallerKind.CLI),
                 history_has_persisted_user=False,
                 no_memory_capture=True,
             )
@@ -520,7 +520,7 @@ async def test_turn_runner_persists_no_provider_error_to_transcript() -> None:
             async for event in runner.run(
                 "hello",
                 session_key,
-                ToolContext(is_owner=True, caller_kind=CallerKind.CLI),
+                ToolContext(caller_kind=CallerKind.CLI),
                 history_has_persisted_user=False,
                 no_memory_capture=True,
             )

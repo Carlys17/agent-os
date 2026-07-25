@@ -23,7 +23,6 @@ import {
   inactiveHint,
   isAccessLocked,
   mergeChannels,
-  resolveAccessMode,
   senderLabel,
   senderMeta,
   sortChannels,
@@ -39,8 +38,7 @@ import {
 // single source of truth alongside the channel.status event-driven invalidate).
 const POLL_MS = 5000
 
-// channels.js:74-83 — the two parallel reads. access.list is tolerant of
-// failure so a broken access endpoint never blocks the channel status render.
+// Channel health remains available even when the pairing endpoint fails.
 interface ChannelsStatus {
   channels?: RawChannel[]
 }
@@ -53,14 +51,6 @@ function toneClass(tone: Tone): string {
   return tone === 'danger' ? 'tone-danger' : tone === 'ok' ? 'tone-ok' : 'tone-dim'
 }
 
-// channels.js:262-267 — the four selectable Telegram DM access modes.
-const ACCESS_MODE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: 'pairing', label: 'Pairing codes' },
-  { value: 'allowlist', label: 'Allowlist only' },
-  { value: 'open', label: 'Open to everyone' },
-  { value: 'disabled', label: 'Disabled' },
-]
-
 function PersonRow({
   item,
   variant,
@@ -70,27 +60,24 @@ function PersonRow({
   onRevoke,
 }: {
   item: AccessAccount
-  variant: 'pending' | 'approved'
+  variant: 'pending' | 'paired'
   disabled: boolean
   onApprove?: () => void
   onDeny?: () => void
   onRevoke?: () => void
 }) {
-  // channels.js:292-316 — one Telegram account row (pending: Approve/Deny;
-  // approved: Revoke).
+  // Pending connections can be paired or denied; paired connections can be
+  // disconnected. There are no account roles.
   return (
     <div className="ch-access__person">
       <div className="ch-access__identity">
         <strong>{senderLabel(item)}</strong>
         <span>{senderMeta(item)}</span>
-        {variant === 'pending' && item.code ? (
-          <code className="ch-access__code">{String(item.code)}</code>
-        ) : null}
       </div>
       {variant === 'pending' ? (
         <div className="ch-access__person-actions">
           <Button type="button" size="sm" disabled={disabled} onClick={onApprove}>
-            Approve
+            Pair
           </Button>
           <Button
             type="button"
@@ -104,7 +91,7 @@ function PersonRow({
         </div>
       ) : (
         <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={onRevoke}>
-          Revoke
+          Disconnect
         </Button>
       )}
     </div>
@@ -114,112 +101,84 @@ function PersonRow({
 function AccessPanel({
   channel,
   busy,
-  onSetMode,
   onResolve,
   onRevoke,
 }: {
   channel: MergedChannel
   busy: boolean
-  onSetMode: (channel: string, mode: string) => void
   onResolve: (channel: string, senderId: string, approved: boolean) => void
   onRevoke: (channel: string, senderId: string) => void
 }) {
-  // channels.js:246-290 — telegram-only access panel.
+  // Telegram has one binary admission state: pending or paired.
   const access = channel.access
   if (!access || channel.type !== 'telegram') return null
   const channelName = String(channel.name || '')
   const pending = Array.isArray(access.pending) ? access.pending : []
-  const approved = Array.isArray(access.approved) ? access.approved : []
-  const mode = resolveAccessMode(access.mode)
+  const paired = Array.isArray(access.paired) ? access.paired : []
   const locked = isAccessLocked(access.locked_until)
-  const groupMode = access.group_mode || 'allowlist'
 
   return (
     <section className={`ch-access${pending.length ? ' ch-access--pending' : ''}`}>
       <div className="ch-access__head">
         <div>
-          <span className="ch-access__eyebrow t-label">Telegram accounts</span>
-          <h3 className="ch-access__title">Chat access</h3>
+          <span className="ch-access__eyebrow t-label">Telegram connections</span>
+          <h3 className="ch-access__title">Pairing</h3>
         </div>
-        <label className="ch-access__mode">
-          <span className="t-label">Mode</span>
-          <select
-            className="ch-access__select t-data"
-            aria-label="Telegram chat access mode"
-            value={mode}
-            disabled={busy}
-            onChange={(e) => onSetMode(channelName, e.target.value)}
-          >
-            {ACCESS_MODE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
 
       {locked ? (
         <p className="ch-access__warning">
-          Pairing approval is locked for one hour after repeated invalid codes.
+          Pairing is locked for one hour after repeated invalid codes.
         </p>
       ) : null}
 
-      {mode === 'open' ? (
-        <p className="ch-access__note">
-          Every Telegram account can DM this bot. Group access remains separately controlled as{' '}
-          {groupMode}.
-        </p>
-      ) : mode === 'disabled' ? (
-        <p className="ch-access__note">
-          Telegram direct messages are disabled. Group access remains separately controlled as{' '}
-          {groupMode}.
-        </p>
-      ) : (
-        <>
-          <div className="ch-access__group">
-            <div className="ch-access__group-title t-label">
-              Pending <span>{pending.length}</span>
-            </div>
-            {pending.length ? (
-              <div className="ch-access__people">
-                {pending.map((item, i) => (
-                  <PersonRow
-                    key={`pending-${String(item.sender_id ?? i)}`}
-                    item={item}
-                    variant="pending"
-                    disabled={busy}
-                    onApprove={() => onResolve(channelName, String(item.sender_id ?? ''), true)}
-                    onDeny={() => onResolve(channelName, String(item.sender_id ?? ''), false)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <p className="ch-access__empty">No Telegram accounts are waiting for approval.</p>
-            )}
+      <p className="ch-access__note">
+        Direct messages always require pairing.{' '}
+        {access.groups_enabled
+          ? `${access.group_chat_ids?.length || 0} configured group(s) also require a paired sender${access.group_mention_required ? ' and a bot mention' : ''}.`
+          : 'Group messaging is disabled.'}
+      </p>
+      <div className="ch-access__group">
+        <div className="ch-access__group-title t-label">
+          Pending pairing <span>{pending.length}</span>
+        </div>
+        {pending.length ? (
+          <div className="ch-access__people">
+            {pending.map((item, i) => (
+              <PersonRow
+                key={`pending-${String(item.sender_id ?? i)}`}
+                item={item}
+                variant="pending"
+                disabled={busy}
+                onApprove={() => onResolve(channelName, String(item.sender_id ?? ''), true)}
+                onDeny={() => onResolve(channelName, String(item.sender_id ?? ''), false)}
+              />
+            ))}
           </div>
-          <div className="ch-access__group">
-            <div className="ch-access__group-title t-label">
-              Approved <span>{approved.length}</span>
-            </div>
-            {approved.length ? (
-              <div className="ch-access__people">
-                {approved.map((item, i) => (
-                  <PersonRow
-                    key={`approved-${String(item.sender_id ?? i)}`}
-                    item={item}
-                    variant="approved"
-                    disabled={busy}
-                    onRevoke={() => onRevoke(channelName, String(item.sender_id ?? ''))}
-                  />
-                ))}
-              </div>
-            ) : (
-              <p className="ch-access__empty">No approved accounts yet.</p>
-            )}
+        ) : (
+          <p className="ch-access__empty">No Telegram connections are waiting to pair.</p>
+        )}
+      </div>
+      <div className="ch-access__group">
+        <div className="ch-access__group-title t-label">
+          Paired <span>{paired.length}</span>
+        </div>
+        {paired.length ? (
+          <div className="ch-access__people">
+            {paired.map((item, i) => (
+              <PersonRow
+                key={`paired-${String(item.sender_id ?? i)}`}
+                item={item}
+                variant="paired"
+                disabled={busy}
+                onRevoke={() => onRevoke(channelName, String(item.sender_id ?? ''))}
+              />
+            ))}
           </div>
-        </>
-      )}
+        ) : (
+          <p className="ch-access__empty">No paired Telegram connections yet.</p>
+        )}
+      </div>
     </section>
   )
 }
@@ -230,7 +189,6 @@ function ChannelCard({
   configurationMode,
   onConfigure,
   onOpenAdvanced,
-  onSetMode,
   onResolve,
   onRevoke,
 }: {
@@ -239,7 +197,6 @@ function ChannelCard({
   configurationMode: 'loading' | 'guided' | 'advanced'
   onConfigure: () => void
   onOpenAdvanced: () => void
-  onSetMode: (channel: string, mode: string) => void
   onResolve: (channel: string, senderId: string, approved: boolean) => void
   onRevoke: (channel: string, senderId: string) => void
 }) {
@@ -310,13 +267,7 @@ function ChannelCard({
           </div>
         </dl>
         <p className="ch-card__hint">{hint}</p>
-        <AccessPanel
-          channel={channel}
-          busy={busy}
-          onSetMode={onSetMode}
-          onResolve={onResolve}
-          onRevoke={onRevoke}
-        />
+        <AccessPanel channel={channel} busy={busy} onResolve={onResolve} onRevoke={onRevoke} />
         <details className="ch-card__config">
           <summary>Adapter config</summary>
           <pre className="ch-card__config-pre t-data">{d.configJson}</pre>
@@ -370,18 +321,18 @@ export function ChannelsPage() {
     document.title = 'Channels - AgentOS Control'
   }, [])
 
-  // channels.js:74-108 — two parallel reads; access.list tolerates failure.
+  // Load runtime status and Telegram pairing state in parallel.
   const channelsQuery = useQuery<MergedChannel[]>({
     queryKey: ['channels'],
     queryFn: async () => {
       await rpc.waitForConnection()
-      const [status, access] = await Promise.all([
+      const [status, pairing] = await Promise.all([
         rpc.call<ChannelsStatus>('channels.status', {}),
         rpc
-          .call<AccessList>('channels.access.list', {})
+          .call<AccessList>('channels.pairing.list', {})
           .catch(() => ({ channels: [] }) as AccessList),
       ])
-      return sortChannels(mergeChannels(status.channels, access.channels))
+      return sortChannels(mergeChannels(status.channels, pairing.channels))
     },
     refetchInterval: POLL_MS,
     refetchOnWindowFocus: false,
@@ -516,53 +467,39 @@ export function ChannelsPage() {
     if (setupNavigationBlocker.state === 'blocked') setupNavigationBlocker.reset()
   }
 
-  // channels.js:319-334 — mode select mutation (open warns; else info) + refetch.
-  const setModeMutation = useMutation({
-    mutationFn: (vars: { channel: string; mode: string }) =>
-      rpc.call('channels.access.setMode', vars),
-    onSuccess: (_data, vars) => {
-      const message = 'Telegram DM policy: ' + vars.mode + '.'
-      if (vars.mode === 'open') toast.warning(message, { id: 'channels-mode' })
-      else toast.info(message, { id: 'channels-mode' })
-      void invalidate()
-    },
-    onError: (err) => {
-      const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to update access mode: ' + message, { id: 'channels-mode-err' })
-      void invalidate()
-    },
-  })
-
-  // channels.js:336-353 — approve/deny mutation + refetch.
+  // Pair or deny one pending connection.
   const resolveMutation = useMutation({
     mutationFn: (vars: { channel: string; senderId: string; approved: boolean }) =>
-      rpc.call('channels.access.resolve', vars),
+      rpc.call(vars.approved ? 'channels.pairing.approve' : 'channels.pairing.deny', {
+        channel: vars.channel,
+        senderId: vars.senderId,
+      }),
     onSuccess: (_data, vars) => {
-      if (vars.approved) toast.info('Telegram account approved.', { id: 'channels-resolve' })
-      else toast.warning('Telegram account denied.', { id: 'channels-resolve' })
+      if (vars.approved) toast.info('Telegram connection paired.', { id: 'channels-resolve' })
+      else toast.warning('Telegram pairing denied.', { id: 'channels-resolve' })
       void invalidate()
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to resolve account request: ' + message, { id: 'channels-resolve-err' })
+      toast.error('Failed to resolve pairing request: ' + message, { id: 'channels-resolve-err' })
     },
   })
 
-  // channels.js:355-370 — revoke mutation + refetch.
+  // Disconnect one paired Telegram sender.
   const revokeMutation = useMutation({
     mutationFn: (vars: { channel: string; senderId: string }) =>
-      rpc.call('channels.access.revoke', vars),
+      rpc.call('channels.pairing.revoke', vars),
     onSuccess: () => {
-      toast.info('Telegram account access revoked.', { id: 'channels-revoke' })
+      toast.info('Telegram connection disconnected.', { id: 'channels-revoke' })
       void invalidate()
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to revoke account: ' + message, { id: 'channels-revoke-err' })
+      toast.error('Failed to disconnect Telegram: ' + message, { id: 'channels-revoke-err' })
     },
   })
 
-  const busy = setModeMutation.isPending || resolveMutation.isPending || revokeMutation.isPending
+  const busy = resolveMutation.isPending || revokeMutation.isPending
 
   const channels = channelsQuery.data ?? []
   const stats = channelStats(channels)
@@ -570,7 +507,6 @@ export function ChannelsPage() {
     (setupSnapshotQuery.data?.catalog?.channels || []).map((spec) => spec.type),
   )
 
-  const onSetMode = (channel: string, mode: string) => setModeMutation.mutate({ channel, mode })
   const onResolve = (channel: string, senderId: string, approved: boolean) =>
     resolveMutation.mutate({ channel, senderId, approved })
   const onRevoke = (channel: string, senderId: string) =>
@@ -583,7 +519,7 @@ export function ChannelsPage() {
           <span className="t-label">Control · Channels</span>
           <h1 className="t-display">Channels</h1>
           <p className="ch-stage__subtitle">
-            Add messaging adapters, monitor runtime health, and manage account access in one place.
+            Add messaging adapters, monitor runtime health, and pair Telegram connections.
           </p>
         </div>
         <div className="ch-stage__actions">
@@ -655,10 +591,10 @@ export function ChannelsPage() {
           />
           <StatTile label="Restart attempts" value={stats.restarts} hint="since gateway start" />
           <StatTile
-            label="Chat approvals"
+            label="Pairing requests"
             value={stats.pendingAccess}
             attention={stats.pendingAccess > 0}
-            hint={stats.pendingAccess ? 'Telegram account requests' : 'nothing waiting'}
+            hint={stats.pendingAccess ? 'Telegram connections waiting' : 'nothing waiting'}
           />
         </div>
       </section>
@@ -668,7 +604,7 @@ export function ChannelsPage() {
           <div>
             <h2 className="ch-list__title">Configured channels</h2>
             <p className="ch-list__description">
-              Runtime adapters, connection health, and messaging access in one place.
+              Runtime adapters, connection health, and Telegram pairing in one place.
             </p>
           </div>
           <div className="ch-list__actions">
@@ -719,7 +655,6 @@ export function ChannelsPage() {
                       configurationMode={configurationMode}
                       onConfigure={() => openSetup(String(channel.name || ''))}
                       onOpenAdvanced={() => navigate('/config')}
-                      onSetMode={onSetMode}
                       onResolve={onResolve}
                       onRevoke={onRevoke}
                     />

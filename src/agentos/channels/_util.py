@@ -19,6 +19,8 @@ from typing import Any, Literal
 import httpx
 import structlog
 
+from agentos.channel_pairing import ChannelAdmission
+
 log = structlog.get_logger(__name__)
 
 
@@ -56,9 +58,13 @@ class AccessDecision:
         "dm_denied",
         "group_admitted",
         "group_denied",
+        "group_not_configured",
         "not_mentioned_in_group",
         "not_in_allowlist",
+        "not_paired",
     ]
+    admission: ChannelAdmission | None = None
+    admission_validator: Callable[[ChannelAdmission], bool] | None = None
 
 
 def evaluate_policy(

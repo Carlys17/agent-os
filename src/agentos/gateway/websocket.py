@@ -13,7 +13,8 @@ import structlog
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from agentos import __version__
-from agentos.gateway.auth import Principal
+from agentos.gateway.access import ConnectionSurface
+from agentos.gateway.auth import AccessContext
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.protocol import (
     PREAUTH_TIMEOUT_MS,
@@ -80,10 +81,10 @@ def is_allowed_ws_origin(
 ) -> bool:
     """Return True if a WebSocket handshake ``Origin`` may be accepted.
 
-    The WS upgrade skips ``AuthMiddleware`` and a loopback peer is
-    auto-upgraded to operator scopes by ``peer_ip`` alone, so a malicious
-    page in the victim's browser could otherwise open a socket to the local
-    gateway and drive the admin RPC surface (Cross-Site WebSocket Hijacking;
+    The WS upgrade skips ``AuthMiddleware`` and a loopback peer may use
+    no-auth Control admission, so a malicious page in the victim's browser
+    could otherwise open a socket to the local gateway and drive the Control
+    RPC surface (Cross-Site WebSocket Hijacking;
     the CVE-2026-53869 class). Browsers always send ``Origin`` on WS
     handshakes and page JS cannot forge it, so it is the correct gate.
 
@@ -94,7 +95,7 @@ def is_allowed_ws_origin(
     * The gateway is on a **non-loopback bind**. It only starts there past
       ``enforce_public_bind_auth_guard`` (auth on, or explicit opt-in), the
       socket is authenticated after ``accept()`` via ``connect.challenge`` /
-      ``resolve_auth``, and the loopback auto-admin upgrade is off. A remote
+      ``resolve_auth``. A remote
       browser's ``Origin`` names whatever host it navigated to (a LAN IP, a
       DNS name) — never the bind address (``0.0.0.0``/``::``) — so gating
       here would reject every legitimate browser without adding security.
@@ -110,7 +111,7 @@ def is_allowed_ws_origin(
     if not origin:
         return True
 
-    from agentos.gateway.scopes import is_loopback_address, is_loopback_bind
+    from agentos.gateway.access import is_loopback_address, is_loopback_bind
 
     # Prefer the bind posture captured when the app was built: config.host is
     # mutated in place by config.apply without rebinding the live socket, so
@@ -188,12 +189,11 @@ class WsConnection:
 
     conn_id: str
     ws: WebSocket
-    principal: Principal = field(
-        default_factory=lambda: Principal(
-            role="operator",
-            scopes=frozenset(["operator.admin"]),
-            is_owner=True,
-            authenticated=False,
+    access: AccessContext = field(
+        default_factory=lambda: AccessContext(
+            surface=ConnectionSurface.CONTROL,
+            admitted=False,
+            credential_verified=False,
         )
     )
     connected_at: int = field(default_factory=lambda: int(time.time() * 1000))
@@ -209,16 +209,8 @@ class WsConnection:
     _closing: bool = field(default=False, init=False, repr=False)
 
     @property
-    def role(self) -> str:
-        return self.principal.role
-
-    @property
-    def scopes(self) -> list[str]:
-        return list(self.principal.scopes)
-
-    @property
     def authenticated(self) -> bool:
-        return self.principal.authenticated
+        return self.access.admitted
 
     def next_seq(self) -> int:
         self._seq += 1
@@ -650,8 +642,8 @@ async def handle_ws_connection(
     # CSWSH / DNS-rebinding guard (loopback binds): reject a browser handshake
     # whose Origin is neither loopback nor an explicitly allowed UI origin,
     # before accept(). A cross-site page cannot forge Origin, so this stops it
-    # from opening a socket to the loopback gateway and inheriting operator
-    # scopes. Starlette Headers.get is case-insensitive. bind_is_loopback is
+    # from opening a socket to the loopback gateway and inheriting Control
+    # admission. Starlette Headers.get is case-insensitive. bind_is_loopback is
     # the posture captured at app-build time (P2) — see is_allowed_ws_origin.
     origin = ws.headers.get("origin")
     if not is_allowed_ws_origin(origin, config, bind_is_loopback=bind_is_loopback):
@@ -704,18 +696,18 @@ async def handle_ws_connection(
     req_id = data.get("id", "handshake")
     params_raw = data.get("params", {}) or {}
 
-    # Step 4: Resolve auth via server-side ScopeResolver
+    # Step 4: Resolve binary admission and the fixed protocol surface.
     from agentos.gateway.auth import resolve_auth
 
     auth_params = params_raw.get("auth", {}) or {}
     peer_ip = ws.client.host if ws.client is not None else None
-    principal = resolve_auth(
+    access = resolve_auth(
         config,
         auth_params=auth_params,
-        role_claim=params_raw.get("role", "operator"),
+        client_kind=params_raw.get("clientKind", "control"),
         peer_ip=peer_ip,
     )
-    if principal is None:
+    if access is None:
         await conn.send_res(make_error_res(req_id, "UNAUTHORIZED", "Authentication failed"))
         await conn.close()
         return
@@ -731,8 +723,7 @@ async def handle_ws_connection(
         await conn.close()
         return
 
-    # Assign principal
-    conn.principal = principal
+    conn.access = access
 
     # Step 6: Send HelloOk
     hello = HelloOk(
@@ -779,7 +770,7 @@ async def handle_ws_connection(
         maxsize=config.ws_writer_queue_maxsize,
         enabled=config.ws_writer_queue_enabled,
     )
-    log.info("ws.authenticated", conn_id=conn_id, role=conn.role)
+    log.info("ws.authenticated", conn_id=conn_id, surface=conn.access.surface.value)
 
     # Step 7: Main message loop
     tick_task = asyncio.create_task(_tick_loop(conn, hello.policy.tick_interval_ms))
@@ -907,7 +898,7 @@ async def _message_loop(
 
             ctx = RpcContext(
                 conn_id=conn.conn_id,
-                principal=conn.principal,
+                access=conn.access,
                 session_manager=session_manager,
                 config=config,
                 provider_selector=provider_selector,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -9,6 +10,7 @@ from agentos.channels._util import ChannelAccessPolicy, evaluate_policy
 from agentos.channels.telegram import TelegramChannel, TelegramChannelConfig
 from agentos.channels.types import IncomingMessage
 from agentos.gateway.channel_dispatch import _should_skip_unmentioned, run_channel_dispatch
+from agentos.gateway.routing import build_channel_route_envelope
 
 
 def _incoming(channel: TelegramChannel, *, sender_id: int = 42, username: str = "alice"):
@@ -30,9 +32,9 @@ def _incoming(channel: TelegramChannel, *, sender_id: int = 42, username: str = 
     )
 
 
-def test_pairing_mode_denies_first_sender_and_creates_one_pending_request(tmp_path) -> None:
+def test_unpaired_sender_creates_one_pending_request(tmp_path) -> None:
     channel = TelegramChannel(
-        TelegramChannelConfig(name="tg", access_mode="pairing"),
+        TelegramChannelConfig(name="tg"),
         pairing_store=ChannelPairingStore(tmp_path / "pairing"),
     )
     message = _incoming(channel)
@@ -67,9 +69,9 @@ def test_pairing_mode_denies_first_sender_and_creates_one_pending_request(tmp_pa
     assert len(channel.access_snapshot()["pending"]) == 1
 
 
-def test_resolving_pairing_request_updates_runtime_policy_and_revoke_closes_it(tmp_path) -> None:
+def test_pairing_grant_is_invalid_immediately_after_disconnect(tmp_path) -> None:
     channel = TelegramChannel(
-        TelegramChannelConfig(name="tg", access_mode="pairing"),
+        TelegramChannelConfig(name="tg"),
         pairing_store=ChannelPairingStore(tmp_path / "pairing"),
     )
     message = _incoming(channel)
@@ -78,34 +80,65 @@ def test_resolving_pairing_request_updates_runtime_policy_and_revoke_closes_it(t
     request = channel.resolve_access_request("42", approved=True)
 
     assert request["username"] == "alice"
-    assert channel.config.approved_sender_ids == []
-    assert channel.evaluate_access(message, is_group=False, mentioned=True).admit is True
+    paired = channel.evaluate_access(message, is_group=False, mentioned=True)
+    assert paired.admit is True
+    assert paired.admission is not None
+    assert paired.admission_validator is not None
+    assert paired.admission_validator(paired.admission) is True
     assert channel.revoke_sender("42") == "pairing"
+    assert paired.admission_validator(paired.admission) is False
     assert (
         channel.evaluate_access(message, is_group=False, mentioned=True).reason
-        == "not_in_allowlist"
+        == "not_paired"
     )
 
 
-def test_open_mode_preserves_allow_all_dm_behavior(tmp_path) -> None:
+def test_pairing_runtime_proof_stays_out_of_persisted_route_metadata(tmp_path) -> None:
     channel = TelegramChannel(
-        TelegramChannelConfig(access_mode="open"),
+        TelegramChannelConfig(name="tg"),
+        pairing_store=ChannelPairingStore(tmp_path / "pairing"),
+    )
+    message = _incoming(channel)
+    _should_skip_unmentioned(channel, message, "agent:main:telegram:direct:42")
+    channel.resolve_access_request("42", approved=True)
+    envelope = build_channel_route_envelope(
+        message,
+        session_key="agent:main:telegram:direct:42",
+        session_prefix="tg",
+    )
+
+    assert _should_skip_unmentioned(channel, message, envelope.session_key, envelope) is False
+    assert json.loads(json.dumps(envelope.metadata)) == envelope.metadata
+
+    tool_context = envelope.tool_context()
+    assert tool_context.channel_admission is not None
+    assert tool_context.channel_admission_validator is not None
+    assert tool_context.channel_admission_validator(tool_context.channel_admission) is True
+
+    channel.revoke_sender("42")
+    assert tool_context.channel_admission_validator(tool_context.channel_admission) is False
+
+
+def test_direct_messages_always_require_pairing(tmp_path) -> None:
+    channel = TelegramChannel(
+        TelegramChannelConfig(),
         pairing_store=ChannelPairingStore(tmp_path / "pairing"),
     )
     message = _incoming(channel)
 
     decision = channel.evaluate_access(message, is_group=False, mentioned=True)
 
-    assert decision.admit is True
-    assert decision.reason == "dm_admitted"
+    assert decision.admit is False
+    assert decision.reason == "not_paired"
 
 
-def test_dm_pairing_does_not_grant_group_access(tmp_path) -> None:
+def test_configured_group_requires_pairing_and_mention(tmp_path) -> None:
     channel = TelegramChannel(
         TelegramChannelConfig(
             name="tg",
-            access_mode="pairing",
-            group_access_mode="allowlist",
+            groups_enabled=True,
+            group_chat_ids=["group-1"],
+            group_mention_required=True,
         ),
         pairing_store=ChannelPairingStore(tmp_path / "pairing"),
     )
@@ -117,10 +150,10 @@ def test_dm_pairing_does_not_grant_group_access(tmp_path) -> None:
     )
 
     assert channel.evaluate_access(direct, is_group=False, mentioned=True).admit is True
-    assert (
-        channel.evaluate_access(group, is_group=True, mentioned=True).reason
-        == "not_in_allowlist"
+    assert channel.evaluate_access(group, is_group=True, mentioned=False).reason == (
+        "not_mentioned_in_group"
     )
+    assert channel.evaluate_access(group, is_group=True, mentioned=True).admit is True
 
 
 @pytest.mark.parametrize(
@@ -139,7 +172,7 @@ def test_telegram_group_bot_command_entity_is_mention_aware(
     entity_type: str,
     expected: bool,
 ) -> None:
-    channel = TelegramChannel(TelegramChannelConfig(access_mode="open"))
+    channel = TelegramChannel(TelegramChannelConfig())
     channel.bot_username = "AgentBot"
     message = channel.parse_incoming(
         {
@@ -158,7 +191,7 @@ def test_telegram_group_bot_command_entity_is_mention_aware(
 
 
 def test_telegram_group_bot_command_in_media_caption_is_mention_aware() -> None:
-    channel = TelegramChannel(TelegramChannelConfig(access_mode="open"))
+    channel = TelegramChannel(TelegramChannelConfig())
     channel.bot_username = "AgentBot"
     command = "/status"
     message = channel.parse_incoming(

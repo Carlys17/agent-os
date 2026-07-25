@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from agentos.channel_pairing import ChannelAdmission
+
 
 class CallerKind(StrEnum):
     """Entry-point caller type — used in ToolContext for filtering decisions."""
@@ -35,7 +37,6 @@ class ToolContext:
     a ToolContext. There is no default — omitting it is a TypeError.
     """
 
-    is_owner: bool = False
     caller_kind: CallerKind = CallerKind.AGENT
     interaction_mode: InteractionMode = InteractionMode.INTERACTIVE
     subagent_depth: int = 0
@@ -52,6 +53,8 @@ class ToolContext:
     sender_id: str | None = None
     source_kind: str | None = None
     source_name: str | None = None
+    channel_admission: ChannelAdmission | None = None
+    channel_admission_validator: Callable[[ChannelAdmission], bool] | None = None
     task_id: str | None = None
     artifact_media_root: str | None = None
     artifact_session_id: str | None = None
@@ -146,7 +149,6 @@ class ToolSpec:
     description: str
     parameters: dict[str, Any]  # JSON Schema properties dict
     required: list[str] = field(default_factory=list)
-    owner_only: bool = False
     exposed_by_default: bool = True
     execution_timeout_seconds: float | None = None
     execution_timeout_argument: str | None = None

@@ -20,7 +20,7 @@ from agentos.tools.rpc_payload import (
 _d = get_dispatcher()
 
 
-@_d.method("tools.catalog", scope="operator.read")
+@_d.method("tools.catalog")
 async def _handle_tools_catalog(params: dict | None, ctx: RpcContext) -> dict:
     tool_registry = getattr(ctx, "tool_registry", None) or get_default_registry()
     return await tools_catalog_payload(
@@ -32,11 +32,10 @@ async def _handle_tools_catalog(params: dict | None, ctx: RpcContext) -> dict:
         gateway_config=getattr(ctx, "config", None),
         channel_manager=getattr(ctx, "channel_manager", None),
         originating_envelope=getattr(ctx, "originating_envelope", None),
-        is_owner=ctx.principal.is_owner,
     )
 
 
-@_d.method("tools.effective", scope="operator.read")
+@_d.method("tools.effective")
 async def _handle_tools_effective(params: dict | None, ctx: RpcContext) -> dict:
     tool_registry = getattr(ctx, "tool_registry", None) or get_default_registry()
     return await tools_effective_payload(
@@ -48,11 +47,10 @@ async def _handle_tools_effective(params: dict | None, ctx: RpcContext) -> dict:
         gateway_config=getattr(ctx, "config", None),
         channel_manager=getattr(ctx, "channel_manager", None),
         originating_envelope=getattr(ctx, "originating_envelope", None),
-        is_owner=ctx.principal.is_owner,
     )
 
 
-@_d.method("tools.search_provider", scope="operator.read")
+@_d.method("tools.search_provider")
 async def _handle_tools_search_provider(params: dict | None, ctx: RpcContext) -> dict:
     return {"provider": get_active_provider()}
 
@@ -116,7 +114,7 @@ async def _model_probe(provider_id: str, ctx: RpcContext) -> dict[str, Any]:
         return {"attempted": True, "status": "error", "count": 0, "error": str(exc)}
 
 
-@_d.method("providers.status", scope="operator.read")
+@_d.method("providers.status")
 async def _handle_providers_status(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.provider_specs import list_provider_setup_specs
     from agentos.provider.selector import ProviderBuildError, build_provider
@@ -189,7 +187,7 @@ async def _handle_providers_status(params: dict | None, ctx: RpcContext) -> dict
     return {"activeProvider": active, "providers": rows, "count": len(rows)}
 
 
-@_d.method("search.status", scope="operator.read")
+@_d.method("search.status")
 async def _handle_search_status(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if params is not None and not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -209,7 +207,7 @@ def _query_limit(params: dict[str, Any]) -> int | None:
     return limit
 
 
-@_d.method("search.query", scope="operator.write")
+@_d.method("search.query")
 async def _handle_search_query(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params must be an object")

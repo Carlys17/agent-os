@@ -4,9 +4,9 @@ from typing import Any
 
 import pytest
 
+from agentos.gateway.access import CONTROL_ONLY
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, get_dispatcher
-from agentos.gateway.scopes import METHOD_SCOPES, READ_SCOPE
 
 
 async def _ready_memory(params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
@@ -85,8 +85,10 @@ def _patch_ready_support_surfaces(monkeypatch: pytest.MonkeyPatch, rpc_doctor: A
 
 
 @pytest.mark.asyncio
-async def test_doctor_status_is_read_scoped() -> None:
-    assert METHOD_SCOPES["doctor.status"] == READ_SCOPE
+async def test_doctor_status_is_control_only() -> None:
+    entry = get_dispatcher().get_entry("doctor.status")
+    assert entry is not None
+    assert entry.audiences == CONTROL_ONLY
 
 
 @pytest.mark.asyncio

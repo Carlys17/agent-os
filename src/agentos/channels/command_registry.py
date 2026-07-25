@@ -22,11 +22,10 @@ from agentos.channels.command_replies import (
 )
 from agentos.channels.types import OutgoingMessage
 from agentos.engine.commands import DEFAULT_REGISTRY, ExecutionKind, ParamsFactory, Surface
-from agentos.gateway.auth import Principal
+from agentos.gateway.access import ConnectionSurface
+from agentos.gateway.auth import AccessContext
 from agentos.gateway.routing import RouteEnvelope, SourceKind
 from agentos.gateway.rpc import RpcContext
-from agentos.gateway.scopes import READ_SCOPE, WRITE_SCOPE
-from agentos.session.keys import derive_chat_type
 
 
 class CommandRegistry:
@@ -116,24 +115,17 @@ def build_channel_rpc_context(
     gateway_config: Any,
     **handles: Any,
 ) -> RpcContext:
-    """Grant write access to admitted DMs and configured channel admins."""
-    admin_senders = getattr(gateway_config, "channel_admin_senders", {})
+    """Build a channel-surface RPC context after successful pairing."""
+
     sender_id = envelope.sender_id
-    is_admin = bool(sender_id and sender_id in admin_senders.get(envelope.source_name, []))
-    is_direct_message = derive_chat_type(envelope.session_key) == "direct"
-    principal = Principal(
-        role="operator",
-        scopes=(
-            frozenset({READ_SCOPE, WRITE_SCOPE})
-            if is_admin or is_direct_message
-            else frozenset({READ_SCOPE})
-        ),
-        is_owner=False,
-        authenticated=True,
+    access = AccessContext(
+        surface=ConnectionSurface.CHANNEL,
+        admitted=True,
+        credential_verified=True,
     )
     return RpcContext(
         conn_id=f"channel:{envelope.source_name}:{sender_id or 'unknown'}",
-        principal=principal,
+        access=access,
         config=gateway_config,
         originating_envelope=envelope,
         **handles,

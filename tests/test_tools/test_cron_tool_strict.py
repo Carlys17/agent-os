@@ -1,4 +1,4 @@
-"""Admin cron tool: strict structured-schedule contract.
+"""Cron tool: strict structured-schedule contract.
 
 Covers structured success path plus the four key field-named ``ToolError``
 messages (flat string rejection, invalid cron expr, naive ISO ``at``, and
@@ -12,9 +12,9 @@ from typing import Any
 
 import pytest
 
-import agentos.tools.builtin.admin as admin_mod
+import agentos.tools.builtin.control as control_mod
 from agentos.scheduler.types import SessionTarget
-from agentos.tools.builtin.admin import cron as cron_tool
+from agentos.tools.builtin.control import cron as cron_tool
 from agentos.tools.registry import get_default_registry
 from agentos.tools.types import ToolContext, ToolError, current_tool_context
 
@@ -37,9 +37,9 @@ class _ToolFakeScheduler:
 
 
 @pytest.mark.asyncio
-async def test_admin_cron_accepts_structured_cron_schedule() -> None:
+async def test_cron_tool_accepts_structured_cron_schedule() -> None:
     fake = _ToolFakeScheduler()
-    admin_mod.set_scheduler(fake)
+    control_mod.set_scheduler(fake)
     try:
         raw = await cron_tool(
             action="add",
@@ -49,22 +49,21 @@ async def test_admin_cron_accepts_structured_cron_schedule() -> None:
             session_target="isolated",
         )
     finally:
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
     assert fake.added_kwargs is not None
     assert fake.added_kwargs["schedule_value"] == "*/5 * * * *"
-    assert fake.added_kwargs["creator_is_owner"] is True
+    assert "creator_is_owner" not in fake.added_kwargs
     assert json.loads(raw)["schedule_value"] == "*/5 * * * *"
 
 
 @pytest.mark.asyncio
-async def test_admin_cron_records_non_owner_creator_boundary() -> None:
+async def test_cron_does_not_persist_caller_roles() -> None:
     fake = _ToolFakeScheduler()
-    admin_mod.set_scheduler(fake)
+    control_mod.set_scheduler(fake)
     token = current_tool_context.set(
         ToolContext(
-            is_owner=False,
-            session_key="agent:main:channel:user",
+                        session_key="agent:main:channel:user",
             sender_id="channel-user",
             channel_kind="feishu",
             channel_id="chat-1",
@@ -80,20 +79,19 @@ async def test_admin_cron_records_non_owner_creator_boundary() -> None:
         )
     finally:
         current_tool_context.reset(token)
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
     assert fake.added_kwargs is not None
-    assert fake.added_kwargs["creator_is_owner"] is False
+    assert "creator_is_owner" not in fake.added_kwargs
 
 
 @pytest.mark.asyncio
-async def test_admin_cron_current_target_binds_caller_session() -> None:
+async def test_cron_tool_current_target_binds_caller_session() -> None:
     fake = _ToolFakeScheduler()
-    admin_mod.set_scheduler(fake)
+    control_mod.set_scheduler(fake)
     token = current_tool_context.set(
         ToolContext(
-            is_owner=True,
-            session_key="agent:main:webchat:abc123",
+                        session_key="agent:main:webchat:abc123",
             sender_id="owner",
         )
     )
@@ -107,7 +105,7 @@ async def test_admin_cron_current_target_binds_caller_session() -> None:
         )
     finally:
         current_tool_context.reset(token)
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
     assert fake.added_kwargs is not None
     assert fake.added_kwargs["session_target"] == SessionTarget.CURRENT
@@ -117,13 +115,12 @@ async def test_admin_cron_current_target_binds_caller_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_admin_cron_non_owner_current_target_stays_caller_scoped() -> None:
+async def test_cron_channel_current_target_stays_caller_scoped() -> None:
     fake = _ToolFakeScheduler()
-    admin_mod.set_scheduler(fake)
+    control_mod.set_scheduler(fake)
     token = current_tool_context.set(
         ToolContext(
-            is_owner=False,
-            session_key="agent:main:channel:user",
+                        session_key="agent:main:channel:user",
             sender_id="channel-user",
             channel_kind="feishu",
             channel_id="chat-1",
@@ -139,19 +136,19 @@ async def test_admin_cron_non_owner_current_target_stays_caller_scoped() -> None
         )
     finally:
         current_tool_context.reset(token)
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
     assert fake.added_kwargs is not None
-    assert fake.added_kwargs["creator_is_owner"] is False
+    assert "creator_is_owner" not in fake.added_kwargs
     assert fake.added_kwargs["session_target"] == SessionTarget.CURRENT
     assert fake.added_kwargs["session_key"] == "agent:main:channel:user"
     assert fake.added_kwargs["origin_session_key"] == "agent:main:channel:user"
 
 
 @pytest.mark.asyncio
-async def test_admin_cron_applies_top_level_tz_to_structured_cron() -> None:
+async def test_cron_tool_applies_top_level_tz_to_structured_cron() -> None:
     fake = _ToolFakeScheduler()
-    admin_mod.set_scheduler(fake)
+    control_mod.set_scheduler(fake)
     try:
         await cron_tool(
             action="add",
@@ -162,15 +159,15 @@ async def test_admin_cron_applies_top_level_tz_to_structured_cron() -> None:
             tz="Asia/Shanghai",
         )
     finally:
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
     assert fake.added_kwargs is not None
     assert fake.added_kwargs["schedule_tz"] == "Asia/Shanghai"
 
 
 @pytest.mark.asyncio
-async def test_admin_cron_rejects_conflicting_schedule_and_top_level_tz() -> None:
-    admin_mod.set_scheduler(_ToolFakeScheduler())
+async def test_cron_tool_rejects_conflicting_schedule_and_top_level_tz() -> None:
+    control_mod.set_scheduler(_ToolFakeScheduler())
     try:
         with pytest.raises(ToolError, match="schedule.tz conflicts with tz"):
             await cron_tool(
@@ -186,13 +183,13 @@ async def test_admin_cron_rejects_conflicting_schedule_and_top_level_tz() -> Non
                 tz="America/Los_Angeles",
             )
     finally:
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
-async def test_admin_cron_rejects_flat_string_schedule() -> None:
+async def test_cron_tool_rejects_flat_string_schedule() -> None:
     """A bare 5-field cron string must NOT be accepted by the LLM tool."""
-    admin_mod.set_scheduler(_ToolFakeScheduler())
+    control_mod.set_scheduler(_ToolFakeScheduler())
     try:
         with pytest.raises(ToolError, match="schedule must be an object"):
             await cron_tool(
@@ -203,12 +200,12 @@ async def test_admin_cron_rejects_flat_string_schedule() -> None:
                 session_target="main",
             )
     finally:
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
-async def test_admin_cron_rejects_invalid_cron_expr() -> None:
-    admin_mod.set_scheduler(_ToolFakeScheduler())
+async def test_cron_tool_rejects_invalid_cron_expr() -> None:
+    control_mod.set_scheduler(_ToolFakeScheduler())
     try:
         with pytest.raises(ToolError, match="schedule.expr invalid"):
             await cron_tool(
@@ -219,12 +216,12 @@ async def test_admin_cron_rejects_invalid_cron_expr() -> None:
                 session_target="isolated",
             )
     finally:
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
-async def test_admin_cron_rejects_naive_at_timestamp() -> None:
-    admin_mod.set_scheduler(_ToolFakeScheduler())
+async def test_cron_tool_rejects_naive_at_timestamp() -> None:
+    control_mod.set_scheduler(_ToolFakeScheduler())
     try:
         with pytest.raises(ToolError, match="must include a timezone"):
             await cron_tool(
@@ -235,12 +232,12 @@ async def test_admin_cron_rejects_naive_at_timestamp() -> None:
                 session_target="isolated",
             )
     finally:
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
-async def test_admin_cron_rejects_zero_every_seconds() -> None:
-    admin_mod.set_scheduler(_ToolFakeScheduler())
+async def test_cron_tool_rejects_zero_every_seconds() -> None:
+    control_mod.set_scheduler(_ToolFakeScheduler())
     try:
         with pytest.raises(ToolError, match="every_seconds"):
             await cron_tool(
@@ -251,10 +248,10 @@ async def test_admin_cron_rejects_zero_every_seconds() -> None:
                 session_target="isolated",
             )
     finally:
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
 
-def test_admin_cron_schema_does_not_advertise_every_anchor() -> None:
+def test_cron_tool_schema_does_not_advertise_every_anchor() -> None:
     registered = get_default_registry().get("cron")
 
     assert registered is not None
@@ -262,7 +259,7 @@ def test_admin_cron_schema_does_not_advertise_every_anchor() -> None:
     assert "anchor_at" not in schedule_props
 
 
-def test_admin_cron_schema_advertises_current_session_target() -> None:
+def test_cron_tool_schema_advertises_current_session_target() -> None:
     registered = get_default_registry().get("cron")
 
     assert registered is not None
@@ -271,8 +268,8 @@ def test_admin_cron_schema_advertises_current_session_target() -> None:
 
 
 @pytest.mark.asyncio
-async def test_admin_cron_rejects_every_anchor_until_supported() -> None:
-    admin_mod.set_scheduler(_ToolFakeScheduler())
+async def test_cron_tool_rejects_every_anchor_until_supported() -> None:
+    control_mod.set_scheduler(_ToolFakeScheduler())
     try:
         with pytest.raises(ToolError, match="schedule.anchor_at is not supported"):
             await cron_tool(
@@ -287,4 +284,4 @@ async def test_admin_cron_rejects_every_anchor_until_supported() -> None:
                 session_target="isolated",
             )
     finally:
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]

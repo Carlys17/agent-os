@@ -246,7 +246,6 @@ async def run_agent_once(
         )
         tool_ctx = tool_context_from_envelope(
             route_envelope,
-            is_owner=True,
             workspace_dir=tool_workspace_dir,
             workspace_strict=effective_workspace_strict,
         )

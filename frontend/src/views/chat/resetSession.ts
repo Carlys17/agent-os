@@ -30,7 +30,7 @@ async function discardAndReset(rpc: SessionResetRpc, sessionKey: string): Promis
     toast.info('Session reset without transcript backup')
   } catch (error) {
     if (errorCode(error) === 'permission_denied') {
-      toast.error('Reset without backup requires a local owner connection.')
+      toast.error('Reset without backup requires an admitted Control connection.')
       return
     }
     toast.error('Reset failed: ' + errorMessage(error))
@@ -39,7 +39,7 @@ async function discardAndReset(rpc: SessionResetRpc, sessionKey: string): Promis
 
 /**
  * Reset through the safe flush path first. If transcript backup is disabled,
- * offer the local owner an explicit destructive recovery action instead of
+ * offer the connected Control client an explicit destructive recovery action instead of
  * leaking the backend-only `force=true` instruction into the UI.
  */
 export async function resetSession(rpc: SessionResetRpc, sessionKey: string): Promise<void> {

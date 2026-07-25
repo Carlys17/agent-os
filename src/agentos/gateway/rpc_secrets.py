@@ -9,12 +9,12 @@ from agentos.gateway.rpc import RpcContext, RpcUnavailableError, get_dispatcher
 _d = get_dispatcher()
 
 
-@_d.method("secrets.reload", scope="operator.admin")
+@_d.method("secrets.reload")
 async def _handle_secrets_reload(params: dict | None, ctx: RpcContext) -> None:
     raise RpcUnavailableError("secrets.reload is not supported without a configured secret store")
 
 
-@_d.method("secrets.resolve", scope="operator.admin")
+@_d.method("secrets.resolve")
 async def _handle_secrets_resolve(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict) or "refs" not in params:
         raise ValueError("params.refs is required")

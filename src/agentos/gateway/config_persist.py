@@ -8,9 +8,8 @@ It delegates the actual write to
 shares one atomic + ``0600`` contract (temp file + ``os.replace`` + ``chmod``);
 a freshly generated bearer token is never world-readable.
 
-**Provenance, not field names.** ``run_gateway`` and break-glass inject one-off
-overrides (``--bind`` / ``--port`` / ``--debug``; break-glass ``auth.mode`` /
-``allow_unauthenticated_public``) into the in-memory config, which then flows
+**Provenance, not field names.** ``run_gateway`` injects one-off overrides
+(``--bind`` / ``--port`` / ``--debug``) into the in-memory config, which then flows
 into ``ctx.config`` for every RPC. Writing those wholesale would freeze a
 one-off ``--listen 0.0.0.0 --debug`` into ``config.toml``. So at boot the CLI
 records the ON-DISK original values of exactly those fields in a process-global
@@ -33,9 +32,8 @@ if TYPE_CHECKING:
 
     from agentos.gateway.config import GatewayConfig
 
-# Process-global map recorded at boot by ``run_gateway`` (and augmented by the
-# break-glass prompt). Keys are dotted paths (``host``, ``port``, ``debug``,
-# ``auth.mode``, ``auth.allow_unauthenticated_public``); values are the original
+# Process-global map recorded at boot by ``run_gateway``. Keys are dotted paths
+# (``host``, ``port``, ``debug``); values are the original
 # on-disk value, or ``None`` meaning "was absent -> drop so the default applies".
 _RUNTIME_OVERRIDES: dict[str, Any] = {}
 
@@ -44,8 +42,7 @@ def set_runtime_overrides(mapping: dict[str, Any] | None) -> None:
     """Record (or clear) the boot-time runtime override map.
 
     Called once by ``run_gateway`` before it overrides ``host``/``port``/
-    ``debug`` in memory, and augmented by the break-glass prompt when it forces
-    ``auth.mode=none``. ``None`` clears the map (used by tests and by a plain
+    ``debug`` in memory. ``None`` clears the map (used by tests and by a plain
     loopback run that overrode nothing).
     """
     global _RUNTIME_OVERRIDES
@@ -153,10 +150,10 @@ def persist_config(
     """Write config to TOML atomically (0600), restoring any runtime overrides.
 
     The process-global runtime-override map (see :func:`set_runtime_overrides`)
-    maps each CLI/break-glass-overridden dotted path to the value that was on
+    maps each CLI-overridden dotted path to the value that was on
     disk before the override. Each such field is restored to its original value
     (or dropped when the original was ``None``) so a transient
-    ``--listen``/``--debug``/break-glass posture never persists — UNLESS the
+    ``--listen``/``--debug`` posture never persists — UNLESS the
     path is in ``explicit_paths``, meaning the user explicitly changed it this
     write and the new value must persist verbatim.
 

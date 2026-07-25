@@ -9,7 +9,6 @@ from starlette.testclient import TestClient
 
 import agentos.gateway.rpc_config  # noqa: F401  ensure registration
 from agentos.gateway.app import create_gateway_app
-from agentos.gateway.auth import Principal
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
@@ -31,12 +30,6 @@ def _patch_base_path(config: GatewayConfig, base_path: str):
     context = RpcContext(
         conn_id="ui-exemption-test",
         config=config,
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.admin"}),
-            is_owner=True,
-            authenticated=True,
-        ),
     )
     result = asyncio.run(
         get_dispatcher().dispatch(

@@ -191,7 +191,7 @@ async def test_runtime_raw_turn_call_log_records_ordered_tool_turn(tmp_path, mon
         async for event in runner.run(
             "use echo",
             "agent:main:turn-call-sequence",
-            ToolContext(is_owner=True, caller_kind=CallerKind.AGENT),
+            ToolContext(caller_kind=CallerKind.AGENT),
         )
     ]
 
@@ -256,7 +256,7 @@ async def test_runtime_correlates_trace_decision_and_raw_logs(
         async for event in runner.run(
             "hello",
             "agent:main:trace-correlation",
-            ToolContext(is_owner=True, caller_kind=CallerKind.AGENT),
+            ToolContext(caller_kind=CallerKind.AGENT),
         )
     ]
 
@@ -298,7 +298,7 @@ async def test_runtime_writes_trace_when_provider_missing(tmp_path, monkeypatch)
         async for event in runner.run(
             "hello",
             "agent:main:no-provider",
-            ToolContext(is_owner=True, caller_kind=CallerKind.AGENT),
+            ToolContext(caller_kind=CallerKind.AGENT),
         )
     ]
 

@@ -96,7 +96,6 @@ class _BgSession:
     process: asyncio.subprocess.Process
     session_key: str | None = None
     agent_id: str | None = None
-    is_owner_run: bool = False
     local_urls: list[str] = field(default_factory=list)
     output_lines: list[str] = field(default_factory=list)
     done: bool = False
@@ -443,17 +442,15 @@ def _background_process_result(session: _BgSession) -> str:
     return "\n".join(lines)
 
 
-def _current_bg_context_is_admin() -> bool:
+def _current_bg_context_has_global_access() -> bool:
     ctx = current_tool_context.get()
-    if ctx is None or not ctx.is_owner:
+    if ctx is None:
         return False
-    if ctx.caller_kind in {CallerKind.CLI, CallerKind.WEB}:
-        return True
-    return ctx.caller_kind is CallerKind.CHANNEL and ctx.elevated in ("on", "bypass", "full")
+    return ctx.caller_kind in {CallerKind.CLI, CallerKind.WEB}
 
 
 def _current_bg_context_allows(session: _BgSession) -> bool:
-    if _current_bg_context_is_admin():
+    if _current_bg_context_has_global_access():
         return True
     ctx = current_tool_context.get()
     if ctx is None or not ctx.session_key:
@@ -845,7 +842,6 @@ async def background_process(
             process=spawned.process,
             session_key=ctx.session_key if ctx is not None else None,
             agent_id=ctx.agent_id if ctx is not None else None,
-            is_owner_run=bool(ctx.is_owner) if ctx is not None else False,
             local_urls=_local_server_urls_from_command(command),
             cleanup_callbacks=spawned.cleanup_callbacks,
         )
@@ -899,7 +895,6 @@ async def background_process(
         process=proc,
         session_key=ctx.session_key if ctx is not None else None,
         agent_id=ctx.agent_id if ctx is not None else None,
-        is_owner_run=bool(ctx.is_owner) if ctx is not None else False,
         local_urls=_local_server_urls_from_command(command),
     )
     _bg_sessions[session_id] = session
@@ -1247,7 +1242,7 @@ def _apply_approval_elevated_mode(entry: object) -> None:
     if mode not in ("on", "bypass", "full"):
         return
     ctx = current_tool_context.get()
-    if ctx is not None and ctx.is_owner:
+    if ctx is not None and ctx.caller_kind in {CallerKind.CLI, CallerKind.WEB}:
         ctx.elevated = mode
 
 

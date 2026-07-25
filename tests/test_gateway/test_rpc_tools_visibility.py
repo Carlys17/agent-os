@@ -6,10 +6,8 @@ from typing import Any
 
 import pytest
 
-from agentos.gateway.auth import Principal
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, get_dispatcher
-from agentos.gateway.scopes import READ_SCOPE
 from agentos.tools.registry import ToolRegistry
 from agentos.tools.types import ToolSpec
 
@@ -18,16 +16,10 @@ async def _handler() -> str:
     return "ok"
 
 
-def _ctx(*, tool_registry: Any, is_owner: bool) -> RpcContext:
+def _ctx(*, tool_registry: Any) -> RpcContext:
     return RpcContext(
         conn_id="test",
         config=GatewayConfig(),
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({READ_SCOPE}),
-            is_owner=is_owner,
-            authenticated=True,
-        ),
         tool_registry=tool_registry,
         session_manager=object(),
         task_runtime=object(),
@@ -83,7 +75,7 @@ def test_tools_rpc_delegates_payloads_to_tools_boundary() -> None:
     } <= boundary_defs
 
 
-def _registry_with_owner_only_probe() -> ToolRegistry:
+def _registry_with_configured_probe() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(
         ToolSpec(
@@ -95,10 +87,10 @@ def _registry_with_owner_only_probe() -> ToolRegistry:
     )
     registry.register(
         ToolSpec(
-            name="owner_probe",
-            description="owner probe",
+            name="configured_probe",
+            description="configured probe",
             parameters={},
-            owner_only=True,
+            exposed_by_default=False,
         ),
         _handler,
     )
@@ -107,41 +99,33 @@ def _registry_with_owner_only_probe() -> ToolRegistry:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["tools.catalog", "tools.effective"])
-async def test_tools_rpc_visibility_respects_principal_ownership(method: str) -> None:
-    registry = _registry_with_owner_only_probe()
+async def test_tools_rpc_visibility_comes_from_tool_configuration(method: str) -> None:
+    registry = _registry_with_configured_probe()
 
-    non_owner = await get_dispatcher().dispatch(
+    result = await get_dispatcher().dispatch(
         "r1",
         method,
         {"callerKind": "agent"},
-        _ctx(tool_registry=registry, is_owner=False),
-    )
-    owner = await get_dispatcher().dispatch(
-        "r2",
-        method,
-        {"callerKind": "agent"},
-        _ctx(tool_registry=registry, is_owner=True),
+        _ctx(tool_registry=registry),
     )
 
-    assert non_owner.error is None, non_owner.error
-    assert owner.error is None, owner.error
-    assert _tool_names(non_owner.payload) == {"ordinary_probe"}
-    assert _tool_names(owner.payload) == {"ordinary_probe", "owner_probe"}
+    assert result.error is None, result.error
+    assert _tool_names(result.payload) == {"ordinary_probe"}
 
 
 @pytest.mark.asyncio
-async def test_tools_catalog_without_runtime_params_respects_principal_ownership() -> None:
-    registry = _registry_with_owner_only_probe()
+async def test_tools_catalog_without_runtime_params_uses_configured_surface() -> None:
+    registry = _registry_with_configured_probe()
 
-    non_owner = await get_dispatcher().dispatch(
+    result = await get_dispatcher().dispatch(
         "r1",
         "tools.catalog",
         {},
-        _ctx(tool_registry=registry, is_owner=False),
+        _ctx(tool_registry=registry),
     )
 
-    assert non_owner.error is None, non_owner.error
-    assert _tool_names(non_owner.payload) == {"ordinary_probe"}
+    assert result.error is None, result.error
+    assert _tool_names(result.payload) == {"ordinary_probe"}
 
 
 @pytest.mark.asyncio
@@ -153,26 +137,26 @@ async def test_tools_catalog_without_runtime_params_respects_principal_ownership
     ],
 )
 @pytest.mark.parametrize("method", ["tools.catalog", "tools.effective"])
-async def test_tools_rpc_subagent_visibility_respects_principal_ownership(
+async def test_tools_rpc_subagent_visibility_uses_runtime_policy(
     method: str,
     params: dict[str, str],
 ) -> None:
-    registry = _registry_with_owner_only_probe()
+    registry = _registry_with_configured_probe()
 
-    non_owner = await get_dispatcher().dispatch(
+    result = await get_dispatcher().dispatch(
         "r1",
         method,
         params,
-        _ctx(tool_registry=registry, is_owner=False),
+        _ctx(tool_registry=registry),
     )
 
-    assert non_owner.error is None, non_owner.error
-    assert _tool_names(non_owner.payload) == {"ordinary_probe"}
+    assert result.error is None, result.error
+    assert _tool_names(result.payload) == {"ordinary_probe"}
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["tools.catalog", "tools.effective"])
-async def test_default_tools_rpc_hides_owner_only_tools_from_non_owner(method: str) -> None:
+async def test_default_tools_rpc_has_no_owner_dependent_visibility(method: str) -> None:
     import agentos.tools.builtin  # noqa: F401
     from agentos.gateway.config import ImageGenerationConfig, LlmProviderConfig
     from agentos.tools.builtin.media import configure_image_generation
@@ -183,39 +167,39 @@ async def test_default_tools_rpc_hides_owner_only_tools_from_non_owner(method: s
         llm_config=LlmProviderConfig(provider="openrouter", api_key="sk-or-configured"),
     )
     try:
-        non_owner = await get_dispatcher().dispatch(
+        first = await get_dispatcher().dispatch(
             "r1",
             method,
             {"callerKind": "agent"},
-            _ctx(tool_registry=get_default_registry(), is_owner=False),
+            _ctx(tool_registry=get_default_registry()),
         )
-        owner = await get_dispatcher().dispatch(
+        second = await get_dispatcher().dispatch(
             "r2",
             method,
             {"callerKind": "agent"},
-            _ctx(tool_registry=get_default_registry(), is_owner=True),
+            _ctx(tool_registry=get_default_registry()),
         )
     finally:
         configure_image_generation(ImageGenerationConfig())
 
-    assert non_owner.error is None, non_owner.error
-    assert owner.error is None, owner.error
+    assert first.error is None, first.error
+    assert second.error is None, second.error
 
-    non_owner_names = _tool_names(non_owner.payload)
-    owner_names = _tool_names(owner.payload)
+    first_names = _tool_names(first.payload)
+    second_names = _tool_names(second.payload)
 
-    assert "http_request" not in non_owner_names
-    assert "git_commit" not in non_owner_names
-    assert {"http_request", "git_commit"} <= owner_names
-    assert {"image_generate", "sessions_spawn", "sessions_send"} <= owner_names
-    assert "spawn_subagent" not in owner_names
-    assert "send_message" not in owner_names
-    assert "generate_image" not in owner_names
+    assert first_names == second_names
+    assert "http_request" in first_names
+    assert "git_commit" not in first_names
+    assert {"image_generate", "sessions_spawn", "sessions_send"} <= first_names
+    assert "spawn_subagent" not in first_names
+    assert "send_message" not in first_names
+    assert "generate_image" not in first_names
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["tools.catalog", "tools.effective"])
-async def test_default_channel_tools_rpc_exposes_structured_file_authoring(method: str) -> None:
+async def test_default_channel_tools_rpc_uses_configured_agent_surface(method: str) -> None:
     import agentos.tools.builtin  # noqa: F401
     from agentos.tools.registry import get_default_registry
 
@@ -223,13 +207,13 @@ async def test_default_channel_tools_rpc_exposes_structured_file_authoring(metho
         "r1",
         method,
         {"callerKind": "channel"},
-        _ctx(tool_registry=get_default_registry(), is_owner=False),
+        _ctx(tool_registry=get_default_registry()),
     )
 
     assert result.error is None, result.error
     names = _tool_names(result.payload)
 
-    assert {"create_csv", "create_xlsx", "create_pdf_report", "create_pptx"} <= names
-    assert "write_file" not in names
-    assert "execute_code" not in names
-    assert "apply_patch" not in names
+    assert {"create_csv", "create_xlsx", "create_pdf_report"} <= names
+    assert "create_pptx" not in names
+    assert {"write_file", "execute_code", "apply_patch"} <= names
+    assert "cron" not in names

@@ -59,17 +59,6 @@ class AuthConfig(BaseSettings):
     password: str | None = None
     mode: str = "none"  # none | token | password | trusted-proxy
     trusted_proxy: str | None = None
-    token_scopes: list[str] = Field(default_factory=lambda: ["operator.admin"])
-    allowed_roles: list[str] = Field(default_factory=lambda: ["operator", "node"])
-    allow_unauthenticated_public: bool = False
-    """Break-glass opt-in: serve with ``mode="none"`` on a non-loopback bind.
-
-    Off by default — ``enforce_public_bind_auth_guard`` refuses that
-    combination at startup because it hands the chat/sessions/config
-    surfaces (and the operator's provider credentials) to anyone who can
-    reach the port. Only set this behind an external auth layer or a
-    network boundary you trust (reverse proxy auth, VPN, firewall).
-    """
 
 
 class CorsConfig(BaseSettings):
@@ -178,7 +167,7 @@ class ToolsConfig(BaseModel):
 
 
 class PermissionsConfig(BaseModel):
-    """Default owner permission posture for local/operator turns."""
+    """Default elevated-execution posture for interactive Control turns."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1471,25 +1460,21 @@ class TelegramChannelEntry(ConfiguredChannelEntry):
     poll_timeout_s: int = 30
     poll_limit: int = 100
     poll_idle_sleep_s: float = 0.1
-    access_mode: Literal["pairing", "allowlist", "open", "disabled"] = "pairing"
-    approved_sender_ids: list[str] = Field(default_factory=list)
-    group_access_mode: Literal["allowlist", "open", "disabled"] = "allowlist"
-    group_allowed_sender_ids: list[str] = Field(default_factory=list)
+    groups_enabled: bool = False
+    group_chat_ids: list[str] = Field(default_factory=list)
+    group_mention_required: bool = True
 
-    @field_validator("access_mode", mode="before")
+    @field_validator("group_chat_ids", mode="before")
     @classmethod
-    def _normalize_legacy_access_mode(cls, value: Any) -> Any:
-        return "pairing" if value == "approval" else value
-
-    @field_validator("approved_sender_ids", "group_allowed_sender_ids", mode="before")
-    @classmethod
-    def _normalize_sender_ids(cls, value: Any) -> list[str]:
+    def _normalize_group_chat_ids(cls, value: Any) -> list[str]:
         values = value.split(",") if isinstance(value, str) else (value or [])
         normalized = (str(item).strip() for item in values)
         return list(dict.fromkeys(item for item in normalized if item))
 
     @model_validator(mode="after")
     def _validate_webhook_auth(self) -> TelegramChannelEntry:
+        if self.groups_enabled and not self.group_chat_ids:
+            raise ValueError("telegram groups_enabled requires at least one group_chat_id")
         if self.transport_name == "webhook":
             if not self.webhook_url:
                 raise ValueError("webhook_url is required for telegram webhook mode")
@@ -1696,8 +1681,6 @@ class GatewayConfig(BaseSettings):
     # Component enable flags
     control_ui: ControlUiConfig = Field(default_factory=ControlUiConfig)
     diagnostics_enabled: bool = False
-    channel_admin_senders: dict[str, list[str]] = Field(default_factory=dict)
-
     @model_validator(mode="after")
     def _default_agentos_router_profile_for_direct_provider(self) -> GatewayConfig:
         router = self.agentos_router
@@ -2121,41 +2104,13 @@ def _mode_protects_public_bind(auth: AuthConfig) -> bool:
 
 
 def enforce_public_bind_auth_guard(config: GatewayConfig) -> None:
-    """Refuse to serve when ``auth.mode="none"`` on a non-loopback bind.
+    """Refuse every unauthenticated non-loopback listener."""
 
-    "No auth by default" is only safe while the gateway stays on loopback,
-    where ownership checks already require a loopback peer. On a wildcard
-    or LAN bind it hands the chat/sessions/config surfaces to anyone who
-    can reach the port, so startup fails closed unless the operator sets
-    ``auth.allow_unauthenticated_public = true`` (issue #18, V3).
-
-    Uses the same loopback predicate as the ownership check
-    (``scopes.is_loopback_bind``) so the set of binds the guard allows is
-    exactly the set ownership treats as local. Raises ``ValueError`` — the
-    CLI boundary surfaces that as a startup error with recovery guidance.
-
-    A mode "protects" a public bind only when it is actually enforced
-    end-to-end (HTTP + WS). Today that is ``token`` (auto-generated at
-    startup) and ``trusted-proxy`` *with a proxy configured*. Any other
-    value — ``password`` (not yet implemented on the HTTP surface),
-    ``trusted-proxy`` without a proxy, or a typo — is treated as *not*
-    authenticated, so it cannot silently open a public port.
-    """
-    from agentos.gateway.scopes import is_loopback_bind
+    from agentos.gateway.access import is_loopback_bind
 
     if _mode_protects_public_bind(config.auth):
         return
     if is_loopback_bind(config.host):
-        return
-    if config.auth.allow_unauthenticated_public:
-        import structlog
-
-        structlog.get_logger(__name__).warning(
-            "gateway.unauthenticated_public_bind_opt_in",
-            host=config.host,
-            hint="auth.allow_unauthenticated_public=true — every peer that "
-            "can reach this port has full operator access",
-        )
         return
     raise ValueError(
         f"Refusing to serve: auth.mode={config.auth.mode!r} does not enforce "
@@ -2164,10 +2119,7 @@ def enforce_public_bind_auth_guard(config: GatewayConfig) -> None:
         "and config with your provider credentials. Fix one of these: "
         '(1) enable enforced auth — set auth.mode="token" in agentos.toml '
         "(a token is auto-generated at startup when unset); "
-        '(2) bind loopback — remove the --listen/--bind flag or set host = "127.0.0.1"; '
-        "(3) explicit break-glass opt-in — set auth.allow_unauthenticated_public = true "
-        "(or AGENTOS_AUTH_ALLOW_UNAUTHENTICATED_PUBLIC=true) only if an external "
-        "layer (reverse proxy auth, VPN, firewall) already protects this port."
+        '(2) bind loopback — remove the --listen/--bind flag or set host = "127.0.0.1".'
     )
 
 

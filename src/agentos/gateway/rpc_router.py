@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agentos.gateway.access import CONTROL_AND_CHANNEL
 from agentos.gateway.rpc import RpcContext, RpcHandlerError, get_dispatcher
 from agentos.router_control import (
     RouterControlHoldStore,
@@ -47,7 +48,7 @@ def _router_state(ctx: RpcContext) -> tuple[Any, RouterControlHoldStore]:
     return cfg, store
 
 
-@_d.method("router.hold.set", scope="operator.write")
+@_d.method("router.hold.set", CONTROL_AND_CHANNEL)
 async def _handle_router_hold_set(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     key = _require_key(params)
     tier = str((params or {}).get("tier") or "").strip().lower()
@@ -74,7 +75,7 @@ async def _handle_router_hold_set(params: dict | None, ctx: RpcContext) -> dict[
     }
 
 
-@_d.method("router.hold.clear", scope="operator.write")
+@_d.method("router.hold.clear", CONTROL_AND_CHANNEL)
 async def _handle_router_hold_clear(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     key = _require_key(params)
     _cfg, store = _router_state(ctx)

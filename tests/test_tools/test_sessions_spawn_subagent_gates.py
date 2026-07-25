@@ -92,8 +92,7 @@ class _StubTaskRuntime:
 
 def _ctx(session_key: str = "agent:caller:main", agent_id: str = "caller") -> ToolContext:
     return ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.AGENT,
+                caller_kind=CallerKind.AGENT,
         subagent_depth=0,
         agent_id=agent_id,
         session_key=session_key,

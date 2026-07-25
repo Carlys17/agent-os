@@ -36,6 +36,19 @@ async def test_telegram_api_retries_connect_error_before_sending() -> None:
 
 
 @pytest.mark.asyncio
+async def test_telegram_long_poll_timeout_has_network_headroom() -> None:
+    channel = TelegramChannel(TelegramChannelConfig(token="token", poll_timeout_s=30))
+    client = AsyncMock()
+    client.post = AsyncMock(return_value=_Response())
+    channel._client = client
+    channel._owns_client = False
+
+    await channel._api("getUpdates", channel._get_updates_payload())
+
+    assert client.post.await_args.kwargs["timeout"] == 35.0
+
+
+@pytest.mark.asyncio
 async def test_telegram_api_redacts_token_after_connect_retries_are_exhausted() -> None:
     token = "secret-bot-token"
     channel = TelegramChannel(TelegramChannelConfig(token=token))

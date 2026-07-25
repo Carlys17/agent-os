@@ -45,7 +45,7 @@ _MENTION_RE = re.compile(r"<@(U[A-Z0-9]+)(?:\|[^>]*)?>")
 # Channel-contract constants pinned by the adapter audit.
 CAPABILITY_TIER = "GREEN-shipping"
 
-# Slack is a DM/group channel; the permission matrix denies admin-only tools.
+# Slack is a DM/group channel; runtime capability and sandbox policy still apply.
 DM_SAFETY_TIERS: tuple[str, ...] = ("safe", "confirm")
 
 RETRYABLE_ERROR_CLASSES: tuple[str, ...] = (

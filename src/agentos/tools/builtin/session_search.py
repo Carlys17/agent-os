@@ -57,7 +57,7 @@ def create_session_search_tool(
             },
         },
         required=["query"],
-        owner_only=True,
+        exposed_by_default=False,
         registry=registry,
     )
     async def session_search(

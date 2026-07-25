@@ -185,11 +185,11 @@ class _ToolFakeScheduler:
 
 async def test_cron_tool_accepts_tz_param() -> None:
     """The model-facing `cron` tool must let callers set tz at add time."""
-    import agentos.tools.builtin.admin as admin_mod
-    from agentos.tools.builtin.admin import cron as cron_tool
+    import agentos.tools.builtin.control as control_mod
+    from agentos.tools.builtin.control import cron as cron_tool
 
     fake = _ToolFakeScheduler()
-    admin_mod.set_scheduler(fake)
+    control_mod.set_scheduler(fake)
     try:
         raw = await cron_tool(
             action="add",
@@ -200,7 +200,7 @@ async def test_cron_tool_accepts_tz_param() -> None:
             tz="America/Los_Angeles",
         )
     finally:
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
     assert fake.added_kwargs is not None
     assert fake.added_kwargs["tz"] == "America/Los_Angeles"
@@ -210,11 +210,11 @@ async def test_cron_tool_accepts_tz_param() -> None:
 
 
 async def test_cron_tool_defaults_tz_to_empty_string() -> None:
-    import agentos.tools.builtin.admin as admin_mod
-    from agentos.tools.builtin.admin import cron as cron_tool
+    import agentos.tools.builtin.control as control_mod
+    from agentos.tools.builtin.control import cron as cron_tool
 
     fake = _ToolFakeScheduler()
-    admin_mod.set_scheduler(fake)
+    control_mod.set_scheduler(fake)
     try:
         raw = await cron_tool(
             action="add",
@@ -224,6 +224,6 @@ async def test_cron_tool_defaults_tz_to_empty_string() -> None:
             session_target="isolated",
         )
     finally:
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
     assert fake.added_kwargs["tz"] == ""
     assert json.loads(raw)["tz"] == ""

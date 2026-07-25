@@ -1815,7 +1815,6 @@ class OpenClawMigrator:
                     reason,
                 )
 
-        admin_senders = dict(self._config_obj().channel_admin_senders)
         for channel_name, option in (
             ("telegram", "telegram-settings"),
             ("discord", "discord-settings"),
@@ -1825,12 +1824,12 @@ class OpenClawMigrator:
                 continue
             admin_users = self._channel_admin_users(config, channel_name)
             if admin_users:
-                admin_senders[channel_name] = admin_users
                 self._note(
                     "channel-settings",
                     (
-                        f"Mapped OpenClaw {channel_name} adminUsers/admin_users to "
-                        "AgentOS channel_admin_senders."
+                        f"OpenClaw {channel_name} adminUsers/admin_users were not "
+                        "migrated. AgentOS has no channel roles; re-pair Telegram "
+                        "senders through the pairing workflow."
                     ),
                 )
             allowlist_fields = self._channel_non_admin_allowlist_fields(config, channel_name)
@@ -1839,13 +1838,10 @@ class OpenClawMigrator:
                     "channel-settings",
                     (
                         f"OpenClaw {channel_name} {', '.join(allowlist_fields)} controls "
-                        "channel access, not AgentOS admin privileges; it was not "
-                        "mapped to channel_admin_senders."
+                        "were not migrated. Configure groups explicitly and pair "
+                        "Telegram senders after migration."
                     ),
                 )
-        if admin_senders != self._config_obj().channel_admin_senders:
-            self._config_obj().channel_admin_senders = admin_senders
-            self._config_changed = True
 
         for channel_name in ("whatsapp", "signal"):
             raw = _get_nested(config, "messages", channel_name)

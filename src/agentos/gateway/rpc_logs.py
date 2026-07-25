@@ -145,14 +145,14 @@ def _build_logs_status(ctx: RpcContext) -> dict[str, Any]:
     }
 
 
-@_d.method("logs.status", scope="operator.read")
+@_d.method("logs.status")
 async def _handle_logs_status(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Report log-related runtime switches without mutating filesystem state."""
 
     return _build_logs_status(ctx)
 
 
-@_d.method("logs.trace", scope="operator.read")
+@_d.method("logs.trace")
 async def _handle_logs_trace(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Return safe trace events for one trace id."""
 
@@ -175,7 +175,7 @@ async def _handle_logs_trace(params: dict | None, ctx: RpcContext) -> dict[str, 
     }
 
 
-@_d.method("logs.tail", scope="operator.read")
+@_d.method("logs.tail")
 async def _handle_logs_tail(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Tail log file with cursor-based pagination and level filter."""
     p = params or {}

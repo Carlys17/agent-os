@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from agentos.engine.commands import DEFAULT_REGISTRY, CommandDef, Surface, parse_surface
+from agentos.gateway.access import CONTROL_AND_CHANNEL
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
 _d = get_dispatcher()
@@ -44,7 +45,7 @@ def _serialize(cmd: CommandDef, surface: Surface) -> dict[str, Any]:
     return out
 
 
-@_d.method("commands.list_for_surface", scope="operator.read")
+@_d.method("commands.list_for_surface", CONTROL_AND_CHANNEL)
 async def _handle_commands_list_for_surface(
     params: dict | None, _ctx: RpcContext
 ) -> dict[str, Any]:

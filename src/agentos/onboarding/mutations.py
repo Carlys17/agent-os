@@ -1217,12 +1217,12 @@ def upsert_channel(
 def _merge_with_existing_secrets(
     config: GatewayConfig, payload: dict[str, Any]
 ) -> dict[str, Any]:
-    """Mirror upsert_llm_provider: blank secret in payload = keep current.
+    """Preserve write-only secrets and omitted Telegram group posture on edit.
 
-    Only secret fields are auto-preserved here so that re-adding an entry
-    by name does not require re-typing credentials. Non-secret partial
-    updates belong to the edit path, which seeds the full existing entry
-    in the CLI before calling upsert.
+    Blank secrets retain their current values so re-adding an entry by name
+    does not require re-typing credentials. Telegram's group controls are
+    security posture, so partial RPC/onboarding edits must not silently reset
+    them to permissive or surprising defaults when those fields are omitted.
     """
     from agentos.onboarding.channel_specs import get_channel_setup_spec
 
@@ -1245,16 +1245,15 @@ def _merge_with_existing_secrets(
     if existing is None:
         return dict(payload)
     merged = dict(payload)
-    # The legacy/static Telegram DM allowlist is intentionally absent from the
-    # onboarding form (new approvals live in the pairing store). Preserve it
-    # when an operator later edits transport or credential fields.
-    if type_name == "telegram" and "approved_sender_ids" not in merged:
-        merged["approved_sender_ids"] = list(existing.get("approved_sender_ids") or [])
     for f in spec.fields:
         if not f.secret:
             continue
         if merged.get(f.name) in ("", None) and existing.get(f.name):
             merged[f.name] = existing[f.name]
+    if type_name == "telegram":
+        for field_name in ("groups_enabled", "group_chat_ids", "group_mention_required"):
+            if field_name not in merged:
+                merged[field_name] = existing[field_name]
     return merged
 
 

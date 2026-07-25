@@ -128,8 +128,7 @@ class GatewayClient:
         params: dict[str, Any] = {
             "minProtocol": 1,
             "maxProtocol": 3,
-            "role": "operator",
-            "scopes": ["operator.admin"],
+            "clientKind": "control",
         }
         if token:
             params["auth"] = {"token": token}

@@ -175,19 +175,16 @@ def _telegram_spec() -> ChannelSetupSpec:
                               placeholder="123456:ABC..."),
             ChannelSetupField("default_chat_id", "Default chat id", "text",
                               required=False, default=""),
-            ChannelSetupField("access_mode", "Chat account access", "select",
-                              required=False, default="pairing",
-                              choices=("pairing", "allowlist", "open", "disabled"),
-                              description="Pairing gives new Telegram DM accounts an "
-                              "expiring code until an operator allows them from the "
-                              "Channels page."),
-            ChannelSetupField("group_access_mode", "Group access", "select",
-                              required=False, default="allowlist",
-                              choices=("allowlist", "open", "disabled"),
-                              description="Group authorization is separate from DM pairing."),
-            ChannelSetupField("group_allowed_sender_ids", "Group sender allowlist", "text",
+            ChannelSetupField("groups_enabled", "Enable configured groups", "bool",
+                              required=False, default=False,
+                              description="Direct messages always require pairing. "
+                              "Groups are disabled unless explicitly enabled."),
+            ChannelSetupField("group_chat_ids", "Allowed group chat ids", "text",
                               required=False, default="",
-                              description="Comma-separated Telegram user IDs allowed in groups."),
+                              description="Comma-separated Telegram group chat IDs. "
+                              "Every sender in these groups must still be paired."),
+            ChannelSetupField("group_mention_required", "Require mention in groups", "bool",
+                              required=False, default=True),
             ChannelSetupField("api_base", "API base", "text",
                               required=False, default="https://api.telegram.org"),
             ChannelSetupField("transport_name", "Transport", "select",

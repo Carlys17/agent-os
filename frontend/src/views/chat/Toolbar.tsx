@@ -63,7 +63,7 @@ export function Toolbar({
 
   // ── Elevated mode ─────────────────────────────────────────────────────────
   // The SESSION override lives in the shared reactive store; the GLOBAL default
-  // comes from config.get. `unavailable` latches after a 403 from the owner-only
+  // comes from config.get. `unavailable` latches after a 403 from the Control
   // endpoint (chat.js:2285-2302).
   const sessionMode = useApprovals((s) => s.elevatedMode)
   const [unavailable, setUnavailable] = useState(false)
@@ -82,7 +82,7 @@ export function Toolbar({
   })
   const globalMode = configQuery.data?.permissions?.default_mode || ''
 
-  // chat.js:2277-2312 (_syncElevatedMode) — POST the new mode to the owner-only
+  // chat.js:2277-2312 (_syncElevatedMode) — POST the new mode to the Control
   // endpoint. A 403 latches `unavailable`, clears the shared elevated mode, and
   // toasts once. Any other failure toasts the error.
   const syncElevatedMode = useCallback(
@@ -96,10 +96,10 @@ export function Toolbar({
           body: JSON.stringify({ sessionKey, mode: mode || 'off' }),
         })
         if (resp.status === 403) {
-          // chat.js:2285-2302 — non-owner session: latch disabled, clear cache.
+          // chat.js:2285-2302 — connection not admitted: latch disabled, clear cache.
           setUnavailable(true)
           setBrowserElevated('')
-          toast.warning('Bypass requires a local owner session (loopback only).', {
+          toast.warning('Bypass requires an admitted Control connection.', {
             duration: 4000,
           })
           return
@@ -143,7 +143,7 @@ export function Toolbar({
   // unavailable, clicking just re-toasts the reason.
   const onPillToggle = useCallback(() => {
     if (unavailable) {
-      toast.warning('Bypass requires a local owner session (loopback only).', { duration: 4000 })
+      toast.warning('Bypass requires an admitted Control connection.', { duration: 4000 })
       return
     }
     if (sessionMode) {
