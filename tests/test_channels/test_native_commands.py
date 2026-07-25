@@ -4,6 +4,7 @@ import asyncio
 import json
 from typing import Any
 
+import httpx
 import pytest
 from structlog.testing import capture_logs
 
@@ -164,16 +165,13 @@ async def test_discord_missing_application_id_logs_setup_hint() -> None:
     assert "Discord Application ID" in event["setup_hint"]
 
 
-@pytest.mark.asyncio
-async def test_discord_start_invokes_native_command_registration() -> None:
-    channel = DiscordChannel(DiscordChannelConfig(token="token", application_id="app-id"))
+def _stub_discord_gateway_start(channel: DiscordChannel) -> None:
     frames = iter(
         [
             {"op": 10, "d": {"heartbeat_interval": 45_000}},
             {"t": "READY", "d": {"user": {"id": "bot"}}},
         ]
     )
-    registered = False
 
     async def connect(_url: str) -> object:
         return object()
@@ -183,10 +181,6 @@ async def test_discord_start_invokes_native_command_registration() -> None:
 
     async def no_op(*_args: Any, **_kwargs: Any) -> None:
         return None
-
-    async def register() -> None:
-        nonlocal registered
-        registered = True
 
     async def idle() -> None:
         await asyncio.Event().wait()
@@ -198,12 +192,55 @@ async def test_discord_start_invokes_native_command_registration() -> None:
     channel._close_ws = no_op  # type: ignore[method-assign]  # noqa: SLF001
     channel._heartbeat_loop = idle  # type: ignore[method-assign]  # noqa: SLF001
     channel._dispatch_loop = idle  # type: ignore[method-assign]  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_discord_start_invokes_native_command_registration() -> None:
+    channel = DiscordChannel(DiscordChannelConfig(token="token", application_id="app-id"))
+    _stub_discord_gateway_start(channel)
+    registered = False
+
+    async def register() -> None:
+        nonlocal registered
+        registered = True
+
     channel.register_native_slash_commands = register  # type: ignore[method-assign]
 
     await channel.start()
     await channel.stop()
 
     assert registered is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(httpx.HTTPError("REST request failed"), id="http-error"),
+        pytest.param(RuntimeError("retry_request exhausted"), id="rate-limit-exhausted"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_discord_start_survives_native_command_registration_failure(
+    error: Exception,
+) -> None:
+    channel = DiscordChannel(DiscordChannelConfig(token="token", application_id="app-id"))
+    _stub_discord_gateway_start(channel)
+
+    async def register() -> None:
+        raise error
+
+    channel.register_native_slash_commands = register  # type: ignore[method-assign]
+
+    with capture_logs() as logs:
+        await channel.start()
+
+    try:
+        assert (await channel.health_check()).connected is True
+        event = next(log for log in logs if log["event"] == "discord.commands_not_registered")
+        assert event["reason"] == "sync_failed"
+        assert event["error"] == str(error)
+    finally:
+        await channel.stop()
 
 
 class _SlackResponse:

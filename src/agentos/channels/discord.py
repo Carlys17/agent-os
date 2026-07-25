@@ -527,7 +527,14 @@ class DiscordChannel:
         if ready.get("t") == "READY":
             await self._handle_dispatch("READY", ready.get("d", {}))
 
-        await self.register_native_slash_commands()
+        try:
+            await self.register_native_slash_commands()
+        except (httpx.HTTPError, RuntimeError) as exc:
+            log.warning(
+                "discord.commands_not_registered",
+                reason="sync_failed",
+                error=str(exc),
+            )
 
         self._connected = True
         self._state.last_heartbeat_ack = True
