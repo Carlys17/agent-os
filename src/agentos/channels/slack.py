@@ -9,7 +9,7 @@ import hmac
 import json
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -683,9 +683,13 @@ class SlackChannel:
             with contextlib.suppress(Exception):
                 await ws.close()
             return
+        payload = msg.get("payload")
+        if mtype == "slash_commands":
+            if isinstance(payload, dict):
+                self._ingest_slash_command(payload)
+            return
         if mtype != "events_api":
             return
-        payload = msg.get("payload")
         if isinstance(payload, dict) and payload.get("type") == "event_callback":
             self._ingest_event_callback(payload)
 
@@ -725,20 +729,8 @@ class SlackChannel:
         content_type = request.headers.get("content-type", "")
         if content_type.startswith("application/x-www-form-urlencoded"):
             form = await request.form()
-            command = str(form.get("command") or "").strip()
-            if not command.startswith("/"):
+            if not self._ingest_slash_command(form):
                 return Response(status_code=400)
-            text = str(form.get("text") or "").strip()
-            self.enqueue(
-                self.parse_event(
-                    {
-                        "user": str(form.get("user_id") or "unknown"),
-                        "channel": str(form.get("channel_id") or self.slack_channel_id),
-                        "text": f"{command} {text}".strip(),
-                        "interaction_type": "slash_command",
-                    }
-                )
-            )
             return Response(status_code=200)
 
         try:
@@ -756,6 +748,25 @@ class SlackChannel:
             self._ingest_event_callback(data)
 
         return Response(status_code=200)
+
+    def _ingest_slash_command(self, payload: Mapping[str, Any]) -> bool:
+        """Normalize and enqueue a Slack slash command from either transport."""
+        command = str(payload.get("command") or "").strip()
+        if not command.startswith("/"):
+            return False
+        text = str(payload.get("text") or "").strip()
+        self.enqueue(
+            self.parse_event(
+                {
+                    "user": str(payload.get("user_id") or "unknown"),
+                    "channel": str(payload.get("channel_id") or self.slack_channel_id),
+                    "text": f"{command} {text}".strip(),
+                    "team": payload.get("team_id"),
+                    "interaction_type": "slash_command",
+                }
+            )
+        )
+        return True
 
     def _ingest_event_callback(self, data: dict[str, Any]) -> None:
         """Shared inbound path for an Events API ``event_callback`` payload,
