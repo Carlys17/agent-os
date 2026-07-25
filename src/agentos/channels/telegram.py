@@ -855,23 +855,28 @@ class TelegramChannel:
         )
 
     def _build_send_payload(self, message: OutgoingMessage) -> dict[str, Any]:
+        metadata = message.metadata
+        route_chat_id = metadata.get("channel")
         chat_id = (
-            message.metadata.get("chat_id")
-            or message.metadata.get("channel_id")
+            metadata.get("chat_id")
+            or metadata.get("channel_id")
+            or route_chat_id
             or message.reply_to
             or self.config.default_chat_id
         )
         if not chat_id:
             raise ValueError("telegram.send requires chat_id via metadata, reply_to, or config")
         payload: dict[str, Any] = {"chat_id": str(chat_id), "text": message.content}
-        thread_id = message.metadata.get("thread_id") or message.metadata.get("message_thread_id")
+        thread_id = metadata.get("thread_id") or metadata.get("message_thread_id")
+        if thread_id is None and route_chat_id and message.reply_to:
+            thread_id = message.reply_to
         if thread_id:
             payload["message_thread_id"] = _coerce_telegram_int(thread_id)
-        if (reply_message_id := message.metadata.get("reply_to_message_id")) is not None:
+        if (reply_message_id := metadata.get("reply_to_message_id")) is not None:
             payload["reply_parameters"] = {
                 "message_id": _coerce_telegram_int(reply_message_id),
             }
-        if parse_mode := message.metadata.get("parse_mode"):
+        if parse_mode := metadata.get("parse_mode"):
             payload["parse_mode"] = str(parse_mode)
         return payload
 

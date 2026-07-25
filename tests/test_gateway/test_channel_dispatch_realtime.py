@@ -10,6 +10,7 @@ import pytest
 
 from agentos.artifacts import ArtifactStore
 from agentos.channels.stream_policy import resolve_channel_stream_policy
+from agentos.channels.telegram import TelegramChannel, TelegramChannelConfig
 from agentos.channels.types import Attachment, IncomingMessage, OutgoingMessage
 from agentos.engine.types import (
     ArtifactEvent,
@@ -147,6 +148,70 @@ async def test_registered_slash_command_preserves_channel_for_thread_target() ->
     assert reply.reply_to == "1700000000.000100"
     assert reply.metadata["channel"] == "C42"
     assert reply.metadata["command"] == "compact"
+
+
+@pytest.mark.asyncio
+async def test_telegram_forum_command_reply_keeps_chat_and_topic_targets() -> None:
+    channel = TelegramChannel(TelegramChannelConfig(token="token"))
+    msg = channel.parse_incoming(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "message_thread_id": 777,
+                "chat": {"id": -100123, "type": "supergroup"},
+                "from": {"id": 42},
+                "text": "/compact",
+            },
+        }
+    )
+    route_envelope = build_channel_route_envelope(
+        msg,
+        session_key="agent:main:telegram:group:-100123:thread:777",
+        session_prefix="telegram",
+        agent_id="main",
+    )
+
+    class FakeDispatcher:
+        async def dispatch(self, req_id, method, params, ctx):
+            return make_ok_res(
+                req_id,
+                {
+                    "status": "skipped",
+                    "compacted": False,
+                },
+            )
+
+    reply = await _dispatch_channel_slash_command(
+        route_envelope=route_envelope,
+        msg=msg,
+        session_manager=object(),
+        session_key=route_envelope.session_key,
+        session_prefix="telegram",
+        rpc_dispatcher=FakeDispatcher(),
+        context_factory=lambda _envelope: object(),
+    )
+    assert reply is not None
+
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_api(method: str, payload: dict | None = None) -> dict:
+        calls.append((method, payload or {}))
+        return {"message_id": 11}
+
+    channel._api = fake_api  # type: ignore[method-assign]  # noqa: SLF001
+    await channel.send(reply)
+
+    assert calls == [
+        (
+            "sendMessage",
+            {
+                "chat_id": "-100123",
+                "text": "Already within context budget; no compact was applied.",
+                "message_thread_id": 777,
+            },
+        )
+    ]
 
 
 def test_channel_stream_policy_prefers_adapter_stream_updates() -> None:
