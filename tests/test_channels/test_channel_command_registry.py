@@ -20,6 +20,7 @@ def _envelope(
     *,
     source_name: str = "telegram",
     bot_username: str | None = None,
+    session_key: str = "agent:main:telegram:u1",
 ):
     metadata = {"bot_username": bot_username} if bot_username else {}
     msg = IncomingMessage(
@@ -30,7 +31,7 @@ def _envelope(
     )
     return build_channel_route_envelope(
         msg,
-        session_key="agent:main:telegram:u1",
+        session_key=session_key,
         session_prefix=source_name,
         agent_id="main",
     )
@@ -107,6 +108,39 @@ async def test_configured_channel_admin_gets_read_and_write_rpc_access() -> None
     assert context.principal.scopes == frozenset({READ_SCOPE, WRITE_SCOPE})
     assert read_response.ok is True
     assert write_response.ok is True
+
+
+@pytest.mark.asyncio
+async def test_admitted_direct_message_sender_gets_read_and_write_rpc_access() -> None:
+    context = build_channel_rpc_context(
+        _envelope(session_key="agent:main:telegram:dm:u1"),
+        gateway_config=SimpleNamespace(channel_admin_senders={}),
+    )
+    dispatcher = _permission_dispatcher()
+
+    read_response = await dispatcher.dispatch("read", "status", {}, context)
+    write_response = await dispatcher.dispatch("write", "sessions.reset", {}, context)
+
+    assert context.principal.role == "operator"
+    assert context.principal.scopes == frozenset({READ_SCOPE, WRITE_SCOPE})
+    assert read_response.ok is True
+    assert write_response.ok is True
+
+
+@pytest.mark.asyncio
+async def test_admitted_group_sender_stays_read_only_without_admin_access() -> None:
+    context = build_channel_rpc_context(
+        _envelope(session_key="agent:main:telegram:group:c1"),
+        gateway_config=SimpleNamespace(channel_admin_senders={}),
+    )
+    dispatcher = _permission_dispatcher()
+
+    write_response = await dispatcher.dispatch("write", "sessions.reset", {}, context)
+
+    assert context.principal.scopes == frozenset({READ_SCOPE})
+    assert write_response.ok is False
+    assert write_response.error is not None
+    assert write_response.error.code == ERROR_UNAUTHORIZED
 
 
 @pytest.mark.parametrize(
@@ -244,8 +278,7 @@ async def test_channel_history_handles_empty_and_bounds_long_content() -> None:
         "/history",
         {
             "messages": [
-                {"role": "user", "text": f"message {index} " + "x" * 800}
-                for index in range(10)
+                {"role": "user", "text": f"message {index} " + "x" * 800} for index in range(10)
             ],
             "loaded_count": 10,
         },
@@ -339,17 +372,13 @@ async def test_channel_information_commands_render_payloads() -> None:
 async def test_channel_models_and_skills_are_bounded() -> None:
     models = await _dispatch(
         "/model",
-        [
-            {"provider": "ollama", "id": f"model-{index}-" + "x" * 200}
-            for index in range(30)
-        ],
+        [{"provider": "ollama", "id": f"model-{index}-" + "x" * 200} for index in range(30)],
     )
     skills = await _dispatch(
         "/skills",
         {
             "skills": [
-                {"name": f"skill-{index}-" + "x" * 200, "status": "ready"}
-                for index in range(30)
+                {"name": f"skill-{index}-" + "x" * 200, "status": "ready"} for index in range(30)
             ]
         },
     )

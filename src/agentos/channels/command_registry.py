@@ -26,6 +26,7 @@ from agentos.gateway.auth import Principal
 from agentos.gateway.routing import RouteEnvelope, SourceKind
 from agentos.gateway.rpc import RpcContext
 from agentos.gateway.scopes import READ_SCOPE, WRITE_SCOPE
+from agentos.session.keys import derive_chat_type
 
 
 class CommandRegistry:
@@ -115,13 +116,18 @@ def build_channel_rpc_context(
     gateway_config: Any,
     **handles: Any,
 ) -> RpcContext:
-    """Grant read access post-admission and reserve mutations for channel admins."""
+    """Grant write access to admitted DMs and configured channel admins."""
     admin_senders = getattr(gateway_config, "channel_admin_senders", {})
     sender_id = envelope.sender_id
     is_admin = bool(sender_id and sender_id in admin_senders.get(envelope.source_name, []))
+    is_direct_message = derive_chat_type(envelope.session_key) == "direct"
     principal = Principal(
         role="operator",
-        scopes=(frozenset({READ_SCOPE, WRITE_SCOPE}) if is_admin else frozenset({READ_SCOPE})),
+        scopes=(
+            frozenset({READ_SCOPE, WRITE_SCOPE})
+            if is_admin or is_direct_message
+            else frozenset({READ_SCOPE})
+        ),
         is_owner=False,
         authenticated=True,
     )

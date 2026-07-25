@@ -135,9 +135,10 @@ sender denied by pairing or an allowlist cannot execute any command. Once
 admitted, a sender receives read-only command access, including `/help`,
 `/status`, `/model`, `/history`, `/memory`, `/skills`, and `/usage`.
 
-Commands that mutate a session or routing state require the sender to be listed
-in the top-level `channel_admin_senders` map. This includes `/new`, `/reset`,
-`/compact`, `/abort`, `/c0` through `/c3`, and `/auto`.
+In direct messages, admitted senders can also run commands that mutate a
+session or routing state, including `/new`, `/reset`, `/compact`, `/abort`,
+`/c0` through `/c3`, and `/auto`. In group chats, those commands require the
+sender to be listed in the top-level `channel_admin_senders` map.
 
 ```toml
 channel_admin_senders = { personal = ["123456789"], team = ["U0123ABC"] }
