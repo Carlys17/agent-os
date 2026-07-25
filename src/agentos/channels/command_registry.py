@@ -115,12 +115,13 @@ def build_channel_rpc_context(
     gateway_config: Any,
     **handles: Any,
 ) -> RpcContext:
+    """Grant read access post-admission and reserve mutations for channel admins."""
     admin_senders = getattr(gateway_config, "channel_admin_senders", {})
     sender_id = envelope.sender_id
-    is_operator = bool(sender_id and sender_id in admin_senders.get(envelope.source_name, []))
+    is_admin = bool(sender_id and sender_id in admin_senders.get(envelope.source_name, []))
     principal = Principal(
-        role="operator" if is_operator else "viewer",
-        scopes=frozenset({READ_SCOPE, WRITE_SCOPE}) if is_operator else frozenset(),
+        role="operator",
+        scopes=(frozenset({READ_SCOPE, WRITE_SCOPE}) if is_admin else frozenset({READ_SCOPE})),
         is_owner=False,
         authenticated=True,
     )

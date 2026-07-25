@@ -128,6 +128,26 @@ DM modes are `pairing`, `allowlist`, `open`, and `disabled`; group modes are
 where the adapter's mention policy applies. Use `open` only when unrestricted
 access is intentional.
 
+## Channel Command Authorization
+
+Channel access policy runs before native or text slash-command dispatch. A
+sender denied by pairing or an allowlist cannot execute any command. Once
+admitted, a sender receives read-only command access, including `/help`,
+`/status`, `/model`, `/history`, `/memory`, `/skills`, and `/usage`.
+
+Commands that mutate a session or routing state require the sender to be listed
+in the top-level `channel_admin_senders` map. This includes `/new`, `/reset`,
+`/compact`, `/abort`, `/c0` through `/c3`, and `/auto`.
+
+```toml
+channel_admin_senders = { personal = ["123456789"], team = ["U0123ABC"] }
+```
+
+Each map key is the configured channel entry `name` (`personal` and `team`
+above), not the platform `type` (`telegram`, `slack`, or `discord`). Keep sender
+IDs as quoted strings and add only trusted accounts: channel admins also receive
+owner-level tool access for normal agent turns from that channel.
+
 ## Slack Modes
 
 Slack Socket Mode uses an outbound websocket and does not require a public
