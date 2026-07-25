@@ -171,6 +171,14 @@ def test_public_docs_do_not_use_key_shaped_placeholders() -> None:
     assert violations == []
 
 
+def test_security_policy_routes_vulnerability_reports_privately() -> None:
+    text = Path("SECURITY.md").read_text(encoding="utf-8")
+
+    assert "https://github.com/use-agent-os/agent-os/security/advisories/new" in text
+    assert "Do not open a public issue with vulnerability details" in text
+    assert "when it is available" not in text
+
+
 def test_release_sop_documents_github_only_validation_boundary() -> None:
     text = Path("RELEASES.md").read_text(encoding="utf-8")
 
