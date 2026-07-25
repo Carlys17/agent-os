@@ -385,7 +385,9 @@ async def run_channel_dispatch(
                 else:
                     event = "channel.command_intercepted"
                 emit(event, command=command_reply.metadata.get("command"), method=command_reply.metadata.get("method"), session_key=session_key)  # noqa: E501
-                await channel.send(command_reply)
+                await channel.send(
+                    _build_command_reply_message(channel, command_reply, msg)
+                )
                 continue
         # fmt: on
 
@@ -1240,6 +1242,29 @@ def _build_reply_message(channel: Any, content: str, msg: IncomingMessage) -> Ou
         if isinstance(reply, OutgoingMessage):
             return _sanitize_outgoing_message(reply)
     return _sanitize_outgoing_message(OutgoingMessage(content=content))
+
+
+def _build_command_reply_message(
+    channel: Any,
+    reply: OutgoingMessage,
+    inbound: IncomingMessage,
+) -> OutgoingMessage:
+    """Preserve command metadata while applying adapter-specific reply routing."""
+    builder = getattr(channel, "build_reply_message", None)
+    if not callable(builder):
+        return _sanitize_outgoing_message(reply)
+    routed = builder(reply.content, inbound)
+    if not isinstance(routed, OutgoingMessage):
+        return _sanitize_outgoing_message(reply)
+    metadata = {**routed.metadata, **reply.metadata}
+    return _sanitize_outgoing_message(
+        reply.model_copy(
+            update={
+                "metadata": metadata,
+                "reply_to": routed.reply_to,
+            }
+        )
+    )
 
 
 def _route_envelope_reply_message(
