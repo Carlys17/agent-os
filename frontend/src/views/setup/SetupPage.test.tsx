@@ -48,6 +48,24 @@ const CATALOG = {
         { name: 'base_url', label: 'Base URL' },
       ],
     },
+    {
+      providerId: 'opencap',
+      label: 'OpenCAP',
+      runtimeSupported: true,
+      routerSupported: true,
+      whatYouNeed: ['API key via OPENCAP_API_KEY or a one-time paste.'],
+      fields: [
+        { name: 'model', label: 'Model', default: 'minimax-m3' },
+        { name: 'api_key', label: 'API key', type: 'password', secret: true, required: true },
+        { name: 'api_key_env', label: 'API key env', default: 'OPENCAP_API_KEY' },
+        {
+          name: 'base_url',
+          label: 'Base URL',
+          default: 'https://gw.capminal.ai/api/inference/v1',
+        },
+        { name: 'proxy', label: 'HTTP proxy' },
+      ],
+    },
     { providerId: 'other', label: 'Other', runtimeSupported: true, fields: [] },
   ],
   routerProfiles: {
@@ -223,6 +241,38 @@ describe('SetupPage', () => {
         expect.objectContaining({ providerId: 'openai', apiKey: 'sk-secret' }),
       ),
     )
+  })
+
+  it('configures OpenCAP defaults without submitting two credential sources', async () => {
+    wireCalls(statusFor({ needsOnboarding: true, sectionDetails: { llm: { status: 'missing' } } }))
+    renderPage()
+    const provider = await screen.findByLabelText('Provider')
+
+    fireEvent.change(provider, { target: { value: 'opencap' } })
+
+    expect(screen.getByLabelText('Model')).toHaveValue('minimax-m3')
+    expect(screen.getByLabelText('API key env')).toHaveValue('OPENCAP_API_KEY')
+    expect(screen.getByText('Advanced provider connection').closest('details')).not.toHaveAttribute(
+      'open',
+    )
+
+    fireEvent.change(screen.getByLabelText('API key'), {
+      target: { value: 'opencap-browser-regression-key' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Provider' }))
+
+    await waitFor(() => {
+      const call = mockRpc.call.mock.calls.find(
+        (entry) => entry[0] === 'onboarding.provider.configure',
+      )
+      expect(call?.[1]).toMatchObject({
+        providerId: 'opencap',
+        model: 'minimax-m3',
+        apiKey: 'opencap-browser-regression-key',
+        baseUrl: 'https://gw.capminal.ai/api/inference/v1',
+      })
+      expect(call?.[1]).not.toHaveProperty('apiKeyEnv')
+    })
   })
 
   it('uses the shared select and checkbox controls throughout Guided setup', async () => {

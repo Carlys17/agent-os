@@ -694,6 +694,18 @@ def _bankr_tiers() -> dict:
     }
 
 
+def _opencap_tiers() -> dict:
+    """OpenCAP routing config using neutral bare model ids served by its gateway.
+
+    Safety-sensitive models such as ``oc-uncensored-1.0`` remain available as
+    explicit user overrides, but are never selected by the recommended profile.
+    """
+    tiers = _bankr_tiers()
+    for tier in tiers.values():
+        tier["provider"] = "opencap"
+    return tiers
+
+
 def _openrouter_tiers() -> dict:
     """Legacy OpenRouter routing config, kept as an explicit tier profile."""
     return {
@@ -754,6 +766,7 @@ def _openrouter_tiers() -> dict:
 ROUTER_TIER_PROFILE_IDS = frozenset(
     {
         "bankr",
+        "opencap",
         "openrouter",
         "dashscope",
         "deepseek",
@@ -791,6 +804,8 @@ def _router_tier_profile_defaults(profile: str | None) -> dict:
         )
     if normalized == "bankr":
         return _bankr_tiers()
+    if normalized == "opencap":
+        return _opencap_tiers()
     if normalized == "openrouter":
         return _openrouter_tiers()
     profiles = {
@@ -1702,6 +1717,7 @@ class GatewayConfig(BaseSettings):
         has_custom_tiers = "tiers" in fields_set and router_tiers not in (
             _openrouter_tiers(),
             _bankr_tiers(),
+            _opencap_tiers(),
         )
         if "tier_profile" in fields_set or has_custom_tiers:
             return self
