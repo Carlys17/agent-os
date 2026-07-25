@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from agentos.channels.command_registry import DEFAULT_COMMAND_REGISTRY
+from agentos.channels.command_registry import (
+    DEFAULT_COMMAND_REGISTRY,
+    build_channel_rpc_context,
+)
 from agentos.channels.types import IncomingMessage
 from agentos.engine.commands import DEFAULT_REGISTRY, Surface
-from agentos.gateway.protocol import make_error_res, make_ok_res
+from agentos.gateway.protocol import ERROR_UNAUTHORIZED, make_error_res, make_ok_res
 from agentos.gateway.routing import build_channel_route_envelope
+from agentos.gateway.rpc import RpcDispatcher
+from agentos.gateway.scopes import READ_SCOPE, WRITE_SCOPE
 
 
-def _envelope(*, bot_username: str | None = None):
+def _envelope(
+    *,
+    source_name: str = "telegram",
+    bot_username: str | None = None,
+):
     metadata = {"bot_username": bot_username} if bot_username else {}
     msg = IncomingMessage(
         sender_id="u1",
@@ -20,7 +31,7 @@ def _envelope(*, bot_username: str | None = None):
     return build_channel_route_envelope(
         msg,
         session_key="agent:main:telegram:u1",
-        session_prefix="telegram",
+        session_prefix=source_name,
         agent_id="main",
     )
 
@@ -38,6 +49,19 @@ async def _dispatch(command: str, payload):
     )
 
 
+def _permission_dispatcher() -> RpcDispatcher:
+    async def read_handler(_params, _ctx):
+        return {"allowed": "read"}
+
+    async def write_handler(_params, _ctx):
+        return {"allowed": "write"}
+
+    dispatcher = RpcDispatcher()
+    dispatcher.register("status", read_handler, READ_SCOPE)
+    dispatcher.register("sessions.reset", write_handler, WRITE_SCOPE)
+    return dispatcher
+
+
 def test_channel_command_names_include_usage_and_registry_words() -> None:
     expected = {
         word.lstrip("/").lower()
@@ -47,6 +71,42 @@ def test_channel_command_names_include_usage_and_registry_words() -> None:
 
     assert "usage" in DEFAULT_COMMAND_REGISTRY.command_names
     assert expected <= DEFAULT_COMMAND_REGISTRY.command_names
+
+
+@pytest.mark.asyncio
+async def test_admitted_non_admin_sender_gets_read_only_rpc_access() -> None:
+    context = build_channel_rpc_context(
+        _envelope(),
+        gateway_config=SimpleNamespace(channel_admin_senders={}),
+    )
+    dispatcher = _permission_dispatcher()
+
+    read_response = await dispatcher.dispatch("read", "status", {}, context)
+    write_response = await dispatcher.dispatch("write", "sessions.reset", {}, context)
+
+    assert context.principal.role == "operator"
+    assert context.principal.scopes == frozenset({READ_SCOPE})
+    assert read_response.ok is True
+    assert write_response.ok is False
+    assert write_response.error is not None
+    assert write_response.error.code == ERROR_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_configured_channel_admin_gets_read_and_write_rpc_access() -> None:
+    context = build_channel_rpc_context(
+        _envelope(source_name="personal"),
+        gateway_config=SimpleNamespace(channel_admin_senders={"personal": ["u1"]}),
+    )
+    dispatcher = _permission_dispatcher()
+
+    read_response = await dispatcher.dispatch("read", "status", {}, context)
+    write_response = await dispatcher.dispatch("write", "sessions.reset", {}, context)
+
+    assert context.principal.role == "operator"
+    assert context.principal.scopes == frozenset({READ_SCOPE, WRITE_SCOPE})
+    assert read_response.ok is True
+    assert write_response.ok is True
 
 
 @pytest.mark.parametrize(

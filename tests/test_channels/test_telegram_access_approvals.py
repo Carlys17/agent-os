@@ -201,11 +201,12 @@ def test_populated_legacy_allowlist_remains_strict_without_explicit_flag() -> No
 
 
 @pytest.mark.asyncio
-async def test_unapproved_sender_is_gated_before_slash_command_dispatch() -> None:
+@pytest.mark.parametrize("command", ["/status", "/reset"])
+async def test_unapproved_sender_is_gated_before_slash_command_dispatch(command: str) -> None:
     message = IncomingMessage(
         sender_id="42",
         channel_id="42",
-        content="/status",
+        content=command,
         metadata={"is_group": False},
     )
 

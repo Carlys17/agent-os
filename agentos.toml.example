@@ -28,6 +28,11 @@
 # run forever. Zero means unlimited.
 # agent_max_iterations = 8
 
+# Admitted channel senders get read-only slash commands. List trusted sender
+# IDs here to allow mutating commands and owner-level tools. Keys are configured
+# channel entry names, not platform types; keep IDs quoted as strings.
+# channel_admin_senders = { personal = ["123456789"], team = ["U0123ABC"] }
+
 # WebSocket per-connection outbound writer queue. When enabled (default),
 # each WS connection gets a bounded asyncio queue + dedicated writer task.
 # Producers enqueue and return immediately; slow clients trigger a fast
