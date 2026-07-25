@@ -68,6 +68,8 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
+_DEFAULT_TYPING_KEEPALIVE_INTERVAL_S = 8.0
+
 
 def _terminal_payload_from_exception(exc: BaseException) -> dict[str, str]:
     is_timeout = isinstance(exc, TimeoutError)
@@ -1065,9 +1067,9 @@ def _should_skip_unmentioned(
 def _start_typing_keepalive(
     channel: Any,
     inbound: IncomingMessage | None = None,
-    interval: float = 8.0,
+    interval: float | None = None,
 ) -> asyncio.Task | None:
-    """Start a background task that re-sends typing every ``interval`` seconds.
+    """Start a background task that periodically refreshes the typing status.
 
     Uses ``asyncio.create_task`` so typing continues even during long tool calls
     where no events are yielded (a timestamp-in-loop approach would fail here).
@@ -1081,16 +1083,45 @@ def _start_typing_keepalive(
     if not callable(send_typing):
         return None
 
+    raw_interval = (
+        interval
+        if interval is not None
+        else getattr(
+            channel,
+            "typing_keepalive_interval_s",
+            _DEFAULT_TYPING_KEEPALIVE_INTERVAL_S,
+        )
+    )
+    try:
+        keepalive_interval = float(raw_interval)
+    except (TypeError, ValueError):
+        keepalive_interval = _DEFAULT_TYPING_KEEPALIVE_INTERVAL_S
+    if keepalive_interval <= 0:
+        keepalive_interval = _DEFAULT_TYPING_KEEPALIVE_INTERVAL_S
+
+    typing_kwargs: dict[str, Any] = {}
+    if inbound is not None:
+        if _accepts_keyword_arg(send_typing, "channel_id"):
+            typing_kwargs["channel_id"] = inbound.channel_id
+        if _accepts_keyword_arg(send_typing, "thread_id"):
+            thread_id = next(
+                (
+                    inbound.metadata[key]
+                    for key in ("native_thread_id", "thread_id", "message_thread_id")
+                    if inbound.metadata.get(key) not in (None, "")
+                ),
+                None,
+            )
+            if thread_id is not None:
+                typing_kwargs["thread_id"] = str(thread_id)
+
     async def _keepalive() -> None:
         while True:
             try:
-                if inbound is not None and _accepts_keyword_arg(send_typing, "channel_id"):
-                    await send_typing(channel_id=inbound.channel_id)
-                else:
-                    await send_typing()
+                await send_typing(**typing_kwargs)
             except Exception:
                 pass  # typing is best-effort, never crash the loop
-            await asyncio.sleep(interval)
+            await asyncio.sleep(keepalive_interval)
 
     return asyncio.create_task(_keepalive())
 

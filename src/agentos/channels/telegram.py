@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 import httpx
 import structlog
@@ -117,6 +117,7 @@ class TelegramChannel:
     pairing_store: ChannelPairingStore = field(default_factory=ChannelPairingStore)
 
     supports_slash_commands: bool = True
+    typing_keepalive_interval_s: ClassVar[float] = 4.0
     policy: ChannelAccessPolicy = field(
         default_factory=lambda: ChannelAccessPolicy(
             dm_allowed=True,
@@ -351,6 +352,7 @@ class TelegramChannel:
             channel_type="telegram",
             group_chat=True,
             mentions=True,
+            typing_indicator=True,
             native_file_upload=True,
             media=True,
             reply=True,
@@ -836,6 +838,28 @@ class TelegramChannel:
         if (thread_id := inbound.metadata.get("thread_id")) is not None:
             metadata["thread_id"] = thread_id
         return OutgoingMessage(content=content, reply_to=inbound.channel_id, metadata=metadata)
+
+    async def send_typing(
+        self,
+        channel_id: str | None = None,
+        *,
+        thread_id: str | None = None,
+    ) -> ChannelSendResult:
+        """Show Telegram's native typing status in a chat or forum topic."""
+        target = channel_id or self.config.default_chat_id
+        if not target:
+            return ChannelSendResult.unsupported(
+                capability=ChannelCapabilities.TYPING_INDICATOR,
+                reason="no chat target",
+            )
+        payload: dict[str, Any] = {"chat_id": str(target), "action": "typing"}
+        if thread_id:
+            payload["message_thread_id"] = _coerce_telegram_int(thread_id)
+        await self._api("sendChatAction", payload)
+        return ChannelSendResult.sent(
+            capability=ChannelCapabilities.TYPING_INDICATOR,
+            target_id=str(target),
+        )
 
     async def send(self, message: OutgoingMessage) -> dict[str, Any]:
         payload = self._build_send_payload(message)

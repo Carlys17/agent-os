@@ -312,7 +312,7 @@ def test_telegram_profile_matches_current_bot_api_adapter_surface() -> None:
     assert profile.supports(ChannelCapabilities.THREAD_REPLY)
     assert profile.supports(ChannelCapabilities.EDIT)
     assert profile.supports(ChannelCapabilities.DELETE)
-    assert not profile.supports(ChannelCapabilities.TYPING_INDICATOR)
+    assert profile.supports(ChannelCapabilities.TYPING_INDICATOR)
     assert profile.supports(ChannelCapabilities.NATIVE_FILE_UPLOAD)
 
 

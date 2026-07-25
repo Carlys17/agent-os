@@ -188,6 +188,14 @@ The command endpoint acknowledges Slack's form submission and routes the
 resulting `/command` through the same channel dispatcher. Keep text command
 interception as the fallback for platforms without native command menus.
 
+## In-Flight Reply Feedback
+
+Telegram and Discord show their native typing indicator while AgentOS is
+working on a reply. Telegram refreshes `sendChatAction` every four seconds
+because Telegram clients expire the status after at most five seconds. Forum
+topic replies keep the typing indicator scoped to the incoming topic. Typing
+feedback is best-effort and never interrupts the underlying agent turn.
+
 ## Webhook Channels
 
 Slack webhook mode requires a public, provider-reachable URL. Telegram may
