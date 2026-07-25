@@ -518,14 +518,21 @@ class SessionManager:
         await self._storage.upsert_session(node)
         return node
 
-    async def _archive_session_identity(self, node: SessionNode) -> None:
-        """Best-effort raw archive before a same-key transcript reset."""
+    async def _archive_session_identity(self, node: SessionNode) -> bool:
+        """Best-effort raw archive before a same-key transcript reset.
+
+        Returns ``True`` when a non-empty archive file was written to disk,
+        ``False`` when there was nothing to archive or the write failed. The
+        reset path uses the return value to decide whether a destructive
+        rotation is safe to fall back to when the memory-flush service is
+        unavailable.
+        """
 
         try:
             entries = await self._storage.get_canonical_transcript(node.session_id)
             summaries = await self._storage.get_all_summaries(node.session_id)
             if not entries and not summaries:
-                return
+                return False
             archive_dir = _archive_dir()
             archive_dir.mkdir(parents=True, exist_ok=True)
             safe_key = _safe_archive_part(node.session_key)
@@ -542,8 +549,49 @@ class SessionManager:
                 "summaries": [summary.model_dump(mode="json") for summary in summaries],
             }
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            return True
         except Exception:
-            return
+            return False
+
+    async def rotate_session_id_archive_only(self, session_key: str) -> SessionNode:
+        """Rotate ``session_id`` after archiving, without deleting transcript rows.
+
+        Non-destructive counterpart to :meth:`_rotate_session_id` used by the
+        ``sessions.reset`` kill-switch path when the memory-flush service is
+        unavailable. The full transcript + summaries are first archived to
+        disk via :meth:`_archive_session_identity`; the old rows are then left
+        in storage (keyed under the old ``session_id``) so nothing is lost.
+        A fresh ``session_id`` makes the session read as empty going forward,
+        matching the "New Chat" semantics while guaranteeing no data loss.
+        """
+
+        session_key = canonicalize_session_key(session_key)
+        node = await self._storage.get_session(session_key)
+        if node is None:
+            raise KeyError(f"Session not found: {session_key}")
+        await self._archive_session_identity(node)
+        await self._storage.invalidate_context_states(
+            node.session_key,
+            reason="session_reset",
+        )
+        node.session_id = str(uuid.uuid4())
+        node.updated_at = _now_ms()
+        node.input_tokens = 0
+        node.output_tokens = 0
+        node.total_tokens = 0
+        node.total_tokens_fresh = False
+        node.estimated_cost_usd = 0.0
+        node.total_cost_usd = 0.0
+        node.billed_cost_usd = 0.0
+        node.estimated_cost_component_usd = 0.0
+        node.cost_source = "none"
+        node.missing_cost_entries = 0
+        node.cache_read = 0
+        node.cache_write = 0
+        node.context_tokens = None
+        node.compaction_count = 0
+        await self._storage.upsert_session(node)
+        return node
 
     async def resume(self, session_key: str) -> SessionNode:
         """Load an existing session; touch updated_at."""
@@ -856,18 +904,13 @@ class SessionManager:
         event_body_hash = checkpoint_event_hash(
             "\n".join(serialize_checkpoint_event(event) for event in events)
         )
-        failure_key = (
-            f"checkpoint:{session_key}:{resolved_turn_id}:"
-            f"{event_body_hash}"
-        )
+        failure_key = f"checkpoint:{session_key}:{resolved_turn_id}:{event_body_hash}"
         try:
             if workspace is None:
                 raise RuntimeError("checkpoint workspace_dir is not configured")
             result = await asyncio.to_thread(append_checkpoint_events, workspace, events)
         except Exception as exc:
-            failure_key = (
-                f"{failure_key}:failed:{checkpoint_event_hash(str(exc))[:16]}"
-            )
+            failure_key = f"{failure_key}:failed:{checkpoint_event_hash(str(exc))[:16]}"
             receipt = MemoryDurableReceipt(
                 session_key=session_key,
                 session_id=node.session_id,
@@ -898,9 +941,7 @@ class SessionManager:
             coverage_turn_id=coverage_turn_id,
             coverage_hash=coverage_hash,
             coverage_entry_count=coverage_entry_count,
-            idempotency_key=(
-                f"checkpoint:{session_key}:{resolved_turn_id}:{result.content_hash}"
-            ),
+            idempotency_key=(f"checkpoint:{session_key}:{resolved_turn_id}:{result.content_hash}"),
             status="checkpoint_saved",
             attempt_count=1,
         )
@@ -1146,9 +1187,7 @@ class SessionManager:
                 removed_count=result.removed_count,
                 kept_count=len(kept_entries),
                 chunk_count=result.chunks_processed,
-                flush_receipt_status=_compaction_flush_status_for_persistence(
-                    flush_receipt_status
-                ),
+                flush_receipt_status=_compaction_flush_status_for_persistence(flush_receipt_status),
                 covered_through_id=max((entry.id or 0) for entry in removed_entries)
                 if removed_entries
                 else 0,
@@ -1237,9 +1276,7 @@ class SessionManager:
                 critical_carry_forward=coverage.critical_carry_forward,
                 removed_count=len(removed_entries),
                 kept_count=len(kept_entries),
-                flush_receipt_status=_compaction_flush_status_for_persistence(
-                    flush_receipt_status
-                ),
+                flush_receipt_status=_compaction_flush_status_for_persistence(flush_receipt_status),
                 covered_through_id=max((entry.id or 0) for entry in removed_entries)
                 if removed_entries
                 else 0,
