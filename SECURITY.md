@@ -8,13 +8,17 @@ still present in the current release line.
 
 ## Reporting a Vulnerability
 
-Do not open a public issue with exploit details, credentials, provider tokens,
-local transcripts, or account identifiers.
+Do not open a public issue with vulnerability details, exploit steps,
+credentials, provider tokens, local transcripts, or account identifiers.
 
-Use GitHub private vulnerability reporting for this repository when it is
-available. If private reporting is not available, open a minimal public issue
-asking for a secure maintainer contact path and do not include technical exploit
-details.
+Submit suspected vulnerabilities through
+[GitHub private vulnerability reporting](https://github.com/use-agent-os/agent-os/security/advisories/new).
+This repository has private reporting enabled so reports can be triaged and
+discussed with maintainers without public disclosure.
+
+If you cannot access the private report form, open a minimal public issue asking
+for a secure maintainer contact path. Do not include technical details in that
+issue.
 
 Helpful reports include:
 
