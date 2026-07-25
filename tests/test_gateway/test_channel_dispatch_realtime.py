@@ -5,6 +5,7 @@ import base64
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -280,6 +281,115 @@ def test_channel_stream_policy_prefers_adapter_stream_updates() -> None:
     assert policy.mode == "adapter_stream"
     assert policy.relay_stream is True
     assert policy.typing_keepalive is False
+
+
+# ── Channel /new "fresh session" pointer (New Chat parity) ────────────────
+
+
+def _write_principal() -> Any:
+    from agentos.gateway.auth import Principal as GatewayPrincipal
+
+    return GatewayPrincipal(
+        role="operator",
+        scopes=frozenset({"operator.read", "operator.write"}),
+        is_owner=False,
+        authenticated=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_channel_new_command_sets_pointer_and_does_not_reset() -> None:
+    """`/new` must mint a fresh key + point the chat at it (non-destructive).
+
+    Regression for "Reset aborted: flush service is unavailable": channel /new
+    previously routed to destructive sessions.reset. It must now never call the
+    dispatcher at all — it only sets a per-chat pointer to a fresh session key.
+    """
+    from agentos.gateway.channel_dispatch import ChannelSessionPointers
+
+    base_key = "agent:main:telegram:direct:42"
+    pointers = ChannelSessionPointers()
+    msg = IncomingMessage(sender_id="42", channel_id="42", content="/new")
+    route_envelope = build_channel_route_envelope(
+        msg,
+        session_key=base_key,
+        session_prefix="telegram",
+        agent_id="main",
+    )
+
+    class ExplodingDispatcher:
+        async def dispatch(self, req_id, method, params, ctx):  # pragma: no cover
+            raise AssertionError("dispatcher must not be called for /new fresh-key flow")
+
+    reply = await _dispatch_channel_slash_command(
+        route_envelope=route_envelope,
+        msg=msg,
+        session_manager=object(),
+        session_key=base_key,
+        session_prefix="telegram",
+        rpc_dispatcher=ExplodingDispatcher(),
+        context_factory=lambda _envelope: SimpleNamespace(principal=_write_principal()),
+        session_pointers=pointers,
+        base_session_key=base_key,
+    )
+
+    assert reply is not None
+    assert reply.content == "Started a new chat session."
+    assert reply.metadata["denied"] is False
+    # A fresh key was minted and the chat now points at it.
+    new_key = reply.metadata["session_key"]
+    assert new_key != base_key
+    assert new_key.startswith(base_key + ":new:")
+    assert pointers.resolve(base_key) == new_key
+
+
+@pytest.mark.asyncio
+async def test_channel_new_command_without_pointer_falls_back_to_reset() -> None:
+    """Without a pointer map, /new retains the legacy destructive reset path."""
+    msg = IncomingMessage(sender_id="42", channel_id="42", content="/new")
+    base_key = "agent:main:telegram:direct:42"
+    route_envelope = build_channel_route_envelope(
+        msg,
+        session_key=base_key,
+        session_prefix="telegram",
+        agent_id="main",
+    )
+    calls: list[tuple[str, dict]] = []
+
+    class FakeDispatcher:
+        async def dispatch(self, req_id, method, params, ctx):
+            calls.append((method, params))
+            return make_ok_res(req_id, {"reset": True, "key": params.get("key")})
+
+    class FakeSessionManager:
+        async def get_or_create(self, session_key, agent_id="main", **fields):
+            return SimpleNamespace(session_key=session_key, session_id="sid"), True
+
+    reply = await _dispatch_channel_slash_command(
+        route_envelope=route_envelope,
+        msg=msg,
+        session_manager=FakeSessionManager(),
+        session_key=base_key,
+        session_prefix="telegram",
+        rpc_dispatcher=FakeDispatcher(),
+        context_factory=lambda _envelope: SimpleNamespace(principal=_write_principal()),
+        session_pointers=None,
+        base_session_key=base_key,
+    )
+
+    assert reply is not None
+    assert calls == [("sessions.reset", {"key": base_key})]
+
+
+def test_channel_session_pointers_resolve_and_set() -> None:
+    from agentos.gateway.channel_dispatch import ChannelSessionPointers
+
+    pointers = ChannelSessionPointers()
+    base = "agent:main:telegram:direct:7"
+    # No pointer → resolve returns base unchanged.
+    assert pointers.resolve(base) == base
+    pointers.set(base, "agent:main:telegram:direct:7:new:abcd1234")
+    assert pointers.resolve(base) == "agent:main:telegram:direct:7:new:abcd1234"
 
 
 def test_channel_stream_policy_uses_typing_placeholder_without_stream_editing() -> None:
@@ -805,10 +915,7 @@ def test_channel_artifact_fallback_uses_only_channel_safe_absolute_links() -> No
                 "signed_download_url": "https://gateway.example/artifacts/art-2?sig=short",
             }
         ]
-    ) == [
-        "Generated file: signed.txt -> "
-        "https://gateway.example/artifacts/art-2?sig=short"
-    ]
+    ) == ["Generated file: signed.txt -> https://gateway.example/artifacts/art-2?sig=short"]
 
     assert _artifact_fallback_lines(
         [

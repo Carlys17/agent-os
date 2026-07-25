@@ -80,10 +80,7 @@ def _clean_cancel_source(value: Any, default: str) -> str:
     text = str(value or "").strip()
     if not text:
         return default
-    safe = "".join(
-        ch if ch.isalnum() or ch in {"_", "-", ".", ":"} else "_"
-        for ch in text
-    )
+    safe = "".join(ch if ch.isalnum() or ch in {"_", "-", ".", ":"} else "_" for ch in text)
     return (safe.strip("_") or default)[:80]
 
 
@@ -171,12 +168,12 @@ def _trusted_elevated_hint(ctx: RpcContext, source_hint: dict[str, Any]) -> str 
 def _normalize_session_send_source_hint(params: dict[str, Any]) -> dict[str, Any]:
     raw_hint = params.get("_source")
     source_hint = dict(raw_hint) if isinstance(raw_hint, dict) else {}
-    caller_kind = str(
-        source_hint.get("caller_kind") or source_hint.get("callerKind") or ""
-    ).strip().lower()
-    channel_kind = str(
-        source_hint.get("channel_kind") or source_hint.get("channelKind") or ""
-    ).strip().lower()
+    caller_kind = (
+        str(source_hint.get("caller_kind") or source_hint.get("callerKind") or "").strip().lower()
+    )
+    channel_kind = (
+        str(source_hint.get("channel_kind") or source_hint.get("channelKind") or "").strip().lower()
+    )
     if caller_kind:
         source_hint.setdefault("caller_kind", caller_kind)
     if channel_kind:
@@ -249,6 +246,7 @@ async def _drain_task_runtime_for_reset(task_runtime: Any, session_key: str) -> 
         log.warning("sessions.reset.task_runtime_drain_timeout", session_key=session_key)
     except Exception:
         log.warning("sessions.reset.task_runtime_drain_failed", session_key=session_key)
+
 
 def _optional_positive_timeout(config: Any, attr: str, default: float) -> float | None:
     raw = getattr(config, attr, default)
@@ -545,8 +543,7 @@ def _normalize_terminal_event_payload(event_name: str, payload: dict[str, Any]) 
     is_timeout = "timeout" in code_text or "stream idle" in raw_text.lower()
     terminal_payload = {
         "status": "timeout" if is_timeout else "failed",
-        "terminal_reason": payload.get("terminal_reason")
-        or ("timeout" if is_timeout else "error"),
+        "terminal_reason": payload.get("terminal_reason") or ("timeout" if is_timeout else "error"),
         "error_class": code,
         "error_message": raw_text,
         **payload,
@@ -1292,9 +1289,7 @@ async def _handle_sessions_send(params: dict | None, ctx: RpcContext) -> dict:
                     "error_message": _STREAM_IDLE_TIMEOUT_MESSAGE,
                 }
             )
-            await ctx.session_manager.append_message(
-                key, role="system", content=timeout_message
-            )
+            await ctx.session_manager.append_message(key, role="system", content=timeout_message)
             await _emit_terminal_once(
                 "session.event.error",
                 {"message": _STREAM_IDLE_TIMEOUT_MESSAGE, "code": _STREAM_IDLE_TIMEOUT_CODE},
@@ -1310,9 +1305,7 @@ async def _handle_sessions_send(params: dict | None, ctx: RpcContext) -> dict:
                 fallback_error_class="agent_error",
                 fallback_error_message=str(exc) or "Agent error",
             )
-            event_code = (
-                error_code if error_code == "provider_request_too_large" else "agent_error"
-            )
+            event_code = error_code if error_code == "provider_request_too_large" else "agent_error"
             log.error("sessions.send.agent_failed", session_key=key, error=str(exc), exc_info=True)
             await ctx.session_manager.append_message(
                 key,
@@ -1601,40 +1594,105 @@ async def _handle_sessions_reset(params: dict | None, ctx: RpcContext) -> dict[s
         transcript = await ctx.session_manager.get_transcript(key)
 
         if ctx.flush_service is None:
-            # Fail-closed when flush is unavailable: refuse to clear a non-empty
-            # transcript without an explicit admin override or a covering
-            # checkpoint receipt. The whole read -> gate -> rotate window stays
-            # under the same per-session lock used by sends.
+            # Flush service unavailable (the default kill-switch path). Rather
+            # than hard-fail a plain reset of a non-empty transcript, fall back
+            # to a NON-destructive archive-then-rotate: the transcript is dumped
+            # to disk and the session_id rotates, but the old rows are left in
+            # storage so nothing is lost. This matches the "New Chat" button's
+            # safety semantics — the reset always succeeds and data is preserved.
+            #
+            # A destructive reset (old transcript rows deleted) is still possible
+            # via force=true (admin) when a durable checkpoint receipt covers the
+            # transcript; without a covering receipt even force=true performs the
+            # non-destructive archive rotation, since destroying un-backed-up
+            # history is never what an operator intends.
             if transcript and not force:
-                checkpoint_safe = (
-                    await _durable_receipt_allows_covered_destructive_compaction(
-                        storage,
-                        key,
-                        previous_session_id,
-                        transcript,
-                    )
+                checkpoint_safe = await _durable_receipt_allows_covered_destructive_compaction(
+                    storage,
+                    key,
+                    previous_session_id,
+                    transcript,
                 )
-                if not checkpoint_safe:
-                    raise RpcHandlerError(
-                        code="flush_unavailable",
-                        message=(
-                            "Reset aborted: flush service is unavailable and the "
-                            "transcript is non-empty. Re-run with force=true (admin) "
-                            "to discard without backup."
-                        ),
-                        details={
-                            "key": key,
-                            "session_id": previous_session_id,
-                            "reason": "flush_service_disabled",
-                            "message_count": len(transcript),
-                        },
+                if checkpoint_safe:
+                    # A durable checkpoint already covers this transcript, so the
+                    # destructive rotation is safe even without the flush service.
+                    updated, rotated = await ctx.session_manager.apply_intent(
+                        key,
+                        SessionIntent.RESET_SAME_KEY,
                     )
+                    new_epoch = await _increment_and_emit_epoch(ctx, storage, key)
+                    await _notify_provider_session_boundary(
+                        ctx,
+                        agent_id=agent_id,
+                        transcript=transcript,
+                        new_session_id=updated.session_id,
+                    )
+                    return {
+                        "key": key,
+                        "reset": True,
+                        "rotated": rotated,
+                        "previous_session_id": previous_session_id,
+                        "session_id": updated.session_id,
+                        "epoch": new_epoch,
+                        "reset_mode": "destructive_checkpoint_covered",
+                    }
+
+                # No covering checkpoint: archive + rotate without deleting.
+                updated = await ctx.session_manager.rotate_session_id_archive_only(key)
+                new_epoch = await _increment_and_emit_epoch(ctx, storage, key)
+                await _notify_provider_session_boundary(
+                    ctx,
+                    agent_id=agent_id,
+                    transcript=transcript,
+                    new_session_id=updated.session_id,
+                )
+                return {
+                    "key": key,
+                    "reset": True,
+                    "rotated": True,
+                    "previous_session_id": previous_session_id,
+                    "session_id": updated.session_id,
+                    "epoch": new_epoch,
+                    "reset_mode": "archive_only",
+                    "message_count": len(transcript),
+                }
+
             if transcript and force and "operator.admin" not in ctx.principal.scopes:
                 raise RpcHandlerError(
                     code="permission_denied",
                     message="force=true on sessions.reset requires operator.admin scope.",
                     details={"key": key, "session_id": previous_session_id},
                 )
+
+            if transcript and force:
+                # Admin force: still prefer the non-destructive archive rotation
+                # unless a durable checkpoint receipt covers the transcript, since
+                # destroying un-backed-up history is never the real intent.
+                checkpoint_safe = await _durable_receipt_allows_covered_destructive_compaction(
+                    storage,
+                    key,
+                    previous_session_id,
+                    transcript,
+                )
+                if not checkpoint_safe:
+                    updated = await ctx.session_manager.rotate_session_id_archive_only(key)
+                    new_epoch = await _increment_and_emit_epoch(ctx, storage, key)
+                    await _notify_provider_session_boundary(
+                        ctx,
+                        agent_id=agent_id,
+                        transcript=transcript,
+                        new_session_id=updated.session_id,
+                    )
+                    return {
+                        "key": key,
+                        "reset": True,
+                        "rotated": True,
+                        "previous_session_id": previous_session_id,
+                        "session_id": updated.session_id,
+                        "epoch": new_epoch,
+                        "reset_mode": "archive_only",
+                        "message_count": len(transcript),
+                    }
 
             updated, rotated = await ctx.session_manager.apply_intent(
                 key,
@@ -2091,9 +2149,8 @@ async def _handle_sessions_context_compact(params: dict | None, ctx: RpcContext)
                 compact_kwargs: dict[str, Any] = {
                     "custom_instructions": custom_instructions,
                 }
-                if (
-                    flush_receipt_status is not None
-                    and _accepts_keyword_arg(compact_with_result, "flush_receipt_status")
+                if flush_receipt_status is not None and _accepts_keyword_arg(
+                    compact_with_result, "flush_receipt_status"
                 ):
                     compact_kwargs["flush_receipt_status"] = flush_receipt_status
                 result = await compact_with_result(
@@ -2108,9 +2165,7 @@ async def _handle_sessions_context_compact(params: dict | None, ctx: RpcContext)
                 kept_count = len(getattr(result, "kept_entries", []) or [])
                 tokens_before = int(getattr(result, "tokens_before", 0) or 0)
                 tokens_after = int(getattr(result, "tokens_after", 0) or 0)
-                remaining_budget_tokens = int(
-                    getattr(result, "remaining_budget_tokens", 0) or 0
-                )
+                remaining_budget_tokens = int(getattr(result, "remaining_budget_tokens", 0) or 0)
                 chunk_count = int(getattr(result, "chunks_processed", 0) or 0)
                 coverage_status = str(getattr(result, "coverage_status", "unknown") or "unknown")
                 skip_reason = str(getattr(result, "skip_reason", "") or "")
@@ -2188,9 +2243,7 @@ async def _handle_sessions_context_compact(params: dict | None, ctx: RpcContext)
         if flush_receipt_status is not None:
             payload["flush_receipt_status"] = flush_receipt_status
         final_event = (
-            COMPACTION_PERSISTED_EVENT
-            if removed_count > 0
-            else COMPACTION_TRIGGERED_EVENT
+            COMPACTION_PERSISTED_EVENT if removed_count > 0 else COMPACTION_TRIGGERED_EVENT
         )
         final_lifecycle_payload = compaction_lifecycle_payload(compaction_id, final_event)
         final_lifecycle_payload.pop("coverage_status", None)
