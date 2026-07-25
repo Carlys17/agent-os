@@ -22,6 +22,7 @@ from agentos.channels._attachment_io import (
     fetch_httpx_bytes_limited,
     preferred_attachment_mime,
 )
+from agentos.channels._telegram_formatting import render_telegram_html
 from agentos.channels._util import AccessDecision, ChannelAccessPolicy, EventDedupeCache
 from agentos.channels.contract import (
     ChannelCapabilities,
@@ -851,7 +852,16 @@ class TelegramChannel:
 
     async def send(self, message: OutgoingMessage) -> dict[str, Any]:
         payload = self._build_send_payload(message)
-        result = await self._api("sendMessage", payload)
+        try:
+            result = await self._api("sendMessage", payload)
+        except TelegramApiError as exc:
+            auto_rendered = "parse_mode" not in message.metadata
+            if not auto_rendered or "parse entities" not in str(exc).lower():
+                raise
+            log.warning("telegram.markdown_fallback", error=str(exc))
+            payload["text"] = message.content
+            payload.pop("parse_mode", None)
+            result = await self._api("sendMessage", payload)
         return result if isinstance(result, dict) else {"result": result}
 
     async def send_file(
@@ -865,7 +875,8 @@ class TelegramChannel:
         path = Path(file_path)
         payload = {"chat_id": str(chat_id)}
         if content:
-            payload["caption"] = content
+            payload["caption"] = render_telegram_html(content)
+            payload["parse_mode"] = "HTML"
         client = self._get_client()
         try:
             with path.open("rb") as f:
@@ -909,8 +920,12 @@ class TelegramChannel:
             payload["reply_parameters"] = {
                 "message_id": _coerce_telegram_int(reply_message_id),
             }
-        if parse_mode := metadata.get("parse_mode"):
-            payload["parse_mode"] = str(parse_mode)
+        if "parse_mode" in metadata:
+            if parse_mode := metadata.get("parse_mode"):
+                payload["parse_mode"] = str(parse_mode)
+        else:
+            payload["text"] = render_telegram_html(message.content)
+            payload["parse_mode"] = "HTML"
         return payload
 
     async def edit(self, message_id: str, content: str) -> None:
@@ -920,7 +935,8 @@ class TelegramChannel:
             {
                 "chat_id": chat_id,
                 "message_id": _coerce_telegram_int(raw_message_id),
-                "text": content,
+                "text": render_telegram_html(content),
+                "parse_mode": "HTML",
             },
         )
 

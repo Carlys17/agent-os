@@ -265,6 +265,7 @@ async def test_telegram_forum_command_reply_keeps_chat_and_topic_targets() -> No
                 "chat_id": "-100123",
                 "text": "Already within context budget; no compact was applied.",
                 "message_thread_id": 777,
+                "parse_mode": "HTML",
             },
         )
     ]
