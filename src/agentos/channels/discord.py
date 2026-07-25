@@ -55,6 +55,8 @@ _DISCORD_MENTION_RE = re.compile(r"<@!?(\d+)>")
 _DISCORD_DM_CHANNEL_TYPES = {1}
 _DISCORD_GROUP_DM_CHANNEL_TYPES = {3}
 _DISCORD_THREAD_CHANNEL_TYPES = {10, 11, 12}
+_DISCORD_APPLICATION_COMMAND_INTERACTION_TYPE = 2
+_DISCORD_DEFERRED_CHANNEL_MESSAGE_RESPONSE_TYPE = 5
 
 # Gateway intents bitmask
 GATEWAY_INTENTS = (
@@ -387,10 +389,12 @@ class DiscordChannel:
                 return
             self._enqueue_reaction(self._annotate_channel_context(data))
         elif event_type == "INTERACTION_CREATE":
+            if data.get("type") != _DISCORD_APPLICATION_COMMAND_INTERACTION_TYPE:
+                return
             interaction_id = str(data.get("id") or "")
             if interaction_id and not self._dedupe.check_and_add(f"interaction:{interaction_id}"):
                 return
-            self._handle_interaction(self._annotate_channel_context(data))
+            await self._handle_interaction(self._annotate_channel_context(data))
         elif event_type in {"CHANNEL_CREATE", "CHANNEL_UPDATE", "THREAD_CREATE", "THREAD_UPDATE"}:
             self._cache_channel_context(data)
         elif event_type == "GUILD_CREATE":
@@ -468,31 +472,76 @@ class DiscordChannel:
         )
         self.enqueue(msg)
 
-    def _handle_interaction(self, data: dict[str, Any]) -> None:
+    async def _defer_interaction_response(
+        self,
+        interaction_id: str,
+        interaction_token: str,
+    ) -> bool:
+        try:
+            response = await self._get_client().post(
+                f"/interactions/{interaction_id}/{interaction_token}/callback",
+                json={"type": _DISCORD_DEFERRED_CHANNEL_MESSAGE_RESPONSE_TYPE},
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            status_code = (
+                exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            )
+            log.warning(
+                "discord.interaction_ack_failed",
+                interaction_id=interaction_id,
+                error_type=type(exc).__name__,
+                status_code=status_code,
+            )
+            return False
+        log.debug("discord.interaction_deferred", interaction_id=interaction_id)
+        return True
+
+    async def _handle_interaction(self, data: dict[str, Any]) -> None:
         """Parse a slash command interaction into IncomingMessage."""
-        interaction_data = data.get("data", {})
-        user = data.get("member", {}).get("user", data.get("user", {}))
-        channel_id = data.get("channel_id", "unknown")
+        interaction_data = data.get("data")
+        interaction_id = str(data.get("id") or "")
+        interaction_token = str(data.get("token") or "")
+        if not isinstance(interaction_data, dict) or not interaction_id or not interaction_token:
+            return
+
+        command_name = interaction_data.get("name")
+        if not isinstance(command_name, str) or not command_name:
+            return
+        if not await self._defer_interaction_response(interaction_id, interaction_token):
+            return
+
+        member = data.get("member")
+        member_user = member.get("user") if isinstance(member, dict) else None
+        direct_user = data.get("user")
+        user = member_user if isinstance(member_user, dict) else direct_user
+        if not isinstance(user, dict):
+            user = {}
+        channel_id = str(data.get("channel_id") or "unknown")
 
         # Build content from command name and options
-        command_name = interaction_data.get("name", "")
-        options = interaction_data.get("options", [])
-        option_parts = [opt.get("value", "") for opt in options if opt.get("value")]
+        raw_options = interaction_data.get("options")
+        options = raw_options if isinstance(raw_options, list) else []
+        option_parts = [
+            opt.get("value", "") for opt in options if isinstance(opt, dict) and opt.get("value")
+        ]
         content = f"/{command_name} {' '.join(str(v) for v in option_parts)}".strip()
         channel_type = self._channel_type(data.get("channel_type"))
         thread_id = self._native_thread_id(data, channel_type)
         conversation_kind = self._conversation_kind(data, channel_type, thread_id)
         parent_channel_id = data.get("thread_parent_channel_id")
+        application_id = str(data.get("application_id") or self.config.application_id)
 
         msg = IncomingMessage(
-            sender_id=user.get("id", "unknown"),
+            sender_id=str(user.get("id") or "unknown"),
             channel_id=channel_id,
             content=content,
             metadata={
                 "interaction_type": "slash_command",
                 "command_name": command_name,
-                "interaction_id": data.get("id"),
-                "interaction_token": data.get("token"),
+                "interaction_id": interaction_id,
+                "interaction_token": interaction_token,
+                "interaction_application_id": application_id,
                 "guild_id": data.get("guild_id"),
                 "channel_type": channel_type,
                 "is_group": conversation_kind in {"group", "group_dm", "thread", "topic"},
@@ -700,6 +749,38 @@ class DiscordChannel:
     # Outbound
     # ------------------------------------------------------------------
 
+    def build_reply_message(self, content: str, inbound: IncomingMessage) -> OutgoingMessage:
+        """Route replies to the triggering interaction or channel."""
+        metadata: dict[str, Any] = {}
+        if inbound.metadata.get("interaction_type") == "slash_command":
+            for key in (
+                "interaction_id",
+                "interaction_token",
+                "interaction_application_id",
+            ):
+                value = inbound.metadata.get(key)
+                if isinstance(value, str) and value:
+                    metadata[key] = value
+        return OutgoingMessage(
+            content=content,
+            reply_to=inbound.channel_id,
+            metadata=metadata,
+        )
+
+    def streaming_reply_kwargs(self, inbound: IncomingMessage) -> dict[str, Any]:
+        """Route streaming replies to the triggering interaction or channel."""
+        kwargs: dict[str, Any] = {"channel_id": inbound.channel_id}
+        if inbound.metadata.get("interaction_type") == "slash_command":
+            for key in (
+                "interaction_id",
+                "interaction_token",
+                "interaction_application_id",
+            ):
+                value = inbound.metadata.get(key)
+                if isinstance(value, str) and value:
+                    kwargs[key] = value
+        return kwargs
+
     async def send(self, message: OutgoingMessage) -> ChannelSendResult:
         await self._rate_limiter.acquire()
         client = self._get_client()
@@ -714,6 +795,39 @@ class DiscordChannel:
             payload["message_reference"] = {
                 "message_id": message.metadata["reply_to_message_id"],
             }
+
+        interaction_token = message.metadata.get("interaction_token")
+        if isinstance(interaction_token, str) and interaction_token:
+            application_id = message.metadata.get("interaction_application_id")
+            if not isinstance(application_id, str) or not application_id:
+                application_id = self.config.application_id
+            interaction_id = str(message.metadata.get("interaction_id") or "")
+            if not application_id:
+                return ChannelSendResult.failed(
+                    capability=ChannelCapabilities.GROUP_CHAT,
+                    target_id=interaction_id or channel_id,
+                    reason="missing Discord application id for interaction response",
+                )
+            resp = await retry_request(
+                client.patch,
+                f"/webhooks/{application_id}/{interaction_token}/messages/@original",
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            message_id = str(data.get("id") or "")
+            if message_id:
+                self._sent_messages[message_id] = channel_id
+            log.debug(
+                "discord.interaction_response_completed",
+                interaction_id=interaction_id,
+                message_id=message_id,
+            )
+            return ChannelSendResult.sent(
+                capability=ChannelCapabilities.GROUP_CHAT,
+                target_id=interaction_id or channel_id,
+                provider_message_id=message_id,
+            )
 
         resp = await retry_request(
             client.post,
@@ -844,6 +958,8 @@ class DiscordChannel:
 
     def is_group_mentioned(self, msg: IncomingMessage) -> bool:
         """Uniform mention check for group gating. Delegates to is_mentioned."""
+        if msg.metadata.get("interaction_type") == "slash_command":
+            return True
         return self.is_mentioned(msg.content)
 
     # ------------------------------------------------------------------
@@ -877,6 +993,9 @@ class DiscordChannel:
         chunks: AsyncIterator[str],
         *,
         channel_id: str | None = None,
+        interaction_id: str | None = None,
+        interaction_token: str | None = None,
+        interaction_application_id: str | None = None,
         update_interval_ms: int = 500,
     ) -> str | None:
         """Stream a message: post first chunk, PATCH edits for subsequent.
@@ -890,27 +1009,47 @@ class DiscordChannel:
         client = self._get_client()
         throttle = StreamThrottle(interval_s=update_interval_ms / 1000.0)
         message_id: str | None = None
+        interaction_path: str | None = None
+        if interaction_token:
+            application_id = interaction_application_id or self.config.application_id
+            if not application_id:
+                raise ValueError("missing Discord application id for interaction response")
+            interaction_path = f"/webhooks/{application_id}/{interaction_token}/messages/@original"
 
         async def _post(text: str) -> None:
             nonlocal message_id
             await self._rate_limiter.acquire()
-            resp = await retry_request(
-                client.post,
-                f"/channels/{target}/messages",
-                json={"content": text},
-                headers=self._auth_headers(),
-            )
+            if interaction_path is not None:
+                resp = await retry_request(
+                    client.patch,
+                    interaction_path,
+                    json={"content": text},
+                )
+            else:
+                resp = await retry_request(
+                    client.post,
+                    f"/channels/{target}/messages",
+                    json={"content": text},
+                    headers=self._auth_headers(),
+                )
             resp.raise_for_status()
             message_id = resp.json().get("id")
 
         async def _edit(text: str) -> None:
             await self._rate_limiter.acquire()
-            await retry_request(
-                client.patch,
-                f"/channels/{target}/messages/{message_id}",
-                json={"content": text},
-                headers=self._auth_headers(),
-            )
+            if interaction_path is not None:
+                await retry_request(
+                    client.patch,
+                    interaction_path,
+                    json={"content": text},
+                )
+            else:
+                await retry_request(
+                    client.patch,
+                    f"/channels/{target}/messages/{message_id}",
+                    json={"content": text},
+                    headers=self._auth_headers(),
+                )
 
         async for chunk in chunks:
             throttle.add(chunk)
