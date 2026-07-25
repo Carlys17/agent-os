@@ -23,8 +23,7 @@ def _channel_artifact_context(tmp_path: Path) -> ToolContext:
     workspace = tmp_path / "workspace"
     workspace.mkdir(exist_ok=True)
     return ToolContext(
-        is_owner=False,
-        caller_kind=CallerKind.CHANNEL,
+                caller_kind=CallerKind.CHANNEL,
         workspace_dir=str(workspace),
         artifact_media_root=str(tmp_path / "media"),
         artifact_session_id="session-1",

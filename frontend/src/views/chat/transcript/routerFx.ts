@@ -1,6 +1,6 @@
 // Chat transcript — router-fx animation engine (imperative).
 //
-// This module is part of the OWNER-APPROVED imperative boundary of the
+// This module is part of the reviewed imperative boundary of the
 // chat-view migration (design §2.1): the router-fx subsystem is a self-contained
 // imperative animation engine (DOM + timers + rAF), ported near-verbatim from
 // static/js/views/chat.js (the router-fx range, chat.js:3263-4680) — it is NOT

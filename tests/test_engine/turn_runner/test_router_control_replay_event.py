@@ -117,7 +117,7 @@ async def test_router_control_replay_event_replays_turn_once(monkeypatch) -> Non
         async for event in runner.run(
             "Use c3 for this",
             "agent:main:router-control-replay",
-            tool_context=ToolContext(is_owner=True, caller_kind=CallerKind.CLI),
+            tool_context=ToolContext(caller_kind=CallerKind.CLI),
             history_has_persisted_user=False,
             no_memory_capture=True,
         )

@@ -278,9 +278,6 @@ def _bind_restart_fingerprint(config: Any) -> dict[str, Any]:
     return {
         "host": data.get("host"),
         "auth_mode": auth.get("mode") if isinstance(auth, dict) else None,
-        "allow_unauthenticated_public": (
-            auth.get("allow_unauthenticated_public") if isinstance(auth, dict) else None
-        ),
     }
 
 
@@ -581,7 +578,7 @@ def _deep_merge(base: dict, patch: dict) -> dict:
     return result
 
 
-@_d.method("config.snapshot", scope="operator.read")
+@_d.method("config.snapshot")
 async def _handle_config_snapshot(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Return one coherent, redacted setup/config view for control surfaces."""
     if params is not None and not isinstance(params, dict):
@@ -622,7 +619,7 @@ async def _handle_config_snapshot(params: dict | None, ctx: RpcContext) -> dict[
     }
 
 
-@_d.method("config.set", scope="operator.admin")
+@_d.method("config.set")
 async def _handle_config_set(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict) or "path" not in params or "value" not in params:
         raise ValueError("params.path and params.value are required")
@@ -691,7 +688,7 @@ async def _handle_config_set(params: dict | None, ctx: RpcContext) -> dict[str, 
     return {"restartRequired": result.restart_required}
 
 
-@_d.method("config.patch", scope="operator.admin")
+@_d.method("config.patch")
 async def _handle_config_patch(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params.patch or params.patches is required")
@@ -787,7 +784,7 @@ async def _handle_config_patch(params: dict | None, ctx: RpcContext) -> dict[str
     }
 
 
-@_d.method("config.patch.safe", scope="operator.write")
+@_d.method("config.patch.safe")
 async def _handle_config_patch_safe(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params.patches is required")
@@ -801,12 +798,14 @@ async def _handle_config_patch_safe(params: dict | None, ctx: RpcContext) -> dic
 
     unsafe_paths = sorted(set(dot_patches) - _SAFE_WRITE_PATCH_PATHS)
     if unsafe_paths:
-        raise ValueError(f"Path is not safe for operator.write: {unsafe_paths[0]}")
+        raise ValueError(
+            f"Path is outside the writable configuration roots: {unsafe_paths[0]}"
+        )
 
     return cast(dict[str, Any], await _handle_config_patch(params, ctx))
 
 
-@_d.method("config.apply", scope="operator.admin")
+@_d.method("config.apply")
 async def _handle_config_apply(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params.config is required")
@@ -827,8 +826,8 @@ async def _handle_config_apply(params: dict | None, ctx: RpcContext) -> dict[str
 
     config_payload = dict(config_payload)
     # YAML-mode Save seeds the payload from the RUNNING config (config.get), so
-    # every CLI/break-glass override it carries (host/port/debug/auth.mode/
-    # opt-in) is echoed back verbatim.
+    # every transient CLI override it carries (host/port/debug) is echoed back
+    # verbatim.
     from agentos.gateway.config_persist import get_runtime_overrides
 
     if isinstance(baseline_payload, dict):
@@ -888,7 +887,7 @@ async def _handle_config_apply(params: dict | None, ctx: RpcContext) -> dict[str
     return {"restartRequired": result.restart_required}
 
 
-@_d.method("config.schema", scope="operator.admin")
+@_d.method("config.schema")
 async def _handle_config_schema(params: dict | None, ctx: RpcContext) -> dict:
     from agentos.gateway.config import GatewayConfig
 
@@ -908,7 +907,7 @@ async def _handle_config_schema(params: dict | None, ctx: RpcContext) -> dict:
     return {"schema": schema}
 
 
-@_d.method("config.schema.lookup", scope="operator.read")
+@_d.method("config.schema.lookup")
 async def _handle_config_schema_lookup(params: dict | None, ctx: RpcContext) -> dict:
     if not isinstance(params, dict) or "path" not in params:
         raise ValueError("params.path is required")

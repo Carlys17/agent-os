@@ -8,6 +8,7 @@ import weakref
 from pathlib import Path
 from typing import Any
 
+from agentos.gateway.access import CONTROL_AND_CHANNEL, CONTROL_AND_NODE
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 from agentos.skills.eligibility import (
     EligibilityContext,
@@ -218,7 +219,7 @@ def _skill_to_dict(
     return d
 
 
-@_d.method("skills.status", scope="operator.read")
+@_d.method("skills.status")
 async def _handle_skills_status(params: dict | None, ctx: RpcContext) -> list[dict[str, Any]]:
     """Return all skills with their eligibility status."""
     loader = _get_loader(ctx)
@@ -240,7 +241,7 @@ async def _handle_skills_status(params: dict | None, ctx: RpcContext) -> list[di
     ]
 
 
-@_d.method("skills.list", scope="operator.read")
+@_d.method("skills.list", CONTROL_AND_CHANNEL)
 async def _handle_skills_list(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """List installed skills."""
     loader = _get_loader(ctx)
@@ -265,7 +266,7 @@ async def _handle_skills_list(params: dict | None, ctx: RpcContext) -> dict[str,
     }
 
 
-@_d.method("skills.bins", scope="node")
+@_d.method("skills.bins", CONTROL_AND_NODE)
 async def _handle_skills_bins(params: dict | None, ctx: RpcContext) -> dict[str, bool]:
     """Return the availability status of required bins across all skills."""
     loader = _get_loader(ctx)
@@ -287,7 +288,7 @@ async def _handle_skills_bins(params: dict | None, ctx: RpcContext) -> dict[str,
     return bins_status
 
 
-@_d.method("skills.get", scope="operator.read")
+@_d.method("skills.get")
 async def _handle_skills_get(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Get a single skill by name, including its full content."""
     if not isinstance(params, dict) or "name" not in params:
@@ -328,7 +329,7 @@ def _installed_names() -> set[str]:
     return installed_skill_names()
 
 
-@_d.method("skills.search", scope="operator.read")
+@_d.method("skills.search")
 async def _handle_skills_search(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Search for skills across Community sources."""
     if not isinstance(params, dict) or "query" not in params:
@@ -396,7 +397,7 @@ def _invalidate_loader(ctx: RpcContext) -> None:
         loader.invalidate_cache()
 
 
-@_d.method("skills.install", scope="operator.admin")
+@_d.method("skills.install")
 async def _handle_skills_install(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Install a skill from a Community source."""
     if not isinstance(params, dict) or "identifier" not in params:
@@ -428,7 +429,7 @@ async def _handle_skills_install(params: dict | None, ctx: RpcContext) -> dict[s
     return resp
 
 
-@_d.method("skills.update", scope="operator.admin")
+@_d.method("skills.update")
 async def _handle_skills_update(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Update installed skills from lockfile."""
     loader = _get_loader(ctx)
@@ -458,7 +459,7 @@ async def _handle_skills_update(params: dict | None, ctx: RpcContext) -> dict[st
     }
 
 
-@_d.method("skills.uninstall", scope="operator.admin")
+@_d.method("skills.uninstall")
 async def _handle_skills_uninstall(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Uninstall a managed skill."""
     if not isinstance(params, dict) or "name" not in params:
@@ -474,7 +475,7 @@ async def _handle_skills_uninstall(params: dict | None, ctx: RpcContext) -> dict
     return {"success": result.success, "name": result.name, "message": result.message}
 
 
-@_d.method("skills.deps.install", scope="operator.admin")
+@_d.method("skills.deps.install")
 async def _handle_skills_deps_install(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Install runtime dependencies for an already-loaded skill.
 

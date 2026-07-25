@@ -3,7 +3,7 @@
 // This module carries the two PURE, unit-tested helpers the brief calls out —
 // `messagePageIdentity` (chat.js:5350) and `mergeHistoryMessagePages`
 // (chat.js:5357-5368) — plus the imperative, controller-driven history-render
-// seam (design §2.1: the transcript region is the owner-approved imperative
+// seam (design §2.1: the transcript region is the reviewed imperative
 // boundary; history DOM rendering is ported near-verbatim, NOT reactified).
 //
 // The react-query wiring that DRIVES these (fetch + backward pagination) lives

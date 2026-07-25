@@ -517,14 +517,10 @@ def assert_capability_tier(module: ModuleType) -> None:
 
 
 def assert_dm_safety_tiers(module: ModuleType) -> None:
-    """DM/group adapters must declare a non-empty safety-tier tuple without admin-only."""
+    """DM/group adapters must declare a non-empty SAFE/CONFIRM tier tuple."""
     tiers = getattr(module, "DM_SAFETY_TIERS", None)
     assert isinstance(tiers, tuple), f"{module.__name__}.DM_SAFETY_TIERS must be a tuple"
     assert tiers, f"{module.__name__}.DM_SAFETY_TIERS must be non-empty"
-    assert "admin-only" not in tiers, (
-        f"{module.__name__}.DM_SAFETY_TIERS must not include 'admin-only' "
-        "(DM/group adapters must not declare admin scope)."
-    )
     for tier in tiers:
         assert tier in ALLOWED_DM_SAFETY_TIERS, (
             f"unknown safety tier {tier!r} in {module.__name__}.DM_SAFETY_TIERS"

@@ -354,7 +354,7 @@ def create_skill_tools(loader: SkillLoader) -> None:
             },
         },
         required=["identifier"],
-        owner_only=True,
+        exposed_by_default=False,
     )
     async def skill_install_community(
         identifier: str,
@@ -411,7 +411,7 @@ def create_skill_tools(loader: SkillLoader) -> None:
             },
         },
         required=["skill_name", "install_id"],
-        owner_only=True,
+        exposed_by_default=False,
     )
     async def install_skill_deps(
         skill_name: str,

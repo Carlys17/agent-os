@@ -76,8 +76,8 @@ class RPCFailGatewayClient(FakeGatewayClient):
         raise GatewayRPCError(
             method,
             code="UNAUTHORIZED",
-            message="operator.admin scope required",
-            data={"scope": "operator.admin"},
+            message="connected control client required",
+            data={"surface": "control"},
         )
 
 

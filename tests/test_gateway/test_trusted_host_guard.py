@@ -5,8 +5,8 @@ rebind ``attacker.com`` to ``127.0.0.1`` and reach the local gateway, with
 the attacker's hostname in the ``Host`` header (CVE-2026-53869 class). On a
 loopback bind we therefore pin ``Host`` to a loopback allowlist. On a
 non-loopback bind (which only starts past ``enforce_public_bind_auth_guard``
-— so auth is on, or the operator explicitly opted in) we do not constrain
-Host, since the operator deliberately serves other names.
+with authentication enabled) we do not constrain Host, since the operator
+deliberately serves other names.
 """
 
 from __future__ import annotations
@@ -25,14 +25,16 @@ from agentos.gateway.middleware import LoopbackHostMiddleware
 def _config(
     host: str = "127.0.0.1",
     auth_mode: str = "none",
-    allow_public: bool = False,
     ui_origins: list[str] | None = None,
     cors_origins: list[str] | None = None,
     base_path: str = "/control",
 ) -> GatewayConfig:
     return GatewayConfig(
         host=host,
-        auth=AuthConfig(mode=auth_mode, allow_unauthenticated_public=allow_public),
+        auth=AuthConfig(
+            mode=auth_mode,
+            token="test-token" if auth_mode == "token" else None,
+        ),
         control_ui=ControlUiConfig(allowed_origins=ui_origins or [], base_path=base_path),
         cors=CorsConfig(allowed_origins=cors_origins)
         if cors_origins is not None
@@ -43,12 +45,12 @@ def _config(
 class TestResolveTrustedHosts:
     def test_loopback_bind_constrains_host(self) -> None:
         """No wildcard on a loopback bind — loopback Host values themselves are
-        admitted by LoopbackHostMiddleware via scopes.is_loopback_address."""
+        admitted by LoopbackHostMiddleware via the shared loopback predicate."""
         hosts = resolve_trusted_hosts(_config(host="127.0.0.1"))
         assert "*" not in hosts
 
     def test_non_loopback_bind_does_not_constrain(self) -> None:
-        """Past the startup guard a public bind has auth (or explicit opt-in)."""
+        """Past the startup guard a public bind has authentication."""
         hosts = resolve_trusted_hosts(_config(host="0.0.0.0", auth_mode="token"))
         assert hosts == ["*"]
 
@@ -186,9 +188,11 @@ class TestLoopbackOriginGuardHttp:
     def _client(self, **cfg_kwargs: object) -> TestClient:
         from agentos.gateway.app import create_gateway_app
 
+        cfg_kwargs.setdefault("auth_mode", "token")
         return TestClient(
             create_gateway_app(_config(**cfg_kwargs)),  # type: ignore[arg-type]
             base_url="http://localhost",
+            headers={"authorization": "Bearer test-token"},
         )
 
     def test_cross_site_origin_rejected(self) -> None:

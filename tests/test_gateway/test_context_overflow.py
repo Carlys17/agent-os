@@ -1141,9 +1141,9 @@ async def test_chat_send_accepts_turn_without_synchronous_context_overflow_gate(
         get_or_create=AsyncMock(return_value=SimpleNamespace(session_key="s-auto")),
     )
     ctx = SimpleNamespace(
+        conn_id="test-control",
         config=cfg,
         session_manager=sm,
-        principal=SimpleNamespace(role="owner"),
     )
     accepted: dict[str, Any] = {}
 
@@ -1189,9 +1189,9 @@ def test_chat_send_creates_webchat_session_with_agent_from_key(
         ),
     )
     ctx = SimpleNamespace(
+        conn_id="test-control",
         config=cfg,
         session_manager=sm,
-        principal=SimpleNamespace(role="owner"),
     )
 
     async def _fake_sessions_send(params: dict[str, Any], _ctx: Any) -> dict[str, Any]:

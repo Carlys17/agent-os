@@ -63,7 +63,7 @@ class ChannelManager:
     _retry_backoff_initial: float = 1.0
     _retry_backoff_max: float = 60.0
     # Outer-loop restart policy. ``dead`` is operator-recoverable via the
-    # ``channels.restart`` admin RPC; the cap only bounds *automatic*
+    # ``channels.restart`` Control RPC; the cap only bounds *automatic*
     # restart attempts.
     _restart_delay_s: float = 30.0
     _max_restart_cycles: int = 3
@@ -370,7 +370,7 @@ class ChannelManager:
 
         Adapter-reported ``ChannelHealth.extra`` is augmented with the
         dispatch-loop state so operators can distinguish "channel dropped a
-        message" from "channel is permanently dead pending admin restart".
+        message" from "channel is permanently dead pending a Control restart".
         """
         out: dict[str, ChannelHealth] = {}
         for name, a in self._channels.items():

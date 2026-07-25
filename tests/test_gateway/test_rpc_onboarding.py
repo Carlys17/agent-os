@@ -8,7 +8,6 @@ import tomllib
 import pytest
 
 import agentos.gateway.rpc_onboarding  # noqa: F401  ensures registration
-from agentos.gateway.auth import Principal
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
 
@@ -21,24 +20,12 @@ def _env_hint(env_key: str) -> str:
 def _admin_ctx() -> RpcContext:
     return RpcContext(
         conn_id="t",
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.admin"}),
-            is_owner=True,
-            authenticated=True,
-        ),
     )
 
 
 def _read_ctx() -> RpcContext:
     return RpcContext(
         conn_id="t",
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.read"}),
-            is_owner=False,
-            authenticated=True,
-        ),
     )
 
 
@@ -1168,7 +1155,7 @@ async def test_memory_embedding_configure_auto_can_store_remote_fallback(
 
 
 @pytest.mark.asyncio
-async def test_admin_required_for_mutations(tmp_path, monkeypatch):
+async def test_connected_control_can_run_onboarding_mutations(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(tmp_path / "c.toml"))
     res = await get_dispatcher().dispatch(
         "r1",
@@ -1176,8 +1163,8 @@ async def test_admin_required_for_mutations(tmp_path, monkeypatch):
         {"providerId": "openrouter", "model": "x", "apiKey": "k"},
         _read_ctx(),
     )
-    assert res.error is not None
-    assert res.error.code == "UNAUTHORIZED"
+    assert res.error is None, res.error
+    assert res.payload["entry"]["api_key"] == "***"
 
 
 @pytest.mark.asyncio

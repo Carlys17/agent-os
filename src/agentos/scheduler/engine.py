@@ -130,7 +130,6 @@ class SchedulerEngine:
         jitter_seconds: float | None = None,
         creator_session_key: str = "",
         creator_sender_id: str = "",
-        creator_is_owner: bool = False,
     ) -> CronJob:
         """Create and persist a new job; compute initial next_run_at.
 
@@ -154,7 +153,6 @@ class SchedulerEngine:
             jitter_seconds=jitter_seconds,
             creator_session_key=creator_session_key,
             creator_sender_id=creator_sender_id,
-            creator_is_owner=creator_is_owner,
             schedule_kind=schedule_kind,
             schedule_value=schedule_value,
             schedule_tz=schedule_tz,
@@ -193,7 +191,7 @@ class SchedulerEngine:
         return result
 
     async def remove_job(self, job_id: str) -> bool:
-        """Alias for delete_job (used by admin tool)."""
+        """Alias for delete_job (used by the Control tool module)."""
         return await self.delete_job(job_id)
 
     async def run_job_now(self, job_id: str) -> ManualRunResult:

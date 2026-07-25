@@ -44,7 +44,7 @@ from agentos.gateway.channel_dispatch import (
 from agentos.gateway.config import AgentEntryConfig, GatewayConfig
 from agentos.gateway.protocol import make_ok_res
 from agentos.gateway.routing import build_channel_route_envelope
-from agentos.safety.permission_matrix import Principal, is_tool_allowed
+from agentos.safety.permission_matrix import is_tool_allowed
 from agentos.tools.types import CallerKind
 
 
@@ -286,14 +286,14 @@ def test_channel_stream_policy_prefers_adapter_stream_updates() -> None:
 # ── Channel /new "fresh session" pointer (New Chat parity) ────────────────
 
 
-def _write_principal() -> Any:
-    from agentos.gateway.auth import Principal as GatewayPrincipal
+def _channel_access() -> Any:
+    from agentos.gateway.access import ConnectionSurface
+    from agentos.gateway.auth import AccessContext
 
-    return GatewayPrincipal(
-        role="operator",
-        scopes=frozenset({"operator.read", "operator.write"}),
-        is_owner=False,
-        authenticated=True,
+    return AccessContext(
+        surface=ConnectionSurface.CHANNEL,
+        admitted=True,
+        credential_verified=True,
     )
 
 
@@ -328,7 +328,7 @@ async def test_channel_new_command_sets_pointer_and_does_not_reset() -> None:
         session_key=base_key,
         session_prefix="telegram",
         rpc_dispatcher=ExplodingDispatcher(),
-        context_factory=lambda _envelope: SimpleNamespace(principal=_write_principal()),
+        context_factory=lambda _envelope: SimpleNamespace(access=_channel_access()),
         session_pointers=pointers,
         base_session_key=base_key,
     )
@@ -372,7 +372,7 @@ async def test_channel_new_command_without_pointer_falls_back_to_reset() -> None
         session_key=base_key,
         session_prefix="telegram",
         rpc_dispatcher=FakeDispatcher(),
-        context_factory=lambda _envelope: SimpleNamespace(principal=_write_principal()),
+        context_factory=lambda _envelope: SimpleNamespace(access=_channel_access()),
         session_pointers=None,
         base_session_key=base_key,
     )
@@ -806,7 +806,7 @@ async def test_direct_channel_batch_turn_removes_artifact_markers_from_channel_t
 
 
 @pytest.mark.asyncio
-async def test_channel_admin_sender_gets_owner_tool_context_for_agent_turn(tmp_path) -> None:
+async def test_channel_sender_gets_role_free_tool_context_for_agent_turn(tmp_path) -> None:
     captured: dict[str, object] = {}
 
     class FakeTurnRunner:
@@ -823,7 +823,6 @@ async def test_channel_admin_sender_gets_owner_tool_context_for_agent_turn(tmp_p
         agent_id="main",
     )
     config = SimpleNamespace(
-        channel_admin_senders={"feishu": ["u1"]},
         workspace_dir=str(tmp_path),
         workspace_strict=True,
         agent_stream_heartbeat_interval_seconds=0.0,
@@ -840,21 +839,17 @@ async def test_channel_admin_sender_gets_owner_tool_context_for_agent_turn(tmp_p
     )
 
     tool_context = captured["tool_context"]
-    assert tool_context.is_owner is True
+    assert not hasattr(tool_context, "is_owner")
     assert tool_context.caller_kind is CallerKind.CHANNEL
     assert tool_context.channel_kind == "feishu"
     assert tool_context.sender_id == "u1"
-    decision = is_tool_allowed(
-        "write_file",
-        "dm",
-        Principal(role="operator", channel_id=tool_context.session_key),
-    )
+    decision = is_tool_allowed("write_file", "dm")
     assert decision.allowed is True
-    assert decision.reason == "operator_override"
+    assert decision.reason == "confirmation_required"
 
 
 @pytest.mark.asyncio
-async def test_unlisted_channel_sender_keeps_restricted_tool_context_for_agent_turn(
+async def test_channel_config_cannot_promote_a_sender_tool_context(
     tmp_path,
 ) -> None:
     captured: dict[str, object] = {}
@@ -873,7 +868,6 @@ async def test_unlisted_channel_sender_keeps_restricted_tool_context_for_agent_t
         agent_id="main",
     )
     config = SimpleNamespace(
-        channel_admin_senders={"feishu": ["other-user"]},
         workspace_dir=str(tmp_path),
         workspace_strict=True,
         agent_stream_heartbeat_interval_seconds=0.0,
@@ -890,7 +884,7 @@ async def test_unlisted_channel_sender_keeps_restricted_tool_context_for_agent_t
     )
 
     tool_context = captured["tool_context"]
-    assert tool_context.is_owner is False
+    assert not hasattr(tool_context, "is_owner")
     assert tool_context.caller_kind is CallerKind.CHANNEL
     assert tool_context.channel_kind == "feishu"
     assert tool_context.sender_id == "u1"

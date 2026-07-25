@@ -74,6 +74,16 @@ class PairingRequestResult:
     retry_after_s: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class ChannelAdmission:
+    """Immutable proof that a channel sender has an active pairing grant."""
+
+    channel_name: str
+    sender_id: str
+    grant_id: str
+    grant_version: int
+
+
 def pairing_root() -> Path:
     return default_agentos_home() / "pairing"
 
@@ -314,6 +324,61 @@ class ChannelPairingStore:
                 for item in approved_doc["users"]
             )
 
+    @staticmethod
+    def _admission_from_entry(
+        channel_name: str,
+        entry: dict[str, Any],
+    ) -> ChannelAdmission:
+        sender_id = str(entry.get("sender_id") or "")
+        grant_id = str(entry.get("grant_id") or "")
+        if not grant_id:
+            legacy_seed = (
+                f"{channel_name}\0{sender_id}\0{entry.get('approved_at', '')}"
+            )
+            grant_id = "legacy-" + hashlib.sha256(
+                legacy_seed.encode("utf-8")
+            ).hexdigest()[:24]
+        return ChannelAdmission(
+            channel_name=channel_name,
+            sender_id=sender_id,
+            grant_id=grant_id,
+            grant_version=int(entry.get("grant_version") or 1),
+        )
+
+    def admission(
+        self,
+        channel_name: str,
+        sender_id: str,
+    ) -> ChannelAdmission | None:
+        """Return the current immutable grant for a paired sender."""
+
+        sender_id = str(sender_id or "").strip()
+        if not sender_id:
+            return None
+        with self._locked():
+            approved_doc = self._read(
+                self._approved_path(channel_name), collection_key="users"
+            )
+            match = next(
+                (
+                    item
+                    for item in approved_doc["users"]
+                    if str(item.get("sender_id") or "") == sender_id
+                ),
+                None,
+            )
+            return (
+                self._admission_from_entry(channel_name, match)
+                if match is not None
+                else None
+            )
+
+    def validate_admission(self, admission: ChannelAdmission) -> bool:
+        """Revalidate a grant so revocation takes effect on queued work."""
+
+        current = self.admission(admission.channel_name, admission.sender_id)
+        return current == admission
+
     def approve(self, channel_name: str, code: str) -> dict[str, Any]:
         normalized_code = str(code or "").strip().upper()
         if not normalized_code:
@@ -369,6 +434,8 @@ class ChannelPairingStore:
                 {
                     **self._profile(sender_id, match),
                     "approved_at": now,
+                    "grant_id": secrets.token_hex(16),
+                    "grant_version": 1,
                 }
             )
             channel_control["failed_attempts"] = 0
@@ -431,6 +498,7 @@ class ChannelPairingStore:
 
 
 __all__ = [
+    "ChannelAdmission",
     "ChannelPairingStore",
     "InvalidPairingCodeError",
     "PAIRING_CODE_LENGTH",

@@ -7,19 +7,12 @@ import pytest
 
 import agentos.gateway.rpc_wizard as rpc_wizard  # noqa: F401  ensures registration
 from agentos.application.wizard import reset_wizard_registry
-from agentos.gateway.auth import Principal
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
 
 def _admin_ctx() -> RpcContext:
     return RpcContext(
         conn_id="t",
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.admin"}),
-            is_owner=True,
-            authenticated=True,
-        ),
     )
 
 

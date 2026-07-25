@@ -406,7 +406,7 @@ async def run_channel_dispatch(
         # Access/mention policy must run before slash-command interception and
         # debounce. Otherwise an unapproved account could still execute a
         # channel command even though normal chat turns were gated.
-        if _should_skip_unmentioned(channel, msg, session_key):
+        if _should_skip_unmentioned(channel, msg, session_key, route_envelope):
             await _notify_access_denial(channel, msg, session_key)
             continue
 
@@ -737,20 +737,18 @@ async def _dispatch_channel_new_command(
     session_pointers: ChannelSessionPointers | None = None,
     base_session_key: str | None = None,
 ) -> OutgoingMessage:
-    from agentos.gateway.scopes import WRITE_SCOPE, authorize_call
+    from agentos.channels.command_registry import DEFAULT_COMMAND_REGISTRY
+    from agentos.gateway.access import ConnectionSurface
 
     ctx = context_factory(route_envelope)
-    principal = getattr(ctx, "principal", None)
-    allowed, missing = authorize_call(
-        "sessions.reset",
-        WRITE_SCOPE,
-        getattr(principal, "role", ""),
-        getattr(principal, "scopes", frozenset()),
-    )
-    if not allowed:
-        detail = f": missing {missing}" if missing else ""
+    access = getattr(ctx, "access", None)
+    if (
+        access is None
+        or not access.admitted
+        or access.surface is not ConnectionSurface.CHANNEL
+    ):
         return _route_envelope_reply_message(
-            (f"/new denied: Insufficient scope for method: sessions.reset{detail}"),
+            "/new denied: paired channel connection required",
             route_envelope,
             metadata={"command": "new", "method": "sessions.reset", "denied": True},
         )
@@ -781,8 +779,6 @@ async def _dispatch_channel_new_command(
 
     # Fallback (no pointer map wired): retain the legacy destructive reset so the
     # command still functions in tests/shims that bypass the pointer.
-    from agentos.channels.command_registry import DEFAULT_COMMAND_REGISTRY
-
     await _record_delivery_context(
         session_manager,
         session_key,
@@ -816,7 +812,7 @@ async def _dispatch_combined_message_after_debounce(channel: Any, combined: Any,
     async with _maybe_lock(session_lock):
         await _record_delivery_context(session_manager, session_key, msg, session_prefix, route_envelope=route_envelope)  # noqa: E501
 
-        if _should_skip_unmentioned(channel, msg, session_key):
+        if _should_skip_unmentioned(channel, msg, session_key, route_envelope):
             return
 
     ingested = await _ingest_channel_message_attachments(channel=channel, msg=msg)
@@ -997,9 +993,20 @@ async def resolve_delivery_target(
 _MENTION_GATE_WARNED: dict[int, weakref.ReferenceType[Any] | None] = {}
 
 
-def _record_access_denial(channel: Any, msg: IncomingMessage, decision: Any) -> bool:
-    """Forward policy denials to adapters that expose an approval workflow."""
+def _record_access_decision(
+    channel: Any,
+    msg: IncomingMessage,
+    decision: Any,
+    route_envelope: Any | None = None,
+) -> bool:
+    """Record admission proof or forward a denial to the adapter."""
+
     if bool(getattr(decision, "admit", False)):
+        admission = getattr(decision, "admission", None)
+        validator = getattr(decision, "admission_validator", None)
+        if route_envelope is not None and admission is not None and callable(validator):
+            route_envelope.metadata["_channel_admission"] = admission
+            route_envelope.metadata["_channel_admission_validator"] = validator
         return False
     hook = getattr(channel, "record_access_denial", None)
     if callable(hook):
@@ -1058,6 +1065,7 @@ def _should_skip_unmentioned(
     channel: Any,
     msg: IncomingMessage,
     session_key: str,
+    route_envelope: Any | None = None,
 ) -> bool:
     """Return True when channel policy says to skip this inbound message.
 
@@ -1072,6 +1080,9 @@ def _should_skip_unmentioned(
     is_explicit_interaction = interaction_type == "slash_command"
     policy = getattr(channel, "policy", None)
     custom_evaluator = getattr(channel, "evaluate_access", None)
+    if route_envelope is not None:
+        route_envelope.metadata.pop("_channel_admission", None)
+        route_envelope.metadata.pop("_channel_admission_validator", None)
     if callable(custom_evaluator):
         mentioned = not is_group or is_explicit_interaction
         if is_group and not is_explicit_interaction:
@@ -1085,7 +1096,7 @@ def _should_skip_unmentioned(
             is_group=is_group,
             mentioned=mentioned,
         )
-        return _record_access_denial(channel, msg, decision)
+        return _record_access_decision(channel, msg, decision, route_envelope)
 
     if isinstance(policy, ChannelAccessPolicy):
         if not is_group:
@@ -1095,7 +1106,7 @@ def _should_skip_unmentioned(
                 mentioned=False,
                 sender_id=msg.sender_id,
             )
-            return _record_access_denial(channel, msg, decision)
+            return _record_access_decision(channel, msg, decision, route_envelope)
         if not policy.group_allowed:
             decision = evaluate_policy(
                 policy,
@@ -1103,7 +1114,7 @@ def _should_skip_unmentioned(
                 mentioned=False,
                 sender_id=msg.sender_id,
             )
-            return _record_access_denial(channel, msg, decision)
+            return _record_access_decision(channel, msg, decision, route_envelope)
         if not policy.mention_required_in_group or is_explicit_interaction:
             decision = evaluate_policy(
                 policy,
@@ -1111,7 +1122,7 @@ def _should_skip_unmentioned(
                 mentioned=True,
                 sender_id=msg.sender_id,
             )
-            return _record_access_denial(channel, msg, decision)
+            return _record_access_decision(channel, msg, decision, route_envelope)
 
     if not is_group or is_explicit_interaction:
         return False
@@ -1129,7 +1140,7 @@ def _should_skip_unmentioned(
             mentioned=mentioned,
             sender_id=msg.sender_id,
         )
-        return _record_access_denial(channel, msg, decision)
+        return _record_access_decision(channel, msg, decision, route_envelope)
     return not mentioned
 
 
@@ -1249,26 +1260,6 @@ async def _emit_run_heartbeat(
     )
 
 
-def _is_channel_admin_sender(config: Any, envelope: Any) -> bool:
-    admin_senders = getattr(config, "channel_admin_senders", None)
-    if not isinstance(admin_senders, dict):
-        return False
-
-    source_name = getattr(envelope, "source_name", None)
-    sender_id = getattr(envelope, "sender_id", None)
-    if not isinstance(source_name, str) or not source_name:
-        return False
-    if not isinstance(sender_id, str) or not sender_id:
-        return False
-
-    configured = admin_senders.get(source_name)
-    if isinstance(configured, str):
-        return sender_id == configured
-    if not isinstance(configured, list | tuple | set | frozenset):
-        return False
-    return sender_id in {str(item) for item in configured}
-
-
 async def _run_turn_with_streaming(
     channel: Any,
     turn_runner: Any,
@@ -1307,7 +1298,6 @@ async def _run_turn_with_streaming(
     )
     tool_ctx = tool_context_from_envelope(
         envelope,
-        is_owner=_is_channel_admin_sender(config, envelope),
         workspace_dir=str(workspace_dir),
         workspace_strict=workspace_strict,
         default_elevated=configured_default_elevated(config),

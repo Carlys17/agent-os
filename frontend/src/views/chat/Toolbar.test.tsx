@@ -145,7 +145,7 @@ describe('Toolbar', () => {
   })
 
   it('latches "Bypass N/A" and clears storage when the POST returns 403', async () => {
-    const fetchSpy = fetchOk({ error: 'owner privileges required' }, 403)
+    const fetchSpy = fetchOk({ error: 'control connection required' }, 403)
     vi.stubGlobal('fetch', fetchSpy)
     render(<Toolbar sessionKey={SESSION} />)
 

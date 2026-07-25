@@ -6,6 +6,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from agentos.gateway.access import CONTROL_AND_CHANNEL
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 from agentos.provider.model_catalog import ModelCatalog
 from agentos.session.cost_rollup import rollup_cost_source
@@ -538,7 +539,7 @@ def _usage_totals(rows: list[dict[str, Any]]) -> dict[str, int | float]:
     }
 
 
-@_d.method("usage.status", scope="operator.read")
+@_d.method("usage.status", CONTROL_AND_CHANNEL)
 async def _handle_usage_status(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     now_ms = _now_ms()
     tracker_rows = _tracker_rows(ctx, now_ms=now_ms)
@@ -635,7 +636,7 @@ async def _handle_usage_status(params: dict | None, ctx: RpcContext) -> dict[str
         }
 
 
-@_d.method("usage.cost", scope="operator.read")
+@_d.method("usage.cost")
 async def _handle_usage_cost(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     now_ms = _now_ms()
     tracker_rows = _tracker_rows(ctx, now_ms=now_ms)

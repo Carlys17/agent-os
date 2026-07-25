@@ -811,7 +811,7 @@ def test_agent_search_and_channel_semantics_are_mapped(
     assert persisted["context_overflow_policy"] == "hard_truncate"
     assert persisted["search_provider"] == "brave"
     assert persisted["search_api_key_env"] == "BRAVE_API_KEY"
-    assert persisted["channel_admin_senders"] == {"slack": ["slack-admin"]}
+    assert "channel_admin_senders" not in persisted
     assert "BRAVE_API_KEY=brave-secret" in (home / ".env").read_text(encoding="utf-8")
     notes = Path(report["output_dir"]) / "MIGRATION_NOTES.md"
     assert notes.is_file()
@@ -821,6 +821,8 @@ def test_agent_search_and_channel_semantics_are_mapped(
     assert "legacy-compact-model" in notes_text
     assert "allowFrom" in notes_text
     assert "allowedUsers" in notes_text
+    assert "adminUsers" in notes_text
+    assert "re-pair" in notes_text.lower()
 
 
 def test_dry_run_report_includes_semantic_notes(

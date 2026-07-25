@@ -1,6 +1,6 @@
 // Chat transcript — tool-activity + subagent-disclosure imperative renderer.
 //
-// This module is part of the OWNER-APPROVED imperative boundary of the
+// This module is part of the reviewed imperative boundary of the
 // chat-view migration (design §2.1): the tool-card / subagent region is ported
 // as near-verbatim imperative DOM code (createElement/appendChild/innerHTML)
 // from static/js/views/chat.js, NOT reactified. Each function carries the cited

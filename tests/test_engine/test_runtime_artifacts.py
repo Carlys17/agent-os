@@ -617,8 +617,7 @@ async def test_turn_runner_streams_artifact_event_and_persists_history(tmp_path)
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(tmp_path),
     )
 
@@ -684,8 +683,7 @@ async def test_turn_runner_cancel_after_artifact_persists_recoverable_delivery_t
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(tmp_path),
     )
     artifact_seen = asyncio.Event()
@@ -745,8 +743,7 @@ async def test_turn_runner_suppresses_tools_after_successful_publish_artifact(
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(tmp_path),
     )
 
@@ -802,8 +799,7 @@ async def test_turn_runner_auto_publishes_deliverable_file_when_model_omits_publ
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(tmp_path / "workspace"),
         allowed_tools={"write_file"},
         elevated="full",
@@ -860,8 +856,7 @@ async def test_turn_runner_does_not_auto_publish_edited_config_json(tmp_path) ->
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(workspace),
         allowed_tools={"edit_file"},
         elevated="full",
@@ -908,8 +903,7 @@ async def test_turn_runner_auto_publishes_deliverable_file_created_by_apply_patc
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(tmp_path / "workspace"),
         allowed_tools={"apply_patch"},
         elevated="full",
@@ -960,8 +954,7 @@ async def test_turn_runner_marks_partial_omitted_artifact_delivery_failure(
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(tmp_path / "workspace"),
         allowed_tools={"write_file"},
         elevated="full",
@@ -1018,8 +1011,7 @@ async def test_turn_runner_auto_publishes_same_content_deliverables_by_name(
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(tmp_path / "workspace"),
         allowed_tools={"write_file"},
         elevated="full",
@@ -1071,8 +1063,7 @@ async def test_turn_runner_auto_publishes_omitted_deliverable_after_existing_art
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(tmp_path / "workspace"),
         allowed_tools={"make_file", "write_file"},
         elevated="full",
@@ -1123,8 +1114,7 @@ async def test_turn_runner_does_not_auto_publish_memory_json_write(tmp_path) -> 
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(tmp_path / "workspace"),
         allowed_tools={"write_file"},
         elevated="full",
@@ -1174,8 +1164,7 @@ async def test_turn_runner_marks_failed_omitted_artifact_delivery_in_final_text(
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(tmp_path / "workspace"),
         allowed_tools={"write_file"},
         elevated="full",
@@ -1225,8 +1214,7 @@ async def test_turn_runner_marks_failed_artifact_delivery_in_final_text(tmp_path
         ),
     )
     tool_context = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(tmp_path),
     )
 

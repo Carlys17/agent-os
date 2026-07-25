@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from agentos.channels.command_registry import (
@@ -10,10 +8,10 @@ from agentos.channels.command_registry import (
 )
 from agentos.channels.types import IncomingMessage
 from agentos.engine.commands import DEFAULT_REGISTRY, Surface
+from agentos.gateway.access import CONTROL_AND_CHANNEL, CONTROL_ONLY, ConnectionSurface
 from agentos.gateway.protocol import ERROR_UNAUTHORIZED, make_error_res, make_ok_res
 from agentos.gateway.routing import build_channel_route_envelope
 from agentos.gateway.rpc import RpcDispatcher
-from agentos.gateway.scopes import READ_SCOPE, WRITE_SCOPE
 
 
 def _envelope(
@@ -50,16 +48,16 @@ async def _dispatch(command: str, payload):
     )
 
 
-def _permission_dispatcher() -> RpcDispatcher:
-    async def read_handler(_params, _ctx):
-        return {"allowed": "read"}
+def _surface_dispatcher() -> RpcDispatcher:
+    async def channel_handler(_params, _ctx):
+        return {"allowed": "channel"}
 
-    async def write_handler(_params, _ctx):
-        return {"allowed": "write"}
+    async def control_handler(_params, _ctx):
+        return {"allowed": "control"}
 
     dispatcher = RpcDispatcher()
-    dispatcher.register("status", read_handler, READ_SCOPE)
-    dispatcher.register("sessions.reset", write_handler, WRITE_SCOPE)
+    dispatcher.register("status", channel_handler, CONTROL_AND_CHANNEL)
+    dispatcher.register("config.get", control_handler, CONTROL_ONLY)
     return dispatcher
 
 
@@ -75,72 +73,19 @@ def test_channel_command_names_include_usage_and_registry_words() -> None:
 
 
 @pytest.mark.asyncio
-async def test_admitted_non_admin_sender_gets_read_only_rpc_access() -> None:
-    context = build_channel_rpc_context(
-        _envelope(),
-        gateway_config=SimpleNamespace(channel_admin_senders={}),
-    )
-    dispatcher = _permission_dispatcher()
+async def test_paired_channel_context_is_limited_by_protocol_surface() -> None:
+    context = build_channel_rpc_context(_envelope(), gateway_config=None)
+    dispatcher = _surface_dispatcher()
 
-    read_response = await dispatcher.dispatch("read", "status", {}, context)
-    write_response = await dispatcher.dispatch("write", "sessions.reset", {}, context)
+    channel_response = await dispatcher.dispatch("channel", "status", {}, context)
+    control_response = await dispatcher.dispatch("control", "config.get", {}, context)
 
-    assert context.principal.role == "operator"
-    assert context.principal.scopes == frozenset({READ_SCOPE})
-    assert read_response.ok is True
-    assert write_response.ok is False
-    assert write_response.error is not None
-    assert write_response.error.code == ERROR_UNAUTHORIZED
-
-
-@pytest.mark.asyncio
-async def test_configured_channel_admin_gets_read_and_write_rpc_access() -> None:
-    context = build_channel_rpc_context(
-        _envelope(source_name="personal"),
-        gateway_config=SimpleNamespace(channel_admin_senders={"personal": ["u1"]}),
-    )
-    dispatcher = _permission_dispatcher()
-
-    read_response = await dispatcher.dispatch("read", "status", {}, context)
-    write_response = await dispatcher.dispatch("write", "sessions.reset", {}, context)
-
-    assert context.principal.role == "operator"
-    assert context.principal.scopes == frozenset({READ_SCOPE, WRITE_SCOPE})
-    assert read_response.ok is True
-    assert write_response.ok is True
-
-
-@pytest.mark.asyncio
-async def test_admitted_direct_message_sender_gets_read_and_write_rpc_access() -> None:
-    context = build_channel_rpc_context(
-        _envelope(session_key="agent:main:telegram:dm:u1"),
-        gateway_config=SimpleNamespace(channel_admin_senders={}),
-    )
-    dispatcher = _permission_dispatcher()
-
-    read_response = await dispatcher.dispatch("read", "status", {}, context)
-    write_response = await dispatcher.dispatch("write", "sessions.reset", {}, context)
-
-    assert context.principal.role == "operator"
-    assert context.principal.scopes == frozenset({READ_SCOPE, WRITE_SCOPE})
-    assert read_response.ok is True
-    assert write_response.ok is True
-
-
-@pytest.mark.asyncio
-async def test_admitted_group_sender_stays_read_only_without_admin_access() -> None:
-    context = build_channel_rpc_context(
-        _envelope(session_key="agent:main:telegram:group:c1"),
-        gateway_config=SimpleNamespace(channel_admin_senders={}),
-    )
-    dispatcher = _permission_dispatcher()
-
-    write_response = await dispatcher.dispatch("write", "sessions.reset", {}, context)
-
-    assert context.principal.scopes == frozenset({READ_SCOPE})
-    assert write_response.ok is False
-    assert write_response.error is not None
-    assert write_response.error.code == ERROR_UNAUTHORIZED
+    assert context.access.admitted is True
+    assert context.access.surface is ConnectionSurface.CHANNEL
+    assert channel_response.ok is True
+    assert control_response.ok is False
+    assert control_response.error is not None
+    assert control_response.error.code == ERROR_UNAUTHORIZED
 
 
 @pytest.mark.parametrize(

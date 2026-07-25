@@ -1,4 +1,4 @@
-"""Admin tools: cron scheduler and gateway control."""
+"""Cron scheduler and gateway-control tools."""
 
 from __future__ import annotations
 
@@ -58,7 +58,6 @@ class _SchedulerProtocol(Protocol):
         jitter_seconds: float | None = None,
         creator_session_key: str = "",
         creator_sender_id: str = "",
-        creator_is_owner: bool = False,
     ) -> Any: ...
 
     async def update_job(self, job_id: str, **patch: Any) -> Any: ...
@@ -125,8 +124,8 @@ def _coerce_tool_schedule(
         raise ToolError(str(exc)) from exc
 
 
-def _owns_cron_job(job: Any, sender_id: str, session_key: str) -> bool:
-    """Caller-ownership test for non-owner cron actions.
+def _cron_job_matches_caller(job: Any, sender_id: str, session_key: str) -> bool:
+    """Return whether a channel caller created the cron job.
 
     Prefer the stable channel sender_id; fall back to session_key for jobs
     created before sender_id tracking existed (or for non-channel sessions).
@@ -265,7 +264,6 @@ def _owns_cron_job(job: Any, sender_id: str, session_key: str) -> bool:
         },
     },
     required=["action"],
-    owner_only=False,
 )
 async def cron(
     action: str,
@@ -294,44 +292,39 @@ async def cron(
 
     sched = _scheduler
 
-    # Resolve caller context. Owner-context calls (loopback CLI, owner WebUI,
-    # channel_admin_senders) pass through unchanged. Non-owner channel callers
-    # get caller-scoped list / remove / run filtering and have target_session_key
-    # / tool_policy blocked (privilege escalation knobs the model should not
-    # synthesise on a normal channel turn).
-    from agentos.tools.types import current_tool_context
+    # Channel-originated agent calls are confined to jobs created by the same
+    # paired sender. Control clients use the control-only cron RPC surface for
+    # global job management.
+    from agentos.tools.types import CallerKind, current_tool_context
 
     ctx = current_tool_context.get()
-    is_owner_caller = bool(getattr(ctx, "is_owner", False)) if ctx is not None else True
+    channel_caller = ctx is not None and ctx.caller_kind is CallerKind.CHANNEL
     caller_session_key = (
         ctx.session_key if ctx is not None and ctx.session_key else ""
     )
     caller_sender_id = str(getattr(ctx, "sender_id", "") or "") if ctx is not None else ""
 
-    if not is_owner_caller:
+    if channel_caller:
         if not caller_session_key:
             raise ToolError(
-                "cron requires a session context for non-owner callers; "
-                "call from a channel-bound session"
+                "cron requires a session context for channel callers"
             )
         if action == "add":
             if target_session_key:
                 raise ToolError(
-                    "target_session_key is reserved for owner callers; "
-                    "non-owner reminders are scoped to your current session"
+                    "target_session_key is unavailable from a channel; "
+                    "channel reminders stay in the current session"
                 )
             if tool_policy:
-                raise ToolError(
-                    "tool_policy is reserved for owner callers"
-                )
+                raise ToolError("tool_policy is unavailable from a channel")
 
     if action == "list":
         jobs = await sched.list_jobs()
-        if not is_owner_caller:
+        if channel_caller:
             jobs = [
                 j
                 for j in jobs
-                if _owns_cron_job(j, caller_sender_id, caller_session_key)
+                if _cron_job_matches_caller(j, caller_sender_id, caller_session_key)
             ]
         items = [
             {
@@ -481,7 +474,6 @@ async def cron(
             tz=effective_tz,
             creator_session_key=caller_session_key,
             creator_sender_id=caller_sender_id,
-            creator_is_owner=is_owner_caller,
             schedule_kind=schedule_kind,
             schedule_value=schedule_value,
             schedule_tz=effective_tz,
@@ -510,13 +502,15 @@ async def cron(
 
     if action == "remove":
         assert job_id is not None
-        if not is_owner_caller:
+        if channel_caller:
             target_job = await sched.get_job(job_id)
             if target_job is None:
                 raise ToolError(f"Job not found: {job_id}")
-            if not _owns_cron_job(target_job, caller_sender_id, caller_session_key):
+            if not _cron_job_matches_caller(
+                target_job, caller_sender_id, caller_session_key
+            ):
                 raise ToolError(
-                    "permission denied: you can only remove cron jobs you created"
+                    "channel callers can only remove cron jobs they created"
                 )
         removed = await sched.remove_job(job_id)
         if not removed:
@@ -525,13 +519,15 @@ async def cron(
 
     # run
     assert job_id is not None
-    if not is_owner_caller:
+    if channel_caller:
         target_job = await sched.get_job(job_id)
         if target_job is None:
             raise ToolError(f"Job not found: {job_id}")
-        if not _owns_cron_job(target_job, caller_sender_id, caller_session_key):
+        if not _cron_job_matches_caller(
+            target_job, caller_sender_id, caller_session_key
+        ):
             raise ToolError(
-                "permission denied: you can only run cron jobs you created"
+                "channel callers can only run cron jobs they created"
             )
     result = await sched.run_job_now(job_id)
     status = getattr(result, "status", "")
@@ -584,7 +580,7 @@ async def cron(
         },
     },
     required=["action"],
-    owner_only=True,
+    exposed_by_default=False,
 )
 async def gateway(
     action: str,

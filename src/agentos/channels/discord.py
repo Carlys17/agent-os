@@ -70,7 +70,7 @@ GATEWAY_INTENTS = (
 # Channel-contract constants pinned by the adapter audit.
 CAPABILITY_TIER = "GREEN-shipping"
 
-# Discord is a DM/group channel; the permission matrix denies admin-only tools.
+# Discord is a DM/group channel; runtime capability and sandbox policy still apply.
 DM_SAFETY_TIERS: tuple[str, ...] = ("safe", "confirm")
 
 RETRYABLE_ERROR_CLASSES: tuple[str, ...] = (

@@ -19,7 +19,7 @@ export interface RawChannel {
   [key: string]: unknown
 }
 
-/** One access account (pending or approved) from channels.access.list. */
+/** One Telegram connection from channels.pairing.list. */
 export interface AccessAccount {
   sender_id?: string | number
   username?: string
@@ -30,14 +30,15 @@ export interface AccessAccount {
   [key: string]: unknown
 }
 
-/** Per-channel access entry from channels.access.list. */
+/** Per-channel pairing entry from channels.pairing.list. */
 export interface ChannelAccess {
   name?: string
-  mode?: string
-  group_mode?: string
   locked_until?: number
   pending?: AccessAccount[]
-  approved?: AccessAccount[]
+  paired?: AccessAccount[]
+  groups_enabled?: boolean
+  group_chat_ids?: string[]
+  group_mention_required?: boolean
   [key: string]: unknown
 }
 
@@ -192,13 +193,6 @@ export function statusHint(args: {
   if (args.status === 'exhausted')
     return `Adapter exhausted its retry budget. Try \`agentos channels restart ${safeName}\`.`
   return 'Configured on disk but not active in this gateway process — restart the gateway to load it.'
-}
-
-const VALID_ACCESS_MODES = new Set(['pairing', 'allowlist', 'open', 'disabled'])
-
-/** channels.js:251-252 — validate the access mode, defaulting invalid→pairing. */
-export function resolveAccessMode(mode: string | undefined): string {
-  return VALID_ACCESS_MODES.has(String(mode ?? '')) ? String(mode) : 'pairing'
 }
 
 /** channels.js:253 — pairing approval is locked while locked_until*1000 > now. */

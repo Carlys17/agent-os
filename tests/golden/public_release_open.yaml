@@ -17,8 +17,7 @@ cases:
       - "sessions_spawn"
     must_not_contain:
       - "spawn_subagent"
-  - id: raw-http-is-owner-only
+  - id: git-commit-is-opt-in
     prompt: "Fetch a URL from a normal channel conversation."
     forbidden_tools:
-      - "http_request"
       - "git_commit"

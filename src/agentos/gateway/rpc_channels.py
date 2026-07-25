@@ -66,7 +66,7 @@ def _diagnostics_payload() -> dict[str, Any]:
     return {"network_probe": "not_run"}
 
 
-def _telegram_access_rows(ctx: RpcContext) -> list[dict[str, Any]]:
+def _telegram_pairing_rows(ctx: RpcContext) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for entry in _configured_channel_entries(ctx):
         if entry.get("type") != "telegram":
@@ -79,20 +79,14 @@ def _telegram_access_rows(ctx: RpcContext) -> list[dict[str, Any]]:
         else:
             pairing = ChannelPairingStore().snapshot(name)
             snapshot = {
-                "mode": entry.get("access_mode") or "pairing",
-                "group_mode": entry.get("group_access_mode") or "allowlist",
                 "pending": pairing["pending"],
-                "approved": [dict(item, source="pairing") for item in pairing["approved"]] + [
-                    {
-                        "sender_id": str(sender_id),
-                        "username": "",
-                        "display_name": "",
-                        "chat_id": "",
-                        "source": "config",
-                    }
-                    for sender_id in entry.get("approved_sender_ids") or []
-                ],
+                "paired": pairing["approved"],
                 "locked_until": pairing["locked_until"],
+                "groups_enabled": bool(entry.get("groups_enabled", False)),
+                "group_chat_ids": list(entry.get("group_chat_ids") or []),
+                "group_mention_required": bool(
+                    entry.get("group_mention_required", True)
+                ),
             }
         rows.append({"name": name, "type": "telegram", **snapshot})
     return rows
@@ -109,30 +103,8 @@ def _telegram_entry(ctx: RpcContext, channel_name: str) -> tuple[Any, Any]:
     if entry is None:
         raise KeyError(f"Channel not found: {channel_name}")
     if entry.type != "telegram":
-        raise ValueError("Chat account approvals are only supported for Telegram channels")
+        raise ValueError("Pairing is only supported for Telegram channels")
     return config, entry
-
-
-def _persist_telegram_access(
-    ctx: RpcContext,
-    channel_name: str,
-    *,
-    access_mode: str | None = None,
-    approved_sender_ids: list[str] | None = None,
-) -> tuple[Any, str]:
-    from agentos.gateway.rpc_onboarding import _persist
-    from agentos.onboarding.mutations import upsert_channel
-
-    config, entry = _telegram_entry(ctx, channel_name)
-    payload = entry.model_dump(mode="python")
-    if access_mode is not None:
-        payload["access_mode"] = access_mode
-    if approved_sender_ids is not None:
-        payload["approved_sender_ids"] = approved_sender_ids
-    result = upsert_channel(config, entry_payload=payload)
-    config_path = _persist(ctx, result.config, restart_required=False)
-    updated = next(item for item in result.config.channels.channels if item.name == channel_name)
-    return updated, config_path
 
 
 def _required_string(params: dict | None, key: str) -> str:
@@ -142,7 +114,7 @@ def _required_string(params: dict | None, key: str) -> str:
     return value
 
 
-@_d.method("channels.status", scope="operator.read")
+@_d.method("channels.status")
 async def _handle_channels_status(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     health_map = await ctx.channel_manager.health() if ctx.channel_manager else {}
     manager_types = (
@@ -218,54 +190,22 @@ async def _handle_channels_status(params: dict | None, ctx: RpcContext) -> dict[
     return {"channels": channels}
 
 
-@_d.method("channels.access.list", scope="operator.pairing")
-async def _handle_channels_access_list(
+@_d.method("channels.pairing.list")
+async def _handle_channels_pairing_list(
     params: dict | None,
     ctx: RpcContext,
 ) -> dict[str, Any]:
-    return {"channels": _telegram_access_rows(ctx)}
+    return {"channels": _telegram_pairing_rows(ctx)}
 
 
-@_d.method("channels.access.setMode", scope="operator.pairing")
-async def _handle_channels_access_set_mode(
+async def _resolve_pairing_request(
     params: dict | None,
     ctx: RpcContext,
-) -> dict[str, Any]:
-    channel_name = _required_string(params, "channel")
-    mode = _required_string(params, "mode")
-    if mode == "approval":
-        mode = "pairing"
-    if mode not in {"pairing", "allowlist", "open", "disabled"}:
-        raise ValueError("params.mode must be pairing, allowlist, open, or disabled")
-    _updated, config_path = _persist_telegram_access(
-        ctx,
-        channel_name,
-        access_mode=mode,
-    )
-    adapter = ctx.channel_manager.get(channel_name) if ctx.channel_manager else None
-    set_mode = getattr(adapter, "set_access_mode", None)
-    if callable(set_mode):
-        set_mode(mode)
-    return {
-        "channel": channel_name,
-        "mode": mode,
-        "configPath": config_path,
-        "restartRequired": False,
-    }
-
-
-@_d.method("channels.access.resolve", scope="operator.pairing")
-async def _handle_channels_access_resolve(
-    params: dict | None,
-    ctx: RpcContext,
+    *,
+    approved: bool,
 ) -> dict[str, Any]:
     channel_name = _required_string(params, "channel")
     sender_id = _required_string(params, "senderId")
-    if not isinstance(params, dict) or "approved" not in params:
-        raise ValueError("params.approved is required")
-    if not isinstance(params["approved"], bool):
-        raise ValueError("params.approved must be a boolean")
-    approved = params["approved"]
     _telegram_entry(ctx, channel_name)
     adapter = ctx.channel_manager.get(channel_name) if ctx.channel_manager else None
     store = getattr(adapter, "pairing_store", None) or ChannelPairingStore()
@@ -281,13 +221,13 @@ async def _handle_channels_access_resolve(
     if callable(resolve):
         request = resolve(sender_id, approved=approved)
     else:
-        pending_request = next(
+        request_entry = next(
             item
             for item in snapshot["pending"]
             if str(item.get("sender_id") or "") == sender_id
         )
         request = (
-            store.approve(channel_name, str(pending_request.get("code") or ""))
+            store.approve(channel_name, str(request_entry.get("code") or ""))
             if approved
             else store.deny(channel_name, sender_id)
         )
@@ -303,41 +243,62 @@ async def _handle_channels_access_resolve(
                 error_type=type(exc).__name__,
                 error=str(exc),
             )
-    return {"channel": channel_name, "senderId": sender_id, "approved": approved}
+    return {
+        "channel": channel_name,
+        "senderId": sender_id,
+        "status": "paired" if approved else "denied",
+    }
 
 
-@_d.method("channels.access.revoke", scope="operator.pairing")
-async def _handle_channels_access_revoke(
+@_d.method("channels.pairing.approve")
+async def _handle_channels_pairing_approve(
+    params: dict | None,
+    ctx: RpcContext,
+) -> dict[str, Any]:
+    return await _resolve_pairing_request(params, ctx, approved=True)
+
+
+@_d.method("channels.pairing.deny")
+async def _handle_channels_pairing_deny(
+    params: dict | None,
+    ctx: RpcContext,
+) -> dict[str, Any]:
+    return await _resolve_pairing_request(params, ctx, approved=False)
+
+
+@_d.method("channels.pairing.revoke")
+async def _handle_channels_pairing_revoke(
     params: dict | None,
     ctx: RpcContext,
 ) -> dict[str, Any]:
     channel_name = _required_string(params, "channel")
     sender_id = _required_string(params, "senderId")
-    _config, entry = _telegram_entry(ctx, channel_name)
+    _telegram_entry(ctx, channel_name)
     adapter = ctx.channel_manager.get(channel_name) if ctx.channel_manager else None
-    if sender_id in entry.approved_sender_ids:
-        approved_ids = [item for item in entry.approved_sender_ids if item != sender_id]
-        _persist_telegram_access(
-            ctx,
-            channel_name,
-            approved_sender_ids=approved_ids,
-        )
-        if adapter is not None:
-            adapter.config.approved_sender_ids = approved_ids
-        source = "config"
-    else:
-        store = getattr(adapter, "pairing_store", None) or ChannelPairingStore()
-        store.revoke(channel_name, sender_id)
-        source = "pairing"
+    store = getattr(adapter, "pairing_store", None) or ChannelPairingStore()
+    store.revoke(channel_name, sender_id)
     return {
         "channel": channel_name,
         "senderId": sender_id,
         "revoked": True,
-        "source": source,
+        "status": "disconnected",
     }
 
 
-@_d.method("channels.logout", scope="operator.admin")
+@_d.method("channels.pairing.clearPending")
+async def _handle_channels_pairing_clear_pending(
+    params: dict | None,
+    ctx: RpcContext,
+) -> dict[str, Any]:
+    channel_name = _required_string(params, "channel")
+    _telegram_entry(ctx, channel_name)
+    adapter = ctx.channel_manager.get(channel_name) if ctx.channel_manager else None
+    store = getattr(adapter, "pairing_store", None) or ChannelPairingStore()
+    cleared = store.clear_pending(channel_name)
+    return {"channel": channel_name, "cleared": cleared}
+
+
+@_d.method("channels.logout")
 async def _handle_channels_logout(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     channel_name = None
     if isinstance(params, dict):
@@ -352,7 +313,7 @@ async def _handle_channels_logout(params: dict | None, ctx: RpcContext) -> dict[
     return {"status": "disconnected", "channel": channel_name}
 
 
-@_d.method("channels.restart", scope="operator.admin")
+@_d.method("channels.restart")
 async def _handle_channels_restart(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     channel_name = None
     if isinstance(params, dict):

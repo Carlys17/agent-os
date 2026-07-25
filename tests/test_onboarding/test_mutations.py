@@ -207,7 +207,7 @@ def test_upsert_channel_redacts_secrets_in_payload():
     assert res.public_payload["token"] == REDACTED_PLACEHOLDER
 
 
-def test_telegram_edit_preserves_channel_approved_sender_ids() -> None:
+def test_telegram_edit_preserves_group_pairing_posture() -> None:
     cfg = GatewayConfig()
     created = upsert_channel(
         cfg,
@@ -215,8 +215,9 @@ def test_telegram_edit_preserves_channel_approved_sender_ids() -> None:
             "type": "telegram",
             "name": "tg",
             "token": "abc",
-            "access_mode": "approval",
-            "approved_sender_ids": ["42"],
+            "groups_enabled": True,
+            "group_chat_ids": ["-100"],
+            "group_mention_required": True,
         },
     )
 
@@ -226,14 +227,14 @@ def test_telegram_edit_preserves_channel_approved_sender_ids() -> None:
             "type": "telegram",
             "name": "tg",
             "token": "",
-            "access_mode": "approval",
             "poll_timeout_s": 15,
         },
     )
 
     entry = edited.config.channels.channels[0]
-    assert entry.approved_sender_ids == ["42"]
-    assert entry.access_mode == "pairing"
+    assert entry.groups_enabled is True
+    assert entry.group_chat_ids == ["-100"]
+    assert entry.group_mention_required is True
     assert entry.poll_timeout_s == 15
 
 

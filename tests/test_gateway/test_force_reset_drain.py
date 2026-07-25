@@ -14,16 +14,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import agentos.gateway.rpc_sessions  # noqa: F401 — ensures handler registration
-from agentos.gateway.auth import Principal
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, get_dispatcher
-
-_ADMIN_PRINCIPAL = Principal(
-    role="operator",
-    scopes=frozenset({"operator.admin", "operator.write"}),
-    is_owner=True,
-    authenticated=True,
-)
 
 _SESSION_KEY = "agent:main:drain-test"
 _SESSION_ID = "drain-test"
@@ -88,7 +80,6 @@ class _FakeSessionManager:
 def _make_ctx(flush_service=None, task_runtime=None) -> RpcContext:
     ctx = RpcContext(
         conn_id="test-drain",
-        principal=_ADMIN_PRINCIPAL,
         config=GatewayConfig(),
     )
     ctx.session_manager = _FakeSessionManager()

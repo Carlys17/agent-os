@@ -117,7 +117,7 @@ async def _authenticated(config: MCPServerConfig) -> bool:
     return await FileOAuthStorage(config.name, config.url, config.state_dir).is_authenticated()
 
 
-@_d.method("mcp.status", scope="operator.read")
+@_d.method("mcp.status")
 async def _handle_mcp_status(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     del params
     if ctx.config is None:
@@ -141,7 +141,7 @@ async def _handle_mcp_status(params: dict | None, ctx: RpcContext) -> dict[str, 
     return {"enabled": ctx.config.mcp.enabled, "servers": servers}
 
 
-@_d.method("mcp.connect", scope="operator.admin")
+@_d.method("mcp.connect")
 async def _handle_mcp_connect(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     _require_mcp_enabled(ctx)
     name = str((params or {}).get("name") or "").strip()
@@ -155,7 +155,7 @@ async def _handle_mcp_connect(params: dict | None, ctx: RpcContext) -> dict[str,
     return {"connected": True, "authorizationRequired": False, "tools": tools}
 
 
-@_d.method("mcp.disconnect", scope="operator.admin")
+@_d.method("mcp.disconnect")
 async def _handle_mcp_disconnect(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     name = str((params or {}).get("name") or "").strip()
     if not name:
@@ -166,7 +166,7 @@ async def _handle_mcp_disconnect(params: dict | None, ctx: RpcContext) -> dict[s
     return {"disconnected": bool(closed)}
 
 
-@_d.method("mcp.oauth.start", scope="operator.admin")
+@_d.method("mcp.oauth.start")
 async def _handle_mcp_oauth_start(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     _require_mcp_enabled(ctx)
     values = params or {}
@@ -219,7 +219,7 @@ async def _handle_mcp_oauth_start(params: dict | None, ctx: RpcContext) -> dict[
     }
 
 
-@_d.method("mcp.oauth.complete", scope="operator.admin")
+@_d.method("mcp.oauth.complete")
 async def _handle_mcp_oauth_complete(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     del ctx
     values = params or {}
@@ -240,7 +240,7 @@ async def _handle_mcp_oauth_complete(params: dict | None, ctx: RpcContext) -> di
     return {"connected": True, "authorizationRequired": False, "tools": tools}
 
 
-@_d.method("mcp.oauth.clear", scope="operator.admin")
+@_d.method("mcp.oauth.clear")
 async def _handle_mcp_oauth_clear(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     name = str((params or {}).get("name") or "").strip()
     if not name:

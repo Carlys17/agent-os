@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from agentos.channels.types import IncomingMessage
-from agentos.gateway.boot import _task_runtime_envelope_owner
 from agentos.gateway.routing import (
     build_channel_route_envelope,
     build_cli_route_envelope,
@@ -78,7 +77,7 @@ def test_unattended_cli_denies_runtime_dependent_tools_but_keeps_session_reads()
     )
 
     ctx = resolve_runtime_tool_surface(
-        tool_context_from_envelope(envelope, is_owner=True),
+        tool_context_from_envelope(envelope),
         capabilities=ToolSurfaceCapabilities(session_manager=True),
     )
 
@@ -89,82 +88,55 @@ def test_unattended_cli_denies_runtime_dependent_tools_but_keeps_session_reads()
     assert "session_status" not in ctx.denied_tools
 
 
-def test_default_elevated_mode_applies_only_to_owner_tool_context() -> None:
-    envelope = build_cli_route_envelope(session_key="agent:main:cli")
-
-    owner_ctx = tool_context_from_envelope(
-        envelope,
-        is_owner=True,
-        default_elevated="bypass",
+def test_default_elevated_mode_applies_only_to_interactive_control_context() -> None:
+    interactive = build_cli_route_envelope(session_key="agent:main:cli")
+    unattended = build_cli_route_envelope(
+        session_key="agent:main:auto",
+        interaction_mode=InteractionMode.UNATTENDED,
     )
-    non_owner_ctx = tool_context_from_envelope(
-        envelope,
-        is_owner=False,
-        default_elevated="bypass",
+    channel = build_channel_route_envelope(
+        IncomingMessage(sender_id="u1", channel_id="c1", content="hi"),
+        session_key="agent:main:telegram:dm:u1",
+        session_prefix="telegram",
     )
 
-    assert owner_ctx.elevated == "bypass"
-    assert non_owner_ctx.elevated is None
+    control_ctx = tool_context_from_envelope(
+        interactive,
+        default_elevated="bypass",
+    )
+    unattended_ctx = tool_context_from_envelope(
+        unattended,
+        default_elevated="bypass",
+    )
+    channel_ctx = tool_context_from_envelope(channel, default_elevated="bypass")
+
+    assert control_ctx.elevated == "bypass"
+    assert unattended_ctx.elevated is None
+    assert channel_ctx.elevated is None
 
 
-def test_cron_default_elevated_resolves_at_context_build_time() -> None:
+def test_cron_never_inherits_default_elevated_mode() -> None:
     job = CronJob(
-        id="job-owner",
-        name="owner",
+        id="job",
+        name="job",
         session_target=SessionTarget.ISOLATED,
-        creator_is_owner=True,
     )
-    default_mode = {"value": "bypass"}
-
-    first_ctx = _build_cron_tool_context(
+    ctx = _build_cron_tool_context(
         "agent",
         job,
-        default_elevated=lambda: default_mode["value"],
-    )
-    default_mode["value"] = "full"
-    second_ctx = _build_cron_tool_context(
-        "agent",
-        job,
-        default_elevated=lambda: default_mode["value"],
+        default_elevated="full",
     )
 
-    assert first_ctx.elevated == "bypass"
-    assert second_ctx.elevated == "full"
+    assert ctx.elevated is None
 
 
-def test_owner_cron_route_carries_owner_principal_for_task_runtime() -> None:
-    cron_job = SimpleNamespace(id="job-owner", name="owner", creator_is_owner=True)
-
-    envelope = build_cron_route_envelope(cron_job, session_key="cron:job-owner")
-
-    assert envelope.metadata["principal_is_owner"] is True
-    assert _task_runtime_envelope_owner(envelope) is True
-
-
-def test_owner_cron_route_uses_owner_grade_tool_boundary() -> None:
-    cron_job = SimpleNamespace(id="job-owner", name="owner", creator_is_owner=True)
-    envelope = build_cron_route_envelope(cron_job, session_key="cron:job-owner")
-
-    ctx = tool_context_from_envelope(
-        envelope,
-        is_owner=_task_runtime_envelope_owner(envelope),
-    )
-
-    assert ctx.caller_kind is CallerKind.CRON
-    assert ctx.is_owner is True
-    assert ctx.allowed_tools is None
-    assert "exec_command" not in ctx.denied_tools
-    assert "write_file" not in ctx.denied_tools
-
-
-def test_non_owner_cron_route_keeps_restricted_tool_boundary() -> None:
-    cron_job = SimpleNamespace(id="job-user", name="user")
-    envelope = build_cron_route_envelope(cron_job, session_key="cron:job-user")
+def test_cron_route_always_keeps_restricted_tool_boundary() -> None:
+    cron_job = SimpleNamespace(id="job", name="job")
+    envelope = build_cron_route_envelope(cron_job, session_key="cron:job")
 
     ctx = tool_context_from_envelope(envelope)
 
     assert ctx.caller_kind is CallerKind.CRON
-    assert ctx.is_owner is False
     assert ctx.allowed_tools is not None
     assert "exec_command" not in ctx.allowed_tools
     assert "exec_command" in ctx.denied_tools

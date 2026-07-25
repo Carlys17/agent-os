@@ -360,7 +360,7 @@ async def _manager_status_wire(manager: Any) -> dict[str, Any]:
     }
 
 
-@_d.method("memory.list", scope="operator.read")
+@_d.method("memory.list")
 async def _handle_memory_list(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if params is not None and not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -370,7 +370,7 @@ async def _handle_memory_list(params: dict | None, ctx: RpcContext) -> dict[str,
     return {"agentId": agent_id, "count": len(rows), "files": rows}
 
 
-@_d.method("memory.search", scope="operator.read")
+@_d.method("memory.search")
 async def _handle_memory_search(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -392,7 +392,7 @@ async def _handle_memory_search(params: dict | None, ctx: RpcContext) -> dict[st
 
     agent_id, manager = _require_memory_manager(ctx, params.get("agentId"))
     opts = MemorySearchOpts(max_results=limit, min_score=min_score, source=source)
-    results = await manager.search(query, opts, intent=SearchIntent.ADMIN)
+    results = await manager.search(query, opts, intent=SearchIntent.CONTROL)
     rows = [_result_to_wire(result) for result in results]
     return {"agentId": agent_id, "query": query, "count": len(rows), "results": rows}
 
@@ -413,7 +413,7 @@ def _repair_memory_roots(ctx: RpcContext) -> dict[str, Path]:
     return roots
 
 
-@_d.method("memory.index", scope="operator.admin")
+@_d.method("memory.index")
 async def _handle_memory_index(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if params is not None and not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -539,7 +539,7 @@ def _read_memory_content(
     return "".join(parts), selected_line_count, truncated
 
 
-@_d.method("memory.show", scope="operator.read")
+@_d.method("memory.show")
 async def _handle_memory_show(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -587,7 +587,7 @@ async def _handle_memory_show(params: dict | None, ctx: RpcContext) -> dict[str,
     }
 
 
-@_d.method("memory.raw_fallbacks.list", scope="operator.admin")
+@_d.method("memory.raw_fallbacks.list")
 async def _handle_raw_fallbacks_list(
     params: dict | None,
     ctx: RpcContext,
@@ -599,7 +599,7 @@ async def _handle_raw_fallbacks_list(
     return {"agentId": agent_id, "count": len(rows), "files": rows}
 
 
-@_d.method("memory.raw_fallbacks.show", scope="operator.admin")
+@_d.method("memory.raw_fallbacks.show")
 async def _handle_raw_fallbacks_show(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -645,7 +645,7 @@ async def _handle_raw_fallbacks_show(params: dict | None, ctx: RpcContext) -> di
     }
 
 
-@_d.method("memory.repair.list", scope="operator.admin")
+@_d.method("memory.repair.list")
 async def _handle_memory_repair_list(
     params: dict | None,
     ctx: RpcContext,
@@ -690,7 +690,7 @@ async def _handle_memory_repair_list(
     return {"agentId": agent_id, "count": len(items), "items": items}
 
 
-@_d.method("memory.repair.show", scope="operator.admin")
+@_d.method("memory.repair.show")
 async def _handle_memory_repair_show(
     params: dict | None,
     ctx: RpcContext,
@@ -746,7 +746,7 @@ async def _handle_memory_repair_show(
     }
 
 
-@_d.method("memory.repair.run", scope="operator.admin")
+@_d.method("memory.repair.run")
 async def _handle_memory_repair_run(
     params: dict | None,
     ctx: RpcContext,

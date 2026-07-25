@@ -6,10 +6,9 @@ Four modules form the public safety surface:
   ``<untrusted source='...'>...</untrusted>`` envelopes, escape XML, and
   detect tool-call refusals whose origin is traced to an untrusted block.
 * :mod:`agentos.safety.tool_tiers` — ``RiskTier`` enum + declare/get tier
-  API; hardcoded admin-only list for high-risk tools.
-* :mod:`agentos.safety.permission_matrix` — ``is_tool_allowed`` decision
-  function keyed on ``(tool_name, channel_kind, principal)`` with a
-  default matrix and per-channel overrides.
+  API; hardcoded confirmation list for high-risk tools.
+* :mod:`agentos.safety.permission_matrix` — compatibility decision API for
+  the shared SAFE/CONFIRM policy.
 * :mod:`agentos.safety.sandbox` — ``run_sandboxed`` subprocess runner with
   CPU/memory/wall/network limits via :mod:`resource`.
 

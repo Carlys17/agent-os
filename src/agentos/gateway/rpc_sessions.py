@@ -14,6 +14,7 @@ import structlog
 from agentos.engine.cache_break_monitor import notify_compaction
 from agentos.engine.start_turn import start_turn_via_runtime
 from agentos.gateway import attachment_ingest as _attachment_ingest
+from agentos.gateway.access import CONTROL_AND_CHANNEL, ConnectionSurface
 from agentos.gateway.agent_tasks import get_agent_task_registry
 from agentos.gateway.input_normalization import (
     infer_normalized_input_from_attachments,
@@ -157,10 +158,15 @@ _sniff_mime_from_bytes = _attachment_ingest.sniff_mime_from_bytes
 
 
 def _trusted_elevated_hint(ctx: RpcContext, source_hint: dict[str, Any]) -> str | None:
-    """Return an operator-owned elevated hint, or None."""
+    """Return an elevated hint from an admitted Control connection."""
 
     value = source_hint.get("elevated")
-    if isinstance(value, str) and value in _ELEVATED_MODES and ctx.principal.is_owner:
+    if (
+        isinstance(value, str)
+        and value in _ELEVATED_MODES
+        and ctx.access.admitted
+        and ctx.access.surface is ConnectionSurface.CONTROL
+    ):
         return value
     return None
 
@@ -725,7 +731,7 @@ async def _resolve_session_node(storage: Any, key: str) -> Any:
     raise KeyError(f"Session not found: {key}")
 
 
-@_d.method("sessions.list", scope="operator.read")
+@_d.method("sessions.list")
 async def _handle_sessions_list(params: dict | None, ctx: RpcContext) -> dict:
     """List all sessions."""
     now_ms = int(time.time() * 1000)
@@ -811,7 +817,7 @@ async def _handle_sessions_list(params: dict | None, ctx: RpcContext) -> dict:
     return {"sessions": result, "count": len(result), "ts": now_ms}
 
 
-@_d.method("sessions.create", scope="operator.write")
+@_d.method("sessions.create")
 async def _handle_sessions_create(params: dict | None, ctx: RpcContext) -> dict:
     if not isinstance(params, dict):
         params = {}
@@ -861,7 +867,7 @@ async def _handle_sessions_create(params: dict | None, ctx: RpcContext) -> dict:
     return result
 
 
-@_d.method("sessions.send", scope="operator.write")
+@_d.method("sessions.send")
 async def _handle_sessions_send(params: dict | None, ctx: RpcContext) -> dict:
     key = _require_key(params)
     if not isinstance(params, dict) or "message" not in params:
@@ -983,7 +989,6 @@ async def _handle_sessions_send(params: dict | None, ctx: RpcContext) -> dict:
             channel_id=source_hint.get("channel_id") or "cli:rpc",
             sender_id=source_hint.get("sender_id"),
             session_id=getattr(session, "session_id", None),
-            principal_is_owner=ctx.principal.is_owner,
         )
     else:
         route_envelope = build_web_route_envelope(
@@ -995,7 +1000,6 @@ async def _handle_sessions_send(params: dict | None, ctx: RpcContext) -> dict:
             source_name=source_hint.get("source_name") or "RPC",
             tool_source_kind=source_hint.get("source_kind"),
             session_id=getattr(session, "session_id", None),
-            principal_is_owner=ctx.principal.is_owner,
         )
     elevated_hint = _trusted_elevated_hint(ctx, source_hint)
     if elevated_hint is not None:
@@ -1229,7 +1233,6 @@ async def _handle_sessions_send(params: dict | None, ctx: RpcContext) -> dict:
                 workspace_strict = bool(workspace_dir)
             tool_ctx = tool_context_from_envelope(
                 route_envelope,
-                is_owner=ctx.principal.is_owner,
                 workspace_dir=str(workspace_dir),
                 workspace_strict=workspace_strict,
                 default_elevated=configured_default_elevated(ctx.config),
@@ -1396,7 +1399,7 @@ async def _emit_to_subscribers(
                 log.warning("emit.send_failed", conn_id=conn_id, event=event_name)
 
 
-@_d.method("sessions.abort", scope="operator.write")
+@_d.method("sessions.abort", CONTROL_AND_CHANNEL)
 async def _handle_sessions_abort(params: dict | None, ctx: RpcContext) -> dict:
     key = _require_key(params)
 
@@ -1436,7 +1439,7 @@ async def _handle_sessions_abort(params: dict | None, ctx: RpcContext) -> dict:
     return {"aborted": cancelled, "key": key}
 
 
-@_d.method("sessions.patch", scope="operator.admin")
+@_d.method("sessions.patch")
 async def _handle_sessions_patch(params: dict | None, ctx: RpcContext) -> dict:
     key = _require_key(params)
 
@@ -1528,7 +1531,7 @@ async def _notify_provider_session_boundary(
             log.warning("sessions.reset.provider_session_switch_failed", error=str(exc))
 
 
-@_d.method("sessions.reset", scope="operator.write")
+@_d.method("sessions.reset", CONTROL_AND_CHANNEL)
 async def _handle_sessions_reset(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Synchronous session reset with FlushReceipt.
 
@@ -1601,11 +1604,9 @@ async def _handle_sessions_reset(params: dict | None, ctx: RpcContext) -> dict[s
             # storage so nothing is lost. This matches the "New Chat" button's
             # safety semantics — the reset always succeeds and data is preserved.
             #
-            # A destructive reset (old transcript rows deleted) is still possible
-            # via force=true (admin) when a durable checkpoint receipt covers the
-            # transcript; without a covering receipt even force=true performs the
-            # non-destructive archive rotation, since destroying un-backed-up
-            # history is never what an operator intends.
+            # A forced reset can destroy old transcript rows only when a durable
+            # checkpoint receipt covers them. Without one, force=true still uses
+            # the non-destructive archive rotation.
             if transcript and not force:
                 checkpoint_safe = await _durable_receipt_allows_covered_destructive_compaction(
                     storage,
@@ -1657,17 +1658,9 @@ async def _handle_sessions_reset(params: dict | None, ctx: RpcContext) -> dict[s
                     "message_count": len(transcript),
                 }
 
-            if transcript and force and "operator.admin" not in ctx.principal.scopes:
-                raise RpcHandlerError(
-                    code="permission_denied",
-                    message="force=true on sessions.reset requires operator.admin scope.",
-                    details={"key": key, "session_id": previous_session_id},
-                )
-
             if transcript and force:
-                # Admin force: still prefer the non-destructive archive rotation
-                # unless a durable checkpoint receipt covers the transcript, since
-                # destroying un-backed-up history is never the real intent.
+                # Still prefer the non-destructive archive rotation unless a
+                # durable checkpoint receipt covers the transcript.
                 checkpoint_safe = await _durable_receipt_allows_covered_destructive_compaction(
                     storage,
                     key,
@@ -1889,7 +1882,7 @@ def _reset_response(
     }
 
 
-@_d.method("sessions.delete", scope="operator.admin")
+@_d.method("sessions.delete")
 async def _handle_sessions_delete(params: dict | None, ctx: RpcContext) -> dict:
     """Delete one or more sessions. Accepts {key} for single or {keys} for bulk."""
     if ctx.session_manager is None:
@@ -1922,7 +1915,7 @@ async def _handle_sessions_delete(params: dict | None, ctx: RpcContext) -> dict:
     return {"deleted": deleted, "errors": errors}
 
 
-@_d.method("sessions.contextCompact", scope="operator.write")
+@_d.method("sessions.contextCompact", CONTROL_AND_CHANNEL)
 async def _handle_sessions_context_compact(params: dict | None, ctx: RpcContext) -> dict:
     key = _require_key(params)
     if ctx.session_manager is None:
@@ -2277,12 +2270,12 @@ async def _handle_sessions_context_compact(params: dict | None, ctx: RpcContext)
         return await _run_locked()
 
 
-@_d.method("sessions.compact", scope="operator.write")
+@_d.method("sessions.compact")
 async def _handle_sessions_compact(params: dict | None, ctx: RpcContext) -> dict:
     return cast(dict, await _handle_sessions_context_compact(params, ctx))
 
 
-@_d.method("sessions.truncate", scope="operator.write")
+@_d.method("sessions.truncate")
 async def _handle_sessions_truncate(params: dict | None, ctx: RpcContext) -> dict:
     from agentos.memory.session_flush import FlushReceipt
 
@@ -2306,7 +2299,7 @@ async def _handle_sessions_truncate(params: dict | None, ctx: RpcContext) -> dic
 
         if ctx.flush_service is None:
             # Fail-closed: refuse to truncate a non-empty transcript without
-            # an admin force override. Empty transcripts are safe to truncate.
+            # an explicit force override. Empty transcripts are safe to truncate.
             transcript = await ctx.session_manager.get_transcript(key)
             if transcript and not force:
                 checkpoint_safe = (
@@ -2324,7 +2317,7 @@ async def _handle_sessions_truncate(params: dict | None, ctx: RpcContext) -> dic
                         message=(
                             "Truncate aborted: flush service is unavailable and "
                             "the transcript is non-empty. Re-run with force=true "
-                            "(admin) to truncate without backup."
+                            "to truncate without backup."
                         ),
                         details={
                             "key": key,
@@ -2333,12 +2326,6 @@ async def _handle_sessions_truncate(params: dict | None, ctx: RpcContext) -> dic
                             "message_count": len(transcript),
                         },
                     )
-            if transcript and force and "operator.admin" not in ctx.principal.scopes:
-                raise RpcHandlerError(
-                    code="permission_denied",
-                    message="force=true on sessions.truncate requires operator.admin scope.",
-                    details={"key": key, "session_id": previous_session_id},
-                )
         else:
             if storage is None:
                 raise KeyError("No session storage available")
@@ -2436,7 +2423,7 @@ async def _handle_sessions_truncate(params: dict | None, ctx: RpcContext) -> dic
         return await _run_locked()
 
 
-@_d.method("sessions.subscribe", scope="operator.read")
+@_d.method("sessions.subscribe")
 async def _handle_sessions_subscribe(params: dict | None, ctx: RpcContext) -> None:
     subscription_mgr = getattr(ctx, "subscription_manager", None)
     if subscription_mgr is not None:
@@ -2444,7 +2431,7 @@ async def _handle_sessions_subscribe(params: dict | None, ctx: RpcContext) -> No
     return None
 
 
-@_d.method("sessions.unsubscribe", scope="operator.read")
+@_d.method("sessions.unsubscribe")
 async def _handle_sessions_unsubscribe(params: dict | None, ctx: RpcContext) -> None:
     subscription_mgr = getattr(ctx, "subscription_manager", None)
     if subscription_mgr is not None:
@@ -2452,7 +2439,7 @@ async def _handle_sessions_unsubscribe(params: dict | None, ctx: RpcContext) -> 
     return None
 
 
-@_d.method("sessions.messages.subscribe", scope="operator.read")
+@_d.method("sessions.messages.subscribe")
 async def _handle_sessions_messages_subscribe(params: dict | None, ctx: RpcContext) -> dict:
     key = _require_key(params)
     subscription_mgr = getattr(ctx, "subscription_manager", None)
@@ -2489,7 +2476,7 @@ async def _handle_sessions_messages_subscribe(params: dict | None, ctx: RpcConte
     }
 
 
-@_d.method("sessions.messages.unsubscribe", scope="operator.read")
+@_d.method("sessions.messages.unsubscribe")
 async def _handle_sessions_messages_unsubscribe(params: dict | None, ctx: RpcContext) -> None:
     key = _require_key(params)
     subscription_mgr = getattr(ctx, "subscription_manager", None)
@@ -2498,7 +2485,7 @@ async def _handle_sessions_messages_unsubscribe(params: dict | None, ctx: RpcCon
     return None
 
 
-@_d.method("sessions.preview", scope="operator.read")
+@_d.method("sessions.preview")
 async def _handle_sessions_preview(params: dict | None, ctx: RpcContext) -> dict:
     keys = (params or {}).get("keys")
     limit = (params or {}).get("limit", 50)
@@ -2550,7 +2537,7 @@ async def _handle_sessions_preview(params: dict | None, ctx: RpcContext) -> dict
     return {"ts": now_ms, "previews": previews}
 
 
-@_d.method("sessions.resolve", scope="operator.read")
+@_d.method("sessions.resolve")
 async def _handle_sessions_resolve(params: dict | None, ctx: RpcContext) -> dict:
     key = _require_key(params)
 

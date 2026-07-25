@@ -299,6 +299,39 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
                 f"{LEGACY_ROUTER_SECTION} -> agentos_router"
             )
 
+    auth_section = builder.payload.get("auth")
+    if isinstance(auth_section, dict):
+        legacy_scopes = auth_section.pop("token_scopes", None)
+        if legacy_scopes is not None:
+            normalized = {
+                str(item).strip()
+                for item in (legacy_scopes if isinstance(legacy_scopes, list) else [])
+                if str(item).strip()
+            }
+            if normalized and "operator.admin" not in normalized:
+                raise ValueError(
+                    "Legacy auth.token_scopes configured a limited token. "
+                    "AgentOS now uses binary Control access and will not silently "
+                    "widen that token. Remove token_scopes only after confirming "
+                    "the token may control the full gateway."
+                )
+            builder.removed_fields.append("auth.token_scopes")
+        for field_name in ("allowed_roles",):
+            if field_name in auth_section:
+                auth_section.pop(field_name)
+                builder.removed_fields.append(f"auth.{field_name}")
+        if auth_section.pop("allow_unauthenticated_public", False):
+            raise ValueError(
+                "auth.allow_unauthenticated_public is no longer supported. "
+                "Configure token authentication before using a non-loopback bind."
+            )
+        if "allow_unauthenticated_public" in data.get("auth", {}):
+            builder.removed_fields.append("auth.allow_unauthenticated_public")
+
+    if "channel_admin_senders" in builder.payload:
+        builder.payload.pop("channel_admin_senders")
+        builder.removed_fields.append("channel_admin_senders")
+
     channels_section = builder.payload.get("channels")
     if isinstance(channels_section, dict) and isinstance(
         configured_channels := channels_section.get("channels"), list
@@ -310,6 +343,26 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
             normalized_type = raw_type.strip().lower() if isinstance(raw_type, str) else ""
             retired_type = RETIRED_CHANNEL_TYPE_ALIASES.get(normalized_type)
             if retired_type is None:
+                if isinstance(entry, dict) and normalized_type == "telegram":
+                    had_access_mode = "access_mode" in entry
+                    access_mode = str(entry.pop("access_mode", "pairing") or "pairing")
+                    if access_mode == "disabled":
+                        entry["enabled"] = False
+                    for field_name in (
+                        "approved_sender_ids",
+                        "group_access_mode",
+                        "group_allowed_sender_ids",
+                    ):
+                        if field_name in entry:
+                            entry.pop(field_name)
+                            builder.removed_fields.append(
+                                f"channels.channels[].{field_name}"
+                            )
+                    if had_access_mode:
+                        # Per-entry reporting below is intentionally generic so
+                        # channel names and sender ids never enter migration logs.
+                        builder.removed_fields.append("channels.channels[].access_mode")
+                    entry.setdefault("groups_enabled", False)
                 retained_channels.append(entry)
                 continue
             retired_type_counts[retired_type] = retired_type_counts.get(retired_type, 0) + 1

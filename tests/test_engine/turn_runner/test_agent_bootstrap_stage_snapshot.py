@@ -650,7 +650,7 @@ def test_agent_factory_forwards_registry_and_tool_context() -> None:
     """Tool dispatch needs the Agent to retain registry/context wiring."""
 
     registry = ToolRegistry()
-    tool_context = ToolContext(is_owner=True, workspace_dir="/tmp")
+    tool_context = ToolContext(workspace_dir="/tmp")
     runner = TurnRunner(
         provider_selector=None,
         tool_registry=registry,

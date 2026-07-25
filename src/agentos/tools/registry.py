@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import functools
 from collections.abc import Mapping
-from dataclasses import replace
 from typing import Any
 
 import structlog
@@ -25,8 +24,6 @@ from agentos.tools.types import (
 log = structlog.get_logger(__name__)
 
 ToolProfile = visibility_policy.ToolProfile
-_CHANNEL_DEFAULT_ALLOW = visibility_policy._CHANNEL_DEFAULT_ALLOW
-_CHANNEL_HARD_DENY_NON_OWNER = visibility_policy._CHANNEL_HARD_DENY_NON_OWNER
 filter_by_profile = visibility_policy.filter_by_profile
 profile_allows_tool = visibility_policy.profile_allows_tool
 resolve_profile = visibility_policy.resolve_profile
@@ -80,7 +77,6 @@ class ToolRegistry:
         caller_kind: CallerKind | str | None = None,
         interaction_mode: InteractionMode | str | None = None,
         tool_surface_capabilities: ToolSurfaceCapabilities | None = None,
-        is_owner: bool = True,
     ) -> ToolContext:
         return visibility_policy.effective_tool_context(
             session_key=session_key,
@@ -88,7 +84,6 @@ class ToolRegistry:
             caller_kind=caller_kind,
             interaction_mode=interaction_mode,
             tool_surface_capabilities=tool_surface_capabilities,
-            is_owner=is_owner,
         )
 
     @staticmethod
@@ -147,9 +142,8 @@ class ToolRegistry:
     def to_tool_definitions(self, ctx: ToolContext | None = None) -> list[ToolDefinition]:
         """Export tools as MCP-compatible ToolDefinition list.
 
-        When *ctx* is provided, tools are filtered based on:
-        - ``owner_only``: hidden when ``ctx.is_owner`` is False
-        - ``denied_tools``: hidden when the tool name is in ``ctx.denied_tools``
+        When *ctx* is provided, configured allow/deny policy and runtime
+        capability determine visibility.
 
         When *ctx* is None, all tools are returned (backward compat for tests).
         """
@@ -179,7 +173,6 @@ class ToolRegistry:
         caller_kind: CallerKind | str | None = None,
         interaction_mode: InteractionMode | str | None = None,
         tool_surface_capabilities: ToolSurfaceCapabilities | None = None,
-        is_owner: bool = True,
     ) -> list[dict[str, Any]]:
         has_runtime_context = any(
             value is not None
@@ -192,12 +185,9 @@ class ToolRegistry:
                 caller_kind=caller_kind,
                 interaction_mode=interaction_mode,
                 tool_surface_capabilities=tool_surface_capabilities,
-                is_owner=is_owner,
             )
         else:
             ctx = self._context_for_profile(profile)
-            if not is_owner:
-                ctx = replace(ctx, is_owner=False)
         return [
             {
                 "name": rt.spec.name,
@@ -220,7 +210,6 @@ class ToolRegistry:
         caller_kind: CallerKind | str | None = None,
         interaction_mode: InteractionMode | str | None = None,
         tool_surface_capabilities: ToolSurfaceCapabilities | None = None,
-        is_owner: bool = True,
     ) -> list[dict[str, Any]]:
         ctx = self._effective_context(
             session_key=session_key,
@@ -228,7 +217,6 @@ class ToolRegistry:
             caller_kind=caller_kind,
             interaction_mode=interaction_mode,
             tool_surface_capabilities=tool_surface_capabilities,
-            is_owner=is_owner,
         )
         return [
             {
@@ -285,7 +273,6 @@ async def tools_catalog_payload(
     params: Mapping[str, Any] | None,
     *,
     tool_registry: ToolRegistry | None = None,
-    is_owner: bool = True,
     tool_surface_capabilities: ToolSurfaceCapabilities | None = None,
     session_manager: object | None = None,
     task_runtime: object | None = None,
@@ -299,7 +286,6 @@ async def tools_catalog_payload(
     return await build_payload(
         params,
         tool_registry=tool_registry,
-        is_owner=is_owner,
         tool_surface_capabilities=tool_surface_capabilities,
         session_manager=session_manager,
         task_runtime=task_runtime,
@@ -314,7 +300,6 @@ async def tools_effective_payload(
     params: Mapping[str, Any] | None,
     *,
     tool_registry: ToolRegistry | None = None,
-    is_owner: bool = True,
     tool_surface_capabilities: ToolSurfaceCapabilities | None = None,
     session_manager: object | None = None,
     task_runtime: object | None = None,
@@ -328,7 +313,6 @@ async def tools_effective_payload(
     return await build_payload(
         params,
         tool_registry=tool_registry,
-        is_owner=is_owner,
         tool_surface_capabilities=tool_surface_capabilities,
         session_manager=session_manager,
         task_runtime=task_runtime,
@@ -344,7 +328,6 @@ def tool(
     description: str,
     params: dict[str, Any] | None = None,
     required: list[str] | None = None,
-    owner_only: bool = False,
     exposed_by_default: bool = True,
     execution_timeout_seconds: float | None = None,
     execution_timeout_argument: str | None = None,
@@ -366,7 +349,6 @@ def tool(
             description=description,
             parameters=params or {},
             required=required or [],
-            owner_only=owner_only,
             exposed_by_default=exposed_by_default,
             execution_timeout_seconds=execution_timeout_seconds,
             execution_timeout_argument=execution_timeout_argument,

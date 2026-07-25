@@ -37,8 +37,7 @@ async def test_dispatch_tool_failed_log_includes_surface_context() -> None:
     handler = build_tool_handler(_build_registry())
     token = current_tool_context.set(
         ToolContext(
-            is_owner=False,
-            caller_kind=CallerKind.WEB,
+                        caller_kind=CallerKind.WEB,
             session_key="agent:main:demo",
             agent_id="main",
         )
@@ -65,8 +64,7 @@ async def test_dispatch_unsupported_surface_log_includes_approval_id() -> None:
     handler = build_tool_handler(_build_registry())
     token = current_tool_context.set(
         ToolContext(
-            is_owner=False,
-            caller_kind=CallerKind.CRON,
+                        caller_kind=CallerKind.CRON,
             interaction_mode=InteractionMode.UNATTENDED,
             session_key="cron:system",
             agent_id="cron",

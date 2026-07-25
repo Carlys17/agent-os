@@ -138,10 +138,10 @@ async def test_memory_retriever_applies_search_intent_to_sync_and_results():
         sync_manager=sync_manager,
     )
 
-    results = await retriever.search("alpha", intent=SearchIntent.ADMIN)
+    results = await retriever.search("alpha", intent=SearchIntent.CONTROL)
 
-    assert sync_manager.reasons == ["search:admin"]
-    assert results[0].metadata["search_intent"] == "admin"
+    assert sync_manager.reasons == ["search:control"]
+    assert results[0].metadata["search_intent"] == "control"
 
 
 @pytest.mark.asyncio

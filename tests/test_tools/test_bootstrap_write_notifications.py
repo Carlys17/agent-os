@@ -19,8 +19,7 @@ async def test_filesystem_write_notifies_bootstrap_or_memory_sources(tmp_path) -
     bootstrap_calls: list[tuple[str, str]] = []
     token = current_tool_context.set(
         ToolContext(
-            is_owner=True,
-            agent_id="main",
+                        agent_id="main",
             workspace_dir=str(tmp_path),
             memory_source_dir=str(tmp_path),
             on_memory_source_write=lambda agent_id, path: memory_calls.append((agent_id, path)),
@@ -51,8 +50,7 @@ async def test_patch_notifies_bootstrap_and_memory_sources(tmp_path) -> None:
     (tmp_path / "memory" / "2026-05-01.md").write_text("old\n", encoding="utf-8")
     token = current_tool_context.set(
         ToolContext(
-            is_owner=True,
-            agent_id="main",
+                        agent_id="main",
             workspace_dir=str(tmp_path),
             memory_source_dir=str(tmp_path),
             on_memory_source_write=lambda agent_id, path: memory_calls.append((agent_id, path)),

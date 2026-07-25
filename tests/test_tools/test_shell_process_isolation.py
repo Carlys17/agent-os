@@ -49,12 +49,10 @@ class _FakeProcess:
 def _ctx(
     session_key: str,
     *,
-    is_owner: bool = False,
     agent_id: str = "agent",
     caller_kind: CallerKind = CallerKind.AGENT,
 ) -> ToolContext:
     return ToolContext(
-        is_owner=is_owner,
         caller_kind=caller_kind,
         session_key=session_key,
         agent_id=agent_id,
@@ -180,12 +178,12 @@ async def test_process_list_filters_to_current_session_and_warns_for_untagged() 
 
 
 @pytest.mark.asyncio
-async def test_process_owner_context_can_list_all_sessions() -> None:
+async def test_process_control_context_can_list_all_sessions() -> None:
     shell._bg_sessions["own"] = _session("own", "agent:main:one")
     shell._bg_sessions["other"] = _session("other", "agent:main:two")
 
     token = current_tool_context.set(
-        _ctx("agent:main:ops", is_owner=True, caller_kind=CallerKind.CLI)
+        _ctx("agent:main:ops", caller_kind=CallerKind.CLI)
     )
     try:
         payload = json.loads(await shell.process("list"))
@@ -214,11 +212,11 @@ async def test_process_cross_context_operations_are_denied(action: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_owner_context_can_poll_other_sessions() -> None:
+async def test_process_control_context_can_poll_other_sessions() -> None:
     shell._bg_sessions["other"] = _session("other", "agent:main:two")
 
     token = current_tool_context.set(
-        _ctx("agent:main:ops", is_owner=True, caller_kind=CallerKind.CLI)
+        _ctx("agent:main:ops", caller_kind=CallerKind.CLI)
     )
     try:
         payload = json.loads(await shell.process("poll", session_id="other"))
@@ -248,12 +246,12 @@ async def test_process_poll_includes_local_urls_for_server_sessions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_subagent_owner_context_is_not_admin_bypass() -> None:
+async def test_process_subagent_context_has_no_global_bypass() -> None:
     shell._bg_sessions["own"] = _session("own", "subagent:agent:main:one")
     shell._bg_sessions["other"] = _session("other", "agent:main:two")
 
     token = current_tool_context.set(
-        _ctx("subagent:agent:main:one", is_owner=True, caller_kind=CallerKind.SUBAGENT)
+        _ctx("subagent:agent:main:one", caller_kind=CallerKind.SUBAGENT)
     )
     try:
         payload = json.loads(await shell.process("list"))

@@ -235,8 +235,7 @@ async def test_publish_artifact_tool_allows_workspace_file_only(tmp_path: Path) 
     output = workspace / "report.txt"
     output.write_text("ready", encoding="utf-8")
     ctx = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(workspace),
         artifact_media_root=str(tmp_path / "media"),
         artifact_session_id="session-1",
@@ -286,8 +285,7 @@ async def test_publish_artifact_tool_preserves_source_extension_for_display_name
     output = workspace / "generated-chart.png"
     output.write_bytes(b"\x89PNG\r\n\x1a\nimage bytes")
     ctx = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(workspace),
         artifact_media_root=str(tmp_path / "media"),
         artifact_session_id="session-1",
@@ -321,8 +319,7 @@ async def test_publish_artifact_tool_keeps_download_name_mime_when_source_is_gen
     output = workspace / "payload.bin"
     output.write_bytes(b"image bytes")
     ctx = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.WEB,
+                caller_kind=CallerKind.WEB,
         workspace_dir=str(workspace),
         artifact_media_root=str(tmp_path / "media"),
         artifact_session_id="session-1",
@@ -353,8 +350,7 @@ async def test_publish_artifact_tool_hides_local_path_from_non_owner_channel(
     output = workspace / "report.txt"
     output.write_text("ready", encoding="utf-8")
     ctx = ToolContext(
-        is_owner=False,
-        caller_kind=CallerKind.CHANNEL,
+                caller_kind=CallerKind.CHANNEL,
         channel_kind="feishu",
         workspace_dir=str(workspace),
         artifact_media_root=str(tmp_path / "media"),

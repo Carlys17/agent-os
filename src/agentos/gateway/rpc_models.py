@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agentos.gateway.access import CONTROL_AND_CHANNEL
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
 _d = get_dispatcher()
@@ -29,7 +30,7 @@ def _model_info_to_wire(m: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@_d.method("models.list", scope="operator.read")
+@_d.method("models.list", CONTROL_AND_CHANNEL)
 async def _handle_models_list(params: dict | None, ctx: RpcContext) -> list[dict[str, Any]]:
     provider_filter = (params or {}).get("provider")
     capabilities_filter: list[str] | None = (params or {}).get("capabilities")

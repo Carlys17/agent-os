@@ -225,7 +225,6 @@ async def run_standalone_chat(
         )
         return tool_context_from_envelope(
             route_envelope,
-            is_owner=True,
             workspace_dir=active_workspace,
             workspace_strict=effective_workspace_strict,
             default_elevated=configured_default_elevated(svc.config),

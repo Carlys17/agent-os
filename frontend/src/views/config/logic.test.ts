@@ -152,7 +152,6 @@ describe('entriesForTab', () => {
       'updates',
       'control_ui',
       'diagnostics_enabled',
-      'channel_admin_senders',
       'context_budget_tokens',
       'context_overflow_policy',
       'preflight_compact_ratio',

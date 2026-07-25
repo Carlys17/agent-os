@@ -60,7 +60,6 @@ def _flush_tool_context(agent_id: str, *, source_name: str) -> ToolContext:
     resolution picks up the correct per-agent directory.
     """
     return ToolContext(
-        is_owner=True,
         caller_kind=CallerKind.AGENT,
         interaction_mode=InteractionMode.UNATTENDED,
         agent_id=agent_id,

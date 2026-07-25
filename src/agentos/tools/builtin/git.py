@@ -161,7 +161,7 @@ async def git_diff(
         "workdir": {"type": "string", "description": "Git repository directory (default: cwd)."},
     },
     required=["message"],
-    owner_only=True,
+    exposed_by_default=False,
 )
 @sandboxed(
     kind="git.write",

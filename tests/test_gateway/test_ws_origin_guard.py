@@ -3,7 +3,7 @@
 The WS upgrade path skips ``AuthMiddleware`` (middleware.py:33), and on a
 loopback bind any browser peer is auto-upgraded to operator scopes purely by
 ``peer_ip`` proximity (auth.py:152). A malicious web page the victim visits
-can therefore open ``ws://127.0.0.1:<port>/ws`` and drive the admin RPC
+can therefore open ``ws://127.0.0.1:<port>/ws`` and drive the Control RPC
 surface — this is the CVE-2026-53869 (Hermes) / CSWSH class. The handshake
 must reject cross-origin and rebound-Host connections before ``accept()``.
 """
@@ -92,7 +92,7 @@ class TestIsAllowedWsOrigin:
     def test_public_bind_does_not_gate_origin(self) -> None:
         """On a non-loopback bind Origin gating buys no security: the WS is
         authenticated after accept() (connect.challenge -> resolve_auth) and
-        the loopback auto-admin upgrade is off. A remote browser's Origin is
+        loopback implicit admission is unavailable. A remote browser's Origin is
         whatever host it navigated to — never the bind address — so gating
         would only reject legitimate browsers."""
         cfg = GatewayConfig(host="203.0.113.7", port=18791)

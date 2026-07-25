@@ -124,6 +124,12 @@ Built-in channel types are `discord`, `slack`, and `telegram`; use `agentos
 channels types` as the authoritative catalog. Config migration backs up the
 file before removing entries for retired built-in channel types.
 
+Telegram direct messages always require pairing. Use `agentos channels pairing
+list <name>`, `approve <name> <code>`, `deny <name> <sender-id>`, or `revoke
+<name> <sender-id>`. Pairing is binary and has no admin/owner tier. Telegram
+groups are disabled by default; enable them only with explicit
+`group_chat_ids`, paired senders, and the desired mention requirement.
+
 ## Configuration
 
 File resolution (highest precedence first):
@@ -150,7 +156,7 @@ Main `agentos.toml` sections (full commented reference:
 | `[memory]` | memory source and embedding model, `[memory.dream]` |
 | `[sandbox]` | `sandbox`, `default_level` (DISABLED/STANDARD/STRICT/LOCKED), `backend`, network/mounts |
 | `[permissions]` | `default_mode` = `off` \| `on` \| `bypass` \| `full` (pair with `agentos sandbox …`) |
-| `[auth]` | gateway auth: `mode` (`none`/`token`/`password`), `token`, `allow_unauthenticated_public` |
+| `[auth]` | gateway admission: `mode` (`none` on loopback or `token`), `token` |
 | `[control_ui]` | `allowed_origins` for reverse-proxy setups |
 | `[updates]` | `notify` (default true) — the once-per-24h "new release available" notice |
 | `[channels]` | messaging channels (`[[channels.channels]]` entries) |
@@ -220,9 +226,9 @@ agentos config set auth.token "<long random secret>"
 agentos gateway restart
 ```
 
-Only set `auth.allow_unauthenticated_public = true` when an external layer
-(reverse-proxy auth, VPN, firewall) already gates access. Behind a reverse
-proxy on another origin, also set `control_ui.allowed_origins`.
+Unauthenticated non-loopback Control is unsupported. A reverse proxy, VPN, or
+firewall does not replace the AgentOS Control token. Behind a reverse proxy on
+another browser origin, also set `control_ui.allowed_origins`.
 
 **Skills:**
 

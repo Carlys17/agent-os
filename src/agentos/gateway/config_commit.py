@@ -440,13 +440,11 @@ def commit_config(
     source_posture = (
         source.host,
         source.auth.mode,
-        source.auth.allow_unauthenticated_public,
         source.auth.trusted_proxy,
     )
     candidate_posture = (
         new_config.host,
         new_config.auth.mode,
-        new_config.auth.allow_unauthenticated_public,
         new_config.auth.trusted_proxy,
     )
     try:

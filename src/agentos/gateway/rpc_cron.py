@@ -469,7 +469,7 @@ def _handler_key_for_payload_kind(kind: str) -> str:
     return "agent_run"
 
 
-@_d.method("cron.list", scope="operator.read")
+@_d.method("cron.list")
 async def _handle_cron_list(params: dict | None, ctx: RpcContext) -> list[dict]:
     scheduler = getattr(ctx, "cron_scheduler", None)
     if scheduler is None:
@@ -482,7 +482,7 @@ async def _handle_cron_list(params: dict | None, ctx: RpcContext) -> list[dict]:
     return result
 
 
-@_d.method("cron.status", scope="operator.read")
+@_d.method("cron.status")
 async def _handle_cron_status(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict) or "id" not in params:
         raise ValueError("params.id is required")
@@ -493,7 +493,7 @@ async def _handle_cron_status(params: dict | None, ctx: RpcContext) -> dict[str,
     return _job_to_wire(job)
 
 
-@_d.method("cron.add", scope="operator.admin")
+@_d.method("cron.add")
 async def _handle_cron_add(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params required: schedule (object) or expression (string)")
@@ -623,7 +623,6 @@ async def _finalize_cron_add(
         tool_policy=_tool_policy_from_params(params),
         tz=tz_value,
         jitter_seconds=jitter_seconds,
-        creator_is_owner=True,
         schedule_kind=schedule_kind,
         schedule_value=schedule_value,
         schedule_tz=tz_value,
@@ -639,10 +638,10 @@ async def _finalize_cron_add(
 
 
 # Alias: cron.js sends cron.create for new jobs
-_d.method("cron.create", scope="operator.admin")(_handle_cron_add)
+_d.method("cron.create")(_handle_cron_add)
 
 
-@_d.method("cron.update", scope="operator.admin")
+@_d.method("cron.update")
 async def _handle_cron_update(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict) or "id" not in params:
         raise ValueError("params.id is required")
@@ -831,7 +830,7 @@ async def _handle_cron_update(params: dict | None, ctx: RpcContext) -> dict[str,
     return _job_to_wire(job)
 
 
-@_d.method("cron.remove", scope="operator.admin")
+@_d.method("cron.remove")
 async def _handle_cron_remove(params: dict | None, ctx: RpcContext) -> None:
     if not isinstance(params, dict) or "id" not in params:
         raise ValueError("params.id is required")
@@ -840,7 +839,7 @@ async def _handle_cron_remove(params: dict | None, ctx: RpcContext) -> None:
     return None
 
 
-@_d.method("cron.run", scope="operator.admin")
+@_d.method("cron.run")
 async def _handle_cron_run(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict) or "id" not in params:
         raise ValueError("params.id is required")
@@ -849,7 +848,7 @@ async def _handle_cron_run(params: dict | None, ctx: RpcContext) -> dict[str, An
     return _manual_run_to_wire(result)
 
 
-@_d.method("cron.runs", scope="operator.read")
+@_d.method("cron.runs")
 async def _handle_cron_runs(params: dict | None, ctx: RpcContext) -> list[dict]:
     if not isinstance(params, dict):
         raise ValueError("params.id is required")
@@ -882,7 +881,7 @@ async def _handle_cron_runs(params: dict | None, ctx: RpcContext) -> list[dict]:
     ]
 
 
-@_d.method("cron.subscribe", scope="operator.read")
+@_d.method("cron.subscribe")
 async def _handle_cron_subscribe(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Subscribe this connection to cron events."""
     sub_mgr = getattr(ctx, "subscription_manager", None)
@@ -897,7 +896,7 @@ async def _handle_cron_subscribe(params: dict | None, ctx: RpcContext) -> dict[s
     return {"ok": True, "topic": topic}
 
 
-@_d.method("cron.unsubscribe", scope="operator.read")
+@_d.method("cron.unsubscribe")
 async def _handle_cron_unsubscribe(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Unsubscribe this connection from cron events."""
     sub_mgr = getattr(ctx, "subscription_manager", None)

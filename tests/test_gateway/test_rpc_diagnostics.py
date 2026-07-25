@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from agentos.gateway.auth import Principal
+from agentos.gateway.access import CONTROL_ONLY, ConnectionSurface
+from agentos.gateway.auth import AccessContext
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.diagnostics import DiagnosticsState
 from agentos.gateway.rpc import RpcContext, get_dispatcher
-from agentos.gateway.scopes import ADMIN_SCOPE, METHOD_SCOPES, READ_SCOPE
 
 
 @pytest.mark.asyncio
@@ -21,7 +21,9 @@ async def test_diagnostics_status_is_read_scoped_and_reports_standard_default(
         diagnostics_state=state,
     )
 
-    assert METHOD_SCOPES["diagnostics.status"] == READ_SCOPE
+    entry = get_dispatcher().get_entry("diagnostics.status")
+    assert entry is not None
+    assert entry.audiences == CONTROL_ONLY
     response = await get_dispatcher().dispatch("req-1", "diagnostics.status", {}, ctx)
 
     assert response.ok is True
@@ -37,7 +39,9 @@ async def test_diagnostics_set_requires_admin_and_enables_runtime_raw(monkeypatc
     state = DiagnosticsState.from_config(GatewayConfig())
     ctx = RpcContext(conn_id="test", config=GatewayConfig(), diagnostics_state=state)
 
-    assert METHOD_SCOPES["diagnostics.set"] == ADMIN_SCOPE
+    entry = get_dispatcher().get_entry("diagnostics.set")
+    assert entry is not None
+    assert entry.audiences == CONTROL_ONLY
     response = await get_dispatcher().dispatch(
         "req-1",
         "diagnostics.set",
@@ -57,17 +61,17 @@ async def test_diagnostics_set_requires_admin_and_enables_runtime_raw(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_diagnostics_status_read_scope_but_set_requires_admin(monkeypatch) -> None:
+async def test_diagnostics_methods_require_an_admitted_control_connection(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv("AGENTOS_TURN_CALL_LOG", raising=False)
-    read_principal = Principal(
-        role="operator",
-        scopes=frozenset({READ_SCOPE}),
-        is_owner=False,
-        authenticated=True,
-    )
     ctx = RpcContext(
         conn_id="test",
-        principal=read_principal,
+        access=AccessContext(
+            surface=ConnectionSurface.CONTROL,
+            admitted=False,
+            credential_verified=False,
+        ),
         config=GatewayConfig(),
         diagnostics_state=DiagnosticsState.from_config(GatewayConfig()),
     )
@@ -80,8 +84,10 @@ async def test_diagnostics_status_read_scope_but_set_requires_admin(monkeypatch)
         ctx,
     )
 
-    assert status.ok is True
+    assert status.ok is False
     assert setter.ok is False
+    assert status.error is not None
+    assert status.error.code == "UNAUTHORIZED"
     assert setter.error is not None
     assert setter.error.code == "UNAUTHORIZED"
 
@@ -144,5 +150,7 @@ async def test_diagnostics_off_clears_runtime_state_but_reports_env_forced_raw(
     assert second.payload["raw_turn_call"]["source"] == "env"
 
 
-def test_doctor_status_is_read_scope() -> None:
-    assert METHOD_SCOPES["doctor.status"] == READ_SCOPE
+def test_doctor_status_is_control_only() -> None:
+    entry = get_dispatcher().get_entry("doctor.status")
+    assert entry is not None
+    assert entry.audiences == CONTROL_ONLY

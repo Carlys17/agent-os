@@ -64,9 +64,11 @@ const DISCORD_CHANNEL = {
 }
 const ACCESS_ENTRY = {
   name: 'tg-main',
-  mode: 'pairing',
   pending: [{ sender_id: 42, username: 'ada', code: 'A1B2' }],
-  approved: [{ sender_id: 7, display_name: 'Bob' }],
+  paired: [{ sender_id: 7, display_name: 'Bob' }],
+  groups_enabled: false,
+  group_chat_ids: [],
+  group_mention_required: true,
 }
 
 const CHANNEL_CATALOG = {
@@ -144,13 +146,13 @@ function wireRpc(
         return opts.statusReject
           ? Promise.reject(new Error('status down'))
           : Promise.resolve({ channels: opts.channels ?? [TELEGRAM_CHANNEL, DISCORD_CHANNEL] })
-      case 'channels.access.list':
+      case 'channels.pairing.list':
         return opts.accessReject
           ? Promise.reject(new Error('access down'))
           : Promise.resolve({ channels: opts.access ?? [ACCESS_ENTRY] })
-      case 'channels.access.setMode':
-      case 'channels.access.resolve':
-      case 'channels.access.revoke':
+      case 'channels.pairing.approve':
+      case 'channels.pairing.deny':
+      case 'channels.pairing.revoke':
         return opts.mutationReject
           ? Promise.reject(new Error('mutation failed'))
           : Promise.resolve({})
@@ -200,15 +202,15 @@ describe('ChannelsPage', () => {
     vi.useRealTimers()
   })
 
-  it('calls channels.status and channels.access.list after waitForConnection', async () => {
+  it('calls channels.status and channels.pairing.list after waitForConnection', async () => {
     wireRpc()
     renderPage()
     await waitFor(() => expect(mockRpc.call).toHaveBeenCalledWith('channels.status', {}))
-    expect(mockRpc.call).toHaveBeenCalledWith('channels.access.list', {})
+    expect(mockRpc.call).toHaveBeenCalledWith('channels.pairing.list', {})
     expect(mockRpc.waitForConnection).toHaveBeenCalled()
   })
 
-  it('still renders channels when channels.access.list rejects', async () => {
+  it('still renders channels when channels.pairing.list rejects', async () => {
     wireRpc({ accessReject: true })
     renderPage()
     await waitFor(() => expect(screen.getByText('tg-main')).toBeInTheDocument())
@@ -218,9 +220,9 @@ describe('ChannelsPage', () => {
   it('renders the stat row from the channel payload', async () => {
     wireRpc()
     renderPage()
-    // Total channels tile shows 2; restart attempts sum to 2; 1 chat approval.
+    // Total channels tile shows 2; restart attempts sum to 2; 1 pairing request.
     await waitFor(() => expect(screen.getByLabelText('Total channels')).toHaveTextContent('2'))
-    expect(screen.getByLabelText('Chat approvals')).toHaveTextContent('1')
+    expect(screen.getByLabelText('Pairing requests')).toHaveTextContent('1')
     expect(screen.getByLabelText('Restart attempts')).toHaveTextContent('2')
   })
 
@@ -234,16 +236,16 @@ describe('ChannelsPage', () => {
     expect(screen.getByRole('button', { name: /^add channel$/i })).toBeInTheDocument()
   })
 
-  it('tones the Chat approvals attention tile as warn, not danger (channels.js:146,384-389)', async () => {
+  it('tones the Pairing requests attention tile as warn, not danger', async () => {
     // Default fixture has one pending Telegram request → the tile is in
     // attention. Legacy colors the attention stat with --warn, never --danger:
     // the tile must not carry a tone-danger class.
     wireRpc()
     renderPage()
     await waitFor(() =>
-      expect(screen.getByLabelText('Chat approvals')).toHaveClass('ch-stat--attention'),
+      expect(screen.getByLabelText('Pairing requests')).toHaveClass('ch-stat--attention'),
     )
-    expect(screen.getByLabelText('Chat approvals')).not.toHaveClass('tone-danger')
+    expect(screen.getByLabelText('Pairing requests')).not.toHaveClass('tone-danger')
   })
 
   it('gives the inactive "N need attention" hint the danger ch-neg class (channels.js:139)', async () => {
@@ -274,51 +276,30 @@ describe('ChannelsPage', () => {
     expect(within(card).getByText('Adapter config')).toBeInTheDocument()
   })
 
-  it('renders the telegram access panel only for telegram channels and shows pending/approved groups', async () => {
+  it('renders pairing only for Telegram and shows pending and paired connections', async () => {
     wireRpc()
     renderPage()
     await waitFor(() => expect(screen.getByText('tg-main')).toBeInTheDocument())
     const tgCard = screen.getByLabelText('Channel tg-main')
     const discCard = screen.getByLabelText('Channel disc')
-    // Telegram card has the access panel; discord card does not.
-    expect(within(tgCard).getByText('Chat access')).toBeInTheDocument()
-    expect(within(discCard).queryByText('Chat access')).not.toBeInTheDocument()
-    // Pending account (@ada) + approved account (Bob).
+    expect(within(tgCard).getByRole('heading', { name: 'Pairing' })).toBeInTheDocument()
+    expect(within(discCard).queryByRole('heading', { name: 'Pairing' })).not.toBeInTheDocument()
+    expect(within(tgCard).getByText(/Direct messages always require pairing/)).toHaveTextContent(
+      'Group messaging is disabled.',
+    )
     expect(within(tgCard).getByText('@ada')).toBeInTheDocument()
     expect(within(tgCard).getByText('Bob')).toBeInTheDocument()
   })
 
-  it('changing the access mode calls channels.access.setMode and invalidates (open warns)', async () => {
-    wireRpc()
-    renderPage()
-    await waitFor(() =>
-      expect(screen.getByLabelText('Telegram chat access mode')).toBeInTheDocument(),
-    )
-    const select = screen.getByLabelText('Telegram chat access mode')
-    fireEvent.change(select, { target: { value: 'open' } })
-    await waitFor(() =>
-      expect(mockRpc.call).toHaveBeenCalledWith('channels.access.setMode', {
-        channel: 'tg-main',
-        mode: 'open',
-      }),
-    )
-    // open → warn toast; a refetch re-issues channels.status.
-    await waitFor(() => expect(toast.warning).toHaveBeenCalled())
-    const statusCalls = () =>
-      mockRpc.call.mock.calls.filter(([m]) => m === 'channels.status').length
-    await waitFor(() => expect(statusCalls()).toBeGreaterThanOrEqual(2))
-  })
-
-  it('approving a pending account calls channels.access.resolve with approved:true and invalidates', async () => {
+  it('pairing a pending account calls channels.pairing.approve and invalidates', async () => {
     wireRpc()
     renderPage()
     await waitFor(() => expect(screen.getByText('@ada')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: /approve/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^pair$/i }))
     await waitFor(() =>
-      expect(mockRpc.call).toHaveBeenCalledWith('channels.access.resolve', {
+      expect(mockRpc.call).toHaveBeenCalledWith('channels.pairing.approve', {
         channel: 'tg-main',
         senderId: '42',
-        approved: true,
       }),
     )
     const statusCalls = () =>
@@ -326,27 +307,26 @@ describe('ChannelsPage', () => {
     await waitFor(() => expect(statusCalls()).toBeGreaterThanOrEqual(2))
   })
 
-  it('denying a pending account calls channels.access.resolve with approved:false', async () => {
+  it('denying a pending account calls channels.pairing.deny', async () => {
     wireRpc()
     renderPage()
     await waitFor(() => expect(screen.getByText('@ada')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: /deny/i }))
     await waitFor(() =>
-      expect(mockRpc.call).toHaveBeenCalledWith('channels.access.resolve', {
+      expect(mockRpc.call).toHaveBeenCalledWith('channels.pairing.deny', {
         channel: 'tg-main',
         senderId: '42',
-        approved: false,
       }),
     )
   })
 
-  it('revoking an approved account calls channels.access.revoke and invalidates', async () => {
+  it('disconnecting a paired account calls channels.pairing.revoke and invalidates', async () => {
     wireRpc()
     renderPage()
     await waitFor(() => expect(screen.getByText('Bob')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: /revoke/i }))
+    fireEvent.click(screen.getByRole('button', { name: /disconnect/i }))
     await waitFor(() =>
-      expect(mockRpc.call).toHaveBeenCalledWith('channels.access.revoke', {
+      expect(mockRpc.call).toHaveBeenCalledWith('channels.pairing.revoke', {
         channel: 'tg-main',
         senderId: '7',
       }),

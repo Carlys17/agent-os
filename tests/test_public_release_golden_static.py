@@ -25,7 +25,7 @@ def test_public_golden_file_uses_public_schema_and_no_removed_tool_names() -> No
         "canonical-image-tool",
         "session-vs-channel-message",
         "session-spawn-canonical-name",
-        "raw-http-is-owner-only",
+        "git-commit-is-opt-in",
     }
     for case in cases:
         assert isinstance(case.get("prompt"), str) and case["prompt"]

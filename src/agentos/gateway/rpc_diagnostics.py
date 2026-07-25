@@ -22,12 +22,12 @@ def _state(ctx: RpcContext) -> DiagnosticsState:
     return state
 
 
-@_d.method("diagnostics.status", scope="operator.read")
+@_d.method("diagnostics.status")
 async def _handle_diagnostics_status(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     return diagnostics_status_payload(_state(ctx), getattr(ctx, "config", None))
 
 
-@_d.method("diagnostics.set", scope="operator.admin")
+@_d.method("diagnostics.set")
 async def _handle_diagnostics_set(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params must be an object")

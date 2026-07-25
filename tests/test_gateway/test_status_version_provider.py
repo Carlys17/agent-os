@@ -14,7 +14,6 @@ Pins two fixes:
 from __future__ import annotations
 
 from importlib.metadata import version as _pkg_version
-from types import SimpleNamespace
 
 import pytest
 
@@ -24,7 +23,7 @@ from agentos.provider.selector import ModelSelector, ProviderConfig, SelectorCon
 
 
 def _ctx(**kwargs: object) -> RpcContext:
-    return RpcContext(conn_id="c", principal=SimpleNamespace(role="operator"), **kwargs)
+    return RpcContext(conn_id="c", **kwargs)
 
 
 def _openrouter_selector() -> ModelSelector:

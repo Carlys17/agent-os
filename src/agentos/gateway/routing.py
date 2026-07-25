@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from agentos.channel_pairing import ChannelAdmission
 from agentos.channels.types import IncomingMessage
 from agentos.session.keys import normalize_agent_id, parse_agent_id
 from agentos.tools.policy import apply_tool_policy_layer
@@ -71,7 +72,6 @@ class RouteEnvelope:
     def tool_context(
         self,
         *,
-        is_owner: bool = False,
         workspace_dir: str | None = None,
         workspace_strict: bool = False,
         default_elevated: str | None = None,
@@ -79,7 +79,6 @@ class RouteEnvelope:
         """Build the ToolContext for this route."""
         return tool_context_from_envelope(
             self,
-            is_owner=is_owner,
             workspace_dir=workspace_dir,
             workspace_strict=workspace_strict,
             default_elevated=default_elevated,
@@ -154,15 +153,12 @@ def build_cli_route_envelope(
     channel_id: str = "cli:agent",
     sender_id: str | None = None,
     session_id: str | None = None,
-    principal_is_owner: bool | None = None,
     interaction_mode: InteractionMode | str = InteractionMode.INTERACTIVE,
     elevated: str | None = None,
 ) -> RouteEnvelope:
     """Build a route for local CLI input."""
     resolved_interaction_mode = _interaction_mode(interaction_mode)
     metadata: dict[str, Any] = {}
-    if principal_is_owner is not None:
-        metadata["principal_is_owner"] = principal_is_owner
     if elevated in ("on", "bypass", "full"):
         metadata["elevated"] = elevated
     return RouteEnvelope(
@@ -191,7 +187,6 @@ def build_web_route_envelope(
     channel_id: str | None = None,
     session_id: str | None = None,
     tool_source_kind: str | None = None,
-    principal_is_owner: bool | None = None,
 ) -> RouteEnvelope:
     """Build a route for Web/RPC-originated input."""
     resolved_channel_id = channel_id or (f"web:{conn_id}" if conn_id else "web")
@@ -199,8 +194,6 @@ def build_web_route_envelope(
     metadata: dict[str, Any] = {"conn_id": conn_id}
     if tool_source_kind:
         metadata["tool_source_kind"] = tool_source_kind
-    if principal_is_owner is not None:
-        metadata["principal_is_owner"] = principal_is_owner
     return RouteEnvelope(
         source_kind=SourceKind.WEB,
         source_name=source_name,
@@ -237,10 +230,6 @@ def build_cron_route_envelope(
     job_name = str(getattr(job, "name", ""))
     sender_id = f"cron-job-{job_id}"
     metadata: dict[str, Any] = {"job_id": job_id, "job_name": job_name}
-    creator_is_owner = bool(getattr(job, "creator_is_owner", False))
-    if creator_is_owner:
-        metadata["principal_is_owner"] = True
-        metadata["cron_trusted_owner"] = True
     tool_policy = getattr(job, "tool_policy", None)
     if isinstance(tool_policy, dict) and tool_policy:
         metadata["tool_policy"] = dict(tool_policy)
@@ -340,7 +329,6 @@ def delivery_fields_from_envelope(envelope: RouteEnvelope) -> dict[str, Any]:
 def tool_context_from_envelope(
     envelope: RouteEnvelope,
     *,
-    is_owner: bool = False,
     workspace_dir: str | None = None,
     workspace_strict: bool = False,
     default_elevated: str | None = None,
@@ -350,24 +338,30 @@ def tool_context_from_envelope(
     allowed_tools: set[str] | None = None
     denied_tools: set[str] = set()
     interaction_mode = _interaction_mode(envelope.interaction_mode)
-    cron_trusted_owner = (
-        caller_kind is CallerKind.CRON
-        and bool(envelope.metadata.get("cron_trusted_owner"))
-        and is_owner
-    )
     if caller_kind is CallerKind.CRON:
-        if not cron_trusted_owner:
-            allowed_tools = set(CRON_AGENT_ALLOW)
-            denied_tools = set(CRON_AGENT_DENY)
+        allowed_tools = set(CRON_AGENT_ALLOW)
+        denied_tools = set(CRON_AGENT_DENY)
     elif caller_kind is CallerKind.SUBAGENT:
         denied_tools = set(SUBAGENT_TOOL_DENY)
     source_kind = envelope.metadata.get("tool_source_kind") or envelope.source_kind.value
     source_name = envelope.metadata.get("tool_source_name") or envelope.source_name
+    channel_admission = envelope.metadata.get("_channel_admission")
+    channel_admission_validator = envelope.metadata.get(
+        "_channel_admission_validator"
+    )
+    if not isinstance(channel_admission, ChannelAdmission):
+        channel_admission = None
+        channel_admission_validator = None
+    if not callable(channel_admission_validator):
+        channel_admission_validator = None
     elevated = envelope.metadata.get("elevated") or default_elevated
-    if elevated not in ("on", "bypass", "full") or not is_owner:
+    if (
+        elevated not in ("on", "bypass", "full")
+        or caller_kind not in {CallerKind.CLI, CallerKind.WEB}
+        or interaction_mode is not InteractionMode.INTERACTIVE
+    ):
         elevated = None
     ctx = ToolContext(
-        is_owner=is_owner,
         caller_kind=caller_kind,
         interaction_mode=interaction_mode,
         subagent_depth=int(envelope.metadata.get("spawn_depth") or 0),
@@ -380,21 +374,20 @@ def tool_context_from_envelope(
         sender_id=envelope.sender_id,
         source_kind=source_kind,
         source_name=source_name,
+        channel_admission=channel_admission,
+        channel_admission_validator=channel_admission_validator,
         allowed_tools=allowed_tools,
         denied_tools=denied_tools,
         elevated=elevated,
-        tool_policy=(
-            envelope.metadata.get("tool_policy") if cron_trusted_owner else None
-        ),
+        tool_policy=envelope.metadata.get("tool_policy"),
     )
     if caller_kind is CallerKind.CRON:
-        if not cron_trusted_owner:
-            ctx = apply_tool_policy_layer(
-                ctx,
-                envelope.metadata.get("tool_policy"),
-                available_tools=CRON_AGENT_ALLOW | CRON_AGENT_DENY,
-                hard_denied=CRON_AGENT_DENY,
-            )
+        ctx = apply_tool_policy_layer(
+            ctx,
+            envelope.metadata.get("tool_policy"),
+            available_tools=CRON_AGENT_ALLOW | CRON_AGENT_DENY,
+            hard_denied=CRON_AGENT_DENY,
+        )
     return ctx
 
 

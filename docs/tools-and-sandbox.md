@@ -23,7 +23,7 @@ For a focused permissions guide, see
 | Artifacts | `publish_artifact`. |
 | Media | image generation, PDF, TTS, and media helpers. |
 | Skills | `skill_list`, `skill_view`, `skill_create`, `skill_edit`, `install_skill_deps`, `meta_invoke`. |
-| Admin | cron and gateway administration. |
+| Control | cron scheduling and gateway control operations. |
 | Channels/platforms | messaging, chat, and media helpers across supported channel adapters. |
 
 ## Permission Modes

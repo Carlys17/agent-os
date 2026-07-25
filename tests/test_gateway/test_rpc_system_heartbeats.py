@@ -7,7 +7,6 @@ from typing import Any
 import pytest
 
 import agentos.gateway.rpc_system  # noqa: F401  ensure registration
-from agentos.gateway.auth import Principal
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
@@ -25,12 +24,6 @@ def _ctx(config: GatewayConfig, heartbeat_loop: Any) -> RpcContext:
         conn_id="heartbeat-transaction-test",
         config=config,
         heartbeat_loop=heartbeat_loop,
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.admin"}),
-            is_owner=True,
-            authenticated=True,
-        ),
     )
 
 

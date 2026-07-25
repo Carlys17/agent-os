@@ -4,11 +4,10 @@ Drives the contract:
 - A Feishu / Slack chat user can create static reminders (reminder + isolated)
   and background tasks (agent_turn + isolated) — both are normal use cases the
   model picks up from "提醒我喝水" / "每天早上总结邮件" style prompts.
-- target_session_key and tool_policy are owner-only knobs; passing them as a
-  non-owner is rejected with a clear ToolError (the model would only emit
-  them deliberately, so silent drop would create false-success bugs).
-- list / remove / run are scoped to the caller's identity (channel sender_id
-  first, session_key fallback) for privacy. Owner-context callers see all.
+- target_session_key and tool_policy are unavailable from the channel
+  protocol; Control clients manage cross-session jobs over cron RPC.
+- list / remove / run are scoped to the paired channel caller's identity
+  (sender_id first, session_key fallback). Control contexts see all.
 - When session storage has not yet captured last_channel for a fresh chat,
   the tool synthesises a ReplyTargetSnapshot from the live ToolContext so the
   first cron call still binds delivery to the calling channel.
@@ -23,19 +22,15 @@ from typing import Any
 
 import pytest
 
-import agentos.tools.builtin.admin as admin_mod
+import agentos.tools.builtin.control as control_mod
 from agentos.scheduler.types import (
     CronJob,
     DeliveryConfig,
     ReplyTargetSnapshot,
     SessionTarget,
 )
-from agentos.tools.builtin.admin import cron as cron_tool
-from agentos.tools.registry import (
-    _CHANNEL_DEFAULT_ALLOW,
-    ToolProfile,
-    profile_allows_tool,
-)
+from agentos.tools.builtin.control import cron as cron_tool
+from agentos.tools.registry import _default_registry
 from agentos.tools.types import (
     CallerKind,
     InteractionMode,
@@ -54,22 +49,20 @@ def _with_ctx(ctx: ToolContext):
         current_tool_context.reset(token)
 
 
-# --- Tool visibility (channel-default profile) ---------------------------
+# --- Tool visibility ------------------------------------------------------
 
 
 def test_cron_visible_in_channel_default_profile() -> None:
-    """Channel non-owner callers must see cron in the default tool profile."""
-    assert "cron" in _CHANNEL_DEFAULT_ALLOW
-    assert profile_allows_tool("cron", ToolProfile.CHANNEL_DEFAULT) is True
+    """Paired channel callers see the configured cron tool."""
+    registered = _default_registry.get("cron")
+    assert registered is not None
+    assert registered.spec.exposed_by_default is True
 
 
-def test_cron_spec_is_not_owner_only() -> None:
-    """Defense-in-depth dispatch must not block channel callers."""
-    from agentos.tools.registry import _default_registry
-
+def test_cron_spec_has_no_role_gate() -> None:
     rt = _default_registry.get("cron")
     assert rt is not None, "cron tool not registered"
-    assert rt.spec.owner_only is False
+    assert not hasattr(rt.spec, "owner_only")
 
 
 # --- Fakes ----------------------------------------------------------------
@@ -98,7 +91,6 @@ class _FakeScheduler:
             delivery=kwargs.get("delivery") or DeliveryConfig(),
             creator_session_key=kwargs.get("creator_session_key", "") or "",
             creator_sender_id=kwargs.get("creator_sender_id", "") or "",
-            creator_is_owner=bool(kwargs.get("creator_is_owner", False)),
         )
         self.jobs.append(job)
         return job
@@ -138,7 +130,6 @@ def _channel_ctx(
     channel_id: str = "oc_chat_001",
 ) -> ToolContext:
     return ToolContext(
-        is_owner=False,
         caller_kind=CallerKind.CHANNEL,
         interaction_mode=InteractionMode.INTERACTIVE,
         session_key=session_key,
@@ -151,9 +142,8 @@ def _channel_ctx(
     )
 
 
-def _owner_ctx(session_key: str = "agent:main:cli:owner") -> ToolContext:
+def _control_ctx(session_key: str = "agent:main:cli:control") -> ToolContext:
     return ToolContext(
-        is_owner=True,
         caller_kind=CallerKind.CLI,
         interaction_mode=InteractionMode.INTERACTIVE,
         session_key=session_key,
@@ -190,7 +180,7 @@ def _install_fake_infer(monkeypatch, snapshot: ReplyTargetSnapshot | None) -> No
 @pytest.fixture
 def fake_scheduler(monkeypatch):
     sched = _FakeScheduler()
-    admin_mod.set_scheduler(sched)
+    control_mod.set_scheduler(sched)
     _install_fake_infer(
         monkeypatch,
         ReplyTargetSnapshot(
@@ -202,7 +192,7 @@ def fake_scheduler(monkeypatch):
         ),
     )
     yield sched
-    admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+    control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
 
 def _seed_job(
@@ -243,7 +233,6 @@ async def test_channel_user_can_add_reminder(fake_scheduler) -> None:
     kwargs = fake_scheduler.add_calls[-1]
     assert kwargs["creator_sender_id"] == "feishu-user-1"
     assert kwargs["creator_session_key"] == "agent:main:feishu:user-1"
-    assert kwargs["creator_is_owner"] is False
     assert kwargs["handler_key"] == "static_message"
     assert kwargs["session_target"] == SessionTarget.ISOLATED
     assert kwargs["delivery"].originating_reply_target.to == "oc_chat_001"
@@ -297,7 +286,7 @@ async def test_channel_user_can_schedule_isolated_agent_turn(fake_scheduler) -> 
     """'每天早上总结邮件' is a legitimate non-reminder cron use case (#3 relaxed).
 
     The cron-triggered turn runs under CRON_AGENT_ALLOW, so scheduling
-    isolated does not escalate non-owner tool access.
+    isolated does not expand unattended tool access.
     """
     with _with_ctx(_channel_ctx("agent:main:feishu:user-1")):
         raw = await cron_tool(
@@ -328,7 +317,7 @@ async def test_channel_user_cannot_inject_target_session_key(fake_scheduler) -> 
                 task="leak",
                 job_kind="agent_turn",
                 session_target="session",
-                target_session_key="agent:main:cli:owner",
+                target_session_key="agent:main:cli:control",
             )
 
 
@@ -341,7 +330,7 @@ async def test_channel_user_cannot_use_tool_policy(fake_scheduler) -> None:
                 task="x",
                 job_kind="system_event",
                 session_target="main",
-                tool_policy={"profile": "owner_full"},
+                tool_policy={"profile": "full"},
             )
 
 
@@ -353,7 +342,7 @@ async def test_channel_user_without_session_snapshot_falls_back_to_ctx(monkeypat
     provides a usable snapshot — the first cron call from a fresh chat does
     NOT fail."""
     sched = _FakeScheduler()
-    admin_mod.set_scheduler(sched)
+    control_mod.set_scheduler(sched)
     _install_fake_infer(monkeypatch, snapshot=None)
 
     ctx = _channel_ctx(
@@ -371,7 +360,7 @@ async def test_channel_user_without_session_snapshot_falls_back_to_ctx(monkeypat
                 session_target="isolated",
             )
     finally:
-        admin_mod.set_scheduler(None)  # type: ignore[arg-type]
+        control_mod.set_scheduler(None)  # type: ignore[arg-type]
 
     assert json.loads(raw)["status"] == "scheduled"
     snap = sched.add_calls[-1]["delivery"].originating_reply_target
@@ -397,7 +386,7 @@ async def test_channel_user_list_shows_only_own_jobs(fake_scheduler) -> None:
         creator_session_key="agent:main:feishu:user-9",
         creator_sender_id="feishu-user-9",
     )
-    _seed_job(fake_scheduler, job_id="owner-job")  # creator fields blank
+    _seed_job(fake_scheduler, job_id="control-job")  # creator fields blank
 
     with _with_ctx(_channel_ctx("agent:main:feishu:user-1", sender_id="feishu-user-1")):
         raw = await cron_tool(action="list")
@@ -429,7 +418,7 @@ async def test_channel_user_cannot_remove_others_job(fake_scheduler) -> None:
         creator_sender_id="feishu-user-9",
     )
     with _with_ctx(_channel_ctx("agent:main:feishu:user-1")):
-        with pytest.raises(Exception, match="permission denied"):
+        with pytest.raises(Exception, match="only remove cron jobs they created"):
             await cron_tool(action="remove", job_id="theirs")
 
 
@@ -441,7 +430,7 @@ async def test_channel_user_cannot_run_others_job(fake_scheduler) -> None:
         creator_sender_id="feishu-user-9",
     )
     with _with_ctx(_channel_ctx("agent:main:feishu:user-1")):
-        with pytest.raises(Exception, match="permission denied"):
+        with pytest.raises(Exception, match="only run cron jobs they created"):
             await cron_tool(action="run", job_id="theirs")
 
 
@@ -472,8 +461,8 @@ async def test_channel_user_can_run_own_job(fake_scheduler) -> None:
 # --- Owner path unchanged ------------------------------------------------
 
 
-async def test_owner_path_unchanged(fake_scheduler) -> None:
-    with _with_ctx(_owner_ctx()):
+async def test_control_path_can_target_explicit_session(fake_scheduler) -> None:
+    with _with_ctx(_control_ctx()):
         raw = await cron_tool(
             action="add",
             schedule={"kind": "cron", "expr": "0 9 * * *"},
@@ -485,10 +474,10 @@ async def test_owner_path_unchanged(fake_scheduler) -> None:
     assert json.loads(raw)["status"] == "scheduled"
 
 
-async def test_owner_can_list_all_jobs(fake_scheduler) -> None:
+async def test_control_can_list_all_jobs(fake_scheduler) -> None:
     _seed_job(fake_scheduler, job_id="ch1", creator_sender_id="feishu-user-1")
     _seed_job(fake_scheduler, job_id="own1")
-    with _with_ctx(_owner_ctx()):
+    with _with_ctx(_control_ctx()):
         raw = await cron_tool(action="list")
     ids = {j["job_id"] for j in json.loads(raw)["jobs"]}
     assert ids == {"ch1", "own1"}

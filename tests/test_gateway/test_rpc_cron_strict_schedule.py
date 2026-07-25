@@ -41,7 +41,6 @@ class _FakeScheduler:
             origin_session_key=kwargs.get("origin_session_key", ""),
             delivery=kwargs.get("delivery") or DeliveryConfig(),
             tz=kwargs.get("schedule_tz") or kwargs.get("tz", "") or "",
-            creator_is_owner=bool(kwargs.get("creator_is_owner", False)),
         )
         return self.job
 
@@ -81,7 +80,7 @@ async def test_rpc_create_with_structured_cron_returns_normalized_expression() -
     assert scheduler.added is not None
     assert scheduler.added["schedule_kind"] == ScheduleKind.CRON
     assert scheduler.added["schedule_value"] == "*/5 * * * *"
-    assert scheduler.added["creator_is_owner"] is True
+    assert "creator_is_owner" not in scheduler.added
     assert result["expression"] == "*/5 * * * *"
     assert result["scheduleRaw"] == "*/5 * * * *"
     assert result["scheduleKind"] == "cron"

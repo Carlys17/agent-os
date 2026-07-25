@@ -4886,7 +4886,6 @@ class Agent:
         # Schema-time filtering: subagents cannot see dangerous tools
         filtered_defs = [td for td in self.tool_definitions if td.name not in SUBAGENT_TOOL_DENY]
         subagent_ctx = ToolContext(
-            is_owner=True,
             caller_kind=CallerKind.SUBAGENT,
             interaction_mode=InteractionMode.UNATTENDED,
             subagent_depth=depth,

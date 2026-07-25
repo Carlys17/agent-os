@@ -51,7 +51,6 @@ class _FakeScheduler:
             origin_session_key=kwargs["origin_session_key"],
             delivery=kwargs.get("delivery") or DeliveryConfig(),
             tool_policy=kwargs.get("tool_policy") or {},
-            creator_is_owner=bool(kwargs.get("creator_is_owner", False)),
         )
 
     async def update_job(self, job_id, **patch) -> CronJob:
@@ -216,7 +215,7 @@ async def test_rpc_create_current_session_job_passes_session_binding_to_schedule
     assert scheduler.added["session_key"] == SESSION_KEY
     assert scheduler.added["origin_session_key"] == SESSION_KEY
     assert scheduler.added["handler_key"] == "agent_run"
-    assert scheduler.added["creator_is_owner"] is True
+    assert "creator_is_owner" not in scheduler.added
     assert result["sessionTarget"] == "current"
     assert result["targetSessionKey"] == SESSION_KEY
     assert result["originSessionKey"] == SESSION_KEY
@@ -818,7 +817,7 @@ async def test_agent_run_runtime_context_exception_delivers_controlled_message()
 
 
 @pytest.mark.asyncio
-async def test_owner_current_session_agent_run_uses_owner_tool_boundary() -> None:
+async def test_current_session_agent_run_keeps_cron_tool_boundary() -> None:
     session_manager = _FakeSessionManager()
     turn_runner = _FakeTurnRunner(session_manager)
 
@@ -830,8 +829,7 @@ async def test_owner_current_session_agent_run_uses_owner_tool_boundary() -> Non
         session_target=SessionTarget.CURRENT,
         session_key=SESSION_KEY,
         origin_session_key=SESSION_KEY,
-        creator_is_owner=True,
-        tool_policy={
+                tool_policy={
             "profile": "minimal",
             "also_allow": ["memory_search", "exec_command"],
             "deny": ["web_fetch"],
@@ -846,10 +844,9 @@ async def test_owner_current_session_agent_run_uses_owner_tool_boundary() -> Non
     await handler(job)
 
     tool_context = turn_runner.calls[0]["tool_context"]
-    assert tool_context.is_owner is True
-    assert tool_context.allowed_tools is None
+    assert tool_context.allowed_tools == {"session_status"}
     assert tool_context.tool_policy == job.tool_policy
-    assert "exec_command" not in tool_context.denied_tools
+    assert "exec_command" in tool_context.denied_tools
 
 
 @pytest.mark.asyncio

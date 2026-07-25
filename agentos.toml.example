@@ -28,11 +28,6 @@
 # run forever. Zero means unlimited.
 # agent_max_iterations = 8
 
-# Admitted channel senders get read-only slash commands. List trusted sender
-# IDs here to allow mutating commands and owner-level tools. Keys are configured
-# channel entry names, not platform types; keep IDs quoted as strings.
-# channel_admin_senders = { personal = ["123456789"], team = ["U0123ABC"] }
-
 # WebSocket per-connection outbound writer queue. When enabled (default),
 # each WS connection gets a bounded asyncio queue + dedicated writer task.
 # Producers enqueue and return immediately; slow clients trigger a fast
@@ -415,8 +410,8 @@ security_grading = false
 # wall_seconds = 60
 
 [permissions]
-# Owner/operator default permission mode. The shipped default is "bypass", which
-# runs local/operator tool execution on the host while still blocking sensitive
+# Interactive Control default permission mode. The shipped default is "bypass",
+# which runs interactive Control tool execution on the host while still blocking sensitive
 # paths. Use `agentos sandbox on|bypass|full|reset` to update this together
 # with the sandbox section.
 default_mode = "bypass"                 # off | on | bypass | full
@@ -425,9 +420,7 @@ default_mode = "bypass"                 # off | on | bypass | full
 # mode = "none"         # none | token | password
 # token = ""
 # Startup guard: with mode = "none" the gateway refuses to bind a non-loopback
-# host (0.0.0.0, a LAN IP, ...). Enable auth, keep the loopback bind, or — only
-# behind an external auth layer (reverse proxy auth, VPN, firewall) — opt in:
-# allow_unauthenticated_public = false
+# host (0.0.0.0, a LAN IP, ...). Enable token auth or keep the loopback bind.
 
 # [control_ui]
 # On a loopback bind the WebSocket handshake, cross-origin HTTP requests, and
@@ -452,3 +445,13 @@ default_mode = "bypass"                 # off | on | bypass | full
 # command_request_url = "https://agent.example/slack/events"
 # slack_channel_id = "C12345"
 # reply_in_thread = false
+
+# [[channels.channels]]
+# name = "personal"
+# type = "telegram"
+# token = "123456:bot-token"
+# Direct messages always require pairing. Groups are disabled unless every
+# group is listed explicitly; group senders must also be paired.
+# groups_enabled = false
+# group_chat_ids = ["-1001234567890"]
+# group_mention_required = true

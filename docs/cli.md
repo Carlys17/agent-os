@@ -312,6 +312,10 @@ agentos channels native-commands slack --request-url https://agent.example/slack
 agentos channels add telegram --name personal
 agentos channels list
 agentos channels status
+agentos channels pairing list personal
+agentos channels pairing approve personal ABCD2345
+agentos channels pairing deny personal <telegram-user-id>
+agentos channels pairing revoke personal <telegram-user-id>
 agentos channels enable personal
 agentos channels disable personal
 agentos channels restart personal
@@ -325,6 +329,12 @@ at startup when its channel entry has `app_id`, a short-lived app configuration
 `manifest_token`, and `command_request_url`. Otherwise import the exported
 Slack manifest fragment manually; its `--request-url` must point to the
 gateway's Slack webhook endpoint.
+
+Telegram direct messages always require pairing. Pairing is binary
+(`unpaired`/`paired`), with no admin or owner tier. Groups are disabled by
+default and require an explicit group chat ID, a paired sender, and—by
+default—a bot mention. Any connected Control client may approve, deny, or
+disconnect a pairing.
 
 Raw config:
 

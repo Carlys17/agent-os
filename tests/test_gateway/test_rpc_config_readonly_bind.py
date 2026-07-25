@@ -12,7 +12,6 @@ import tomllib
 import pytest
 
 import agentos.gateway.rpc_config  # noqa: F401  ensures registration
-from agentos.gateway.auth import Principal
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
@@ -21,12 +20,6 @@ def _admin_ctx(config: GatewayConfig) -> RpcContext:
     return RpcContext(
         conn_id="t",
         config=config,
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.admin"}),
-            is_owner=True,
-            authenticated=True,
-        ),
     )
 
 

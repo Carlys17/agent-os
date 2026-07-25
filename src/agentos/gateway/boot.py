@@ -306,7 +306,7 @@ class ServiceContainer:
     WARNING: build_services() mutates module-level state:
     - tools.builtin.memory_tools (create_memory_tools)
     - tools.builtin.skill_tools (create_skill_tools)
-    - tools.builtin.admin (set_gateway_config, set_scheduler)
+    - tools.builtin.control (set_gateway_config, set_scheduler)
     - search.providers (configure_search)
     Do not call build_services() twice in the same process without
     understanding these side effects.
@@ -580,16 +580,6 @@ def _task_runtime_turn_hard_deadline_s(config: GatewayConfig) -> float | None:
     return float(configured)
 
 
-def _task_runtime_envelope_owner(envelope: Any) -> bool:
-    """Resolve owner privileges from authenticated route metadata."""
-    from agentos.gateway.routing import SourceKind
-
-    principal_is_owner = getattr(envelope, "metadata", {}).get("principal_is_owner")
-    if isinstance(principal_is_owner, bool):
-        return principal_is_owner
-    return getattr(envelope, "source_kind", None) == SourceKind.CLI
-
-
 async def dispatch_task_runtime_turn(
     run: Any,
     *,
@@ -611,14 +601,20 @@ async def dispatch_task_runtime_turn(
     workspace_strict = getattr(config, "workspace_strict", None)
     if not isinstance(workspace_strict, bool):
         workspace_strict = bool(workspace_dir)
-    is_owner = _task_runtime_envelope_owner(run.envelope)
     tool_context = tool_context_from_envelope(
         run.envelope,
-        is_owner=is_owner,
         workspace_dir=str(workspace_dir),
         workspace_strict=workspace_strict,
         default_elevated=configured_default_elevated(config),
     )
+    if (
+        tool_context.channel_admission is not None
+        and tool_context.channel_admission_validator is not None
+        and not tool_context.channel_admission_validator(
+            tool_context.channel_admission
+        )
+    ):
+        raise PermissionError("channel pairing was revoked before the turn started")
     tool_context.task_id = run.task_id
     session = None
     if session_manager is not None and hasattr(session_manager, "get_session"):
@@ -1578,8 +1574,8 @@ async def build_services(
     if seed_agent_workspaces:
         _ensure_configured_agent_workspaces(config, extra_agent_ids=extra_agent_ids)
 
-    # Inject config into admin tool (needed by both gateway and standalone)
-    from agentos.tools.builtin.admin import set_gateway_config
+    # Inject config into the Control tool module (needed by gateway and standalone).
+    from agentos.tools.builtin.control import set_gateway_config
 
     set_gateway_config(config)
 
@@ -1940,8 +1936,8 @@ async def build_services(
             },
         )
         await cron_scheduler.start()
-        # Inject into admin tool so `cron` tool can dispatch to the scheduler
-        from agentos.tools.builtin.admin import set_scheduler
+        # Inject into the Control tool module so `cron` can dispatch to the scheduler.
+        from agentos.tools.builtin.control import set_scheduler
 
         set_scheduler(cron_scheduler)
         log.info("build_services.cron_scheduler_started")

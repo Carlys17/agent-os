@@ -3312,11 +3312,12 @@ class TurnRunner:
             if ctx.tool_policy:
                 from agentos.tools.policy import apply_tool_policy_layer
 
+                hard_denied = set(ctx.denied_tools)
                 ctx = apply_tool_policy_layer(
                     ctx,
                     ctx.tool_policy,
                     available_tools=self._tool_registry.list_names(),
-                    hard_denied=None,
+                    hard_denied=hard_denied,
                 )
             ctx = self._apply_runtime_capability_denies(ctx)
             log.debug(

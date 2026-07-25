@@ -209,29 +209,6 @@
     'is_error': False,
   })
 # ---
-# name: test_dispatch_corpus_snapshot[multiple_policies_would_deny_first_wins]
-  dict({
-    'artifact_count': 0,
-    'content': dict({
-      'error_class': 'OwnerOnly',
-      'retry_allowed': False,
-      'status': 'error',
-      'tool': 'double_deny_tool',
-      'user_message': "Tool 'double_deny_tool' restricted to owner.",
-    }),
-    'execution_status': dict({
-      'exit_code': None,
-      'preservation_class': 'diagnostic',
-      'reason': 'denied',
-      'source': 'tool_runtime',
-      'status': 'error',
-      'timed_out': False,
-      'truncated': False,
-      'version': 1,
-    }),
-    'is_error': True,
-  })
-# ---
 # name: test_dispatch_corpus_snapshot[nested_tool_inherits_contextvar]
   dict({
     'artifact_count': 0,
@@ -248,68 +225,6 @@
     'is_error': False,
   })
 # ---
-# name: test_dispatch_corpus_snapshot[owner_only_block_non_owner]
-  dict({
-    'artifact_count': 0,
-    'content': dict({
-      'error_class': 'OwnerOnly',
-      'retry_allowed': False,
-      'status': 'error',
-      'tool': 'admin_tool',
-      'user_message': "Tool 'admin_tool' restricted to owner.",
-    }),
-    'execution_status': dict({
-      'exit_code': None,
-      'preservation_class': 'diagnostic',
-      'reason': 'denied',
-      'source': 'tool_runtime',
-      'status': 'error',
-      'timed_out': False,
-      'truncated': False,
-      'version': 1,
-    }),
-    'is_error': True,
-  })
-# ---
-# name: test_dispatch_corpus_snapshot[owner_only_pass_owner]
-  dict({
-    'artifact_count': 0,
-    'content': 'ok',
-    'execution_status': None,
-    'is_error': False,
-  })
-# ---
-# name: test_dispatch_corpus_snapshot[permission_matrix_channel_denies]
-  dict({
-    'artifact_count': 0,
-    'content': dict({
-      'error_class': 'UnsupportedSurface',
-      'retry_allowed': False,
-      'status': 'error',
-      'tool': 'git_push',
-      'user_message': "Tool 'git_push' denied: admin_only_denied_in_dm.",
-    }),
-    'execution_status': dict({
-      'exit_code': None,
-      'preservation_class': 'diagnostic',
-      'reason': 'denied',
-      'source': 'tool_runtime',
-      'status': 'error',
-      'timed_out': False,
-      'truncated': False,
-      'version': 1,
-    }),
-    'is_error': True,
-  })
-# ---
-# name: test_dispatch_corpus_snapshot[permission_matrix_owner_skipped]
-  dict({
-    'artifact_count': 0,
-    'content': 'ok',
-    'execution_status': None,
-    'is_error': False,
-  })
-# ---
 # name: test_dispatch_corpus_snapshot[private_memory_read_blocked]
   dict({
     'artifact_count': 0,
@@ -319,29 +234,6 @@
       'status': 'error',
       'tool': 'memory_get',
       'user_message': "Tool 'memory_get' not available in this context.",
-    }),
-    'execution_status': dict({
-      'exit_code': None,
-      'preservation_class': 'diagnostic',
-      'reason': 'denied',
-      'source': 'tool_runtime',
-      'status': 'error',
-      'timed_out': False,
-      'truncated': False,
-      'version': 1,
-    }),
-    'is_error': True,
-  })
-# ---
-# name: test_dispatch_corpus_snapshot[profile_denies]
-  dict({
-    'artifact_count': 0,
-    'content': dict({
-      'error_class': 'PolicyDenied',
-      'retry_allowed': False,
-      'status': 'error',
-      'tool': 'exec_command',
-      'user_message': "Tool 'exec_command' not available in this context.",
     }),
     'execution_status': dict({
       'exit_code': None,

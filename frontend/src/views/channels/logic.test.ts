@@ -6,7 +6,6 @@ import {
   isAccessLocked,
   mergeChannels,
   needsAttention,
-  resolveAccessMode,
   senderLabel,
   senderMeta,
   sortChannels,
@@ -28,9 +27,9 @@ describe('mergeChannels (channels.js:85-95)', () => {
   })
 
   it('attaches the access entry by channel name', () => {
-    const access: ChannelAccess[] = [{ name: 'a', mode: 'pairing' }]
+    const access: ChannelAccess[] = [{ name: 'a', paired: [] }]
     const merged = mergeChannels([{ name: 'a' }, { name: 'b' }], access)
-    expect(merged[0]!.access).toEqual({ name: 'a', mode: 'pairing' })
+    expect(merged[0]!.access).toEqual({ name: 'a', paired: [] })
     expect(merged[1]!.access).toBeNull()
   })
 
@@ -214,18 +213,6 @@ describe('statusHint (channels.js:388-396)', () => {
     expect(statusHint({ ...base, isRunning: false, status: 'stopped' })).toContain(
       'not active in this gateway process',
     )
-  })
-})
-
-describe('resolveAccessMode (channels.js:251-252)', () => {
-  it('passes through valid modes', () => {
-    for (const mode of ['pairing', 'allowlist', 'open', 'disabled']) {
-      expect(resolveAccessMode(mode)).toBe(mode)
-    }
-  })
-  it('defaults invalid/absent modes to pairing', () => {
-    expect(resolveAccessMode('bogus')).toBe('pairing')
-    expect(resolveAccessMode(undefined)).toBe('pairing')
   })
 })
 

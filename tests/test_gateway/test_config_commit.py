@@ -9,7 +9,6 @@ import pytest
 
 import agentos.gateway.rpc_config  # noqa: F401  ensure registration
 import agentos.gateway.rpc_onboarding  # noqa: F401  ensure registration
-from agentos.gateway.auth import Principal
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.config_persist import (
     get_runtime_overrides,
@@ -30,19 +29,12 @@ class _CapturingSelector:
 def _ctx(
     config: GatewayConfig,
     *,
-    scope: str = "operator.admin",
     selector: Any = None,
 ) -> RpcContext:
     return RpcContext(
         conn_id="config-commit-test",
         config=config,
         provider_selector=selector,
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({scope}),
-            is_owner=scope == "operator.admin",
-            authenticated=True,
-        ),
     )
 
 
@@ -141,7 +133,7 @@ async def test_config_snapshot_is_read_scoped_coherent_and_redacted(tmp_path) ->
         "r1",
         "config.snapshot",
         {},
-        _ctx(config, scope="operator.read"),
+        _ctx(config),
     )
 
     assert result.error is None, result.error
@@ -172,7 +164,7 @@ async def test_config_snapshot_is_read_scoped_coherent_and_redacted(tmp_path) ->
         "r2",
         "onboarding.catalog",
         {},
-        _ctx(config, scope="operator.read"),
+        _ctx(config),
     )
     assert catalog.error is None, catalog.error
     assert result.payload["catalog"] == catalog.payload
@@ -195,12 +187,6 @@ async def test_config_snapshot_derives_status_from_one_active_config(
     monkeypatch.setattr(rpc_onboarding, "_active_config", active_config)
     context = RpcContext(
         conn_id="config-snapshot-test",
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.read"}),
-            is_owner=False,
-            authenticated=True,
-        ),
     )
 
     result = await get_dispatcher().dispatch("r1", "config.snapshot", {}, context)
@@ -470,11 +456,10 @@ async def test_boot_captured_task_runtime_change_requires_restart(tmp_path) -> N
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("path", "value", "reason"),
-    [
-        ("task_runtime.channel_inflight_cap", 16, "task_runtime"),
-        ("state_dir", "state-next", "state_dir"),
-        ("auth.allow_unauthenticated_public", True, "gateway_bind"),
-    ],
+        [
+            ("task_runtime.channel_inflight_cap", 16, "task_runtime"),
+            ("state_dir", "state-next", "state_dir"),
+        ],
 )
 async def test_additional_boot_captured_changes_require_restart(
     tmp_path, path: str, value: Any, reason: str

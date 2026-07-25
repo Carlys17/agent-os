@@ -101,27 +101,25 @@ async def test_preflight_redirects_skill_called_as_tool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_preflight_rejects_owner_only_tool_for_non_owner() -> None:
-    """Owner-only tools are rejected with OwnerOnly when ctx.is_owner is False."""
+async def test_preflight_rejects_tool_missing_from_configured_allowlist() -> None:
     registry = ToolRegistry()
 
-    async def _owner_tool() -> str:
-        return "secret"
+    async def _configured_tool() -> str:
+        return "configured"
 
     registry.register(
         ToolSpec(
-            name="owner_tool",
-            description="owner only",
+            name="configured_tool",
+            description="configured tool",
             parameters={},
-            owner_only=True,
         ),
-        _owner_tool,
+        _configured_tool,
     )
-    ctx = ToolContext(is_owner=False)
+    ctx = ToolContext(allowed_tools={"other_tool"})
 
     tool_call = ToolCall(
         tool_use_id="u1",
-        tool_name="owner_tool",
+        tool_name="configured_tool",
         arguments={},
     )
     result = await preflight_tool_call(
@@ -132,8 +130,8 @@ async def test_preflight_rejects_owner_only_tool_for_non_owner() -> None:
     assert result is not None
     assert result.is_error is True
     payload = json.loads(result.content)
-    assert payload["error_class"] == "OwnerOnly"
-    assert payload["tool"] == "owner_tool"
+    assert payload["error_class"] == "PolicyDenied"
+    assert payload["tool"] == "configured_tool"
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,7 @@ _SESSION_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset(
     {"sessions_send", "sessions_spawn", "sessions_yield"}
 )
 _CHANNEL_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"message"})
-_ADMIN_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"agents_list", "subagents"})
+_INTERACTIVE_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"agents_list", "subagents"})
 _GATEWAY_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"gateway"})
 _SCHEDULER_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"cron"})
 
@@ -42,7 +42,7 @@ def private_memory_read_tools_blocked(ctx: ToolContext | None) -> bool:
     if ctx.caller_kind is CallerKind.SUBAGENT:
         return True
     if ctx.caller_kind is CallerKind.CRON:
-        return not ctx.is_owner
+        return True
     if ctx.caller_kind is CallerKind.CHANNEL and not ctx.session_key:
         return True
     if not ctx.session_key:
@@ -131,7 +131,7 @@ def resolve_runtime_tool_surface(
     if ctx.interaction_mode is InteractionMode.UNATTENDED:
         if not caps.channel_backing:
             denied_tools |= set(_CHANNEL_RUNTIME_TOOL_NAMES)
-        denied_tools |= set(_ADMIN_RUNTIME_TOOL_NAMES)
+        denied_tools |= set(_INTERACTIVE_RUNTIME_TOOL_NAMES)
     if private_memory_read_tools_blocked(ctx):
         denied_tools |= set(_PRIVATE_MEMORY_READ_TOOL_NAMES)
 
@@ -157,10 +157,10 @@ def detect_runtime_tool_surface_capabilities(
     except Exception:
         pass
     try:
-        from agentos.tools.builtin import admin
+        from agentos.tools.builtin import control
 
-        scheduler = admin.scheduler_available()
-        gateway_config = admin.gateway_config_available()
+        scheduler = control.scheduler_available()
+        gateway_config = control.gateway_config_available()
     except Exception:
         pass
     return ToolSurfaceCapabilities(

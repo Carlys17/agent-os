@@ -52,7 +52,6 @@ class HeartbeatLoop:
         if not isinstance(workspace_strict, bool):
             workspace_strict = bool(workspace_dir)
         self._tool_context = ToolContext(
-            is_owner=False,
             caller_kind=CallerKind.CRON,
             interaction_mode=InteractionMode.UNATTENDED,
             agent_id="main",
