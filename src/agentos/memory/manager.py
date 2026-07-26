@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -45,13 +45,19 @@ class MemoryDegradation:
     component: str
     operation: str
     error: str
+    count: int = 1
 
-    def as_dict(self) -> dict[str, str]:
-        return {
+    def as_dict(self) -> dict[str, str | int]:
+        payload: dict[str, str | int] = {
             "component": self.component,
             "operation": self.operation,
             "error": self.error,
         }
+        # Only surfaced once it has actually recurred, so a one-off failure
+        # reads exactly as it did before.
+        if self.count > 1:
+            payload["count"] = self.count
+        return payload
 
 
 # Filenames written by ``_raw_dump_fallback`` historically lived in the canonical
@@ -302,10 +308,25 @@ class MemoryManager:
         operation: str,
         error: Exception,
     ) -> None:
+        # Collapse repeats instead of appending. `status()` records up to five
+        # degradations per call, so a broken store under a health poller would
+        # otherwise grow this list by five entries every poll -- and `status()`
+        # serializes the whole list into every response. Within a day of 30s
+        # polling that is ~14k entries, and the operator reads thousands of
+        # copies of one error rather than "this component is down".
+        message = str(error)
+        for index, existing in enumerate(self.degraded):
+            if (
+                existing.component == component
+                and existing.operation == operation
+                and existing.error == message
+            ):
+                self.degraded[index] = replace(existing, count=existing.count + 1)
+                return
         degradation = MemoryDegradation(
             component=component,
             operation=operation,
-            error=str(error),
+            error=message,
         )
         self.degraded.append(degradation)
         log.warning(
