@@ -473,6 +473,19 @@ def pre_compaction_flush_enabled(config: Any) -> bool:
 
 
 def pre_compaction_flush_requires_safe_receipt(config: Any) -> bool:
+    """Whether compaction must refuse to run without a safe flush receipt.
+
+    Gated on the flush path being enabled at all, mirroring
+    ``pre_compaction_flush_enabled`` above. Without that gate, "block" demands
+    a receipt that nothing can produce: compaction is refused on every turn,
+    the context window fills, and the only signal is one warning line. The
+    user sees an agent that stops working for no visible reason.
+
+    Requiring a receipt is only meaningful when something is there to write
+    one.
+    """
+    if not pre_compaction_flush_enabled(config):
+        return False
     return flush_compaction_safety_mode(config) == "block"
 
 
