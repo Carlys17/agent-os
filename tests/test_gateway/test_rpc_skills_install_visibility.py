@@ -77,13 +77,7 @@ def test_rpc_skill_install_uses_loader_managed_dir_and_list_sees_skill(
 
 
 def test_video_merger_declares_ffmpeg_binaries() -> None:
-    bundled = (
-        Path(__file__).resolve().parents[2]
-        / "src"
-        / "agentos"
-        / "skills"
-        / "bundled"
-    )
+    bundled = Path(__file__).resolve().parents[2] / "src" / "agentos" / "skills" / "bundled"
     loader = SkillLoader(bundled_dir=bundled)
     skills = loader.load_all()
     skill_index = {skill.name: skill for skill in skills}

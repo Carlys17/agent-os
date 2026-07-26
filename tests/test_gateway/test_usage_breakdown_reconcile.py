@@ -187,12 +187,20 @@ def test_reconcile_skips_when_items_already_billed_and_sum_matches_row() -> None
         cost_usd=0.1365,
         cost_source="provider_billed",
         breakdown=[
-            {"model": "anthropic/claude-4.7-opus", "costUsd": 0.1254,
-             "cost_usd": 0.1254, "costSource": "provider_billed",
-             "cost_source": "provider_billed"},
-            {"model": "z-ai/glm-5.1", "costUsd": 0.0111,
-             "cost_usd": 0.0111, "costSource": "provider_billed",
-             "cost_source": "provider_billed"},
+            {
+                "model": "anthropic/claude-4.7-opus",
+                "costUsd": 0.1254,
+                "cost_usd": 0.1254,
+                "costSource": "provider_billed",
+                "cost_source": "provider_billed",
+            },
+            {
+                "model": "z-ai/glm-5.1",
+                "costUsd": 0.0111,
+                "cost_usd": 0.0111,
+                "costSource": "provider_billed",
+                "cost_source": "provider_billed",
+            },
         ],
     )
     _reconcile_breakdown_to_row(row)
@@ -214,11 +222,21 @@ def test_reconcile_still_prorates_when_mixed_items_drift_from_row() -> None:
         cost_source="provider_billed",
         breakdown=[
             # First item has real billed (but inflated for this scenario)
-            {"model": "a", "costUsd": 0.18, "cost_usd": 0.18,
-             "costSource": "provider_billed", "cost_source": "provider_billed"},
+            {
+                "model": "a",
+                "costUsd": 0.18,
+                "cost_usd": 0.18,
+                "costSource": "provider_billed",
+                "cost_source": "provider_billed",
+            },
             # Second item is estimate-only
-            {"model": "b", "costUsd": 0.02, "cost_usd": 0.02,
-             "costSource": "agentos_estimate", "cost_source": "agentos_estimate"},
+            {
+                "model": "b",
+                "costUsd": 0.02,
+                "cost_usd": 0.02,
+                "costSource": "agentos_estimate",
+                "cost_source": "agentos_estimate",
+            },
         ],
     )
     _reconcile_breakdown_to_row(row)
@@ -240,10 +258,20 @@ def test_reconcile_skips_mixed_breakdown_when_sum_already_matches_row() -> None:
         cost_usd=0.08,  # = 0.05 billed + 0.03 estimate
         cost_source="mixed",
         breakdown=[
-            {"model": "claude", "costUsd": 0.05, "cost_usd": 0.05,
-             "costSource": "provider_billed", "cost_source": "provider_billed"},
-            {"model": "deepseek", "costUsd": 0.03, "cost_usd": 0.03,
-             "costSource": "agentos_estimate", "cost_source": "agentos_estimate"},
+            {
+                "model": "claude",
+                "costUsd": 0.05,
+                "cost_usd": 0.05,
+                "costSource": "provider_billed",
+                "cost_source": "provider_billed",
+            },
+            {
+                "model": "deepseek",
+                "costUsd": 0.03,
+                "cost_usd": 0.03,
+                "costSource": "agentos_estimate",
+                "cost_source": "agentos_estimate",
+            },
         ],
     )
     _reconcile_breakdown_to_row(row)
@@ -265,10 +293,20 @@ def test_reconcile_fast_path_tolerates_subcent_drift() -> None:
         cost_usd=0.13649,  # 0.0001 below the breakdown sum of 0.1365
         cost_source="provider_billed",
         breakdown=[
-            {"model": "a", "costUsd": 0.1254, "cost_usd": 0.1254,
-             "costSource": "provider_billed", "cost_source": "provider_billed"},
-            {"model": "b", "costUsd": 0.0111, "cost_usd": 0.0111,
-             "costSource": "provider_billed", "cost_source": "provider_billed"},
+            {
+                "model": "a",
+                "costUsd": 0.1254,
+                "cost_usd": 0.1254,
+                "costSource": "provider_billed",
+                "cost_source": "provider_billed",
+            },
+            {
+                "model": "b",
+                "costUsd": 0.0111,
+                "cost_usd": 0.0111,
+                "costSource": "provider_billed",
+                "cost_source": "provider_billed",
+            },
         ],
     )
     _reconcile_breakdown_to_row(row)

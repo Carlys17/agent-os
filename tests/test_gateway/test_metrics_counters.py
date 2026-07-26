@@ -36,9 +36,11 @@ def _capture_metric_logs():
     finally:
         structlog.configure(**old_config)
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_envelope(session_key: str = "agent-1::sess-1") -> RouteEnvelope:
     return RouteEnvelope(
@@ -97,6 +99,7 @@ def _make_runtime(
 # ---------------------------------------------------------------------------
 # all_four_counters_emit
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_all_four_counters_emit() -> None:
@@ -197,6 +200,7 @@ async def test_all_four_counters_emit() -> None:
 # log_format_regex
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_log_format_regex() -> None:
     """Captured log entries for metrics must have metric=<name> and value=<int>."""
@@ -220,6 +224,4 @@ async def test_log_format_regex() -> None:
         assert metric_name_re.match(entry["metric"]), (
             f"metric name '{entry['metric']}' does not match locked name pattern"
         )
-        assert isinstance(entry["value"], int), (
-            f"value must be int, got {type(entry['value'])}"
-        )
+        assert isinstance(entry["value"], int), f"value must be int, got {type(entry['value'])}"

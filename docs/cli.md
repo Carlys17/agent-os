@@ -391,7 +391,6 @@ agentos memory index
 agentos memory list
 agentos memory search "preference"
 agentos memory show <path>
-agentos memory dream
 agentos memory flush-session <session-key>
 agentos memory repair list
 agentos memory raw-fallbacks list

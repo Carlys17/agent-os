@@ -10,6 +10,7 @@ Categories:
     - Integration: writer task lifecycle on disconnect-equivalent.
 
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -124,9 +125,7 @@ async def test_lossy_drop_log_has_full_field_set_for_tick() -> None:
             # same-kind eviction.
             await conn.send_event("tick", {"time_ms": 999})
 
-        drop_logs = [
-            entry for entry in logs if entry.get("event") == "gateway.ws_writer_drop"
-        ]
+        drop_logs = [entry for entry in logs if entry.get("event") == "gateway.ws_writer_drop"]
         assert len(drop_logs) == 1, f"expected 1 drop, got: {drop_logs}"
         record = drop_logs[0]
         assert record["conn_id"] == "cx-tick"
@@ -175,9 +174,7 @@ async def test_control_overflow_triggers_force_close_with_overflow_log() -> None
             await asyncio.sleep(0.05)
 
         overflow_logs = [
-            entry
-            for entry in logs
-            if entry.get("event") == "gateway.ws_writer_overflow_close"
+            entry for entry in logs if entry.get("event") == "gateway.ws_writer_overflow_close"
         ]
         assert len(overflow_logs) == 1, f"expected 1 overflow, got: {overflow_logs}"
         record = overflow_logs[0]
@@ -258,9 +255,7 @@ async def test_writer_cancel_during_blocked_send_within_budget() -> None:
         # Bounded by wait_for(2.0) + close overhead. Allow up to 3s.
         assert elapsed < 3.0, f"force_close took {elapsed:.2f}s, exceeded 3s"
         timeout_logs = [
-            entry
-            for entry in logs
-            if entry.get("event") == "gateway.ws_writer_force_close_timeout"
+            entry for entry in logs if entry.get("event") == "gateway.ws_writer_force_close_timeout"
         ]
         assert len(timeout_logs) == 1, f"expected 1 timeout log, got: {timeout_logs}"
         assert timeout_logs[0]["conn_id"] == "cx-stuck"
@@ -352,11 +347,7 @@ async def test_same_kind_eviction_only_drops_same_kind() -> None:
         with structlog.testing.capture_logs() as logs:
             await conn.send_event("tick", {"time_ms": 200})
 
-        drop_logs = [
-            entry
-            for entry in logs
-            if entry.get("event") == "gateway.ws_writer_drop"
-        ]
+        drop_logs = [entry for entry in logs if entry.get("event") == "gateway.ws_writer_drop"]
         assert len(drop_logs) == 1
         assert drop_logs[0]["event_name"] == "tick"
         assert drop_logs[0]["eviction"] is True
@@ -395,9 +386,7 @@ async def test_drop_log_null_safe_for_tick_payload() -> None:
         with structlog.testing.capture_logs() as logs:
             await conn.send_event("tick", {"time_ms": 3})
 
-        drop_logs = [
-            e for e in logs if e.get("event") == "gateway.ws_writer_drop"
-        ]
+        drop_logs = [e for e in logs if e.get("event") == "gateway.ws_writer_drop"]
         assert len(drop_logs) == 1
         record = drop_logs[0]
         assert record["session_key"] is None
@@ -505,13 +494,9 @@ async def test_principle2_text_delta_overflow_closes_not_drops() -> None:
                 )
             await asyncio.sleep(0.05)
 
-        drop_logs = [
-            e for e in logs if e.get("event") == "gateway.ws_writer_drop"
-        ]
+        drop_logs = [e for e in logs if e.get("event") == "gateway.ws_writer_drop"]
         assert drop_logs == [], "text_delta MUST NOT be silently dropped"
-        overflow_logs = [
-            e for e in logs if e.get("event") == "gateway.ws_writer_overflow_close"
-        ]
+        overflow_logs = [e for e in logs if e.get("event") == "gateway.ws_writer_overflow_close"]
         assert len(overflow_logs) >= 1, "control overflow must trigger force-close"
         assert conn._closing is True
     finally:
@@ -536,9 +521,7 @@ async def test_writer_emits_make_event_envelope() -> None:
         assert len(conn.ws.sent) == 1  # type: ignore[attr-defined]
         wire = json.loads(conn.ws.sent[0])  # type: ignore[attr-defined]
         expected = json.loads(
-            make_event(
-                "session.event.text_delta", {"chunk": "hi"}, seq=1
-            ).model_dump_json()
+            make_event("session.event.text_delta", {"chunk": "hi"}, seq=1).model_dump_json()
         )
         for key in ("type", "event", "payload", "seq"):
             assert wire[key] == expected[key]

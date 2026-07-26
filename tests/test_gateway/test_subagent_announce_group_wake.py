@@ -167,7 +167,7 @@ async def test_group_payloads_enrich_non_current_children_from_task_ledger() -> 
                     created_at=10,
                     updated_at=20,
                     finished_at=30,
-                )
+                ),
             ],
             child_failed: [
                 SimpleNamespace(

@@ -60,9 +60,7 @@ def test_runtime_ui_base_path_change_cannot_disable_auth(tmp_path, base_path: st
 
 
 @pytest.mark.parametrize("base_path", ["/", "/api", "/api/v1"])
-def test_runtime_ui_base_path_change_cannot_disable_rate_limit(
-    tmp_path, base_path: str
-) -> None:
+def test_runtime_ui_base_path_change_cannot_disable_rate_limit(tmp_path, base_path: str) -> None:
     config = _config(tmp_path, base_path="/control", max_requests=2)
     headers = {"authorization": "Bearer test-token"}
     with TestClient(create_gateway_app(config), base_url="http://localhost") as client:

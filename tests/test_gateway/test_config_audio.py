@@ -12,9 +12,7 @@ def test_audio_config_defaults_are_disabled_and_elevenlabs_ready() -> None:
     assert cfg.audio.tts.output_format == "mp3_44100_128"
     assert cfg.audio.providers.elevenlabs.base_url == "https://api.elevenlabs.io"
     assert cfg.audio.providers.elevenlabs.api_key_env == "ELEVENLABS_API_KEY"
-    assert cfg.audio.providers.elevenlabs.voice_conversion_model == (
-        "eleven_multilingual_sts_v2"
-    )
+    assert cfg.audio.providers.elevenlabs.voice_conversion_model == ("eleven_multilingual_sts_v2")
     assert cfg.audio.providers.elevenlabs.music_model == "music_v1"
     assert cfg.audio.providers.elevenlabs.music_output_format == "mp3_44100_128"
 
@@ -45,9 +43,7 @@ def test_audio_config_accepts_nested_elevenlabs_overrides() -> None:
     assert cfg.audio.tts.model == "eleven_turbo_v2_5"
     assert cfg.audio.tts.output_format == "mp3_22050_32"
     assert cfg.audio.providers.elevenlabs.api_key_env == "CUSTOM_ELEVENLABS_KEY"
-    assert cfg.audio.providers.elevenlabs.voice_conversion_model == (
-        "eleven_english_sts_v2"
-    )
+    assert cfg.audio.providers.elevenlabs.voice_conversion_model == ("eleven_english_sts_v2")
     assert cfg.audio.providers.elevenlabs.music_output_format == "mp3_22050_32"
 
 

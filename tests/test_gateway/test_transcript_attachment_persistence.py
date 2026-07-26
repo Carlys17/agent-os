@@ -38,6 +38,7 @@ def _b64(payload: bytes) -> str:
 # Test 1 — regression: inline attachment shape preserved.
 # ---------------------------------------------------------------------------
 
+
 def test_inline_attachment_stored_in_transcript_envelope(tmp_path: Path) -> None:
     inline = {"type": "image/png", "data": _b64(b"\x89PNG\r\n\x1a\n"), "name": "p.png"}
     envelope, writes = build_transcript_attachment_envelope(
@@ -77,6 +78,7 @@ def test_transcript_envelope_can_separate_provider_and_display_text(tmp_path: Pa
 # ---------------------------------------------------------------------------
 # Test 2 — staged attachment persisted to disk by sha256, envelope uses sha256_ref.
 # ---------------------------------------------------------------------------
+
 
 def test_staged_attachment_persisted_to_disk_and_referenced_by_sha256(
     tmp_path: Path,
@@ -138,6 +140,7 @@ def test_transcript_envelope_uses_sha256_ref_not_file_uuid(tmp_path: Path) -> No
 # Test 3 — persist disabled keeps staged material out of the envelope.
 # ---------------------------------------------------------------------------
 
+
 def test_persist_transcripts_disabled_skips_disk_copy(tmp_path: Path) -> None:
     pdf = b"%PDF-1.4\n"
     staged = {
@@ -170,6 +173,7 @@ def test_persist_transcripts_disabled_skips_disk_copy(tmp_path: Path) -> None:
 # Test 4 — dedupe by sha (free side effect of sha-keyed paths).
 # ---------------------------------------------------------------------------
 
+
 def test_transcript_dedup_within_session(tmp_path: Path) -> None:
     pdf = b"%PDF-1.4\nidentical\n"
     staged = {
@@ -179,12 +183,18 @@ def test_transcript_dedup_within_session(tmp_path: Path) -> None:
         "_was_staged": True,
     }
     build_transcript_attachment_envelope(
-        text="first", attachments=[staged], session_id="s1",
-        media_root=tmp_path, persist_enabled=True,
+        text="first",
+        attachments=[staged],
+        session_id="s1",
+        media_root=tmp_path,
+        persist_enabled=True,
     )
     build_transcript_attachment_envelope(
-        text="second", attachments=[staged], session_id="s1",
-        media_root=tmp_path, persist_enabled=True,
+        text="second",
+        attachments=[staged],
+        session_id="s1",
+        media_root=tmp_path,
+        persist_enabled=True,
     )
     sha = hashlib.sha256(pdf).hexdigest()
     files = list((tmp_path / "transcripts" / "s1").iterdir())
@@ -194,6 +204,7 @@ def test_transcript_dedup_within_session(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Test 5 — replay rebuilds from sha256_ref by reading the on-disk copy.
 # ---------------------------------------------------------------------------
+
 
 def test_replay_preserves_sha256_ref_without_reinlining_bytes(tmp_path: Path) -> None:
     """Historical replay keeps ref metadata and never recreates base64 data."""
@@ -229,6 +240,7 @@ def test_replay_preserves_sha256_ref_without_reinlining_bytes(tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 # Test 6 — replay degrades gracefully when the persisted file is missing.
 # ---------------------------------------------------------------------------
+
 
 def test_transcript_persistence_rejects_budget_exceeded_staged_attachment(
     tmp_path: Path,

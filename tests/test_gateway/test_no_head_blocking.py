@@ -24,6 +24,7 @@ from agentos.session.models import AgentTaskRecord
 # Helpers (same pattern as test_fair_queuing.py)
 # ---------------------------------------------------------------------------
 
+
 def _make_envelope(agent_id: str, session_key: str) -> RouteEnvelope:
     return RouteEnvelope(
         source_kind=SourceKind.WEB,
@@ -65,6 +66,7 @@ def _make_storage() -> Any:
 # ---------------------------------------------------------------------------
 # no_head_blocking_with_idle_slots
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_no_head_blocking_with_idle_slots() -> None:

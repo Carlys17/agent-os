@@ -104,9 +104,7 @@ def test_upload_image_uses_five_mib_cap(store: UploadStore) -> None:
 
 
 def test_upload_pdf_accepts_exact_staged_cap(store: UploadStore) -> None:
-    ok_uuid = asyncio.run(
-        store.put("ok.pdf", "application/pdf", _exact_pdf(MAX_STAGED_PDF_BYTES))
-    )
+    ok_uuid = asyncio.run(store.put("ok.pdf", "application/pdf", _exact_pdf(MAX_STAGED_PDF_BYTES)))
     assert ok_uuid.startswith("u-")
 
 

@@ -67,6 +67,7 @@ class _FlushReceiptSessionStorage(Protocol):
 
     async def upsert_memory_durable_receipt(self, receipt: Any) -> Any: ...
 
+
 _DEBUG_FILE_HANDLER_ATTR = "_agentos_debug_file_handler"
 _ENABLED_VALUES = {"1", "true", "yes", "on"}
 _DISABLED_VALUES = {"0", "false", "no", "off"}
@@ -177,90 +178,25 @@ async def _list_scheduler_jobs(scheduler: Any) -> list[Any]:
     return result if isinstance(result, list) else []
 
 
-async def _register_dream_crons(
+async def _pause_orphaned_dream_crons(
     *,
     scheduler: Any,
-    memory_config: Any,
-    agent_ids: list[str],
+    agent_ids: list[str] | tuple[str, ...],
 ) -> None:
-    """Register a `memory_dream` cron per agent when enabled.
+    """Pause `memory_dream:*` cron rows left behind by an older install.
 
-    Respects the ``AGENTOS_MEMORY_DREAM_DISABLED=1`` kill switch.
-    Prefers ``memory_config.dream.cron`` if set, else derives a structured
-    ``(kind, value)`` pair from ``interval_h``.
+    Dream consolidation was removed, but its cron jobs live in the scheduler
+    database, not in config. Without this they would keep firing against a
+    handler that no longer exists -- failing on every tick, forever. Pausing
+    is preferred over deleting so an operator can still see what happened.
     """
-    import os
-
-    from agentos.scheduler.types import ScheduleKind, SessionTarget
-
-    dream_cfg = getattr(memory_config, "dream", None)
-    existing_jobs = await _list_scheduler_jobs(scheduler)
-    existing_by_name = {
-        getattr(job, "name", ""): job
-        for job in existing_jobs
-        if getattr(job, "name", "").startswith("memory_dream:")
-    }
-    disabled_reason = None
-    if os.getenv("AGENTOS_MEMORY_DREAM_DISABLED") == "1":
-        disabled_reason = "kill_switch"
-    elif dream_cfg is None or not getattr(dream_cfg, "enabled", False):
-        disabled_reason = "disabled"
-    elif not getattr(dream_cfg, "auto_schedule", False):
-        disabled_reason = "auto_schedule_disabled"
-
-    if disabled_reason is not None:
+    jobs = await _list_scheduler_jobs(scheduler)
+    stale = [job for job in jobs if str(getattr(job, "name", "")).startswith("memory_dream:")]
+    if stale:
         await _pause_dream_crons(
             scheduler=scheduler,
-            jobs=list(existing_by_name.values()),
-            reason=disabled_reason,
-        )
-        return
-
-    assert dream_cfg is not None
-    if getattr(dream_cfg, "cron", None):
-        schedule_kind, schedule_value = ScheduleKind.CRON, dream_cfg.cron
-    else:
-        schedule_kind, schedule_value = _interval_h_to_schedule(dream_cfg.interval_h)
-    for agent_id in agent_ids:
-        name = f"memory_dream:{agent_id}"
-        existing = existing_by_name.get(name)
-        if existing is not None:
-            patch: dict[str, Any] = {}
-            existing_kind = getattr(existing, "schedule_kind", None)
-            existing_value = getattr(existing, "cron_expr", "") or ""
-            if (existing_kind, existing_value) != (schedule_kind, schedule_value):
-                patch["schedule_kind"] = schedule_kind
-                patch["schedule_value"] = schedule_value
-            if getattr(existing, "payload", {}).get("agent_id") != agent_id:
-                patch["payload"] = {"agent_id": agent_id}
-            if getattr(existing, "session_target", None) != SessionTarget.ISOLATED:
-                patch["session_target"] = SessionTarget.ISOLATED
-            update_job = getattr(scheduler, "update_job", None)
-            if patch and callable(update_job):
-                result = update_job(getattr(existing, "id"), **patch)
-                if inspect.isawaitable(result):
-                    await result
-            log.info(
-                "boot.dream.already_registered",
-                agent_id=agent_id,
-                schedule_kind=schedule_kind.value,
-                schedule_value=schedule_value,
-            )
-            continue
-
-        await scheduler.add_job(
-            name=name,
-            handler_key="memory_dream",
-            payload={"agent_id": agent_id},
-            session_target=SessionTarget.ISOLATED,
-            schedule_kind=schedule_kind,
-            schedule_value=schedule_value,
-        )
-        log.info(
-            "boot.dream.registered",
-            agent_id=agent_id,
-            schedule_kind=schedule_kind.value,
-            schedule_value=schedule_value,
+            jobs=stale,
+            reason="dream_removed",
         )
 
 
@@ -597,6 +533,7 @@ async def dispatch_task_runtime_turn(
     (including the ``semantic_message`` regression surface).
     """
     from agentos.gateway.routing import tool_context_from_envelope
+
     workspace_dir = resolve_agent_workspace_dir(run.agent_id, config)
     workspace_strict = getattr(config, "workspace_strict", None)
     if not isinstance(workspace_strict, bool):
@@ -610,9 +547,7 @@ async def dispatch_task_runtime_turn(
     if (
         tool_context.channel_admission is not None
         and tool_context.channel_admission_validator is not None
-        and not tool_context.channel_admission_validator(
-            tool_context.channel_admission
-        )
+        and not tool_context.channel_admission_validator(tool_context.channel_admission)
     ):
         raise PermissionError("channel pairing was revoked before the turn started")
     tool_context.task_id = run.task_id
@@ -865,11 +800,7 @@ async def _emit_task_runtime_stream_events(
             is_timeout = "timeout" in code_text or "stream idle" in error_message.lower()
             is_output_truncated = code_text == "provider_output_truncated"
             terminal_reason = (
-                "timeout"
-                if is_timeout
-                else "output_truncated"
-                if is_output_truncated
-                else "error"
+                "timeout" if is_timeout else "output_truncated" if is_output_truncated else "error"
             )
             terminal_payload = {
                 "status": "timeout" if is_timeout else "failed",
@@ -993,9 +924,7 @@ class GatewayServer:
         # returning; only then do we stop channel delivery.
         if self._services is not None and self._services.task_runtime is not None:
             try:
-                await self._services.task_runtime.shutdown(
-                    graceful=True, graceful_timeout=30.0
-                )
+                await self._services.task_runtime.shutdown(graceful=True, graceful_timeout=30.0)
             except Exception:
                 pass
 
@@ -1263,9 +1192,10 @@ def emit_skill_filter_banner(skills_cfg: Any) -> None:
 
     onnx_ok = False
     try:
-        if importlib.util.find_spec("onnxruntime") is not None and importlib.util.find_spec(
-            "tokenizers"
-        ) is not None:
+        if (
+            importlib.util.find_spec("onnxruntime") is not None
+            and importlib.util.find_spec("tokenizers") is not None
+        ):
             from agentos.memory.embedding import LocalEmbeddingProvider
 
             model_name = getattr(
@@ -1306,9 +1236,7 @@ def _log_resolved_judge(config: GatewayConfig, router_cfg: Any) -> None:
     # A local-endpoint judge (source="local") carries its own credentials via
     # judge_base_url / judge_api_key; surface the base_url (never the api key).
     base_url = (
-        str(getattr(router_cfg, "judge_base_url", "") or "").strip()
-        if source == "local"
-        else None
+        str(getattr(router_cfg, "judge_base_url", "") or "").strip() if source == "local" else None
     )
     if not judge_provider_has_credentials(provider, llm_cfg, source):
         # The judge resolved to a provider that does not match llm.provider, so
@@ -1352,9 +1280,7 @@ def _should_build_provider_selector(*, provider: str, api_key: str) -> bool:
     return not spec.requires_api_key()
 
 
-def _router_tier_provider_mismatches(
-    *, config: GatewayConfig, llm_provider: str
-) -> dict[str, str]:
+def _router_tier_provider_mismatches(*, config: GatewayConfig, llm_provider: str) -> dict[str, str]:
     """Router tiers whose declared provider differs from the runtime provider.
 
     Routing is single-provider: boot builds ONE client from ``llm.provider``;
@@ -1930,9 +1856,7 @@ async def build_services(
             config={
                 "max_concurrent_runs": int(os.environ.get("AGENTOS_CRON_MAX_CONCURRENT", "3")),
                 "max_catchup_jobs": int(os.environ.get("AGENTOS_CRON_MAX_CATCHUP", "5")),
-                "session_retention": int(
-                    os.environ.get("AGENTOS_CRON_SESSION_RETENTION", "86400")
-                ),
+                "session_retention": int(os.environ.get("AGENTOS_CRON_SESSION_RETENTION", "86400")),
             },
         )
         await cron_scheduler.start()
@@ -2006,8 +1930,7 @@ async def build_services(
                 agent_id: Path(root)
                 for agent_id, manager in memory_managers.items()
                 for root in [
-                    getattr(manager, "workspace_dir", None)
-                    or getattr(manager, "memory_dir", None)
+                    getattr(manager, "workspace_dir", None) or getattr(manager, "memory_dir", None)
                 ]
                 if root is not None
             }
@@ -2017,9 +1940,7 @@ async def build_services(
                 memory_roots=memory_roots,
                 agent_ids=tuple(_configured_agent_ids(config, extra_agent_ids)),
                 interval_seconds=float(getattr(config.memory, "repair_interval_seconds", 60.0)),
-                max_items_per_tick=int(
-                    getattr(config.memory, "repair_max_items_per_tick", 5)
-                ),
+                max_items_per_tick=int(getattr(config.memory, "repair_max_items_per_tick", 5)),
             )
             log.info("build_services.memory_repair_service_ready")
         except Exception as e:
@@ -2271,9 +2192,7 @@ async def start_gateway_server(
         except RuntimeError:
             emit_coro.close()
 
-    svc._compaction_listener_remove = add_compaction_listener(
-        _emit_runtime_compaction_event
-    )
+    svc._compaction_listener_remove = add_compaction_listener(_emit_runtime_compaction_event)
 
     background_completion_manager = BackgroundCompletionManager(
         session_manager=svc.session_manager,
@@ -2357,9 +2276,7 @@ async def start_gateway_server(
 
     # Register cron agent_run handler (DI-based, no monkey-patch)
     if svc.cron_scheduler is not None:
-        from agentos.memory.dream_factory import build_dream_factory
         from agentos.scheduler.delivery import DeliveryChain
-        from agentos.scheduler.dream_handler import make_memory_dream_handler
         from agentos.scheduler.handlers import (
             make_agent_run_handler,
             make_static_message_handler,
@@ -2504,27 +2421,16 @@ async def start_gateway_server(
             default_elevated=lambda: configured_default_elevated(config),
         )
         static_handler = make_static_message_handler(delivery_chain=delivery_chain)
-        dream_handler = make_memory_dream_handler(
-            build_dream=build_dream_factory(
-                config=config,
-                turn_runner=turn_runner,
-            ),
-            should_skip=lambda: (
-                "disabled" if not getattr(config.memory.dream, "enabled", False) else None
-            ),
-            post_dream_hook=None,
-        )
         svc.cron_scheduler.register_handler("agent_run", agent_handler)
         svc.cron_scheduler.register_handler("static_message", static_handler)
         svc.cron_scheduler.register_handler("system_event", system_handler)
-        svc.cron_scheduler.register_handler("memory_dream", dream_handler)
         log.info("gateway.cron_handler_registered", handler_key="agent_run")
         log.info("gateway.cron_handler_registered", handler_key="static_message")
         log.info("gateway.cron_handler_registered", handler_key="system_event")
-        log.info("gateway.cron_handler_registered", handler_key="memory_dream")
-        await _register_dream_crons(
+        # Dream was removed; pause any cron rows an older install left behind
+        # so they cannot keep firing against a handler that no longer exists.
+        await _pause_orphaned_dream_crons(
             scheduler=svc.cron_scheduler,
-            memory_config=config.memory,
             agent_ids=_configured_agent_ids(config),
         )
 

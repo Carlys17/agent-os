@@ -829,7 +829,7 @@ async def test_current_session_agent_run_keeps_cron_tool_boundary() -> None:
         session_target=SessionTarget.CURRENT,
         session_key=SESSION_KEY,
         origin_session_key=SESSION_KEY,
-                tool_policy={
+        tool_policy={
             "profile": "minimal",
             "also_allow": ["memory_search", "exec_command"],
             "deny": ["web_fetch"],

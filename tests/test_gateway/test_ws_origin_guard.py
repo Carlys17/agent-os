@@ -109,9 +109,7 @@ class TestIsAllowedWsOrigin:
             ("192.168.1.5", "http://myserver.lan:18791"),
         ],
     )
-    def test_non_loopback_bind_admits_remote_browser_origin(
-        self, host: str, origin: str
-    ) -> None:
+    def test_non_loopback_bind_admits_remote_browser_origin(self, host: str, origin: str) -> None:
         cfg = GatewayConfig(host=host, port=18791, auth=AuthConfig(mode="token"))
         assert is_allowed_ws_origin(origin, cfg) is True
 
@@ -222,16 +220,12 @@ class TestRealAppHandshake:
     def test_cross_origin_handshake_denied_through_real_app(self) -> None:
         client = self._client()
         with pytest.raises((WebSocketDisconnect, WebSocketDenialResponse)):
-            with client.websocket_connect(
-                "/ws", headers={"Origin": "http://evil.com"}
-            ):
+            with client.websocket_connect("/ws", headers={"Origin": "http://evil.com"}):
                 pass  # pragma: no cover — handshake must not complete
 
     def test_loopback_origin_handshake_accepted_through_real_app(self) -> None:
         client = self._client()
-        with client.websocket_connect(
-            "/ws", headers={"origin": "http://127.0.0.1:18791"}
-        ) as ws:
+        with client.websocket_connect("/ws", headers={"origin": "http://127.0.0.1:18791"}) as ws:
             frame = ws.receive_json()
             assert frame["event"] == "connect.challenge"
 

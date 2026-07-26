@@ -47,9 +47,7 @@ def test_cli_gateway_catalog_serializes_argument_choices() -> None:
         {"value": "on", "description": "Host exec, approvals required."},
         {
             "value": "bypass",
-            "description": (
-                "Host exec, approvals auto-granted; sensitive paths still blocked."
-            ),
+            "description": ("Host exec, approvals auto-granted; sensitive paths still blocked."),
         },
         {
             "value": "full",

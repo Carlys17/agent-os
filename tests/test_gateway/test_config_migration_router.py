@@ -42,9 +42,7 @@ def test_case_a_missing_strategy_key_is_untouched() -> None:
 def test_case_b_v4_phase3_is_force_migrated_to_pilot() -> None:
     # (b) The core migration: a persisted v4_phase3 is unconditionally rewritten
     # to pilot-v1 and changed=True so the loader backs up and rewrites the file.
-    result = migrate_config_payload(
-        {"agentos_router": {"enabled": True, "strategy": "v4_phase3"}}
-    )
+    result = migrate_config_payload({"agentos_router": {"enabled": True, "strategy": "v4_phase3"}})
 
     assert result.changed is True
     assert _router(result)["strategy"] == "pilot-v1"
@@ -54,9 +52,7 @@ def test_case_b_v4_phase3_is_force_migrated_to_pilot() -> None:
 def test_case_c_pilot_and_judge_strategies_are_untouched() -> None:
     # (c) A config already on pilot-v1 or llm_judge is left entirely alone.
     for strategy in ("pilot-v1", "llm_judge"):
-        result = migrate_config_payload(
-            {"agentos_router": {"enabled": True, "strategy": strategy}}
-        )
+        result = migrate_config_payload({"agentos_router": {"enabled": True, "strategy": strategy}})
         assert result.changed is False
         assert _router(result)["strategy"] == strategy
 
@@ -64,9 +60,7 @@ def test_case_c_pilot_and_judge_strategies_are_untouched() -> None:
 def test_migration_is_idempotent_on_already_migrated_payload() -> None:
     # Running the migration on its own output is a no-op: the strategy is now
     # pilot-v1, so no further rewrite (changed=False).
-    once = migrate_config_payload(
-        {"agentos_router": {"enabled": True, "strategy": "v4_phase3"}}
-    )
+    once = migrate_config_payload({"agentos_router": {"enabled": True, "strategy": "v4_phase3"}})
     assert once.changed is True
 
     twice = migrate_config_payload(once.payload)
@@ -78,9 +72,7 @@ def test_migrated_payload_boots_the_router_config() -> None:
     # The migrated payload must construct AgentOSRouterConfig without raising.
     from agentos.gateway.config import AgentOSRouterConfig
 
-    result = migrate_config_payload(
-        {"agentos_router": {"enabled": True, "strategy": "v4_phase3"}}
-    )
+    result = migrate_config_payload({"agentos_router": {"enabled": True, "strategy": "v4_phase3"}})
     cfg = AgentOSRouterConfig(**_router(result))
     assert cfg.strategy == "pilot-v1"
 
@@ -119,8 +111,7 @@ def test_out_of_range_confidence_threshold_records_change() -> None:
     )
     assert result.changed is True
     assert any(
-        "confidence_threshold" in change and "clamped" in change
-        for change in result.changes
+        "confidence_threshold" in change and "clamped" in change for change in result.changes
     )
 
 

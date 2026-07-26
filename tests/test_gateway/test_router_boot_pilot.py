@@ -16,12 +16,7 @@ import pytest
 from agentos.gateway.boot import validate_agentos_router_runtime
 from agentos.gateway.config import GatewayConfig
 
-FIXTURE_DIR = (
-    Path(__file__).parent.parent
-    / "test_agentos_router"
-    / "data"
-    / "pilot_fixture"
-)
+FIXTURE_DIR = Path(__file__).parent.parent / "test_agentos_router" / "data" / "pilot_fixture"
 
 
 def test_pilot_boot_warns_on_missing_artifacts(
@@ -66,9 +61,7 @@ def test_pilot_boot_passes_with_fixture_bundle(
     )
     from agentos.memory.embedding import LocalEmbeddingProvider
 
-    if LocalEmbeddingProvider.resolve_onnx_dir(
-        "sentence-transformers/all-MiniLM-L6-v2"
-    ) is None:
+    if LocalEmbeddingProvider.resolve_onnx_dir("sentence-transformers/all-MiniLM-L6-v2") is None:
         pytest.skip("MiniLM embedder dir not present in this checkout")
 
     config = GatewayConfig()

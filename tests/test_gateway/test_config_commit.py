@@ -171,9 +171,7 @@ async def test_config_snapshot_is_read_scoped_coherent_and_redacted(tmp_path) ->
 
 
 @pytest.mark.asyncio
-async def test_config_snapshot_derives_status_from_one_active_config(
-    tmp_path, monkeypatch
-) -> None:
+async def test_config_snapshot_derives_status_from_one_active_config(tmp_path, monkeypatch) -> None:
     import agentos.gateway.rpc_onboarding as rpc_onboarding
 
     config = GatewayConfig(config_path=str(tmp_path / "config.toml"))
@@ -335,9 +333,7 @@ async def test_explicit_override_edit_survives_later_unrelated_write(tmp_path) -
 
 
 @pytest.mark.asyncio
-async def test_disk_coherence_uses_gateway_environment_settings(
-    tmp_path, monkeypatch
-) -> None:
+async def test_disk_coherence_uses_gateway_environment_settings(tmp_path, monkeypatch) -> None:
     target = tmp_path / "config.toml"
     target.write_text("", encoding="utf-8")
     monkeypatch.setenv("AGENTOS_GATEWAY_DEBUG", "true")
@@ -456,10 +452,10 @@ async def test_boot_captured_task_runtime_change_requires_restart(tmp_path) -> N
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("path", "value", "reason"),
-        [
-            ("task_runtime.channel_inflight_cap", 16, "task_runtime"),
-            ("state_dir", "state-next", "state_dir"),
-        ],
+    [
+        ("task_runtime.channel_inflight_cap", 16, "task_runtime"),
+        ("state_dir", "state-next", "state_dir"),
+    ],
 )
 async def test_additional_boot_captured_changes_require_restart(
     tmp_path, path: str, value: Any, reason: str
@@ -489,9 +485,6 @@ async def test_additional_boot_captured_changes_require_restart(
         ("memory.repair_enabled", False),
         ("memory.repair_interval_seconds", 90.0),
         ("memory.repair_max_items_per_tick", 9),
-        ("memory.dream.enabled", True),
-        ("memory.dream.auto_schedule", True),
-        ("memory.dream.interval_h", 12),
     ],
 )
 async def test_boot_built_memory_topology_changes_require_restart(
@@ -610,9 +603,7 @@ async def test_config_writes_reject_direct_auth_credential_changes(tmp_path, met
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["config.set", "config.patch", "config.apply"])
-async def test_config_writes_reject_unsafe_public_auth_mode(
-    tmp_path, method: str
-) -> None:
+async def test_config_writes_reject_unsafe_public_auth_mode(tmp_path, method: str) -> None:
     target = tmp_path / "config.toml"
     config = GatewayConfig(
         config_path=str(target),

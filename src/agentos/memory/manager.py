@@ -237,15 +237,12 @@ def memory_config_diagnostics(
     memory_source: str | None = None,
 ) -> dict[str, Any]:
     cost_cfg = getattr(memory_config, "cost", None)
-    dream_cfg = getattr(memory_config, "dream", None)
     return {
         "memory_source": memory_source
         if memory_source is not None
         else _nested_value(memory_config, "source"),
         "retrieval_mode": _nested_value(memory_config, "retrieval_mode"),
         "query_embedding_cache": _nested_value(cost_cfg, "query_embedding_cache", "off"),
-        "dream_enabled": bool(_nested_value(dream_cfg, "enabled", False)),
-        "dream_input_slimming": _nested_value(dream_cfg, "input_slimming", "off"),
     }
 
 

@@ -12,7 +12,6 @@ from agentos.engine.types import AgentConfig, DoneEvent
 from agentos.gateway.boot import (
     _configured_agent_ids,
     _gateway_home,
-    _register_dream_crons,
     _task_runtime_turn_hard_deadline_s,
     _warn_workspace_state_mismatch,
     build_flush_service,
@@ -624,12 +623,8 @@ async def test_start_gateway_server_wires_cron_failure_dispatcher(
     monkeypatch.setattr(boot, "_setup_file_logging", lambda config: None)
     monkeypatch.setattr(boot, "emit_skill_filter_banner", lambda config: None)
     monkeypatch.setattr(scheduler_jobs, "set_failure_dispatcher", _record_dispatcher)
-    monkeypatch.setattr(
-        "agentos.gateway.pidlock.GatewayPidLock.acquire", lambda self: None
-    )
-    monkeypatch.setattr(
-        "agentos.gateway.pidlock.GatewayPidLock.release", lambda self: None
-    )
+    monkeypatch.setattr("agentos.gateway.pidlock.GatewayPidLock.acquire", lambda self: None)
+    monkeypatch.setattr("agentos.gateway.pidlock.GatewayPidLock.release", lambda self: None)
 
     config = GatewayConfig(
         state_dir=str(tmp_path / "state"),
@@ -646,10 +641,7 @@ async def test_start_gateway_server_wires_cron_failure_dispatcher(
         )
         # The wire must register DeliveryChain.dispatch_failure_alert
         # (a bound method), not some unrelated callable.
-        assert (
-            getattr(captured["dispatcher"], "__name__", "")
-            == "dispatch_failure_alert"
-        )
+        assert getattr(captured["dispatcher"], "__name__", "") == "dispatch_failure_alert"
         # Handler factories ran, confirming the wire ran inside the cron-init
         # branch (not just by coincidence).
         assert set(cron_sched.registered) >= {
@@ -659,7 +651,6 @@ async def test_start_gateway_server_wires_cron_failure_dispatcher(
         }
     finally:
         await server.close()
-
 
 
 def test_build_flush_service_respects_memory_flush_enabled_config() -> None:
@@ -718,6 +709,7 @@ async def test_build_flush_service_archive_workspace_falls_back_to_main_workspac
     assert receipt.mode == "raw"
     assert (main_workspace / receipt.flushed_paths[0]).exists()
     assert not (matching_memory_dir / receipt.flushed_paths[0]).exists()
+
 
 @pytest.mark.asyncio
 async def test_build_flush_service_wires_durable_receipt_writer(tmp_path: Path) -> None:
@@ -959,9 +951,7 @@ async def test_build_services_registers_session_search_tool(
 ) -> None:
     monkeypatch.setattr(
         "agentos.sandbox.integration.configure_runtime",
-        lambda *args, **kwargs: SimpleNamespace(
-            effective=SimpleNamespace(as_dict=lambda: {})
-        ),
+        lambda *args, **kwargs: SimpleNamespace(effective=SimpleNamespace(as_dict=lambda: {})),
     )
 
     captured_memory_kwargs: dict[str, Any] = {}
@@ -995,13 +985,10 @@ async def test_build_services_registers_session_search_tool(
         assert "Full-text search across persisted session transcripts" in (
             session_search.spec.description
         )
-        assert "defaults to curated memory source files" in (
-            session_search.spec.description
-        )
+        assert "defaults to curated memory source files" in (session_search.spec.description)
         assert "use source=sessions or source=all" in session_search.spec.description
         default_names = {
-            tool["name"]
-            for tool in await registry.list_tools(caller_kind=CallerKind.AGENT)
+            tool["name"] for tool in await registry.list_tools(caller_kind=CallerKind.AGENT)
         }
         configured_names = {
             tool.name
@@ -1014,9 +1001,7 @@ async def test_build_services_registers_session_search_tool(
         }
         channel_names = {
             tool.name
-            for tool in registry.to_tool_definitions(
-                ToolContext(caller_kind=CallerKind.CHANNEL)
-            )
+            for tool in registry.to_tool_definitions(ToolContext(caller_kind=CallerKind.CHANNEL))
         }
         assert session_search.spec.exposed_by_default is False
         assert "session_search" not in default_names
@@ -1099,9 +1084,7 @@ def test_router_boot_validation_warns_when_judge_provider_lacks_credentials(
     )
     # llm.provider not a router tier profile id → default openrouter tiers
     # are kept, so the AUTO judge resolves cross-provider.
-    config = GatewayConfig(
-        llm={"provider": "anthropic", "model": "claude-x", "api_key": "sk"}
-    )
+    config = GatewayConfig(llm={"provider": "anthropic", "model": "claude-x", "api_key": "sk"})
     # Default strategy is now v4_phase3; select the judge so this exercises the
     # cross-provider judge-credential check rather than v4 bundle validation.
     config.agentos_router.strategy = "llm_judge"
@@ -1109,12 +1092,8 @@ def test_router_boot_validation_warns_when_judge_provider_lacks_credentials(
 
     validate_agentos_router_runtime(config)
 
-    assert any(
-        record["event"] == "router.judge_no_credentials" for record in warnings
-    )
-    assert not any(
-        record["event"] == "router.judge_resolved" for record in infos
-    )
+    assert any(record["event"] == "router.judge_no_credentials" for record in warnings)
+    assert not any(record["event"] == "router.judge_resolved" for record in infos)
 
 
 def test_router_boot_validation_warns_on_missing_pilot_bundle(
@@ -1138,8 +1117,7 @@ def test_router_boot_validation_warns_on_missing_pilot_bundle(
     validate_agentos_router_runtime(config)
 
     assert any(
-        record["event"] == "build_services.agentos_router_bundle_missing"
-        for record in warnings
+        record["event"] == "build_services.agentos_router_bundle_missing" for record in warnings
     )
 
 
@@ -1253,9 +1231,7 @@ async def test_build_services_fails_fast_for_explicit_remote_memory_without_key(
 ) -> None:
     monkeypatch.setattr(
         "agentos.sandbox.integration.configure_runtime",
-        lambda *args, **kwargs: SimpleNamespace(
-            effective=SimpleNamespace(as_dict=lambda: {})
-        ),
+        lambda *args, **kwargs: SimpleNamespace(effective=SimpleNamespace(as_dict=lambda: {})),
     )
     config = GatewayConfig(
         state_dir=str(tmp_path / "state"),
@@ -1314,77 +1290,6 @@ def test_workspace_state_mismatch_emits_warning(
     assert "AGENTOS_STATE_DIR" in warnings[0]["expected_roots"]
 
 
-def test_dream_defaults_are_fail_closed() -> None:
-    config = GatewayConfig()
-
-    assert config.memory.dream.enabled is False
-    assert config.memory.dream.preview_mode is True
-    assert config.memory.dream.auto_schedule is False
-
-
-def test_memory_mode_fingerprint_keeps_dream_auto_schedule_visible() -> None:
-    config = GatewayConfig(memory={"dream": {"enabled": True}})
-
-    assert config.memory.dream.enabled is True
-    assert config.memory.dream.preview_mode is True
-    assert config.memory.dream.auto_schedule is False
-    assert config.memory_mode_fingerprint()["dream_auto_schedule"] == "false"
-
-
-@pytest.mark.asyncio
-async def test_dream_boot_does_not_register_when_auto_schedule_is_off() -> None:
-    scheduler = _FakeDreamScheduler()
-    config = GatewayConfig(memory={"dream": {"enabled": True}})
-
-    await _register_dream_crons(
-        scheduler=scheduler,
-        memory_config=config.memory,
-        agent_ids=["main"],
-    )
-
-    assert scheduler.added == []
-
-
-@pytest.mark.asyncio
-async def test_dream_boot_pauses_existing_jobs_when_auto_schedule_is_off() -> None:
-    existing = CronJob(id="dream-main", name="memory_dream:main", status=JobStatus.PENDING)
-    scheduler = _FakeDreamScheduler([existing])
-    config = GatewayConfig(memory={"dream": {"enabled": True}})
-
-    await _register_dream_crons(
-        scheduler=scheduler,
-        memory_config=config.memory,
-        agent_ids=["main"],
-    )
-
-    assert scheduler.paused == ["dream-main"]
-    assert existing.status == JobStatus.PAUSED
-    assert scheduler.added == []
-
-
-@pytest.mark.asyncio
-async def test_dream_boot_pauses_existing_jobs_when_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("AGENTOS_MEMORY_DREAM_DISABLED", "1")
-    existing = CronJob(id="dream-main", name="memory_dream:main", status=JobStatus.PENDING)
-    scheduler = _FakeDreamScheduler([existing])
-    config = GatewayConfig(
-        memory={"dream": {"enabled": True, "auto_schedule": True}},
-    )
-
-    await _register_dream_crons(
-        scheduler=scheduler,
-        memory_config=config.memory,
-        agent_ids=["main"],
-    )
-
-    assert scheduler.paused == ["dream-main"]
-    assert existing.status == JobStatus.PAUSED
-    assert scheduler.added == []
-
-
-@pytest.mark.asyncio
 async def test_task_runtime_turn_uses_agent_registry_model_when_session_has_no_model() -> None:
     class RecordingTurnRunner:
         def __init__(self) -> None:
@@ -1514,7 +1419,7 @@ async def test_task_runtime_turn_keeps_cron_tool_boundary() -> None:
         id="cron-restricted",
         name="Restricted",
         payload={"kind": "agent_turn", "agent_id": "ops"},
-                tool_policy={
+        tool_policy={
             "profile": "minimal",
             "also_allow": ["memory_search", "exec_command"],
             "deny": ["web_fetch"],

@@ -7,6 +7,7 @@ concurrent sends across a 50-iteration random.shuffle loop, and an
 explicit demonstration that the prior append-then-enqueue order created
 ghost turns while the current enqueue-then-append order does not.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -65,9 +66,7 @@ def _make_runtime(*, fails: bool) -> MagicMock:
     """Return a MagicMock whose .enqueue is an AsyncMock that either succeeds or raises."""
     rt = MagicMock()
     if fails:
-        rt.enqueue = AsyncMock(
-            side_effect=TaskQueueFullError(session_key="s:test", max_pending=1)
-        )
+        rt.enqueue = AsyncMock(side_effect=TaskQueueFullError(session_key="s:test", max_pending=1))
     else:
         handle = MagicMock()
         handle.task_id = "task-1"
@@ -186,8 +185,7 @@ async def test_ac1_2_3_concurrent_no_ghost_turns() -> None:
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
             thread_futures = [
-                executor.submit(_submit_from_thread, sk, succeeds)
-                for sk, succeeds in sends
+                executor.submit(_submit_from_thread, sk, succeeds) for sk, succeeds in sends
             ]
             # Each thread_future.result() gives back the concurrent.futures.Future
             # that run_coroutine_threadsafe returns.  Collect them all without
@@ -260,8 +258,7 @@ async def test_ac1_4_old_order_creates_ghost_turn() -> None:
 
     # Old order: ghost turn was created
     assert len(sm_old.append_calls) == 1, (
-        "PRE-FIX: ghost turn should have been created "
-        "(append ran before failed enqueue)"
+        "PRE-FIX: ghost turn should have been created (append ran before failed enqueue)"
     )
 
     # ── NEW (fixed) order: enqueue THEN append ────────────────────────────
@@ -273,6 +270,5 @@ async def test_ac1_4_old_order_creates_ghost_turn() -> None:
 
     assert not success, "fixed dispatch should report failure"
     assert len(sm_new.append_calls) == 0, (
-        f"POST-FIX: no ghost turn should exist, "
-        f"but append_calls={sm_new.append_calls}"
+        f"POST-FIX: no ghost turn should exist, but append_calls={sm_new.append_calls}"
     )

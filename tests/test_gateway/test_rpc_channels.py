@@ -121,15 +121,18 @@ async def test_channels_status_reports_adapter_capabilities_without_network_prob
         "transports": ["websocket"],
     }
     assert row["platform_manifest"]["channel_type"] == "discord"
-    assert row["platform_manifest"]["capabilities"][ChannelPlatformCategories.CHAT][
-        "status"
-    ] == ChannelPlatformCapabilityStatus.SUPPORTED
-    assert row["platform_manifest"]["capabilities"][ChannelPlatformCategories.FILES][
-        "status"
-    ] == ChannelPlatformCapabilityStatus.CONFIG_REQUIRED
-    assert row["platform_manifest"]["capabilities"][ChannelPlatformCategories.DOCS][
-        "status"
-    ] == ChannelPlatformCapabilityStatus.UNSUPPORTED
+    assert (
+        row["platform_manifest"]["capabilities"][ChannelPlatformCategories.CHAT]["status"]
+        == ChannelPlatformCapabilityStatus.SUPPORTED
+    )
+    assert (
+        row["platform_manifest"]["capabilities"][ChannelPlatformCategories.FILES]["status"]
+        == ChannelPlatformCapabilityStatus.CONFIG_REQUIRED
+    )
+    assert (
+        row["platform_manifest"]["capabilities"][ChannelPlatformCategories.DOCS]["status"]
+        == ChannelPlatformCapabilityStatus.UNSUPPORTED
+    )
     assert row["diagnostics"] == {"network_probe": "not_run"}
 
 

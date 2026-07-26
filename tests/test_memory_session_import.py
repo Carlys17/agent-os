@@ -1,13 +1,15 @@
-"""`agentos.memory` and `agentos.session` import each other.
+"""`agentos.memory` and `agentos.session` must stay importable in either order.
 
-`memory/flush_status.py` imports from `session/compaction_lifecycle` at module
-scope. `compaction_lifecycle.pre_compaction_flush_enabled` imports back from
-`memory/flush_config`, but from *inside the function body* -- which is the only
-reason the cycle does not close at import time.
+There used to be a real cycle: `memory/flush_status.py` imported from
+`session/compaction_lifecycle` at module scope, and
+`compaction_lifecycle.pre_compaction_flush_enabled` imported back from
+`memory/flush_config` -- surviving only because that second import sat inside
+a function body.
 
-Nothing marked that as load-bearing, so a routine "move imports to the top"
-cleanup would break `import agentos.memory.*` outright. These tests make the
-constraint executable, and the failure legible when someone trips it.
+Removing `flush_status.py` broke the cycle from the memory side, so no module
+under `agentos/memory` imports from `agentos/session` any more. These tests
+pin that: they fail if a future change reintroduces the edge, which is what
+would make the function-local import load-bearing again.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import sys
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
-_LIFECYCLE = _SRC / "agentos" / "session" / "compaction_lifecycle.py"
+_MEMORY = _SRC / "agentos" / "memory"
 
 
 def _run(code: str) -> subprocess.CompletedProcess[str]:
@@ -31,7 +33,7 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_memory_imports_cleanly():
-    assert _run("import agentos.memory.flush_status").returncode == 0
+    assert _run("import agentos.memory.manager").returncode == 0
 
 
 def test_session_imports_cleanly():
@@ -42,44 +44,47 @@ def test_either_import_order_works():
     """Whichever package a caller reaches first must succeed."""
     assert (
         _run(
-            "import agentos.session.compaction_lifecycle; import agentos.memory.flush_status"
+            "import agentos.session.compaction_lifecycle; import agentos.memory.manager"
         ).returncode
         == 0
     )
     assert (
         _run(
-            "import agentos.memory.flush_status; import agentos.session.compaction_lifecycle"
+            "import agentos.memory.manager; import agentos.session.compaction_lifecycle"
         ).returncode
         == 0
     )
 
 
-def test_the_flush_config_import_stays_inside_the_function():
-    """The invariant itself: hoisting this import closes the cycle.
+def test_no_memory_module_imports_session_at_module_scope():
+    """The invariant that keeps the cycle gone.
 
     Asserted structurally rather than by string match, so reformatting or
-    renaming around it does not produce a false pass.
+    renaming around it cannot produce a false pass. A module-scope
+    `agentos.session` import here is what previously forced
+    `pre_compaction_flush_enabled` to hide its own import inside a function.
     """
-    tree = ast.parse(_LIFECYCLE.read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    for path in sorted(_MEMORY.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:  # module scope only
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.module.startswith("agentos.session")
+            ):
+                offenders.append(f"{path.name}:{node.lineno} -> {node.module}")
+            elif isinstance(node, ast.Import):
+                offenders.extend(
+                    f"{path.name}:{node.lineno} -> {alias.name}"
+                    for alias in node.names
+                    if alias.name.startswith("agentos.session")
+                )
 
-    module_level_memory_imports = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.ImportFrom)
-        and node.module
-        and node.module.startswith("agentos.memory")
-    ]
-    assert not module_level_memory_imports, (
-        "agentos.memory imported at module scope in compaction_lifecycle.py -- "
-        "this closes the memory <-> session import cycle. Keep it function-local."
+    assert not offenders, (
+        "agentos.memory imports agentos.session at module scope: "
+        + "; ".join(offenders)
+        + " -- this reopens the memory <-> session cycle, and "
+        "session/compaction_lifecycle.py would need its flush_config import "
+        "kept function-local again."
     )
-
-    function = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "pre_compaction_flush_enabled"
-    )
-    assert any(
-        isinstance(node, ast.ImportFrom) and node.module == "agentos.memory.flush_config"
-        for node in ast.walk(function)
-    ), "pre_compaction_flush_enabled no longer imports flush_config locally"

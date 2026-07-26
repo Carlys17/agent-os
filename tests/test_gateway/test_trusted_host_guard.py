@@ -36,9 +36,7 @@ def _config(
             token="test-token" if auth_mode == "token" else None,
         ),
         control_ui=ControlUiConfig(allowed_origins=ui_origins or [], base_path=base_path),
-        cors=CorsConfig(allowed_origins=cors_origins)
-        if cors_origins is not None
-        else CorsConfig(),
+        cors=CorsConfig(allowed_origins=cors_origins) if cors_origins is not None else CorsConfig(),
     )
 
 
@@ -67,9 +65,7 @@ class TestResolveTrustedHosts:
         from structlog.testing import capture_logs
 
         with capture_logs() as logs:
-            hosts = resolve_trusted_hosts(
-                _config(host="127.0.0.1", ui_origins=["ui.example.com"])
-            )
+            hosts = resolve_trusted_hosts(_config(host="127.0.0.1", ui_origins=["ui.example.com"]))
         assert "ui.example.com" not in hosts
         assert any("origin" in entry["event"] for entry in logs)
 
@@ -169,9 +165,7 @@ class TestRealAppWiring:
     def test_foreign_host_rejected_by_real_app(self) -> None:
         client = TestClient(self._real_app())  # default Host: testserver
         assert client.get("/ready").status_code == 400
-        assert (
-            client.get("/ready", headers={"host": "attacker.com"}).status_code == 400
-        )
+        assert client.get("/ready", headers={"host": "attacker.com"}).status_code == 400
 
     def test_loopback_host_admitted_by_real_app(self) -> None:
         client = TestClient(self._real_app(), base_url="http://localhost")
@@ -203,9 +197,7 @@ class TestLoopbackOriginGuardHttp:
 
     def test_loopback_origin_allowed(self) -> None:
         client = self._client()
-        resp = client.get(
-            "/api/sessions", headers={"origin": "http://localhost:18791"}
-        )
+        resp = client.get("/api/sessions", headers={"origin": "http://localhost:18791"})
         assert resp.status_code == 200
 
     def test_no_origin_allowed(self) -> None:
@@ -215,17 +207,13 @@ class TestLoopbackOriginGuardHttp:
 
     def test_allowlisted_ui_origin_allowed(self) -> None:
         client = self._client(ui_origins=["https://agent.example.com"])
-        resp = client.get(
-            "/api/sessions", headers={"origin": "https://agent.example.com"}
-        )
+        resp = client.get("/api/sessions", headers={"origin": "https://agent.example.com"})
         assert resp.status_code == 200
 
     def test_explicit_cors_origin_allowed(self) -> None:
         """A deliberate non-wildcard cors.allowed_origins entry keeps working."""
         client = self._client(cors_origins=["https://myapp.example"])
-        resp = client.get(
-            "/api/sessions", headers={"origin": "https://myapp.example"}
-        )
+        resp = client.get("/api/sessions", headers={"origin": "https://myapp.example"})
         assert resp.status_code == 200
 
     def test_wildcard_cors_default_does_not_admit_foreign_origin(self) -> None:

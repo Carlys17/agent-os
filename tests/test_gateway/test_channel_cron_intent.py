@@ -11,9 +11,7 @@ from agentos.channels.types import IncomingMessage
 
 
 def test_channel_dispatch_no_longer_uses_gateway_cron_intent_preflight() -> None:
-    source = Path("src/agentos/gateway/channel_dispatch.py").read_text(
-        encoding="utf-8"
-    )
+    source = Path("src/agentos/gateway/channel_dispatch.py").read_text(encoding="utf-8")
 
     assert "channel_cron_intent" not in source
     assert "_dispatch_channel_cron_intent" not in source

@@ -899,9 +899,7 @@ async def test_memory_repair_admin_lists_shows_and_runs_raw_fallback(tmp_path):
     raw_dir.mkdir(parents=True)
     raw_path = raw_dir / "raw.md"
     raw_path.write_text(
-        "# Raw flush (timeout)\n\n"
-        "user: remember raw repair marker RR-1\n"
-        "assistant: acknowledged\n",
+        "# Raw flush (timeout)\n\nuser: remember raw repair marker RR-1\nassistant: acknowledged\n",
         encoding="utf-8",
     )
     session_manager = FakeEmptyRepairSessionManager()

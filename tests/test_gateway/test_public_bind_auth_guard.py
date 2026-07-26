@@ -100,6 +100,7 @@ class TestEnforcePublicBindAuthGuard:
         assert "trusted-proxy" not in message
         assert '"token"' in message
 
+
 class TestStartGatewayServerWiring:
     @pytest.mark.asyncio
     async def test_start_gateway_server_refuses_unauthenticated_public_bind(self) -> None:

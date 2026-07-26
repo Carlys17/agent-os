@@ -37,6 +37,7 @@ def _attach(media_type: str, payload: bytes, **extra: Any) -> dict[str, Any]:
 # Allow-list locked at exactly the 10 supported MIMEs.
 # ---------------------------------------------------------------------------
 
+
 def test_allowed_media_types_set_contents() -> None:
     assert _ALLOWED_MEDIA_TYPES == {
         "image/png",
@@ -59,6 +60,7 @@ def test_max_attachments_per_turn_is_ten() -> None:
 # ---------------------------------------------------------------------------
 # Inline acceptance for each non-image MIME class.
 # ---------------------------------------------------------------------------
+
 
 def test_pdf_inline_accepted() -> None:
     pdf_bytes = b"%PDF-1.4\n%fake one-page pdf body\n"
@@ -95,6 +97,7 @@ def test_html_inline_accepted() -> None:
 # Rejection paths.
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_mime_rejected() -> None:
     with pytest.raises(ValueError, match="not allowed"):
         _validate_attachments(
@@ -123,6 +126,7 @@ def test_too_many_attachments_rejected() -> None:
 # ---------------------------------------------------------------------------
 # MIME sniffing semantics.
 # ---------------------------------------------------------------------------
+
 
 def test_mime_sniff_overrides_client_claim() -> None:
     """A claimed text/plain payload that is actually PDF magic is upgraded.
@@ -166,9 +170,9 @@ def test_mime_sniff_logs_warning_on_mismatch(monkeypatch: pytest.MonkeyPatch) ->
     pdf_bytes = b"%PDF-1.4\nbody\n"
     _validate_attachments([_attach("text/plain", pdf_bytes, name="weird.txt")])
 
-    assert any(
-        "mime" in event.lower() and "mismatch" in event.lower() for event, _ in captured
-    ), captured
+    assert any("mime" in event.lower() and "mismatch" in event.lower() for event, _ in captured), (
+        captured
+    )
     mismatch = next(kwargs for event, kwargs in captured if "mismatch" in event)
     assert mismatch.get("claimed") == "text/plain"
     assert mismatch.get("sniffed") == "application/pdf"
@@ -177,6 +181,7 @@ def test_mime_sniff_logs_warning_on_mismatch(monkeypatch: pytest.MonkeyPatch) ->
 # ---------------------------------------------------------------------------
 # file_uuid reference shape.
 # ---------------------------------------------------------------------------
+
 
 def test_file_uuid_reference_resolved() -> None:
     """Validator accepts {file_uuid, name, mime} without inline data.

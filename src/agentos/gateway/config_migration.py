@@ -42,13 +42,15 @@ DEPRECATED_MEMORY_FIELDS: frozenset[str] = frozenset(
         "memory.eviction_policy",
         "memory.summary_model",
         "memory.summary_max_tokens",
+        # Dream consolidation was removed; MemoryConfig forbids extras, so an
+        # existing agentos.toml carrying [memory.dream] would fail validation
+        # at boot without this. The whole sub-table is dropped and warned about.
+        "memory.dream",
     }
 )
 
 DEPRECATED_COST_LEAVES: frozenset[str] = frozenset(
-    k.removeprefix("memory.cost.")
-    for k in DEPRECATED_MEMORY_FIELDS
-    if k.startswith("memory.cost.")
+    k.removeprefix("memory.cost.") for k in DEPRECATED_MEMORY_FIELDS if k.startswith("memory.cost.")
 )
 DEPRECATED_MEMORY_LEAVES: frozenset[str] = frozenset(
     k.removeprefix("memory.")
@@ -113,8 +115,7 @@ DEPRECATED_AGENT_TOKEN_SAVING_FIELDS: frozenset[str] = frozenset(
     }
 )
 DEPRECATED_AGENT_TOKEN_SAVING_LEAVES: frozenset[str] = frozenset(
-    k.removeprefix("agent_token_saving.")
-    for k in DEPRECATED_AGENT_TOKEN_SAVING_FIELDS
+    k.removeprefix("agent_token_saving.") for k in DEPRECATED_AGENT_TOKEN_SAVING_FIELDS
 )
 
 _LEGACY_MEMORY_FIELDS_WARN_LOCK = threading.Lock()
@@ -295,9 +296,7 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
             builder.removed_fields.append(LEGACY_ROUTER_SECTION)
         else:
             builder.payload["agentos_router"] = legacy_router
-            builder.changes.append(
-                f"{LEGACY_ROUTER_SECTION} -> agentos_router"
-            )
+            builder.changes.append(f"{LEGACY_ROUTER_SECTION} -> agentos_router")
 
     auth_section = builder.payload.get("auth")
     if isinstance(auth_section, dict):
@@ -355,9 +354,7 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
                     ):
                         if field_name in entry:
                             entry.pop(field_name)
-                            builder.removed_fields.append(
-                                f"channels.channels[].{field_name}"
-                            )
+                            builder.removed_fields.append(f"channels.channels[].{field_name}")
                     if had_access_mode:
                         # Per-entry reporting below is intentionally generic so
                         # channel names and sender ids never enter migration logs.
@@ -383,9 +380,7 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
     _rename_gateway_provider(builder.payload.get("llm"), "provider", "llm.provider")
     router_section = builder.payload.get("agentos_router")
     if isinstance(router_section, dict):
-        _rename_gateway_provider(
-            router_section, "tier_profile", "agentos_router.tier_profile"
-        )
+        _rename_gateway_provider(router_section, "tier_profile", "agentos_router.tier_profile")
 
     llm = builder.payload.get("llm")
     if isinstance(llm, dict) and _is_gateway_provider(llm.get("provider")):
@@ -461,9 +456,7 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
                 continue
             if not _is_gateway_provider(tier.get("provider")):
                 continue
-            _rename_gateway_provider(
-                tier, "provider", f"agentos_router.tiers.{tier_name}.provider"
-            )
+            _rename_gateway_provider(tier, "provider", f"agentos_router.tiers.{tier_name}.provider")
             old_model = str(tier.get("model") or "").strip()
             new_model = LEGACY_GATEWAY_MODEL_IDS.get(old_model)
             if new_model:
@@ -527,13 +520,9 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
                 "config_migration",
             )
             if (
-                deprecated_token_saving.get(
-                    "agent_token_saving.tool_result_compression_enabled"
-                )
+                deprecated_token_saving.get("agent_token_saving.tool_result_compression_enabled")
                 is False
-                or deprecated_token_saving.get(
-                    "agent_token_saving.tool_result_compression_mode"
-                )
+                or deprecated_token_saving.get("agent_token_saving.tool_result_compression_mode")
                 == "off"
             ):
                 builder.warnings.append(

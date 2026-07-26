@@ -321,7 +321,7 @@ the `memory` tool described above instead.
 
 ## External memory providers
 
-Built-in memory (the index, curated files, and dream consolidation above) is
+Built-in memory (the index and curated files above) is
 always on. On top of it you can enable an **external memory provider** — an
 extra recall/write layer that runs alongside built-in memory rather than
 replacing it. It is **disabled by default**: with no provider selected the

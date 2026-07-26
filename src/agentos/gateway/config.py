@@ -375,31 +375,6 @@ class PromptCacheConfig(BaseSettings):
         return self.mode
 
 
-class DreamConfig(BaseModel):
-    """Per-agent Dream consolidation cron configuration."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    interval_h: int = Field(default=24, ge=1)
-    cron: str | None = None  # e.g. "0 3 * * *"; overrides interval_h when set
-    max_batch_size: int = Field(default=20, ge=1)
-    max_iterations: int = Field(default=15, ge=1)
-    min_batch_size: int = Field(default=1, ge=1)
-    preview_mode: bool = True
-    auto_schedule: bool = False
-    input_slimming: Literal["off", "shadow", "on"] = "off"
-    memory_max_chars: int = Field(default=12_000, ge=0)
-    candidate_file_max_chars: int = Field(default=4_000, ge=0)
-    candidate_total_max_chars: int = Field(default=24_000, ge=0)
-    fallback_total_max_chars: int = Field(default=80_000, ge=0)
-    evidence_min_score: float = Field(default=0.55, ge=0.0, le=1.0)
-    evidence_min_seen_count: int = Field(default=1, ge=1)
-    evidence_negative_recurrence_threshold: int = Field(default=2, ge=1)
-    evidence_curated_writes_enabled: bool = True
-    evidence_quarantine_enabled: bool = True
-
-
 class MemoryNudgeConfig(BaseModel):
     """Periodic memory-review nudge.
 
@@ -626,9 +601,6 @@ class MemoryConfig(BaseSettings):
     mmr_lambda: float = 0.7
     vector_weight: float = 0.7
     text_weight: float = 0.3
-
-    # Dream consolidation
-    dream: DreamConfig = Field(default_factory=DreamConfig)
 
     # Periodic memory-review nudge
     nudge: MemoryNudgeConfig = Field(default_factory=MemoryNudgeConfig)
@@ -1964,9 +1936,6 @@ class GatewayConfig(BaseSettings):
             "mode": "stable",
             "prompt_cache_mode": self.prompt_cache.effective_mode,
             "query_embedding_cache": self.memory.cost.query_embedding_cache,
-            "dream_input_slimming": self.memory.dream.input_slimming,
-            "dream_preview_mode": str(self.memory.dream.preview_mode).lower(),
-            "dream_auto_schedule": str(self.memory.dream.auto_schedule).lower(),
             "daily_note_max_chars": str(self.memory.daily_note_max_chars),
             "daily_notes_total_max_chars": str(self.memory.daily_notes_total_max_chars),
             "auto_capture_enabled": str(self.memory.auto_capture_enabled).lower(),
@@ -1979,7 +1948,6 @@ class GatewayConfig(BaseSettings):
                 self.memory.capture_excluded_provenance_kinds
             ),
             "capture_roll_max_chars": str(self.memory.capture_roll_max_chars),
-            "dream_enabled": str(self.memory.dream.enabled).lower(),
         }
 
     _runtime_secret_paths: set[str] = PrivateAttr(default_factory=set)

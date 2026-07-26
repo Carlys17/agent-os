@@ -213,14 +213,6 @@ interval = 10            # user turns between reviews; 0 disables
 # max_iterations = 6     # ceiling on the review turn's own tool loop
 # timeout_seconds = 90.0
 
-[memory.dream]
-# Dream consolidation is safety-first by default. Background scheduling and
-# curated MEMORY.md writes require explicit opt-in.
-enabled = false
-preview_mode = true
-auto_schedule = false
-# interval_h = 24
-# cron = "0 3 * * *"
 
 [skills]
 # Experimental skill relevance filtering. Default is off; deterministic

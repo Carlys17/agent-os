@@ -41,9 +41,7 @@ def test_audio_onboarding_catalog_configure_and_status(tmp_path, monkeypatch) ->
             _read_ctx(),
         )
         assert catalog.error is None, catalog.error
-        audio_provider_ids = {
-            p["providerId"] for p in catalog.payload["audioProviders"]
-        }
+        audio_provider_ids = {p["providerId"] for p in catalog.payload["audioProviders"]}
         assert "elevenlabs" in audio_provider_ids
 
         res = await get_dispatcher().dispatch(

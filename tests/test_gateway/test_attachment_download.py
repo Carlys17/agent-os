@@ -51,9 +51,7 @@ def test_transcript_attachment_download_requires_auth_and_session_scope(tmp_path
     )
 
     with TestClient(_app(tmp_path)) as client:
-        unauthenticated = client.get(
-            f"/api/v1/attachments/{sha}?sessionKey=agent:main:webchat:ok"
-        )
+        unauthenticated = client.get(f"/api/v1/attachments/{sha}?sessionKey=agent:main:webchat:ok")
         wrong_session = client.get(
             f"/api/v1/attachments/{sha}?sessionKey=agent:main:webchat:other",
             headers={"Authorization": "Bearer secret"},

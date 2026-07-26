@@ -14,8 +14,7 @@ async def test_logs_tail_uses_agentos_log_dir_and_filters_level(tmp_path, monkey
     monkeypatch.setenv("AGENTOS_LOG_DIR", str(tmp_path))
     log_file = tmp_path / "debug.log"
     log_file.write_text(
-        "2026-05-03 [DEBUG] agentos: ignored\n"
-        "2026-05-03 [INFO] agentos: selected\n",
+        "2026-05-03 [DEBUG] agentos: ignored\n2026-05-03 [INFO] agentos: selected\n",
         encoding="utf-8",
     )
 
@@ -199,9 +198,7 @@ async def test_logs_trace_returns_persisted_trace_events(tmp_path, monkeypatch) 
     )
     ctx = RpcContext(conn_id="test", config=GatewayConfig())
 
-    response = await get_dispatcher().dispatch(
-        "req-1", "logs.trace", {"trace_id": "trace-1"}, ctx
-    )
+    response = await get_dispatcher().dispatch("req-1", "logs.trace", {"trace_id": "trace-1"}, ctx)
 
     assert response.ok is True
     assert response.payload["trace_id"] == "trace-1"

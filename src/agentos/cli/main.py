@@ -78,33 +78,6 @@ repair_app = typer.Typer(help="Compaction memory repair commands.")
 memory_app.add_typer(repair_app, name="repair")
 
 
-def _build_cli_dream(agent: str, *, force: bool = False, need_provider: bool = True):
-    """Assemble a Dream instance for CLI runs.
-
-    Uses the same configured agent workspace resolver as gateway Dream runs.
-    Unit tests monkeypatch this function to inject a mock Dream without
-    touching provider wiring. When ``need_provider`` is False (e.g. ``--status``
-    / ``--reset-cursor``), skip provider construction so the command works
-    offline.
-    """
-    import os
-
-    from agentos.gateway.config import GatewayConfig
-    from agentos.memory.dream_factory import build_dream_factory
-
-    gw = GatewayConfig.load(os.environ.get("AGENTOS_GATEWAY_CONFIG_PATH"))
-
-    dream = build_dream_factory(
-        config=gw,
-        turn_runner=None,
-        need_provider=need_provider,
-    )
-    dream_obj = dream(agent)
-    if force:
-        dream_obj.cursor.reset()
-    return dream_obj
-
-
 @memory_app.command("status")
 def memory_status_cmd(
     agent_id: str = typer.Option("main", "--agent", help="Agent id (default: main)"),
@@ -192,8 +165,7 @@ def memory_index_cmd(
         print_json(payload)
         return
     console.print(
-        f"memory index agent={payload.get('agentId', agent_id)} "
-        f"force={bool(payload.get('force'))}"
+        f"memory index agent={payload.get('agentId', agent_id)} force={bool(payload.get('force'))}"
     )
 
 
@@ -350,8 +322,7 @@ def memory_embedding_download_cmd(
             console.print(f"  {name}: {done} bytes")
 
     console.print(
-        f"Downloading {model} (~{manifest.approx_total_mb} MB) to "
-        f"{manifest.target_dirname}/"
+        f"Downloading {model} (~{manifest.approx_total_mb} MB) to {manifest.target_dirname}/"
     )
 
     async def _run() -> Path:
@@ -566,42 +537,6 @@ def memory_repair_run_cmd(
             str(row.get("reason") or ""),
         )
     console.print(table)
-
-
-@memory_app.command("dream")
-def memory_dream_cmd(
-    agent: str = typer.Option("main", "--agent", "-a", help="Agent ID"),
-    force: bool = typer.Option(False, "--force", help="Reset cursor and process all files"),
-    status: bool = typer.Option(False, "--status", help="Show cursor + pending file count, no run"),
-    reset_cursor: bool = typer.Option(False, "--reset-cursor", help="Clear cursor file, no run"),
-) -> None:
-    """Run Dream consolidation for an agent."""
-    import asyncio
-
-    need_provider = not (status or reset_cursor)
-    dream = _build_cli_dream(agent, force=force, need_provider=need_provider)
-    if reset_cursor:
-        dream.cursor.reset()
-        typer.echo(f"reset cursor for agent={agent}")
-        return
-    if status:
-        cursor = dream.cursor.load()
-        pending = dream.pending_candidate_count()
-        typer.echo(
-            f"agent={agent} cursor={cursor} pending={pending} "
-            f"memory_md_exists={dream.memory_md.exists()}"
-        )
-        return
-    result = asyncio.run(dream.run())
-    typer.echo(
-        f"dream agent={agent} "
-        f"processed={result.files_processed} "
-        f"evidence={result.evidence_status} "
-        f"apply={result.apply_status}"
-    )
-    if result.error:
-        typer.echo(f"error: {result.error}", err=True)
-        raise typer.Exit(code=1)
 
 
 memory_app.command("flush-session")(memory_flush_session_cmd)
@@ -1034,6 +969,7 @@ def reset_cmd(
         typer.echo("  Flush mode: skipped (empty transcript)")
     else:
         typer.echo(f"  Flush mode: {mode}")
+
 
 if __name__ == "__main__":
     app()

@@ -354,7 +354,6 @@ agentos memory index
 agentos memory list
 agentos memory search "project preference"
 agentos memory show <path>
-agentos memory dream
 agentos memory flush-session <session-key>
 ```
 
