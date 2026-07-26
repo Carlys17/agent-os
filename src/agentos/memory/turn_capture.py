@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from agentos.engine.steps.inject_time_prefix import TIME_PREFIX_RE
+from agentos.memory.atomic_write import atomic_write_text
 
 _SESSION_SLUG_RE = re.compile(r"[^a-z0-9]+")
 _TRUNCATION_SUFFIX = "\n... (truncated)"
@@ -176,9 +177,7 @@ class TurnCaptureService:
 
             previous_content = abs_path.read_text(encoding="utf-8") if abs_path.exists() else None
             existing = (
-                previous_content
-                if previous_content is not None
-                else self._file_header(session_key)
+                previous_content if previous_content is not None else self._file_header(session_key)
             )
             new_content = existing.rstrip() + "\n\n" + entry + "\n"
             if (
@@ -214,9 +213,7 @@ class TurnCaptureService:
             else ""
         )
         cleaned_assistant = (
-            _truncate(assistant_text.strip(), max_chars)
-            if self._capture_assistant()
-            else ""
+            _truncate(assistant_text.strip(), max_chars) if self._capture_assistant() else ""
         )
         if not cleaned_user and not cleaned_assistant:
             return None
@@ -236,10 +233,17 @@ class TurnCaptureService:
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         had_existing = previous_content is not None
         try:
-            abs_path.write_text(new_content, encoding="utf-8")
+            # The whole day file is rewritten on every capture, so a plain
+            # write_text would truncate it before the new content lands --
+            # a crash in that window loses the entire day's captures for this
+            # session. Rename-into-place has no such window.
+            atomic_write_text(abs_path, new_content)
         except Exception:
+            # Reached only when the write itself failed, in which case the
+            # original is still intact; this restores the pre-roll state for
+            # the rollover case, where the target is a fresh part file.
             if had_existing and previous_content is not None:
-                abs_path.write_text(previous_content, encoding="utf-8")
+                atomic_write_text(abs_path, previous_content)
             elif abs_path.exists():
                 abs_path.unlink()
             raise

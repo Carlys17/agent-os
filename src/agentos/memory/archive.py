@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from agentos.memory.atomic_write import fsync_directory
+
 
 @dataclass(frozen=True)
 class RawArchiveWriteResult:
@@ -31,24 +33,6 @@ def _validate_sha256_hex(value: str) -> str:
     if not re.fullmatch(r"[0-9a-fA-F]{64}", normalized):
         raise ValueError("content_hash must be a 64-character SHA-256 hex string")
     return normalized.lower()
-
-
-def _fsync_directory(path: Path) -> None:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
-
-    try:
-        fd = os.open(path, flags)
-    except OSError:
-        return
-
-    try:
-        os.fsync(fd)
-    except OSError:
-        return
-    finally:
-        os.close(fd)
 
 
 def raw_fallback_relative_path(
@@ -106,7 +90,7 @@ def write_raw_fallback_archive(
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_name, target)
-        _fsync_directory(target.parent)
+        fsync_directory(target.parent)
     except Exception:
         try:
             os.unlink(tmp_name)
