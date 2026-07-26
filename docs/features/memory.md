@@ -120,12 +120,9 @@ Search memory for my release-note preferences before drafting this.
 
 ## Session-Derived Memory
 
-For long or important sessions, flush session state into memory before
-archiving, compacting, or switching tasks:
-
-```sh
-agentos memory flush-session <session-key>
-```
+Durable facts from a conversation are saved by the periodic memory review
+(`[memory.nudge]`), which runs on its own every few turns. You can also ask
+the agent to save something explicitly at any point.
 
 Use session export when exact old wording matters:
 
@@ -430,19 +427,11 @@ Refresh the index after editing memory files or changing memory configuration:
 agentos memory index --force
 ```
 
-Inspect fallback and repair surfaces:
+Inspect archived transcripts from sessions whose memory never landed:
 
 ```sh
 agentos memory raw-fallbacks list
-agentos memory repair list
-```
-
-Show or repair a degraded compaction memory record when instructed by
-diagnostics:
-
-```sh
-agentos memory repair show --summary-id <id>
-agentos memory repair run --summary-id <id>
+agentos memory raw-fallbacks show <path>
 ```
 
 ## Best Practices

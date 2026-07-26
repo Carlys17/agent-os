@@ -24,7 +24,6 @@ from agentos.cli.dist_cmd import app as dist_app  # noqa: E402
 from agentos.cli.doctor_cmd import doctor_command  # noqa: E402
 from agentos.cli.init_cmd import init_command  # noqa: E402
 from agentos.cli.mcp_server_cmd import app as mcp_server_app  # noqa: E402
-from agentos.cli.memory_flush_cmd import memory_flush_session_cmd  # noqa: E402
 from agentos.cli.migrate_cmd import migrate_app  # noqa: E402
 from agentos.cli.models_cmd import app as models_app  # noqa: E402
 from agentos.cli.onboard_cmd import configure_command, onboard_app  # noqa: E402
@@ -74,8 +73,6 @@ memory_app = typer.Typer(help="Memory subsystem commands.")
 app.add_typer(memory_app, name="memory")
 raw_fallbacks_app = typer.Typer(help="Raw fallback receipt commands.")
 memory_app.add_typer(raw_fallbacks_app, name="raw-fallbacks")
-repair_app = typer.Typer(help="Compaction memory repair commands.")
-memory_app.add_typer(repair_app, name="repair")
 
 
 @memory_app.command("status")
@@ -408,138 +405,8 @@ def memory_raw_fallbacks_show_cmd(
         console.print("[dim]... truncated[/dim]")
 
 
-@repair_app.command("list")
-def memory_repair_list_cmd(
-    agent_id: str = typer.Option("main", "--agent", help="Agent id (default: main)"),
-    limit: int = typer.Option(50, "--limit", min=1, help="Maximum pending repairs"),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
-    config_path: Path | None = typer.Option(None, "--config", help="Override config path."),
-) -> None:
-    """List degraded compaction records pending repair."""
-
-    from rich.table import Table
-
-    from agentos.cli.gateway_rpc import run_gateway_sync
-    from agentos.cli.output import print_json
-    from agentos.cli.ui import console
-
-    async def _run(client):
-        return await client.call(
-            "memory.repair.list",
-            {"agentId": agent_id, "limit": limit},
-        )
-
-    payload = run_gateway_sync(_run, json_output=json_output, config_path=config_path)
-    if json_output:
-        print_json(payload)
-        return
-
-    table = Table(title=f"Memory repair queue - agent={agent_id}", show_header=True)
-    table.add_column("Summary")
-    table.add_column("Session")
-    table.add_column("Compaction")
-    table.add_column("Status")
-    table.add_column("Removed", justify="right")
-    for row in payload.get("items", []):
-        table.add_row(
-            str(row.get("summaryId") or ""),
-            str(row.get("sessionKey") or ""),
-            str(row.get("compactionId") or ""),
-            str(row.get("flushReceiptStatus") or ""),
-            "" if row.get("removedCount") is None else str(row.get("removedCount")),
-        )
-    console.print(table)
 
 
-@repair_app.command("show")
-def memory_repair_show_cmd(
-    summary_id: int | None = typer.Option(None, "--summary-id", help="Repair summary id"),
-    session_key: str = typer.Option("", "--session-key", help="Session key to inspect"),
-    compaction_id: str = typer.Option("", "--compaction-id", help="Compaction id to inspect"),
-    agent_id: str = typer.Option("main", "--agent", help="Agent id (default: main)"),
-    entry_limit: int = typer.Option(
-        20,
-        "--entry-limit",
-        min=1,
-        help="Maximum preimage entries",
-    ),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
-) -> None:
-    """Show archived preimage entries for one degraded compaction."""
-
-    from agentos.cli.gateway_rpc import run_gateway_sync
-    from agentos.cli.output import print_json
-    from agentos.cli.ui import console
-
-    async def _run(client):
-        params: dict[str, object] = {"agentId": agent_id}
-        if summary_id is not None:
-            params["summaryId"] = summary_id
-        if session_key:
-            params["sessionKey"] = session_key
-        if compaction_id:
-            params["compactionId"] = compaction_id
-        if entry_limit != 20:
-            params["entryLimit"] = entry_limit
-        return await client.call("memory.repair.show", params)
-
-    payload = run_gateway_sync(_run, json_output=json_output)
-    if json_output:
-        print_json(payload)
-        return
-    for row in payload.get("entries", []):
-        console.print(f"[{row.get('role', '')}] {row.get('content', '')}")
-
-
-@repair_app.command("run")
-def memory_repair_run_cmd(
-    summary_id: int | None = typer.Option(None, "--summary-id", help="Repair summary id"),
-    session_key: str = typer.Option("", "--session-key", help="Session key to repair"),
-    compaction_id: str = typer.Option("", "--compaction-id", help="Compaction id to repair"),
-    agent_id: str = typer.Option("main", "--agent", help="Agent id (default: main)"),
-    limit: int = typer.Option(50, "--limit", min=1, help="Maximum repairs to run"),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
-    config_path: Path | None = typer.Option(None, "--config", help="Override config path."),
-) -> None:
-    """Retry extraction from archived compaction preimages."""
-
-    from rich.table import Table
-
-    from agentos.cli.gateway_rpc import run_gateway_sync
-    from agentos.cli.output import print_json
-    from agentos.cli.ui import console
-
-    async def _run(client):
-        params: dict[str, object] = {"agentId": agent_id, "limit": limit}
-        if summary_id is not None:
-            params["summaryId"] = summary_id
-        if session_key:
-            params["sessionKey"] = session_key
-        if compaction_id:
-            params["compactionId"] = compaction_id
-        return await client.call("memory.repair.run", params)
-
-    payload = run_gateway_sync(_run, json_output=json_output, config_path=config_path)
-    if json_output:
-        print_json(payload)
-        return
-
-    table = Table(title=f"Memory repair run - agent={agent_id}", show_header=True)
-    table.add_column("Session")
-    table.add_column("Compaction")
-    table.add_column("Status")
-    table.add_column("Reason")
-    for row in payload.get("results", []):
-        table.add_row(
-            str(row.get("sessionKey") or ""),
-            str(row.get("compactionId") or ""),
-            str(row.get("status") or ""),
-            str(row.get("reason") or ""),
-        )
-    console.print(table)
-
-
-memory_app.command("flush-session")(memory_flush_session_cmd)
 
 
 # ── gateway sub-app ───────────────────────────────────────────────────────────

@@ -272,7 +272,6 @@ class ServiceContainer:
     # over `memory_managers` (each manager's `.provider_manager`).
     memory_provider_managers: dict[str, Any] = field(default_factory=dict)
     flush_service: Any = None  # SessionFlushService | None (gated by AGENTOS_SESSION_FLUSH)
-    memory_repair_service: Any = None
     task_runtime: Any = None
     heartbeat_loop: Any = None
     heartbeat_watcher: Any = None
@@ -333,11 +332,6 @@ class ServiceContainer:
             except Exception:
                 pass
 
-        if self.memory_repair_service is not None:
-            try:
-                await self.memory_repair_service.stop()
-            except Exception:
-                pass
 
         # ── 2. Tear down memory tier through MemoryManager ──
         # In real boot, the legacy `memory_watchers` / `memory_stores` below
@@ -1917,34 +1911,6 @@ async def build_services(
     else:
         log.info("build_services.session_flush_service_disabled")
 
-    memory_repair_service = None
-    if (
-        bool(getattr(config.memory, "repair_enabled", True))
-        and flush_service is not None
-        and session_manager is not None
-    ):
-        try:
-            from agentos.gateway.memory_repair_service import MemoryRepairService
-
-            memory_roots = {
-                agent_id: Path(root)
-                for agent_id, manager in memory_managers.items()
-                for root in [
-                    getattr(manager, "workspace_dir", None) or getattr(manager, "memory_dir", None)
-                ]
-                if root is not None
-            }
-            memory_repair_service = MemoryRepairService(
-                session_manager=session_manager,
-                flush_service=flush_service,
-                memory_roots=memory_roots,
-                agent_ids=tuple(_configured_agent_ids(config, extra_agent_ids)),
-                interval_seconds=float(getattr(config.memory, "repair_interval_seconds", 60.0)),
-                max_items_per_tick=int(getattr(config.memory, "repair_max_items_per_tick", 5)),
-            )
-            log.info("build_services.memory_repair_service_ready")
-        except Exception as e:
-            log.warning("build_services.memory_repair_service_failed", error=str(e))
 
     svc = ServiceContainer(
         config=config,
@@ -1964,7 +1930,6 @@ async def build_services(
         turn_capture_services=turn_capture_services,
         memory_provider_managers=memory_provider_managers,
         flush_service=flush_service,
-        memory_repair_service=memory_repair_service,
     )
     # Attach deferred callback ref so start_gateway_server can wire TurnRunner
     svc._turn_runner_ref = _turn_runner_ref  # type: ignore[attr-defined]
@@ -2138,10 +2103,6 @@ async def start_gateway_server(
     if hasattr(svc, "_turn_runner_ref"):
         svc._turn_runner_ref.append(turn_runner)  # type: ignore[attr-defined]
 
-    memory_repair_service = getattr(svc, "memory_repair_service", None)
-    if memory_repair_service is not None:
-        memory_repair_service.start()
-        log.info("gateway.memory_repair_service_started")
 
     # Lazy ref for channel_manager — cron handler captures it via closure,
     # populated after channel_manager is constructed below.

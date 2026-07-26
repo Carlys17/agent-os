@@ -310,7 +310,7 @@ def test_memory_repair_guidance_uses_existing_cli_options() -> None:
 
     repair = next(finding for finding in findings if finding.id == "memory.repair.pending")
     commands = [step.command for step in repair.fix_steps]
-    assert "agentos memory repair run --json" in commands
+    assert "agentos memory raw-fallbacks list --json" in commands
     assert "agentos memory repair run --yes" not in commands
 
 

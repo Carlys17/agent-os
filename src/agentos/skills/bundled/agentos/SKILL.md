@@ -110,7 +110,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `sessions` | `list`, `show`, `resume`, `abort`, `delete`, `export` |
 | `cron` | `list`, `status`, `add`, `update`, `remove`, `run`, `runs` |
 | `channels` | `list`, `status`, `types`, `describe`, `native-commands`, `add`, `remove`, `enable`, `disable`, `edit`, `restart`, `logout`, `pairing …` |
-| `memory` | `status`, `index`, `list`, `search`, `show`, `embedding-download`, `repair …`, `raw-fallbacks …` |
+| `memory` | `status`, `index`, `list`, `search`, `show`, `embedding-download`, `raw-fallbacks …` |
 | `sandbox` | `status`, `on`, `bypass`, `full`, `reset` |
 | `search` | `list`, `status`, `query`, `configure` |
 | `cost` | usage and estimated cost report |

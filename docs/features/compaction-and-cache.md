@@ -93,11 +93,10 @@ agentos sessions export <session-key>
 agentos diagnostics on
 ```
 
-For memory repair surfaces related to degraded compaction records:
+Sessions whose memory never landed are visible in `agentos doctor`. Automatic
+repair was removed; the raw transcripts remain on disk:
 
-```sh
-agentos memory repair list
-agentos memory repair show --summary-id <id>
+```bash
 agentos memory raw-fallbacks list
 ```
 
