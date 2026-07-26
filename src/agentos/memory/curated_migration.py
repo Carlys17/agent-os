@@ -25,6 +25,7 @@ from pathlib import Path
 
 import structlog
 
+from agentos.memory.atomic_write import atomic_write_text
 from agentos.memory.curated import ENTRY_DELIMITER
 
 log = structlog.get_logger(__name__)
@@ -159,7 +160,13 @@ def migrate_freeform_memory_md(
     if overflow:
         _append_overflow(memory_dir, overflow, today or date.today().isoformat())
 
-    memory_path.write_text(ENTRY_DELIMITER.join(kept), encoding="utf-8")
+    # Atomic: this is the one moment MEMORY.md is restructured, and `kept` --
+    # the ~80% the user is meant to retain -- exists nowhere else. The overflow
+    # archive written just above holds only the discarded remainder. A plain
+    # write_text truncates first, so a crash mid-write would destroy the
+    # user's primary memory file with nothing to recover it from, and the
+    # migration is one-time and content-idempotent, so no retry brings it back.
+    atomic_write_text(memory_path, ENTRY_DELIMITER.join(kept))
     log.info(
         "memory_md_migrated",
         kept=len(kept),
@@ -178,6 +185,13 @@ def _append_overflow(memory_dir: Path, overflow: list[str], today: str) -> None:
     if archive_path.is_file():
         try:
             existing = archive_path.read_text(encoding="utf-8").rstrip() + "\n\n"
-        except OSError:
-            existing = ""
-    archive_path.write_text(existing + header + body, encoding="utf-8")
+        except OSError as exc:
+            # Unreadable is not empty. Falling back to "" here would rewrite
+            # the archive with only this batch, discarding every previously
+            # migrated overflow entry -- the same class of loss guarded
+            # against on the curated write paths. Refuse instead: the caller
+            # has not yet touched MEMORY.md, so nothing is lost by stopping.
+            raise OSError(
+                f"refusing to overwrite unreadable overflow archive {archive_path}"
+            ) from exc
+    atomic_write_text(archive_path, existing + header + body)
