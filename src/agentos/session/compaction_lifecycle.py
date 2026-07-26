@@ -466,6 +466,10 @@ def compaction_memory_status(
 
 
 def pre_compaction_flush_enabled(config: Any) -> bool:
+    # Function-local on purpose: agentos.memory.flush_status imports from this
+    # module at module scope, so hoisting this to the top of the file closes an
+    # import cycle and raises ImportError on `import agentos.memory.*`. The
+    # cycle is real, not theoretical -- see tests/test_memory_session_import.py.
     from agentos.memory.flush_config import is_session_flush_enabled
 
     if not is_session_flush_enabled():
