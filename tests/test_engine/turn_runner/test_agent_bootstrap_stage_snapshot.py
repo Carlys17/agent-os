@@ -321,14 +321,10 @@ def _patch_memory_helpers(runner):
     def _load_memory_md(self, workspace_dir, max_chars=None):  # noqa: ARG001, ARG002
         return None
 
-    def _load_daily_notes(self, workspace_dir):  # noqa: ARG001, ARG002
-        return {}
-
     runner._resolve_memory_source_dir = _resolve_memory_source_dir.__get__(
         runner, TurnRunner
     )
     runner._load_memory_md = _load_memory_md.__get__(runner, TurnRunner)
-    runner._load_daily_notes = _load_daily_notes.__get__(runner, TurnRunner)
 
 
 def _patch_post_slice_probe(runner):

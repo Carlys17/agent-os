@@ -1610,7 +1610,7 @@ class TurnRunner:
         ws = self._resolve_memory_source_dir(agent_id)
         new_snap = MemorySnapshot(
             memory_md=self._load_memory_md(ws),
-            daily_notes=self._load_daily_notes(ws),
+            daily_notes={},  # dropped before injection; see the omit block below
         )
         for key in list(self._memory_snapshots):
             if key[0] == agent_id:
@@ -3832,7 +3832,7 @@ class TurnRunner:
             memory_text = snap.memory_md
             daily = snap.daily_notes
         else:
-            daily = self._load_daily_notes(memory_source_dir)
+            daily = {}
             memory_text = self._load_memory_md(memory_source_dir)
         # The curated store now owns MEMORY.md / USER.md injection via the
         # ``## Memory`` block (usage header + sanitization). Drop the raw
@@ -3867,15 +3867,23 @@ class TurnRunner:
                     memory_text = (
                         f"{memory_text}\n\n{static_block}" if memory_text else static_block
                     )
+        # Daily notes are not auto-injected, and are no longer read from disk
+        # either: every load was immediately discarded here, so the directory
+        # scan and file reads bought nothing.
+        #
+        # `daily_notes_omitted` reports the POLICY, not a count. Deriving it
+        # from "how many did we drop" would flip it to False now that nothing
+        # is loaded, and the decision log would go quiet about a policy that
+        # is still in force -- the reader could no longer tell "notes were
+        # suppressed" from "this workspace has no notes". The count is 0
+        # because none were read, which is what the separate counter says.
         daily_notes_count_before_omit = len(daily)
-        daily_notes_omitted = daily_notes_count_before_omit > 0
-        if daily_notes_omitted:
-            daily = {}
+        daily_notes_omitted = True
+        daily = {}
         if prompt_metadata is not None:
             prompt_metadata["daily_notes_omitted"] = daily_notes_omitted
             prompt_metadata["daily_notes_count_before_omit"] = daily_notes_count_before_omit
-            if daily_notes_omitted:
-                prompt_metadata["daily_notes_policy_reason"] = "auto_injection_disabled"
+            prompt_metadata["daily_notes_policy_reason"] = "auto_injection_disabled"
             if fresh_user_session:
                 prompt_metadata["daily_notes_fresh_session_omitted"] = True
             prompt_metadata["memory_md_present"] = memory_text is not None
@@ -4153,16 +4161,6 @@ class TurnRunner:
             joined_len = candidate_len
 
         return "\n\n".join(included)
-
-    def _load_daily_notes(self, workspace_dir: Any) -> dict[str, str]:
-        from agentos.identity.workspace import load_daily_notes
-
-        memory_cfg = getattr(self._config, "memory", None)
-        return load_daily_notes(
-            str(workspace_dir),
-            per_note_max_chars=getattr(memory_cfg, "daily_note_max_chars", 4000),
-            total_max_chars=getattr(memory_cfg, "daily_notes_total_max_chars", 8000),
-        )
 
     async def _run_pipeline(
         self,

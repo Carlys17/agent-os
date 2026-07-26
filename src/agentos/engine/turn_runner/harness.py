@@ -535,7 +535,11 @@ class _TurnRunnerMemorySnapshotAdapter(MemorySnapshotPort):
             else:
                 runner._memory_snapshots[snap_key] = MemorySnapshot(
                     memory_md=memory_md,
-                    daily_notes=runner._load_daily_notes(workspace),
+                    # Daily notes are dropped unconditionally before injection
+                    # (see the omit block in runtime.py). Reading them here
+                    # only to discard them there cost a directory scan plus
+                    # file reads on every session start.
+                    daily_notes={},
                 )
         return _MemorySnapshotResult(
             sync_manager=sync_manager,
@@ -815,7 +819,7 @@ class _TurnRunnerMemorySnapshotRefreshAdapter(MemorySnapshotRefreshPort):
         if private_memory_allowed:
             runner._memory_snapshots[(agent_id, session_key)] = MemorySnapshot(
                 memory_md=runner._load_memory_md(workspace),
-                daily_notes=runner._load_daily_notes(workspace),
+                daily_notes={},  # dropped before injection; see runtime.py
             )
 
 

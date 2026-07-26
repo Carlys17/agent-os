@@ -145,7 +145,6 @@ def test_fresh_user_session_omits_live_daily_notes_from_dynamic_context(tmp_path
             tools=SimpleNamespace(profile=None),
         ),
     )
-    runner._load_daily_notes = lambda _workspace_dir: {"2026-05-31.md": "stale Labubu context"}
     metadata: dict[str, object] = {}
 
     assembled = runner._assemble_prompt(
@@ -160,7 +159,9 @@ def test_fresh_user_session_omits_live_daily_notes_from_dynamic_context(tmp_path
     assert "## Recent Notes" not in dynamic
     assert "stale Labubu context" not in dynamic
     assert metadata["daily_notes_fresh_session_omitted"] is True
-    assert metadata["daily_notes_count_before_omit"] == 1
+    # 0, not 1: daily notes are no longer read from disk at all, so nothing
+    # is loaded to be counted. The omit flag still reports the policy.
+    assert metadata["daily_notes_count_before_omit"] == 0
 
 
 def test_fresh_user_session_omits_snapshot_daily_notes_from_dynamic_context(tmp_path) -> None:
@@ -192,6 +193,9 @@ def test_fresh_user_session_omits_snapshot_daily_notes_from_dynamic_context(tmp_
     assert "snapshot daily context" not in dynamic
     assert "stable memory" in full_prompt
     assert metadata["daily_notes_fresh_session_omitted"] is True
+    # 1 here, unlike the load-path tests below: this snapshot was populated
+    # directly, so the notes exist in memory and must still be dropped. A
+    # snapshot captured before this change can still carry them.
     assert metadata["daily_notes_count_before_omit"] == 1
 
 
@@ -205,7 +209,6 @@ def test_non_fresh_user_session_omits_live_daily_notes_from_dynamic_context(tmp_
             tools=SimpleNamespace(profile=None),
         ),
     )
-    runner._load_daily_notes = lambda _workspace_dir: {"2026-05-31.md": "daily context"}
     metadata: dict[str, object] = {}
 
     assembled = runner._assemble_prompt(
@@ -220,7 +223,9 @@ def test_non_fresh_user_session_omits_live_daily_notes_from_dynamic_context(tmp_
     assert "daily context" not in dynamic
     assert metadata["daily_notes_omitted"] is True
     assert metadata["daily_notes_policy_reason"] == "auto_injection_disabled"
-    assert metadata["daily_notes_count_before_omit"] == 1
+    # 0, not 1: daily notes are no longer read from disk at all, so nothing
+    # is loaded to be counted. The omit flag still reports the policy.
+    assert metadata["daily_notes_count_before_omit"] == 0
 
 
 def test_daily_notes_auto_omit_preserves_memory_md(tmp_path) -> None:
@@ -234,7 +239,6 @@ def test_daily_notes_auto_omit_preserves_memory_md(tmp_path) -> None:
             tools=SimpleNamespace(profile=None),
         ),
     )
-    runner._load_daily_notes = lambda _workspace_dir: {"2026-05-31.md": "daily context"}
     metadata: dict[str, object] = {}
 
     assembled = runner._assemble_prompt(
@@ -350,7 +354,4 @@ def test_full_and_unattended_bootstrap_snapshots_use_distinct_keys(tmp_path) -> 
     full_snapshot = runner._bootstrap_snapshots[("main", session_key, "full")]
     unattended_snapshot = runner._bootstrap_snapshots[("main", session_key, "unattended")]
     assert "BOOTSTRAP.md" in full_snapshot.workspace_files
-    assert (
-        "BOOTSTRAP.md"
-        not in unattended_snapshot.workspace_files
-    )
+    assert "BOOTSTRAP.md" not in unattended_snapshot.workspace_files
