@@ -522,11 +522,21 @@ class _TurnRunnerMemorySnapshotAdapter(MemorySnapshotPort):
         private_memory_allowed = allows_private_memory_prompt_injection(session_key)
         snap_key = (agent_id, session_key)
         if private_memory_allowed and snap_key not in runner._memory_snapshots:
+            from agentos.engine.runtime import MemorySourceUnreadableError
+
             workspace = runner._resolve_memory_source_dir(agent_id)
-            runner._memory_snapshots[snap_key] = MemorySnapshot(
-                memory_md=runner._load_memory_md(workspace),
-                daily_notes=runner._load_daily_notes(workspace),
-            )
+            try:
+                memory_md = runner._load_memory_md(workspace)
+            except MemorySourceUnreadableError:
+                # Leave the snapshot unset so the next turn retries. Freezing
+                # an empty one here would blind the agent for the whole
+                # session over a transient read failure.
+                pass
+            else:
+                runner._memory_snapshots[snap_key] = MemorySnapshot(
+                    memory_md=memory_md,
+                    daily_notes=runner._load_daily_notes(workspace),
+                )
         return _MemorySnapshotResult(
             sync_manager=sync_manager,
             private_memory_allowed=private_memory_allowed,

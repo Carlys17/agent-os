@@ -125,6 +125,10 @@ class CuratedMemoryStore:
         self.user_entries: list[str] = []
         self._consolidation_failures = 0
         self._first_failure_at = 0.0
+        # Targets whose last load_from_disk() could not read the file. Their
+        # in-memory entries are NOT the file's contents, so writes must refuse
+        # rather than flush emptiness over real data.
+        self.load_failed: dict[str, bool] = {}
         # Frozen snapshot for system-prompt injection -- set once per
         # load_from_disk() call and never mutated by mid-session writes.
         self._snapshot: dict[str, str] = {}
@@ -147,8 +151,30 @@ class CuratedMemoryStore:
         stable for the entire session (prefix-cache invariant holds).
         """
         self._memory_dir.mkdir(parents=True, exist_ok=True)
-        self.memory_entries = list(dict.fromkeys(self._read_file(self._path_for("memory"))))
-        self.user_entries = list(dict.fromkeys(self._read_file(self._path_for("user"))))
+
+        # An unreadable file is not an empty one. Loading it as [] would put
+        # the agent into a silent memory blackout for the whole session --
+        # the file still holds every entry on disk, but the snapshot is empty
+        # and nothing anywhere says why. Worse, the store then holds [] in
+        # memory while disk holds real entries, and `add` (which skips the
+        # drift check) would flush that emptiness back over them.
+        #
+        # Record the failure instead: writes refuse, and the caller can tell
+        # "no memory" apart from "could not read memory".
+        self.load_failed = {}
+        memory_raw = self._read_raw_checked(self._path_for("memory"))
+        user_raw = self._read_raw_checked(self._path_for("user"))
+        if memory_raw is None:
+            self.load_failed["memory"] = True
+            log.error(
+                "curated_memory_load_failed", target="memory", path=str(self._path_for("memory"))
+            )
+        if user_raw is None:
+            self.load_failed["user"] = True
+            log.error("curated_memory_load_failed", target="user", path=str(self._path_for("user")))
+
+        self.memory_entries = list(dict.fromkeys(self._parse_entries(memory_raw or "")))
+        self.user_entries = list(dict.fromkeys(self._parse_entries(user_raw or "")))
 
         sanitized_memory = self._sanitize_entries_for_snapshot(self.memory_entries, "MEMORY.md")
         sanitized_user = self._sanitize_entries_for_snapshot(self.user_entries, "USER.md")

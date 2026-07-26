@@ -550,6 +550,15 @@ def _normalize_capture_kind(value: str) -> str:
     return value.strip().lower().replace("-", "_").replace(".", "_").replace(":", "_")
 
 
+class MemorySourceUnreadableError(Exception):
+    """Curated memory exists on disk but could not be read this attempt.
+
+    Distinct from "there is no memory": callers must not freeze an empty
+    snapshot on this, or a transient read failure blinds the agent for the
+    rest of the session.
+    """
+
+
 # Curated-memory write tools. A turn that calls one of these has already done
 # the thing the nudge would ask for, so it resets the counter instead.
 _MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset({"memory", "memory_save"})
@@ -4094,6 +4103,16 @@ class TurnRunner:
             user_char_limit=user_limit,
         )
         store.load_from_disk()
+        if store.load_failed:
+            # The file exists but could not be read. Returning None here would
+            # be indistinguishable from "no memory yet", and the caller freezes
+            # that result for the whole session -- so one transient lock or
+            # permission blip would blind the agent until the session ends,
+            # silently. Raise so the snapshot is not frozen and the next turn
+            # retries the read.
+            raise MemorySourceUnreadableError(
+                f"curated memory unreadable: {sorted(store.load_failed)}"
+            )
         named_blocks = [
             (name, block)
             for name, block in (
