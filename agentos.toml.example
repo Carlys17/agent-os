@@ -200,6 +200,19 @@ source = "workspace"
 # embedder_base_url = "http://localhost:11434"
 # vector_store_path = ""  # empty -> <agent state dir>/mem0
 
+[memory.nudge]
+# Periodic memory review. Every `interval` user turns, once the reply is
+# already delivered, a short background turn re-reads the conversation and
+# saves anything durable it finds. Without it MEMORY.md tends to stay empty:
+# saving is never the most urgent thing in any single turn.
+#
+# Skipped for cron/heartbeat/subagent turns, and for any turn where the agent
+# already wrote to memory on its own.
+enabled = true
+interval = 10            # user turns between reviews; 0 disables
+# max_iterations = 6     # ceiling on the review turn's own tool loop
+# timeout_seconds = 90.0
+
 [memory.dream]
 # Dream consolidation is safety-first by default. Background scheduling and
 # curated MEMORY.md writes require explicit opt-in.

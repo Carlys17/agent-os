@@ -153,7 +153,7 @@ Main `agentos.toml` sections (full commented reference:
 | `[agentos_router]` | router on/off, `strategy` (`pilot-v1`), tier settings under `[agentos_router.tiers.c0..c3]` |
 | `[skills]` | skill filtering/injection: `filter_strategy`, `filter_top_k`, `injection_mode` |
 | `[tools]` | model-visible tools and policy; `enabled = false` runs providers in plain-text mode |
-| `[memory]` | memory source and embedding model, `[memory.dream]` |
+| `[memory]` | memory source and embedding model, `[memory.nudge]` (periodic memory review), `[memory.dream]` |
 | `[sandbox]` | `sandbox`, `default_level` (DISABLED/STANDARD/STRICT/LOCKED), `backend`, network/mounts |
 | `[permissions]` | `default_mode` = `off` \| `on` \| `bypass` \| `full` (pair with `agentos sandbox …`) |
 | `[auth]` | gateway admission: `mode` (`none` on loopback or `token`), `token` |

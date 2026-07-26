@@ -116,9 +116,7 @@ class ControlUiConfig(BaseSettings):
             or re.fullmatch(r"[A-Za-z0-9._~-]+", segment) is None
             for segment in segments
         ):
-            raise ValueError(
-                "control_ui.base_path must contain only safe URL path segments"
-            )
+            raise ValueError("control_ui.base_path must contain only safe URL path segments")
         if base_path in {"/api", "/ws"} or base_path.startswith(("/api/", "/ws/")):
             raise ValueError("control_ui.base_path cannot overlap gateway API or WebSocket routes")
         return base_path
@@ -218,9 +216,7 @@ class TaskRuntimeConfig(BaseModel):
             PendingOverflowPolicy(value)
         except ValueError as exc:
             valid = ", ".join(member.value for member in PendingOverflowPolicy)
-            raise ValueError(
-                f"pending_overflow_policy must be one of {{{valid}}}"
-            ) from exc
+            raise ValueError(f"pending_overflow_policy must be one of {{{valid}}}") from exc
         return value
 
     @field_validator("pending_overflow_policy_per_channel")
@@ -234,8 +230,7 @@ class TaskRuntimeConfig(BaseModel):
                 PendingOverflowPolicy(policy)
             except ValueError as exc:
                 raise ValueError(
-                    f"pending_overflow_policy_per_channel[{channel!r}] "
-                    f"must be one of {{{valid}}}"
+                    f"pending_overflow_policy_per_channel[{channel!r}] must be one of {{{valid}}}"
                 ) from exc
         return value
 
@@ -403,6 +398,43 @@ class DreamConfig(BaseModel):
     evidence_negative_recurrence_threshold: int = Field(default=2, ge=1)
     evidence_curated_writes_enabled: bool = True
     evidence_quarantine_enabled: bool = True
+
+
+class MemoryNudgeConfig(BaseModel):
+    """Periodic memory-review nudge.
+
+    Curated memory only fills up when something asks the agent to write to it.
+    Left alone, an agent will happily run for hundreds of turns with an empty
+    MEMORY.md, because saving is never the most urgent thing in any single
+    turn. The nudge closes that gap: every N user turns, once the reply is
+    already on the wire, a short background turn re-reads the conversation and
+    saves anything durable it finds.
+
+    It runs after the response so it never competes with the user's task for
+    model attention, and it is skipped entirely when the model already wrote
+    to memory on its own -- an agent that curates unprompted needs no nudge.
+
+    Adapted from hermes-agent's memory nudge (MIT, © 2025 Nous Research).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    # User turns between reviews. 0 disables the nudge entirely.
+    interval: int = Field(default=10, ge=0)
+    # Ceiling on the review turn's own tool loop. The review has one job --
+    # read the transcript, decide, maybe call `memory` -- so it should never
+    # need a long loop; a low cap bounds the cost of a confused review.
+    max_iterations: int = Field(default=6, ge=1)
+    # Give up on a review that outlives its usefulness rather than letting it
+    # trail the session.
+    timeout_seconds: float = Field(default=90.0, gt=0)
+    # Turn kinds that must never trigger a review. Cron/heartbeat/subagent
+    # turns are machine traffic: their transcripts say nothing durable about
+    # the user, and reviewing them would write the harness into memory.
+    excluded_run_kinds: list[str] = Field(
+        default_factory=lambda: ["memory_nudge", "cron", "heartbeat", "subagent", "recall"]
+    )
 
 
 class SafetyConfig(BaseModel):
@@ -597,6 +629,9 @@ class MemoryConfig(BaseSettings):
 
     # Dream consolidation
     dream: DreamConfig = Field(default_factory=DreamConfig)
+
+    # Periodic memory-review nudge
+    nudge: MemoryNudgeConfig = Field(default_factory=MemoryNudgeConfig)
 
     # Curated memory (hermes-style bounded entry stores). Char budgets for the
     # always-injected MEMORY.md / USER.md files. Chars, not tokens — char
@@ -838,8 +873,7 @@ def _router_tier_profile_defaults(profile: str | None) -> dict:
                 "provider": "dashscope",
                 "model": "qwen3.6-flash",
                 "description": (
-                    "DashScope fast route: Qwen3.6 Flash for simple text tasks; "
-                    "pending live smoke."
+                    "DashScope fast route: Qwen3.6 Flash for simple text tasks; pending live smoke."
                 ),
                 "supports_image": False,
             },
@@ -992,8 +1026,7 @@ def _router_tier_profile_defaults(profile: str | None) -> dict:
                 "provider": "moonshot",
                 "model": "kimi-k2.5",
                 "description": (
-                    "Moonshot balanced route: Kimi K2.5 for normal multimodal "
-                    "agent work."
+                    "Moonshot balanced route: Kimi K2.5 for normal multimodal agent work."
                 ),
                 "supports_image": True,
                 "thinking_level": "medium",
@@ -1012,8 +1045,7 @@ def _router_tier_profile_defaults(profile: str | None) -> dict:
                 "provider": "moonshot",
                 "model": "kimi-k2.6",
                 "description": (
-                    "Moonshot highest route: Kimi K2.6 for the hardest long-horizon "
-                    "agent work."
+                    "Moonshot highest route: Kimi K2.6 for the hardest long-horizon agent work."
                 ),
                 "supports_image": True,
                 "thinking_level": "high",
@@ -1161,9 +1193,7 @@ class AgentOSRouterConfig(BaseSettings):
         normalized = LEGACY_STRATEGY_ALIASES.get(normalized, normalized)
         if not is_known_strategy(normalized):
             allowed = ", ".join(repr(s) for s in sorted(known_strategy_ids()))
-            raise ValueError(
-                f"agentos_router.strategy must be one of {allowed}; got {value!r}"
-            )
+            raise ValueError(f"agentos_router.strategy must be one of {allowed}; got {value!r}")
         return normalized
 
     @model_validator(mode="before")
@@ -1176,9 +1206,7 @@ class AgentOSRouterConfig(BaseSettings):
             "upgrade_to_c3_compaction_enabled" not in values
             and "upgrade_to_t3_compaction_enabled" in values
         ):
-            values["upgrade_to_c3_compaction_enabled"] = values[
-                "upgrade_to_t3_compaction_enabled"
-            ]
+            values["upgrade_to_c3_compaction_enabled"] = values["upgrade_to_t3_compaction_enabled"]
         if "default_tier" in values:
             values["default_tier"] = normalize_text_tier(values.get("default_tier")) or values.get(
                 "default_tier"
@@ -1346,9 +1374,7 @@ class AudioElevenLabsProviderConfig(BaseModel):
 
 
 class AudioProvidersConfig(BaseModel):
-    elevenlabs: AudioElevenLabsProviderConfig = Field(
-        default_factory=AudioElevenLabsProviderConfig
-    )
+    elevenlabs: AudioElevenLabsProviderConfig = Field(default_factory=AudioElevenLabsProviderConfig)
 
 
 class AudioTTSConfig(BaseModel):
@@ -1479,9 +1505,7 @@ class TelegramChannelEntry(ConfiguredChannelEntry):
             if not self.webhook_url:
                 raise ValueError("webhook_url is required for telegram webhook mode")
             if not self.webhook_secret_token:
-                raise ValueError(
-                    "webhook_secret_token is required for telegram webhook mode"
-                )
+                raise ValueError("webhook_secret_token is required for telegram webhook mode")
         return self
 
 
@@ -1681,6 +1705,7 @@ class GatewayConfig(BaseSettings):
     # Component enable flags
     control_ui: ControlUiConfig = Field(default_factory=ControlUiConfig)
     diagnostics_enabled: bool = False
+
     @model_validator(mode="after")
     def _default_agentos_router_profile_for_direct_provider(self) -> GatewayConfig:
         router = self.agentos_router
@@ -1755,8 +1780,7 @@ class GatewayConfig(BaseSettings):
         import logging
 
         logging.getLogger(__name__).warning(
-            "agentos_router.judge_provider_cross_provider_reset "
-            "judge_provider=%s llm_provider=%s",
+            "agentos_router.judge_provider_cross_provider_reset judge_provider=%s llm_provider=%s",
             judge_provider,
             provider,
         )
@@ -1957,6 +1981,7 @@ class GatewayConfig(BaseSettings):
             "capture_roll_max_chars": str(self.memory.capture_roll_max_chars),
             "dream_enabled": str(self.memory.dream.enabled).lower(),
         }
+
     _runtime_secret_paths: set[str] = PrivateAttr(default_factory=set)
 
     def to_toml_dict(self) -> dict[str, Any]:
