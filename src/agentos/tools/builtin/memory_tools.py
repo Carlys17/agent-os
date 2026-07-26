@@ -54,18 +54,55 @@ logger = structlog.get_logger(__name__)
 # Injection scanning
 # ---------------------------------------------------------------------------
 
+# Curated memory is the highest-value injection target in the system: entries
+# enter the system prompt verbatim, survive restarts, and persist across every
+# future session, so a single poisoned entry keeps firing until a human spots
+# it. These mirror hermes-agent's "strict" scope (MIT) -- the scope it applies
+# to memory writes and skill installs -- rather than the narrower set used for
+# ordinary conversational context.
 _MEMORY_THREAT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Instruction override / identity hijack
     re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.I),
     re.compile(r"you\s+are\s+now\s+(a|an)\b", re.I),
     re.compile(r"system\s+prompt\s+override", re.I),
     re.compile(r"new\s+instructions?\s*:", re.I),
-    re.compile(r"(curl|wget)\s+.*\$\{?\w*(KEY|SECRET|TOKEN|PASSWORD)", re.I),
-    re.compile(r"cat\s+.*(\.env|\.netrc|\.pgpass|credentials)", re.I),
-    re.compile(r"authorized_keys", re.I),
     re.compile(r"<\s*system\s*>", re.I),
+    # Secret exfiltration via shell
+    re.compile(
+        r"(curl|wget)\s+[^\n]{0,2048}\$\{?\w*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|API)", re.I
+    ),
+    re.compile(r"cat\s+[^\n]{0,2048}(\.env|\.netrc|\.pgpass|\.npmrc|\.pypirc|credentials)", re.I),
+    # Exfiltration to an arbitrary endpoint
+    re.compile(r"(send|post|upload|transmit)\s+[^\n]{0,2048}\s+(to|at)\s+https?://", re.I),
+    re.compile(
+        r"(include|output|print|share)\s+(?:\w+\s+){0,8}"
+        r"(conversation|chat\s+history|previous\s+messages|full\s+context|entire\s+context)",
+        re.I,
+    ),
+    # Persistence / SSH backdoor
+    re.compile(r"authorized_keys", re.I),
+    re.compile(r"\$HOME/\.ssh|~/\.ssh", re.I),
+    re.compile(r"\$HOME/\.agentos/\.env|~/\.agentos/\.env", re.I),
+    # Rewriting the instruction files the agent reads on every run
+    re.compile(
+        r"(update|modify|edit|write|change|append|add\s+to)\s+[^\n]{0,2048}"
+        r"(?:AGENTS\.md|CLAUDE\.md|\.cursorrules|\.clinerules)",
+        re.I,
+    ),
+    re.compile(
+        r"(update|modify|edit|write|change|append|add\s+to)\s+[^\n]{0,2048}"
+        r"\.agentos/(config\.yaml|agentos\.toml)",
+        re.I,
+    ),
+    # Hardcoded credentials -- keeping these out of a file that is injected
+    # into every prompt is worth the occasional false positive.
+    re.compile(r"(?:api[_-]?key|token|secret|password)\s*[=:]\s*[\"'][A-Za-z0-9+/=_-]{20,}", re.I),
 )
 
-_INVISIBLE_CHARS = re.compile(r"[\u200b\u200c\u200d\ufeff\u202a-\u202e]")
+# Invisible / bidirectional unicode used to hide injected text from a human
+# reviewing the file. Includes directional isolates (U+2066-U+2069) and
+# invisible math operators (U+2062-U+2064), both real attack tools.
+_INVISIBLE_CHARS = re.compile(r"[\u200b\u200c\u200d\ufeff\u202a-\u202e\u2062-\u2064\u2066-\u2069]")
 
 # Actions that mirror to an external memory provider. Read-only or unknown
 # actions never reach a provider \u2014 ported from hermes-agent's
@@ -1018,8 +1055,7 @@ def create_memory_tools(
                     {
                         "success": False,
                         "error": (
-                            "operations must be a list of "
-                            "{action, content?, old_text?} objects."
+                            "operations must be a list of {action, content?, old_text?} objects."
                         ),
                     },
                     ensure_ascii=False,

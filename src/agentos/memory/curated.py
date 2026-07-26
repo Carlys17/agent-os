@@ -33,6 +33,11 @@ try:
 except ImportError:  # pragma: no cover - non-POSIX
     fcntl = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - Windows only
+    import msvcrt
+except ImportError:
+    msvcrt = None  # type: ignore[assignment]
+
 ENTRY_DELIMITER = "\n§\n"
 
 # After this many failed consolidation attempts (overflow / zero-match) in ONE
@@ -715,18 +720,36 @@ class CuratedMemoryStore:
     @staticmethod
     @contextmanager
     def _file_lock(path: Path) -> Iterator[None]:
+        """Hold an exclusive lock across a read-modify-write of *path*.
+
+        The lock lives in a sibling ``.lock`` file so the memory file itself
+        stays free to be swapped by atomic replace.
+
+        Windows has no ``fcntl``; without the ``msvcrt`` branch the lock was a
+        bare ``yield``, so two concurrent sessions on Windows interleaved
+        their read-modify-write and one of the writes was lost. Only a
+        platform with neither primitive falls through unlocked.
+        """
         lock_path = path.with_suffix(path.suffix + ".lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        if fcntl is None:  # pragma: no cover - non-POSIX
+        if fcntl is None and msvcrt is None:  # pragma: no cover - exotic platform
             yield
             return
         fd = open(lock_path, "a+", encoding="utf-8")
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
+            else:  # pragma: no cover - Windows only
+                fd.seek(0)
+                msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]
             yield
         finally:
             try:
-                fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+                if fcntl is not None:
+                    fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+                else:  # pragma: no cover - Windows only
+                    fd.seek(0)
+                    msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
             except OSError:  # pragma: no cover
                 pass
             fd.close()
