@@ -6,6 +6,68 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.7.26] - 2026-07-26
+
+### Added
+
+- Curated memory now nudges itself. Every N user turns — default 10,
+  configured at `[memory.nudge]`, `interval = 0` disables it — a short
+  background review runs after the reply is already on the wire and saves
+  anything durable it found in the conversation. Machine traffic (cron,
+  heartbeat, subagent, recall), the review turn itself, and turns where the
+  agent already wrote to memory are excluded and do not advance the counter.
+- OpenCAP is supported as an LLM gateway provider.
+- Telegram shows a typing indicator while a turn is running.
+- `SECURITY.md` documents GitHub private vulnerability reporting as the
+  intake path for suspected vulnerabilities.
+
+### Changed
+
+- **Breaking:** channel authorization is now two connection surfaces —
+  Control and Channel — backed by explicit RPC audiences, replacing roles and
+  scopes. Telegram pairing is durable, group admission is explicit, and
+  grants are revalidated before turns and tools. Owner/admin elevation is
+  gone from tools, cron, the CLI, and the Control UI; sandbox and approval
+  policy are unchanged. Channel roles, scoped tokens, access modes, and
+  unauthenticated public Control are removed — existing configs using them
+  need to move to pairing surfaces.
+- Cron job management is scoped to the active profile, so jobs from one
+  profile are no longer listed or mutated from another.
+- Daily notes that the injection budget would discard are no longer read at
+  all, cutting per-turn memory I/O.
+
+### Fixed
+
+- `/new` and `/reset` are non-destructive when flush is unavailable: the
+  session is no longer discarded on a path that cannot produce a receipt,
+  and compaction only demands a flush receipt when flush can actually
+  produce one.
+- The `MEMORY.md` migration is non-destructive — an existing file is
+  preserved rather than overwritten.
+- Turn captures are written atomically, so an interrupted write can no
+  longer leave a truncated capture behind.
+- Curated memory writes are locked on Windows, the injection scan covers a
+  wider set of paths, and the hermes durability guards in the curated store
+  are restored.
+- `USER.md` counts as a memory source for write notifications.
+- Unreadable curated files are surfaced as errors instead of being silently
+  skipped, which previously left the agent blind to memory it could not
+  read.
+- The degraded-source list no longer grows one entry per failed metric.
+- Slack dispatches Socket Mode slash commands and classifies slash-command
+  conversations correctly.
+- Discord completes native interaction responses and tolerates command
+  registration failures instead of failing adapter startup.
+- Telegram handles native bot-command mentions, preserves forum command
+  reply targets, renders markdown replies, allows admitted DM slash
+  commands, and keeps pairing runtime state serializable.
+- Admitted senders are granted read access across channels.
+
+### Removed
+
+- Dream consolidation, the orphaned `flush_status`, the memory repair
+  service, and the `agentos memory flush-session` command are removed.
+
 ## [2026.7.25] - 2026-07-25
 
 ### Added
