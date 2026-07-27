@@ -937,7 +937,9 @@ export function SkillsPage() {
           onCategory={setCapminalCat}
           forceArmed={forceArmed}
           busyKeys={busyKeys}
-          onOpen={(key) => setDialog({ kind: 'registry', group: 'capminal', key })}
+          onOpen={(item) =>
+            setDialog({ kind: 'registry', group: 'capminal', key: registryKey(item), item })
+          }
           onInstall={runInstall}
         />
       ) : null}
