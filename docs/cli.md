@@ -355,6 +355,49 @@ More detail:
 - [`search.md`](search.md)
 - [`channels.md`](channels.md)
 
+## Environment Variables
+
+`agentos config` edits the TOML config. `agentos env` edits `~/.agentos/.env`,
+which is where OS environment variables live — the credentials skills and
+external binaries read, and provider keys you would rather not keep in the
+config file.
+
+```sh
+agentos env list                       # every variable AgentOS knows about
+agentos env list --missing             # only the ones that are not set
+agentos env list --category skill      # provider | search | image | audio | memory | skill | custom
+agentos env get OPENAI_API_KEY         # state and description, value masked
+agentos env get OPENAI_API_KEY --reveal
+agentos env set OPENAI_API_KEY --stdin # value read from stdin
+agentos env unset OPENAI_API_KEY
+```
+
+Values are never printed unless you ask for them with `--reveal`, which
+prompts first. Prefer `--stdin` or the interactive prompt over `--value`: a
+value passed as a flag lands in your shell history and in the process list.
+
+When the gateway is running, the change applies to it immediately, so a skill
+that needed the variable becomes eligible without a restart. When no gateway
+is running the file is written directly and the command says the value applies
+at next start. Provider keys always need a restart to take full effect,
+because the client was constructed at boot with the previous value — the
+command tells you when that is the case.
+
+Names that steer subprocess execution (`PATH`, `LD_PRELOAD`, `PYTHONPATH`,
+`EDITOR`, …) or AgentOS runtime posture (`AGENTOS_AGENT_PERMISSIONS`,
+`AGENTOS_GATEWAY_TOKEN`, `AGENTOS_STATE_DIR`, …) are refused, so this surface
+cannot be used to widen what the agent is allowed to do. Edit
+`~/.agentos/.env` by hand if you genuinely need one of them. Variables already
+set that way keep working; only writing through AgentOS is gated.
+
+If `agentos env list` reports a variable as coming from `process env`, the
+shell that started the gateway exported it and that value wins over the file.
+Editing the file will not change anything until the export is removed.
+
+Read:
+
+- [`configuration.md`](configuration.md)
+
 ## Skills
 
 ```sh

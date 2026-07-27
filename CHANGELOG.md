@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Environment variables can be managed from AgentOS instead of by hand-editing
+  `~/.agentos/.env` and restarting. Every surface that could already *detect* a
+  missing variable can now *fix* it: a new **Environment** screen in the Web UI
+  (`/env`), an `agentos env list|get|set|unset` command, `env.*` gateway RPC,
+  and a **Set &lt;VAR&gt;** action in the Skills dialog next to the existing
+  install action. Setting a variable applies it to the running gateway, so a
+  skill that was ineligible for want of one becomes eligible without a restart.
+- Skill manifests can describe the variables they need — a description, where
+  to obtain the value, and whether it is a secret — instead of only naming
+  them. Existing manifests using the plain `requires.env: [NAME]` list keep
+  working unchanged.
+- Skills can also declare non-secret settings under `metadata.agentos.config`,
+  stored in the TOML config under `[skills.config]` rather than in `.env`.
+  Their current values are appended to what `skill_view` returns, so the agent
+  starts from what is configured instead of asking.
+- The agent has `env_list` (names and set/unset state, never values) and, gated
+  behind the approval queue and hidden by default, `env_set`. There is no
+  reveal tool: a model that can read back stored credentials is one prompt
+  injection away from exfiltrating them.
+
+### Security
+
+- Environment writes are refused for names that steer subprocess execution
+  (`PATH`, `LD_PRELOAD`, `PYTHONPATH`, `EDITOR`, …) or AgentOS runtime posture
+  (`AGENTOS_AGENT_PERMISSIONS`, `AGENTOS_GATEWAY_TOKEN`, `AGENTOS_STATE_DIR`,
+  …). Every tool AgentOS spawns inherits `os.environ` and several guards are
+  read from it, so a writable surface without this gate could widen what the
+  agent is allowed to do. The gate applies on write only — values set in your
+  shell or by editing the file directly keep working, and the `AGENTOS_` prefix
+  is not blanket-blocked.
+- Listings never carry a value. `env.reveal` is a separate method, rate limited
+  to five per thirty seconds and written to the audit log.
+- The Hermes migration wrote the migrated `.env` at the default umask, leaving
+  imported credentials world-readable on a typical box. It now writes `0600`,
+  like every other `.env` AgentOS creates.
+
+### Upgrade notes
+
+- Two `.env` lines that AgentOS previously ignored now take effect: a
+  bash-style `export KEY=value`, and the first entry in a file saved with a
+  byte-order mark. Both were parsed into unusable keys before (literally
+  `export KEY`, and `\ufeffKEY`), so the variable was not set. If your `.env`
+  has either, expect that variable to start being applied — which is what the
+  line was written to do. Values exported in your shell still win over the
+  file, so nothing that was already working changes.
+- CLI logs now go to stderr instead of stdout. Anything capturing a command's
+  stdout to collect log output needs `2>` instead; in exchange, `--json`
+  output is parseable on an install that has a populated `.env`.
+- The skill snapshot cache is invalidated once on first run, so the first
+  command after upgrading rescans skills from disk.
+
 ### Removed
 
 - The session-flush subsystem is gone. It wrote a "flush receipt" before
@@ -30,6 +83,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- A `.env` value with significant leading or trailing whitespace was written
+  unquoted and then silently trimmed when read back. The OpenClaw migration
+  carries a command allowlist across, and its entries are prefix patterns:
+  `"^pytest "` with the trailing space matches that command, while `"^pytest"`
+  without it matches anything starting with those six characters. Migrating an
+  allowlist and quietly widening it is the wrong direction.
+- `.env` parsing now recognises the bash-compatible `export KEY=value` form.
+  A hand-written `export GITHUB_TOKEN=…` was previously invisible to AgentOS,
+  and a save would have appended a second, competing definition.
 - `/reset` in the standalone chat TUI works again on sessions with a non-empty
   transcript. It had been gated on a flush service that is never constructed,
   so it aborted every time; `/compact` printed a matching false warning.

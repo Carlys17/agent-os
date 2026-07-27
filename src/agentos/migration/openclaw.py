@@ -19,13 +19,13 @@ from typing import Any, Literal
 
 import yaml
 
+from agentos.env_store import write_env_file_values
 from agentos.gateway.config import (
     ChannelsConfig,
     ContextOverflowPolicy,
     GatewayConfig,
     MCPServerEntry,
 )
-from agentos.migration.env_file import merge_env_lines
 from agentos.onboarding.config_store import load_config, persist_config
 from agentos.paths import default_agentos_home
 
@@ -235,9 +235,7 @@ class MigrationOptions:
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
     skill_conflict: Literal["skip", "overwrite", "rename"] = "skip"
-    persona_conflict: Literal[
-        "prompt", "use-agentos", "use-openclaw", "merge", "skip"
-    ] = "prompt"
+    persona_conflict: Literal["prompt", "use-agentos", "use-openclaw", "merge", "skip"] = "prompt"
 
 
 @dataclass
@@ -282,7 +280,7 @@ def _load_env_file(path: Path) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         if line.startswith("export "):
-            line = line[len("export "):].lstrip()
+            line = line[len("export ") :].lstrip()
         key, value = line.split("=", 1)
         values[key.strip().lstrip("\ufeff")] = value.strip().strip('"').strip("'")
     return values
@@ -717,9 +715,7 @@ class OpenClawMigrator:
             destination.exists()
             and not self.options.overwrite
             and bootstrap_template_filename is not None
-            and _dest_is_pristine_bootstrap_template(
-                destination, bootstrap_template_filename
-            )
+            and _dest_is_pristine_bootstrap_template(destination, bootstrap_template_filename)
         )
         if destination.exists() and not self.options.overwrite and not is_pristine_template:
             self._record(kind, source, destination, "conflict", "target exists")
@@ -736,17 +732,13 @@ class OpenClawMigrator:
             # init) would block every workspace-file migration with a silent
             # ``conflict: target exists``.
             merged_details["replaced_bootstrap_template"] = True
-        self._record(
-            kind, source, destination, "migrated", details=merged_details or None
-        )
+        self._record(kind, source, destination, "migrated", details=merged_details or None)
 
     def _migrate_workspace_file(self, filename: str, kind: str) -> None:
         source = self._openclaw_workspace() / filename
         destination = self._workspace_dir() / filename
         raw_text = (
-            source.read_text(encoding="utf-8-sig", errors="replace")
-            if source.is_file()
-            else ""
+            source.read_text(encoding="utf-8-sig", errors="replace") if source.is_file() else ""
         )
         skip_reason = _rebrand_skip_reason(raw_text) if raw_text else None
         text, changed = _rebrand_text(raw_text)
@@ -785,11 +777,7 @@ class OpenClawMigrator:
                 return
             if choice == "merge":
                 existing = destination.read_text(encoding="utf-8-sig")
-                merged = (
-                    existing.rstrip()
-                    + "\n\n## Imported from OpenClaw\n\n"
-                    + text.lstrip()
-                )
+                merged = existing.rstrip() + "\n\n## Imported from OpenClaw\n\n" + text.lstrip()
                 self._backup_file(destination)
                 destination.write_text(merged, encoding="utf-8")
                 self._record(kind, source, destination, "migrated", details=details)
@@ -854,9 +842,7 @@ class OpenClawMigrator:
             return "use-agentos"
         return self._prompt_persona_choice(filename, destination, incoming_text)
 
-    def _prompt_persona_choice(
-        self, filename: str, destination: Path, incoming_text: str
-    ) -> str:
+    def _prompt_persona_choice(self, filename: str, destination: Path, incoming_text: str) -> str:
         # Show a small side-by-side preview and offer the four resolutions
         # we already support programmatically.
         try:
@@ -875,9 +861,7 @@ class OpenClawMigrator:
             if len(lines) > 10:
                 _sys.stderr.write(f"    ... ({len(lines) - 10} more lines)\n")
 
-        _sys.stderr.write(
-            f"\n⚠ Conflict on {filename}: agentos and openclaw both have content.\n"
-        )
+        _sys.stderr.write(f"\n⚠ Conflict on {filename}: agentos and openclaw both have content.\n")
         _preview(f"existing agentos {filename}", existing, len(existing))
         _preview(f"incoming openclaw {filename} (after rebrand)", incoming_text, len(incoming_text))
         _sys.stderr.write("\n")
@@ -907,14 +891,10 @@ class OpenClawMigrator:
     def _archive_openclaw_orphaned(self, source: Path, filename: Path | str) -> None:
         if not source.is_file():
             return
-        destination = (
-            self.output_dir / "archive" / "files" / "openclaw-orphaned" / filename
-        )
+        destination = self.output_dir / "archive" / "files" / "openclaw-orphaned" / filename
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
-        self._record(
-            f"openclaw-orphaned/{filename}", source, destination, "archived"
-        )
+        self._record(f"openclaw-orphaned/{filename}", source, destination, "archived")
 
     def _archive_original_workspace_file(self, source: Path, filename: Path | str) -> None:
         if not source.is_file():
@@ -948,9 +928,7 @@ class OpenClawMigrator:
                     read_sources.append(memo)
                     if _rebrand_text(body)[1]:
                         rel = (
-                            Path("MEMORY.md")
-                            if is_primary
-                            else Path(workspace.name) / "MEMORY.md"
+                            Path("MEMORY.md") if is_primary else Path(workspace.name) / "MEMORY.md"
                         )
                         rebranded_sources.append((memo, rel))
             memory_dir = workspace / "memory"
@@ -959,9 +937,7 @@ class OpenClawMigrator:
                     body = note.read_text(encoding="utf-8-sig", errors="replace").strip()
                     if not body:
                         continue
-                    label = (
-                        note.name if is_primary else f"{workspace.name}/{note.name}"
-                    )
+                    label = note.name if is_primary else f"{workspace.name}/{note.name}"
                     parts.append(f"## Imported daily memory: {label}\n\n{body}")
                     read_sources.append(note)
                     if _rebrand_text(body)[1]:
@@ -1014,9 +990,7 @@ class OpenClawMigrator:
             and not _dest_is_pristine_bootstrap_template(destination, "MEMORY.md")
         ):
             existing = destination.read_text(encoding="utf-8-sig")
-            merged, deduped, appended_count = (
-                self._merge_blocks_preserving_existing(existing, text)
-            )
+            merged, deduped, appended_count = self._merge_blocks_preserving_existing(existing, text)
             if appended_count == 0:
                 record_details["deduplicated_against_existing"] = True
                 self._record(
@@ -1035,9 +1009,7 @@ class OpenClawMigrator:
                 record_details["new_blocks_appended"] = appended_count
                 if deduped:
                     record_details["deduplicated_blocks_vs_existing"] = deduped
-                self._record(
-                    "memory", source, destination, "migrated", details=record_details
-                )
+                self._record("memory", source, destination, "migrated", details=record_details)
         else:
             self._write_text_target(
                 "memory",
@@ -1089,9 +1061,7 @@ class OpenClawMigrator:
             stripped = match.group(1).strip()
         return re.sub(r"\s+", " ", stripped)
 
-    def _merge_blocks_preserving_existing(
-        self, existing: str, new: str
-    ) -> tuple[str, int, int]:
+    def _merge_blocks_preserving_existing(self, existing: str, new: str) -> tuple[str, int, int]:
         # Append blocks from ``new`` that are not already present in
         # ``existing``. A "block" is a paragraph, but daily-memory entries
         # of the form ``## Imported daily memory: <name>\n\n<body>`` are
@@ -1340,14 +1310,11 @@ class OpenClawMigrator:
         should_write_model = True
         if provider:
             env_key = _env_key_for_provider(provider)
-            existing_profile = getattr(
-                getattr(cfg, "agentos_router", None), "tier_profile", None
-            )
+            existing_profile = getattr(getattr(cfg, "agentos_router", None), "tier_profile", None)
             normalized_profile = (existing_profile or "").strip().lower()
             normalized_provider = provider.strip().lower()
             tier_profile_conflicts = bool(
-                existing_profile
-                and normalized_profile != normalized_provider
+                existing_profile and normalized_profile != normalized_provider
             )
             if env_key and not tier_profile_conflicts:
                 cfg.llm.provider = provider
@@ -1490,9 +1457,7 @@ class OpenClawMigrator:
                     args=[str(item) for item in raw.get("args", []) if item is not None],
                     url=str(url) if url else None,
                     env={
-                        str(k): str(v)
-                        for k, v in (raw.get("env") or {}).items()
-                        if v is not None
+                        str(k): str(v) for k, v in (raw.get("env") or {}).items() if v is not None
                     },
                     tool_timeout_seconds=float(raw.get("tool_timeout_seconds", 30.0)),
                 )
@@ -1531,8 +1496,7 @@ class OpenClawMigrator:
             "added": added,
             "replaced": replaced,
             "preserved_existing": [
-                s.name for s in existing_servers
-                if s.name not in {e.name for e in entries}
+                s.name for s in existing_servers if s.name not in {e.name for e in entries}
             ],
             "unsupported_fields": unsupported_fields,
         }
@@ -1578,10 +1542,7 @@ class OpenClawMigrator:
             for key in sorted(set(compaction) - {"mode"}):
                 self._note(
                     "agent-config",
-                    (
-                        f"OpenClaw compaction.{key}={compaction[key]!r} has no exact "
-                        "AgentOS field."
-                    ),
+                    (f"OpenClaw compaction.{key}={compaction[key]!r} has no exact AgentOS field."),
                 )
         for key in ("verboseDefault", "humanDelay", "userTimezone"):
             if key in defaults:
@@ -1707,10 +1668,15 @@ class OpenClawMigrator:
                 details={"migrated_keys": [SECRET_REDACTION] * migrated},
             )
             return
-        provider_keys_present = any(
-            isinstance(raw, dict) and any(raw.get(name) for name in ("apiKey", "api_key", "token"))
-            for raw in providers.values()
-        ) if isinstance(providers, dict) else False
+        provider_keys_present = (
+            any(
+                isinstance(raw, dict)
+                and any(raw.get(name) for name in ("apiKey", "api_key", "token"))
+                for raw in providers.values()
+            )
+            if isinstance(providers, dict)
+            else False
+        )
         reason = (
             "pass --migrate-secrets to migrate recognized secrets"
             if env_values or provider_keys_present
@@ -1727,8 +1693,7 @@ class OpenClawMigrator:
     def _migrate_supported_channels(self, config: dict[str, Any], selected: set[str]) -> None:
         env_values = _load_env_file(self.source / ".env")
         raw_entries = [
-            entry.model_dump(mode="python")
-            for entry in self._config_obj().channels.channels
+            entry.model_dump(mode="python") for entry in self._config_obj().channels.channels
         ]
         changed = False
 
@@ -2004,19 +1969,13 @@ class OpenClawMigrator:
     def _flush_env(self) -> None:
         if not self._env_additions:
             return
-        env_path = self.home / ".env"
-        env_path.parent.mkdir(parents=True, exist_ok=True)
-        existing_lines = (
-            env_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            if env_path.exists()
-            else []
-        )
-        lines = merge_env_lines(existing_lines, self._env_additions)
-        env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        try:
-            os.chmod(env_path, 0o600)
-        except OSError:
-            pass
+        # Routed through the shared writer so the migrated file gets the same
+        # atomic replace, permissions, and quoting as anything AgentOS writes
+        # later. The denylist is off here: importing the operator's own prior
+        # configuration is them editing the file by hand, and silently dropping
+        # settings they already had (their command allowlist, for one) would be
+        # a worse outcome than migrating them.
+        write_env_file_values(self.home / ".env", self._env_additions, enforce_denylist=False)
 
     def _backup_file(self, path: Path) -> None:
         backup = path.with_name(f"{path.name}.backup.{self.timestamp}")

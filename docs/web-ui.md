@@ -78,6 +78,7 @@ non-root mounts such as `/console/` work without rebuilding. Root, `/api`, and
 | Cron | View and manage scheduled runs. |
 | MCP Servers | Add local or remote MCP servers, connect tools live, and complete OAuth authorization. |
 | Agent setup | Configure the agent through Guided capability setup or the complete Advanced Form/YAML editor. |
+| Environment | Set, replace, and remove the environment variables skills and providers read. |
 | Logs | Inspect runtime logs and diagnostics. |
 | Approvals | Respond to sensitive tool-call approval requests. |
 
@@ -230,6 +231,38 @@ It is configured as Streamable HTTP with OAuth. Saving the connection opens the
 provider authorization flow and loads its tools without requiring a gateway
 restart. Agentic trading involves significant risk. Review the server's access
 and action permissions before authorizing it.
+
+## Environment
+
+Open **Settings > Environment** to manage the variables in
+`~/.agentos/.env` without touching a shell:
+
+```text
+http://127.0.0.1:18791/control/env
+```
+
+Variables are grouped by what needs them — LLM provider, search, memory, each
+installed skill, and your own additions — with the description and, where the
+skill declared one, a link to where the credential is obtained. A skill listed
+as needing setup can be fixed from its own dialog on the Skills screen too: the
+Missing block offers **Set &lt;VAR&gt;** next to the existing install action.
+
+Values are masked. **Reveal** asks for confirmation, is rate limited, writes an
+audit line, and hides the value again after thirty seconds. Setting a variable
+applies it to the running gateway, so a skill that was ineligible becomes
+eligible immediately; provider keys additionally need a restart, and the screen
+says so when that is the case.
+
+Two things the screen deliberately makes visible:
+
+- **Locked variables.** Names that steer subprocess execution or AgentOS
+  runtime posture (`PATH`, `LD_PRELOAD`, `AGENTOS_AGENT_PERMISSIONS`, …) show a
+  lock instead of an edit control. See
+  [configuration.md](configuration.md#what-cannot-be-written-through-agentos).
+- **Shadowed variables.** If the shell that started the gateway exported a
+  variable, that value wins over the file and editing here has no effect until
+  the export is removed. The screen warns rather than letting you save
+  repeatedly and conclude it is broken.
 
 ## Logs and Diagnostics
 

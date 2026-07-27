@@ -216,6 +216,11 @@ def _skill_to_dict(
         d["reasons"] = report.reasons
         d["missing_bins"] = report.missing_bins
         d["missing_env"] = report.missing_env
+        # Names alone tell an operator that something is missing but not what
+        # it is or where to get it. The detail form carries whatever the
+        # manifest declared so a UI can offer a real fix next to the name,
+        # the way it already does for a missing binary.
+        d["missing_env_detail"] = [e.to_dict() for e in report.missing_env_detail]
     return d
 
 

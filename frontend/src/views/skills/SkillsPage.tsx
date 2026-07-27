@@ -326,6 +326,12 @@ export function SkillsPage() {
   const [filterText, setFilterText] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
+  // Setting a variable without leaving the dialog: the operator is already
+  // looking at why the skill is unavailable, and sending them to another
+  // screen to fix it loses that context.
+  const [envPrompt, setEnvPrompt] = useState<{ skill: string; name: string } | null>(null)
+  const [envValue, setEnvValue] = useState('')
+  const [envSaving, setEnvSaving] = useState(false)
 
   // Registry (bankr/community) query text + debounced community query.
   const [bankrQuery, setBankrQuery] = useState('')
@@ -788,10 +794,38 @@ export function SkillsPage() {
                   onInstallDeps={(installId) =>
                     depsMutation.mutate({ name: skill.name!, installId })
                   }
+                  onSetEnv={(name) => setEnvPrompt({ skill: skill.name!, name })}
                 />
               )
             })()
           : null}
+
+        {envPrompt ? (
+          <SetEnvDialog
+            name={envPrompt.name}
+            value={envValue}
+            saving={envSaving}
+            onChange={setEnvValue}
+            onClose={() => {
+              setEnvPrompt(null)
+              setEnvValue('')
+            }}
+            onSubmit={async () => {
+              setEnvSaving(true)
+              try {
+                await rpc.call('env.set', { name: envPrompt.name, value: envValue })
+                await queryClient.invalidateQueries({ queryKey: ['skills'] })
+                toast.success(`${envPrompt.name} saved.`)
+                setEnvPrompt(null)
+                setEnvValue('')
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : String(error))
+              } finally {
+                setEnvSaving(false)
+              }
+            }}
+          />
+        ) : null}
 
         {dialog.kind === 'registry'
           ? (() => {
@@ -1310,6 +1344,7 @@ function SkillDialog({
   onUpdate,
   onRemove,
   onInstallDeps,
+  onSetEnv,
 }: {
   skill: RawSkill
   busyKeys: Set<string>
@@ -1317,6 +1352,7 @@ function SkillDialog({
   onUpdate: () => void
   onRemove: () => void
   onInstallDeps: (installId: string) => void
+  onSetEnv: (name: string) => void
 }) {
   const titleId = useId()
   const status = skillStatus(skill)
@@ -1377,11 +1413,33 @@ function SkillDialog({
                   <code>{b}</code> <span className="sk-dim">binary</span>
                 </li>
               ))}
-              {missingEnv.map((e) => (
-                <li key={`env:${e}`}>
-                  <code>{e}</code> <span className="sk-dim">env var</span>
-                </li>
-              ))}
+              {missingEnv.map((e) => {
+                // A missing binary has always had an "Install via …" button
+                // here while a missing variable was a dead end. Same dialog,
+                // same class of problem, so it gets an action too.
+                const detail = (skill.missing_env_detail || []).find((d) => d.name === e)
+                return (
+                  <li key={`env:${e}`} className="sk-dialog__missing-env">
+                    <div>
+                      <code>{e}</code> <span className="sk-dim">env var</span>
+                      {detail?.description ? (
+                        <span className="sk-dim"> — {detail.description}</span>
+                      ) : null}
+                      {detail?.url ? (
+                        <>
+                          {' '}
+                          <a href={detail.url} target="_blank" rel="noopener noreferrer">
+                            where to get it ↗
+                          </a>
+                        </>
+                      ) : null}
+                    </div>
+                    <Button type="button" size="sm" onClick={() => onSetEnv(e)}>
+                      Set {e}
+                    </Button>
+                  </li>
+                )
+              })}
             </ul>
           </div>
         ) : null}
@@ -1547,6 +1605,70 @@ function RegistryDialog({
         <small className="sk-dim sk-mono sk-dialog__path">{registryKey(item)}</small>
         <InstallButton action={action} busy={busy} large onInstall={(force) => onInstall(force)} />
       </footer>
+    </ModalShell>
+  )
+}
+
+// ── Set a missing environment variable without leaving the skill dialog ──────
+function SetEnvDialog({
+  name,
+  value,
+  saving,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  name: string
+  value: string
+  saving: boolean
+  onChange: (value: string) => void
+  onClose: () => void
+  onSubmit: () => void
+}) {
+  const titleId = useId()
+  return (
+    <ModalShell
+      role="dialog"
+      labelledBy={titleId}
+      onClose={onClose}
+      overlayClassName="sk-modal__overlay"
+      className="sk-modal panel"
+    >
+      <header className="sk-dialog__head">
+        <h2 id={titleId} className="sk-dialog__title">
+          Set {name}
+        </h2>
+        <Button type="button" variant="ghost" size="icon-sm" aria-label="Close" onClick={onClose}>
+          <XIcon />
+        </Button>
+      </header>
+      <form
+        className="sk-dialog__body"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onSubmit()
+        }}
+      >
+        <p className="sk-dialog__desc">
+          Stored in the AgentOS <code>.env</code> and applied to the running gateway.
+        </p>
+        <input
+          type="password"
+          className="sk-dialog__input"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          aria-label={`Value for ${name}`}
+          autoFocus
+        />
+        <div className="sk-dialog__install-row">
+          <Button type="submit" size="sm" disabled={saving || !value}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+      </form>
     </ModalShell>
   )
 }

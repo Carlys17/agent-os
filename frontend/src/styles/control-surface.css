@@ -539,6 +539,7 @@
     .cron-stage__header,
     .ch-stage__header,
     .ap-stage__header,
+    .env-stage__header,
     .mcp-stage__header,
     .cfg-stage__header,
     .setup-stage__header,
@@ -568,6 +569,7 @@
     .sess-stage__header,
     .ch-stage__header,
     .ap-stage__header,
+    .env-stage__header,
     .mcp-stage__header,
     .cfg-stage__header
   ) {
@@ -595,6 +597,7 @@
     .cron-stage__title-block,
     .ch-stage__title-block,
     .ap-stage__title-block,
+    .env-stage__title-block,
     .mcp-stage__title-block,
     .cfg-stage__title-block,
     .setup-stage__title-block,
@@ -1378,6 +1381,7 @@
       .cron-stage__header,
       .ch-stage__header,
       .ap-stage__header,
+      .env-stage__header,
       .mcp-stage__header,
       .cfg-stage__header,
       .setup-stage__header,
@@ -1396,6 +1400,7 @@
       .ag-stage__actions,
       .sess-stage__actions,
       .cron-stage__actions,
+      .env-stage__actions,
       .mcp-stage__actions,
       .cfg-stage__actions,
       .setup-stage__aside,
@@ -1498,6 +1503,7 @@
       .cron-stage__header,
       .ch-stage__header,
       .ap-stage__header,
+      .env-stage__header,
       .cfg-stage__header,
       .setup-stage__header,
       .settings-stage__header

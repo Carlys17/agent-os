@@ -465,6 +465,7 @@ describe('app shell chrome', () => {
       'Usage',
       'Cron',
       'Agent setup',
+      'Environment',
       'Logs',
       'Approvals',
     ])

@@ -104,6 +104,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | --- | --- |
 | `gateway` | `run`, `start`, `status`, `stop`, `restart` (`--port`, `--bind`, `--listen`, `--config`, `--json`, `--debug`) |
 | `config` | `get [key]` (empty key = show all), `set <dot.key> <value>` |
+| `env` | `list [--missing] [--category]`, `get <NAME> [--reveal]`, `set <NAME> --stdin`, `unset <NAME>` |
 | `providers` | `list`, `status`, `configure <id> [-m MODEL] [-k API_KEY] [--base-url] [--proxy]` |
 | `models` | `list` |
 | `skills` | `list`, `search`, `view`, `install`, `uninstall`, `update`, `publish`, `tap add/list/remove` |
@@ -142,6 +143,17 @@ File resolution (highest precedence first):
 Most commands accept `--config <path>` to target a specific file. On load,
 AgentOS auto-migrates outdated config schemas and writes a backup next to
 the file before rewriting it.
+
+Environment variables live in `~/.agentos/.env` and are managed with `agentos
+env`, not `agentos config`. Use them for credentials skills and external
+binaries read. `agentos env list` shows every variable AgentOS knows about,
+whether it is set, and which skill or provider needs it — values are masked
+unless you ask for `agentos env get <NAME> --reveal`. Names that steer
+subprocess execution (`PATH`, `LD_PRELOAD`, `EDITOR`, …) or runtime posture
+(`AGENTOS_AGENT_PERMISSIONS`, `AGENTOS_GATEWAY_TOKEN`, …) cannot be written
+through AgentOS; edit the file by hand if one is genuinely needed. When
+`agentos env list` reports a variable's source as `process env`, the shell
+that started the gateway exported it and that value wins over the file.
 
 Main `agentos.toml` sections (full commented reference:
 `agentos.toml.example` in the repo):

@@ -7,6 +7,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from agentos.cli.main import app
+from agentos.env import parse_env_file
 from agentos.gateway.config import (
     AgentEntryConfig,
     AuthConfig,
@@ -300,9 +301,11 @@ def test_realistic_cli_apply_is_isolated_and_preserves_unrelated_config(
     assert channels["discord"]["default_channel_id"] == "discord-channel-1"
     assert channels["slack"]["token"] == "xoxb-slack-secret-token"
 
-    env_text = (home / ".env").read_text(encoding="utf-8")
-    assert "ANTHROPIC_API_KEY=sk-ant-realistic" in env_text
-    assert "AGENTOS_SAFE_BIN_ALLOW=^git status$,^uv run pytest " in env_text
+    # Parsed values, not raw lines: the allowlist entry ends in a significant
+    # space that only survives because the writer quotes the value.
+    env_values = parse_env_file(home / ".env")
+    assert env_values["ANTHROPIC_API_KEY"] == "sk-ant-realistic"
+    assert env_values["AGENTOS_SAFE_BIN_ALLOW"] == "^git status$,^uv run pytest "
     assert existing_skill.read_text(encoding="utf-8") == "existing skill stays\n"
     renamed_skill = home / "skills" / "openclaw-imports" / "triage-imported-1" / "SKILL.md"
     assert "Triage production incidents" in renamed_skill.read_text(encoding="utf-8")

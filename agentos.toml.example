@@ -234,6 +234,13 @@ max_skills_prompt_chars = 8000
 # filter_embedding_model = "BAAI/bge-small-zh-v1.5"  # bundled BGE default;
 #   set "google/embeddinggemma-300m" to reuse a downloaded EmbeddingGemma export
 
+# Settings individual skills declare via metadata.agentos.config in their
+# SKILL.md. Keys belong to the skills, so this section is free-form. Credentials
+# do NOT go here — those belong in ~/.agentos/.env (`agentos env set`), where
+# they are masked in listings and gated on write.
+# [skills.config]
+# wiki.path = "/srv/wiki"
+
 [task_runtime]
 # Server-side agent turn queue. Same-session tasks are serialized;
 # different sessions can run concurrently up to this limit.

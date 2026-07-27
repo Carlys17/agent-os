@@ -5,6 +5,7 @@ import tomllib
 from pathlib import Path
 
 from agentos.engine.context import load_context_files
+from agentos.env import parse_env_file
 from agentos.migration.openclaw import MigrationOptions, OpenClawMigrator
 from agentos.provider.selector import build_provider
 from agentos.skills.loader import SkillLoader
@@ -112,8 +113,12 @@ def test_apply_migrates_workspace_skills_config_and_allowlist(
     assert str(home / "skills" / "openclaw-imports") in config["skills"]["extra_dirs"]
     assert config["agent_runtime_timeout_seconds"] == 500
 
-    env_text = (home / ".env").read_text(encoding="utf-8")
-    assert "AGENTOS_SAFE_BIN_ALLOW=^git status$,^pytest " in env_text
+    # Assert the value as it parses back, not as it is serialized: the trailing
+    # space is part of the "^pytest " prefix pattern, so it has to survive the
+    # write/read round-trip. The writer quotes the value to protect it from the
+    # reader's strip() — writing it bare silently narrowed the allowlist.
+    env_values = parse_env_file(home / ".env")
+    assert env_values["AGENTOS_SAFE_BIN_ALLOW"] == "^git status$,^pytest "
     assert (Path(report["output_dir"]) / "report.json").is_file()
     assert (Path(report["output_dir"]) / "summary.md").is_file()
 

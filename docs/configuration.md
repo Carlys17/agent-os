@@ -28,6 +28,80 @@ agentos configure provider --provider openrouter --api-key-env OPENROUTER_API_KE
 Avoid committing raw API keys to TOML files, shell history, examples, or issue
 reports.
 
+## Environment Variables
+
+Environment variables live in `~/.agentos/.env` and are managed with
+[`agentos env`](cli.md#environment-variables) or the Environment screen in the
+Web UI. They are where credentials belong — skills and external binaries read
+them, and AgentOS masks them in every listing.
+
+### Load order and the shadowing trap
+
+`.env` files are read once at process start, in this order, and **an existing
+environment variable is never overridden**:
+
+1. `os.environ` — whatever the shell that started AgentOS exported
+2. `$CWD/.env`, then `$CWD/.env.test`
+3. `~/.agentos/.env`
+
+The first rule is the one that surprises people. If your shell exported
+`OPENAI_API_KEY`, then writing that variable through AgentOS updates the file
+and the running process, but a restart goes back to the shell's value. `agentos
+env list` reports the source of each value (`process env` / `project .env` /
+`AgentOS .env`) and the Web UI warns on the row, so this is visible rather than
+something to discover through a confusing hour. To make the file authoritative,
+remove the export and restart.
+
+Likewise, a `.env` in the directory the gateway was started from wins over
+`~/.agentos/.env`.
+
+### What cannot be written through AgentOS
+
+Names that steer subprocess execution or AgentOS runtime posture are refused by
+every AgentOS surface — the Web UI, the CLI, the RPC, and the agent tool:
+
+- Loader and interpreter: `LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_*`,
+  `PYTHONPATH`, `PYTHONHOME`, `PYTHONSTARTUP`, `NODE_OPTIONS`, `NODE_PATH`
+- Shell and implicitly-invoked commands: `PATH`, `SHELL`, `IFS`, `BASH_ENV`,
+  `EDITOR`, `VISUAL`, `PAGER`, `BROWSER`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`
+- AgentOS posture and state location: `AGENTOS_SENSITIVE_PATHS_DISABLED`,
+  `AGENTOS_SHELL_DENYLIST`, `AGENTOS_SAFE_BIN_*`, `AGENTOS_AGENT_PERMISSIONS`,
+  `AGENTOS_HOOKS`, `AGENTOS_GATEWAY_TOKEN`, `AGENTOS_GATEWAY_CONFIG_PATH`,
+  `AGENTOS_STATE_DIR`, `AGENTOS_ROOT`, and the bind settings
+
+Every tool AgentOS spawns inherits `os.environ`, and several AgentOS guards are
+themselves read from it, so a surface that could write these names could widen
+what the agent is allowed to do. The `AGENTOS_` prefix is not blanket-blocked —
+ordinary credentials such as `AGENTOS_LLM_API_KEY` remain writable.
+
+The gate applies on *write* only. Values you set in your shell or by editing
+`~/.agentos/.env` by hand keep working exactly as before.
+
+### Skill settings are not secrets
+
+A skill may also declare ordinary settings — a directory, a format, a default —
+under `metadata.agentos.config` in its `SKILL.md`:
+
+```yaml
+metadata:
+  agentos:
+    config:
+      - key: wiki.path
+        description: Path to the knowledge base directory
+        default: "~/wiki"
+```
+
+These live in the TOML config under `[skills.config]`, not in `.env`, because
+there is nothing to hide and a visible, diffable setting is easier to share and
+review:
+
+```sh
+agentos config set skills.config.wiki.path /srv/wiki
+```
+
+When the agent opens the skill, the values currently in effect are appended to
+what it reads, so it does not have to ask or go looking.
+
 ## First-Run Wizard
 
 ```sh

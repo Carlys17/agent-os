@@ -26,7 +26,10 @@ MAX_SKILLS_PER_SOURCE = 200  # per layer cap
 
 # Bump when on-disk snapshot fields change so stale caches are invalidated
 # instead of silently losing new fields.
-_SNAPSHOT_SCHEMA_VERSION = 8
+# 9: requires_env carries declared descriptions/URLs instead of bare names,
+#    and config_vars was added. A version-8 snapshot would parse without error
+#    and silently strip both.
+_SNAPSHOT_SCHEMA_VERSION = 9
 
 
 def _string_list(value: object) -> list[str]:
@@ -84,6 +87,7 @@ def _resolve_metadata(frontmatter: dict) -> SkillPlatformMeta | None:
                 "always",
                 "os",
                 "requires",
+                "config",
                 "install",
                 "risk",
                 "risk_level",
@@ -128,6 +132,8 @@ def _resolve_metadata(frontmatter: dict) -> SkillPlatformMeta | None:
             )
 
     always_val = raw_meta.get("always")
+    raw_config = raw_meta.get("config", [])
+    config_vars = raw_config if isinstance(raw_config, list) else [raw_config]
     return SkillPlatformMeta(
         emoji=raw_meta.get("emoji", ""),
         skill_key=raw_meta.get("skillKey", ""),
@@ -138,12 +144,12 @@ def _resolve_metadata(frontmatter: dict) -> SkillPlatformMeta | None:
         requires=requires,
         install=install_specs,
         risk_level=str(
-            raw_meta.get("risk")
-            or raw_meta.get("risk_level")
-            or raw_meta.get("riskLevel")
-            or ""
-        ).strip().lower(),
+            raw_meta.get("risk") or raw_meta.get("risk_level") or raw_meta.get("riskLevel") or ""
+        )
+        .strip()
+        .lower(),
         capabilities=_string_list(raw_meta.get("capabilities", [])),
+        config_vars=config_vars,
     )
 
 
@@ -295,8 +301,15 @@ class SkillLoader:
                         "requires_any_bins": s.metadata.requires.any_bins
                         if s.metadata and s.metadata.requires
                         else [],
-                        "requires_env": s.metadata.requires.env
+                        # Serialized as dicts, not names: the cache has to carry
+                        # the description and source URL a manifest declared, or
+                        # a cache hit would silently downgrade what surfaces can
+                        # tell the operator about a missing variable.
+                        "requires_env": [e.to_dict() for e in s.metadata.requires.env]
                         if s.metadata and s.metadata.requires
+                        else [],
+                        "config_vars": [c.to_dict() for c in s.metadata.config_vars]
+                        if s.metadata
                         else [],
                         "install": [
                             {
@@ -383,6 +396,7 @@ class SkillLoader:
                     install=install_specs,
                     risk_level=str(raw_meta.get("risk_level", "")).strip().lower(),
                     capabilities=raw_meta.get("capabilities", []),
+                    config_vars=raw_meta.get("config_vars", []),
                 )
 
             skills.append(

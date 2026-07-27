@@ -8,6 +8,51 @@ import typer
 
 from agentos.env import load_env, warn_if_proxy_ignored
 
+
+class _CurrentStderr:
+    """A file-like that resolves ``sys.stderr`` on every write.
+
+    Handing structlog ``sys.stderr`` directly would freeze whichever object is
+    installed at import time. Anything that replaces the stream afterwards —
+    pytest's capture, a TUI taking over the terminal, a caller redirecting for
+    one command — would then be writing past the replacement, and the logs
+    would surface somewhere nobody is looking.
+    """
+
+    def write(self, message: str) -> int:
+        import sys
+
+        return sys.stderr.write(message)
+
+    def flush(self) -> None:
+        import sys
+
+        sys.stderr.flush()
+
+
+def _route_logs_to_stderr() -> None:
+    """Send structlog output to stderr before anything can log.
+
+    structlog's unconfigured default prints to stdout, and the first thing the
+    CLI does is load .env files — which log. That put log lines in front of
+    every ``--json`` payload the moment a user had a populated .env, so
+    ``agentos <anything> --json | jq`` failed on a real install while working
+    in a clean one. Logs are diagnostics; stdout belongs to the command's
+    output.
+    """
+    from typing import TextIO, cast
+
+    import structlog
+
+    # PrintLogger only ever calls write() and flush() on this, which is the
+    # whole contract _CurrentStderr implements — the annotation asks for a full
+    # TextIO that structlog does not actually use.
+    stream = cast("TextIO", _CurrentStderr())
+    structlog.configure(logger_factory=structlog.PrintLoggerFactory(file=stream))
+
+
+_route_logs_to_stderr()
+
 # Populate os.environ from .env files before any submodule import reads keys.
 # Precedence: os.environ > $CWD/.env > $CWD/.env.test > ~/.agentos/.env.
 load_env()
@@ -22,6 +67,7 @@ from agentos.cli.cron_cmd import cron_app  # noqa: E402
 from agentos.cli.diagnostics_cmd import diagnostics_app  # noqa: E402
 from agentos.cli.dist_cmd import app as dist_app  # noqa: E402
 from agentos.cli.doctor_cmd import doctor_command  # noqa: E402
+from agentos.cli.env_cmd import env_app  # noqa: E402
 from agentos.cli.init_cmd import init_command  # noqa: E402
 from agentos.cli.mcp_server_cmd import app as mcp_server_app  # noqa: E402
 from agentos.cli.migrate_cmd import migrate_app  # noqa: E402
@@ -49,6 +95,7 @@ app.add_typer(agents_app, name="agents")
 app.add_typer(config_app, name="config")
 app.add_typer(cost_app, name="cost")
 app.add_typer(diagnostics_app, name="diagnostics")
+app.add_typer(env_app, name="env")
 app.add_typer(cron_app, name="cron")
 app.add_typer(dist_app, name="dist")
 app.add_typer(mcp_server_app, name="mcp-server")
@@ -403,10 +450,6 @@ def memory_raw_fallbacks_show_cmd(
     console.print(str(payload.get("content") or ""))
     if payload.get("truncated"):
         console.print("[dim]... truncated[/dim]")
-
-
-
-
 
 
 # ── gateway sub-app ───────────────────────────────────────────────────────────

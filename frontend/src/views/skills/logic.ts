@@ -21,9 +21,19 @@ export interface RawSkill {
   file_path?: string
   missing_bins?: string[]
   missing_env?: string[]
+  /** Same variables as missing_env, with whatever the manifest declared. */
+  missing_env_detail?: MissingEnvDetail[]
   install?: SkillInstallOption[]
   requirements?: SkillRequirements
   [key: string]: unknown
+}
+
+export interface MissingEnvDetail {
+  name: string
+  description?: string
+  url?: string
+  secret?: boolean | null
+  required?: boolean
 }
 
 export interface SkillInstallOption {

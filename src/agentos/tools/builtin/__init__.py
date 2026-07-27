@@ -12,6 +12,7 @@ _NAMES = [
     "artifacts",
     "code_exec",
     "control",
+    "env_tools",
     "file_authoring",
     "filesystem",
     "git",
