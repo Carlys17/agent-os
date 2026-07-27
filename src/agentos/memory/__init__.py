@@ -9,7 +9,6 @@ from .embedding import (
     OpenAIEmbeddingProvider,
     chunk_text,
 )
-from .flush import SILENT_REPLY_TOKEN, MemoryFlushPlan, resolve_flush_plan, should_flush
 from .manager import MemoryManager, build_memory_managers
 from .meta import MemoryIndexMeta
 from .retrieval import MemoryRetriever
@@ -50,10 +49,6 @@ __all__ = [
     "MemorySyncManager",
     "SessionDeltaTracker",
     # flush
-    "MemoryFlushPlan",
-    "resolve_flush_plan",
-    "should_flush",
-    "SILENT_REPLY_TOKEN",
     # meta
     "MemoryIndexMeta",
 ]

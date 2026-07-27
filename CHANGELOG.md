@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- The session-flush subsystem is gone. It wrote a "flush receipt" before
+  destructive compaction and never earned its keep: roughly 8,000 lines for a
+  memory path that underperformed. Compaction still records a durable
+  checkpoint first, so the pre-image it recovers from is unchanged.
+- The `memory.flush_*` and `memory.repair_*` configuration keys are no longer
+  read. An existing `agentos.toml` keeps working — the keys are dropped on load
+  with one warning naming them, and the file is rewritten on the next config
+  save. They will be rejected outright in 0.2.0.
+
+  Removing `memory.flush_enabled`, `memory.flush_compaction_safety_mode`, and
+  `memory.flush_compaction_requires_safe_receipt` matters most. With no flush
+  service left, no receipt can ever be written, so `flush_enabled = true`
+  combined with `block` (or the legacy `requires_safe_receipt`) would have made
+  compaction demand a receipt nothing could produce: refused on every turn,
+  context window filling until the provider errors, with a single warning line
+  as the only clue.
+- `sessions.reset` and `sessions.contextCompact` no longer return a
+  `flush_receipt` field, and `agentos reset` no longer prints a "Flush mode"
+  line. Both described work that no longer happens.
+
+### Fixed
+
+- `/reset` in the standalone chat TUI works again on sessions with a non-empty
+  transcript. It had been gated on a flush service that is never constructed,
+  so it aborted every time; `/compact` printed a matching false warning.
+
 ## [2026.7.26] - 2026-07-26
 
 ### Added

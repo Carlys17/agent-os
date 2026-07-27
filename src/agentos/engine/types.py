@@ -321,19 +321,6 @@ class AgentConfig:
     # and before the current user turn. The agent persists each turn's
     # skill context in history so provider KV-cache prefixes stay stable.
     skills_context_prompt: str | None = None
-    # Pre-compaction memory flush
-    flush_enabled: bool = False
-    flush_timeout_seconds: float = 15.0
-    flush_background_timeout_seconds: float = 120.0
-    flush_backoff_initial_seconds: float = 30.0
-    flush_backoff_max_seconds: float = 300.0
-    flush_archive_max_bytes: int = 800_000
-    flush_compaction_requires_safe_receipt: bool = False
-    flush_compaction_safety_mode: Literal["protect", "best_effort", "block", "off"] = "protect"
-    repair_enabled: bool = True
-    repair_interval_seconds: float = 60.0
-    repair_max_items_per_tick: int = 5
-    flush_workspace_dir: str | None = None
     model_capabilities: Any | None = None  # ModelCapabilities from provider.types
     # Tokenjuice projection: project eligible fresh tool results before the
     # next LLM turn. This is not user-selectable behavior.

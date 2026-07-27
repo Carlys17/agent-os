@@ -482,9 +482,6 @@ async def test_additional_boot_captured_changes_require_restart(
     ("path", "value"),
     [
         ("memory.source", "state"),
-        ("memory.repair_enabled", False),
-        ("memory.repair_interval_seconds", 90.0),
-        ("memory.repair_max_items_per_tick", 9),
     ],
 )
 async def test_boot_built_memory_topology_changes_require_restart(

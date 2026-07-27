@@ -167,7 +167,6 @@ def _standalone_context(
             truncate_session=None,
             compact_session=None,
             compact_with_result=None,
-            flush_transcript=None,
             config=None,
             provider_selector=None,
         ),

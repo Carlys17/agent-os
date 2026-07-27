@@ -152,9 +152,6 @@ def _capture_locals_at_post_slice() -> dict[str, Any]:
         "agent_config_tool_result_projection_max_inline_chars": getattr(
             agent_config, "tool_result_projection_max_inline_chars", None
         ),
-        "agent_config_flush_enabled": getattr(
-            agent_config, "flush_enabled", None
-        ),
         "effective_runtime_timeout": locs.get("effective_runtime_timeout"),
         "effective_max_iterations": locs.get("effective_max_iterations"),
         "effective_iteration_timeout": locs.get("effective_iteration_timeout"),
@@ -365,7 +362,6 @@ def _build_runner(*, model_catalog=None, memory_sync_managers=None) -> TurnRunne
         model_catalog=model_catalog,
         memory_retrievers=None,
         turn_capture_services=None,
-        session_flush_service=None,
         session_lock_provider=None,
         diagnostics_state=None,
         turn_hooks=None,
@@ -596,7 +592,6 @@ async def test_agent_bootstrap_stage_snapshot(
         "agent_config_cache_mode": "off",
         "agent_config_thinking": case["thinking"],
         "agent_config_tool_result_projection_max_inline_chars": 60_000,
-        "agent_config_flush_enabled": False,
         "effective_runtime_timeout": expected_runtime_timeout,
         "effective_max_iterations": expected_max_iterations,
         "effective_iteration_timeout": case["iteration_timeout"],

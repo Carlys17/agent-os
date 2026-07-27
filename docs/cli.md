@@ -38,7 +38,7 @@ agentos <command> --help
 | `agentos agents` | Manage durable agents. |
 | `agentos mcp-server` | Run the AgentOS MCP server bridge. |
 | `agentos dist` | Emit a reproducible workspace-state inventory. |
-| `agentos reset` | Reset a session and flush memory synchronously. |
+| `agentos reset` | Reset a session, rotating it to a fresh transcript. |
 
 ## Run Surfaces
 

@@ -1,8 +1,7 @@
 """Tests that _drain_task_runtime_for_reset is called on every reset branch.
 
 Asserts that ``_drain_task_runtime_for_reset`` is invoked regardless of
-whether ``flush_service`` is None or wired, and regardless of the
-``force`` flag.
+the ``force`` flag.
 """
 
 from __future__ import annotations
@@ -77,13 +76,12 @@ class _FakeSessionManager:
         return session, True
 
 
-def _make_ctx(flush_service=None, task_runtime=None) -> RpcContext:
+def _make_ctx(task_runtime=None) -> RpcContext:
     ctx = RpcContext(
         conn_id="test-drain",
         config=GatewayConfig(),
     )
     ctx.session_manager = _FakeSessionManager()
-    ctx.flush_service = flush_service
     ctx.task_runtime = task_runtime
     return ctx
 
@@ -97,45 +95,10 @@ def _make_task_runtime() -> SimpleNamespace:
 
 
 @pytest.mark.asyncio
-async def test_drain_called_when_flush_service_none():
-    """drain is called even when flush_service is None (kill-switch path)."""
+async def test_drain_called_on_reset():
+    """drain is called on the reset path."""
     task_runtime = _make_task_runtime()
-    ctx = _make_ctx(flush_service=None, task_runtime=task_runtime)
-
-    target = "agentos.gateway.rpc_sessions._drain_task_runtime_for_reset"
-    with patch(target, new_callable=AsyncMock) as mock_drain:
-        result = await get_dispatcher().dispatch(
-            "r1",
-            "sessions.reset",
-            {"key": _SESSION_KEY},
-            ctx,
-        )
-
-    assert result.error is None, result.error
-    mock_drain.assert_awaited_once_with(task_runtime, _SESSION_KEY)
-
-
-@pytest.mark.asyncio
-async def test_drain_called_with_flush_service():
-    """drain is called when flush_service is wired (normal path)."""
-    from agentos.memory.session_flush import FlushReceipt
-
-    task_runtime = _make_task_runtime()
-
-    flush_receipt = FlushReceipt(
-        mode="skipped",
-        flushed_paths=[],
-        slug=None,
-        message_count=0,
-        duration_ms=0,
-        raw_reason=None,
-        error=None,
-    )
-    fake_flush_service = SimpleNamespace(
-        execute=AsyncMock(return_value=flush_receipt),
-    )
-
-    ctx = _make_ctx(flush_service=fake_flush_service, task_runtime=task_runtime)
+    ctx = _make_ctx(task_runtime=task_runtime)
 
     target = "agentos.gateway.rpc_sessions._drain_task_runtime_for_reset"
     with patch(target, new_callable=AsyncMock) as mock_drain:

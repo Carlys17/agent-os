@@ -313,7 +313,6 @@ async def _enforce_context_overflow(
         session_key=session_key,
         session_manager=ctx.session_manager,
         compaction_config=await _build_context_overflow_compaction_config(ctx, session_key),
-        flush_service=getattr(ctx, "flush_service", None),
         compaction_marker=getattr(ctx, "turn_runner", None),
         policy_override=policy_override,
         budget_override=budget_override,

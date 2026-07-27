@@ -159,9 +159,6 @@ class DecisionEntry:
     cache_dynamic_chars: int = 0
     runtime_context_hash: str | None = None
     runtime_context_chars: int = 0
-    session_flush_extraction_model: str | None = None
-    session_flush_fallback_used: bool = False
-    session_flush_fallback_reason: str | None = None
     skills_invoked: list[str] = field(default_factory=list)
     pipeline_steps: list[PipelineStepRecord] = field(default_factory=list)
     savings: SavingsTelemetry = field(default_factory=SavingsTelemetry)

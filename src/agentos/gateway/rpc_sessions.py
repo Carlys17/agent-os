@@ -42,15 +42,9 @@ from agentos.session.compaction_lifecycle import (
     COMPACTION_TRIGGERED_EVENT,
     compaction_effect_payload,
     compaction_lifecycle_payload,
-    compaction_memory_status,
     compaction_result_payload,
     durable_receipt_allows_destructive_compaction,
-    flush_receipt_is_successful_flush,
-    flush_receipt_status_for_compaction,
-    flush_receipt_to_dict,
     new_compaction_id,
-    pre_compaction_flush_enabled,
-    pre_compaction_flush_requires_safe_receipt,
 )
 from agentos.session.keys import canonicalize_session_key, normalize_agent_id, parse_agent_id
 from agentos.session.terminal_reply import build_terminal_reply, sanitize_agent_error
@@ -1533,20 +1527,17 @@ async def _notify_provider_session_boundary(
 
 @_d.method("sessions.reset", CONTROL_AND_CHANNEL)
 async def _handle_sessions_reset(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
-    """Synchronous session reset with FlushReceipt.
+    """Synchronous session reset.
 
-    Sequence when ``ctx.flush_service`` is wired:
+    Sequence:
     1. Drain any in-flight turn task so the per-session lock is free.
     2. Acquire the per-session lock for the whole snapshot → flush → rotate
        window (prevents a late turn write after flush).
     3. Snapshot the transcript, execute the flush, then rotate via
        ``apply_intent(RESET_SAME_KEY)``.
 
-    When ``ctx.flush_service`` is None (kill-switch path), falls back to
     PR2-pre behavior: no flush, no ``flush_receipt`` field in the response.
     """
-    from agentos.gateway.rpc import RpcHandlerError
-    from agentos.memory.session_flush import FlushReceipt
     from agentos.session.models import SessionIntent
 
     key = _require_key(params)
@@ -1596,49 +1587,77 @@ async def _handle_sessions_reset(params: dict | None, ctx: RpcContext) -> dict[s
 
         transcript = await ctx.session_manager.get_transcript(key)
 
-        if ctx.flush_service is None:
-            # Flush service unavailable (the default kill-switch path). Rather
-            # than hard-fail a plain reset of a non-empty transcript, fall back
-            # to a NON-destructive archive-then-rotate: the transcript is dumped
-            # to disk and the session_id rotates, but the old rows are left in
-            # storage so nothing is lost. This matches the "New Chat" button's
-            # safety semantics — the reset always succeeds and data is preserved.
-            #
-            # A forced reset can destroy old transcript rows only when a durable
-            # checkpoint receipt covers them. Without one, force=true still uses
-            # the non-destructive archive rotation.
-            if transcript and not force:
-                checkpoint_safe = await _durable_receipt_allows_covered_destructive_compaction(
-                    storage,
+        # Flush service unavailable (the default kill-switch path). Rather
+        # than hard-fail a plain reset of a non-empty transcript, fall back
+        # to a NON-destructive archive-then-rotate: the transcript is dumped
+        # to disk and the session_id rotates, but the old rows are left in
+        # storage so nothing is lost. This matches the "New Chat" button's
+        # safety semantics — the reset always succeeds and data is preserved.
+        #
+        # A forced reset can destroy old transcript rows only when a durable
+        # checkpoint receipt covers them. Without one, force=true still uses
+        # the non-destructive archive rotation.
+        if transcript and not force:
+            checkpoint_safe = await _durable_receipt_allows_covered_destructive_compaction(
+                storage,
+                key,
+                previous_session_id,
+                transcript,
+            )
+            if checkpoint_safe:
+                # A durable checkpoint already covers this transcript, so the
+                # destructive rotation is safe even without the flush service.
+                updated, rotated = await ctx.session_manager.apply_intent(
                     key,
-                    previous_session_id,
-                    transcript,
+                    SessionIntent.RESET_SAME_KEY,
                 )
-                if checkpoint_safe:
-                    # A durable checkpoint already covers this transcript, so the
-                    # destructive rotation is safe even without the flush service.
-                    updated, rotated = await ctx.session_manager.apply_intent(
-                        key,
-                        SessionIntent.RESET_SAME_KEY,
-                    )
-                    new_epoch = await _increment_and_emit_epoch(ctx, storage, key)
-                    await _notify_provider_session_boundary(
-                        ctx,
-                        agent_id=agent_id,
-                        transcript=transcript,
-                        new_session_id=updated.session_id,
-                    )
-                    return {
-                        "key": key,
-                        "reset": True,
-                        "rotated": rotated,
-                        "previous_session_id": previous_session_id,
-                        "session_id": updated.session_id,
-                        "epoch": new_epoch,
-                        "reset_mode": "destructive_checkpoint_covered",
-                    }
+                new_epoch = await _increment_and_emit_epoch(ctx, storage, key)
+                await _notify_provider_session_boundary(
+                    ctx,
+                    agent_id=agent_id,
+                    transcript=transcript,
+                    new_session_id=updated.session_id,
+                )
+                return {
+                    "key": key,
+                    "reset": True,
+                    "rotated": rotated,
+                    "previous_session_id": previous_session_id,
+                    "session_id": updated.session_id,
+                    "epoch": new_epoch,
+                    "reset_mode": "destructive_checkpoint_covered",
+                }
 
-                # No covering checkpoint: archive + rotate without deleting.
+            # No covering checkpoint: archive + rotate without deleting.
+            updated = await ctx.session_manager.rotate_session_id_archive_only(key)
+            new_epoch = await _increment_and_emit_epoch(ctx, storage, key)
+            await _notify_provider_session_boundary(
+                ctx,
+                agent_id=agent_id,
+                transcript=transcript,
+                new_session_id=updated.session_id,
+            )
+            return {
+                "key": key,
+                "reset": True,
+                "rotated": True,
+                "previous_session_id": previous_session_id,
+                "session_id": updated.session_id,
+                "epoch": new_epoch,
+                "reset_mode": "archive_only",
+                "message_count": len(transcript),
+            }
+
+        if transcript and force:
+            # Still prefer the non-destructive archive rotation unless a
+            # durable checkpoint receipt covers the transcript.
+            checkpoint_safe = await _durable_receipt_allows_covered_destructive_compaction(
+                storage,
+                key,
+                previous_session_id,
+                transcript,
+            )
+            if not checkpoint_safe:
                 updated = await ctx.session_manager.rotate_session_id_archive_only(key)
                 new_epoch = await _increment_and_emit_epoch(ctx, storage, key)
                 await _notify_provider_session_boundary(
@@ -1658,54 +1677,25 @@ async def _handle_sessions_reset(params: dict | None, ctx: RpcContext) -> dict[s
                     "message_count": len(transcript),
                 }
 
-            if transcript and force:
-                # Still prefer the non-destructive archive rotation unless a
-                # durable checkpoint receipt covers the transcript.
-                checkpoint_safe = await _durable_receipt_allows_covered_destructive_compaction(
-                    storage,
-                    key,
-                    previous_session_id,
-                    transcript,
-                )
-                if not checkpoint_safe:
-                    updated = await ctx.session_manager.rotate_session_id_archive_only(key)
-                    new_epoch = await _increment_and_emit_epoch(ctx, storage, key)
-                    await _notify_provider_session_boundary(
-                        ctx,
-                        agent_id=agent_id,
-                        transcript=transcript,
-                        new_session_id=updated.session_id,
-                    )
-                    return {
-                        "key": key,
-                        "reset": True,
-                        "rotated": True,
-                        "previous_session_id": previous_session_id,
-                        "session_id": updated.session_id,
-                        "epoch": new_epoch,
-                        "reset_mode": "archive_only",
-                        "message_count": len(transcript),
-                    }
-
-            updated, rotated = await ctx.session_manager.apply_intent(
-                key,
-                SessionIntent.RESET_SAME_KEY,
-            )
-            new_epoch = await _increment_and_emit_epoch(ctx, storage, key)
-            await _notify_provider_session_boundary(
-                ctx,
-                agent_id=agent_id,
-                transcript=transcript,
-                new_session_id=updated.session_id,
-            )
-            return {
-                "key": key,
-                "reset": True,
-                "rotated": rotated,
-                "previous_session_id": previous_session_id,
-                "session_id": updated.session_id,
-                "epoch": new_epoch,
-            }
+        updated, rotated = await ctx.session_manager.apply_intent(
+            key,
+            SessionIntent.RESET_SAME_KEY,
+        )
+        new_epoch = await _increment_and_emit_epoch(ctx, storage, key)
+        await _notify_provider_session_boundary(
+            ctx,
+            agent_id=agent_id,
+            transcript=transcript,
+            new_session_id=updated.session_id,
+        )
+        return {
+            "key": key,
+            "reset": True,
+            "rotated": rotated,
+            "previous_session_id": previous_session_id,
+            "session_id": updated.session_id,
+            "epoch": new_epoch,
+        }
 
         if not transcript:
             updated, rotated = await ctx.session_manager.apply_intent(
@@ -1718,101 +1708,13 @@ async def _handle_sessions_reset(params: dict | None, ctx: RpcContext) -> dict[s
                 transcript=transcript,
                 new_session_id=updated.session_id,
             )
-            receipt = FlushReceipt(
-                mode="skipped",
-                flushed_paths=[],
-                slug=None,
-                message_count=0,
-                duration_ms=0,
-                raw_reason=None,
-                error=None,
-            )
             return _reset_response(
                 key,
                 rotated,
                 previous_session_id,
                 updated.session_id,
-                receipt,
                 new_epoch,
             )
-
-        try:
-            receipt = await ctx.flush_service.execute(
-                transcript,
-                key,
-                agent_id=agent_id,
-                timeout=30.0,
-                message_window=0,
-                segment_mode="auto",
-                raw_capture_policy="required",
-            )
-        except Exception as exc:  # noqa: BLE001 — both LLM and raw-dump failed
-            receipt = FlushReceipt(
-                mode="error",
-                flushed_paths=[],
-                slug=None,
-                message_count=len(transcript),
-                duration_ms=0,
-                raw_reason=None,
-                error=str(exc),
-                result_status="archive_failed",
-            )
-            raise RpcHandlerError(
-                code="flush_disk_error",
-                message=f"Reset aborted: flush failed ({receipt.error})",
-                details={
-                    "flush_receipt": receipt.to_dict(),
-                    "key": key,
-                    "session_id": previous_session_id,
-                },
-            ) from exc
-
-        durable_receipt_safe = await _durable_receipt_allows_covered_destructive_compaction(
-            storage,
-            key,
-            previous_session_id,
-            transcript,
-        )
-        memory_status = compaction_memory_status(
-            receipt,
-            deterministic_receipt_safe=durable_receipt_safe,
-            required=True,
-        )
-        if not memory_status.allows_destructive_compaction:
-            flush_status = flush_receipt_status_for_compaction(receipt, ctx.config)
-            raise RpcHandlerError(
-                code="flush_disk_error",
-                message=(
-                    f"Reset aborted: flush status {flush_status!r} is not sufficient "
-                    "for destructive reset."
-                ),
-                details={
-                    "flush_receipt": receipt.to_dict(),
-                    "key": key,
-                    "session_id": previous_session_id,
-                    "reason": "destructive_reset_requires_safe_flush",
-                    "flush_receipt_status": flush_status,
-                    "memory_safety_status": memory_status.safety_status,
-                    "semantic_memory_status": memory_status.semantic_status,
-                },
-            )
-
-        updated, rotated = await ctx.session_manager.apply_intent(key, SessionIntent.RESET_SAME_KEY)
-        new_epoch = await _increment_and_emit_epoch(ctx, storage, key)
-        await _notify_provider_session_boundary(
-            ctx,
-            agent_id=agent_id,
-            transcript=transcript,
-            new_session_id=updated.session_id,
-        )
-        return _reset_response(
-            key,
-            rotated,
-            previous_session_id,
-            updated.session_id,
-            receipt,
-            new_epoch,
-        )
 
     if lock is None:
         return await _run_locked()
@@ -1868,7 +1770,6 @@ def _reset_response(
     rotated: bool,
     previous_session_id: str,
     session_id: str,
-    receipt: Any,
     epoch: int = 0,
 ) -> dict[str, Any]:
     return {
@@ -1878,7 +1779,6 @@ def _reset_response(
         "previous_session_id": previous_session_id,
         "session_id": session_id,
         "epoch": epoch,
-        "flush_receipt": flush_receipt_to_dict(receipt),
     }
 
 
@@ -1956,8 +1856,8 @@ async def _handle_sessions_context_compact(params: dict | None, ctx: RpcContext)
         )
 
     async def _run_locked() -> dict[str, Any]:
-        receipt = None
-        flush_receipt_status: str | None = None
+        # No flush runs any more, so compaction never waits on a receipt.
+        flush_receipt_status = "not_required"
         compaction_id = new_compaction_id()
         storage = get_session_storage(ctx.session_manager)
         session = None
@@ -2009,122 +1909,7 @@ async def _handle_sessions_context_compact(params: dict | None, ctx: RpcContext)
             status="started",
             **compaction_lifecycle_payload(compaction_id, COMPACTION_TRIGGERED_EVENT),
         )
-        transcript = []
-        flush_enabled = pre_compaction_flush_enabled(ctx.config)
         try:
-            if flush_enabled:
-                get_transcript = getattr(ctx.session_manager, "get_transcript", None)
-                if not callable(get_transcript):
-                    log.warning(
-                        "sessions.context_compact.flush_skipped",
-                        key=key,
-                        reason="transcript_reader_unavailable",
-                    )
-                    flush_enabled = False
-                else:
-                    transcript = await get_transcript(key)
-
-            if flush_enabled and transcript:
-                if ctx.flush_service is None:
-                    log.warning(
-                        "sessions.context_compact.flush_skipped",
-                        key=key,
-                        reason="flush_service_unavailable",
-                    )
-                    flush_receipt_status = flush_receipt_status_for_compaction(
-                        None,
-                        ctx.config,
-                    )
-                else:
-                    agent_id = normalize_agent_id(getattr(session, "agent_id", None) or "main")
-                    memory_cfg = getattr(getattr(ctx, "config", None), "memory", None)
-                    raw_timeout = getattr(
-                        memory_cfg,
-                        "flush_background_timeout_seconds",
-                        120.0,
-                    )
-                    try:
-                        flush_timeout = max(float(raw_timeout), 0.0)
-                    except (TypeError, ValueError):
-                        flush_timeout = 120.0
-                    try:
-                        receipt = await ctx.flush_service.execute(
-                            transcript,
-                            key,
-                            agent_id=agent_id,
-                            timeout=flush_timeout,
-                            message_window=0,
-                            segment_mode="auto",
-                            raw_capture_policy="required",
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning(
-                            "sessions.context_compact.flush_failed",
-                            key=key,
-                            error=str(exc),
-                        )
-                        flush_receipt_status = flush_receipt_status_for_compaction(
-                            None,
-                            ctx.config,
-                        )
-                    else:
-                        flush_receipt_status = flush_receipt_status_for_compaction(
-                            receipt,
-                            ctx.config,
-                        )
-                        if not flush_receipt_is_successful_flush(receipt):
-                            log.warning(
-                                "sessions.context_compact.flush_degraded",
-                                key=key,
-                                flush_receipt_status=flush_receipt_status,
-                                flush_receipt=flush_receipt_to_dict(receipt),
-                            )
-                        else:
-                            log.info(
-                                "sessions.context_compact.flush_done",
-                                key=key,
-                                flush_receipt_status=flush_receipt_status,
-                                flush_receipt=flush_receipt_to_dict(receipt),
-                            )
-
-            if (
-                flush_enabled
-                and transcript
-                and pre_compaction_flush_requires_safe_receipt(ctx.config)
-            ):
-                durable_receipt_safe = False
-                if storage is not None:
-                    durable_receipt_safe = (
-                        await _durable_receipt_allows_covered_destructive_compaction(
-                            storage,
-                            key,
-                            getattr(session, "session_id", None) if session else None,
-                            transcript,
-                        )
-                    )
-                memory_status = compaction_memory_status(
-                    receipt,
-                    deterministic_receipt_safe=durable_receipt_safe,
-                    required=flush_enabled,
-                )
-                if not memory_status.allows_destructive_compaction:
-                    raise RpcHandlerError(
-                        code="CONTEXT_FLUSH_FAILED",
-                        message=(
-                            "Manual compaction aborted: flush receipt is not sufficient "
-                            "for destructive compaction."
-                        ),
-                        details={
-                            "flush_receipt": flush_receipt_to_dict(receipt),
-                            "key": key,
-                            "session_id": getattr(session, "session_id", None),
-                            "reason": "destructive_manual_compact_requires_safe_flush",
-                            "flush_receipt_status": flush_receipt_status,
-                            "memory_safety_status": memory_status.safety_status,
-                            "semantic_memory_status": memory_status.semantic_status,
-                        },
-                    )
-
             compaction_config = build_compaction_config_from_provider(
                 _resolve_compaction_provider(ctx, session),
                 model_override=_effective_compaction_model(session),
@@ -2142,9 +1927,7 @@ async def _handle_sessions_context_compact(params: dict | None, ctx: RpcContext)
                 compact_kwargs: dict[str, Any] = {
                     "custom_instructions": custom_instructions,
                 }
-                if flush_receipt_status is not None and _accepts_keyword_arg(
-                    compact_with_result, "flush_receipt_status"
-                ):
+                if _accepts_keyword_arg(compact_with_result, "flush_receipt_status"):
                     compact_kwargs["flush_receipt_status"] = flush_receipt_status
                 result = await compact_with_result(
                     key,
@@ -2231,10 +2014,6 @@ async def _handle_sessions_context_compact(params: dict | None, ctx: RpcContext)
         if not removed_count:
             payload["skip_reason"] = skip_reason or "empty_summary"
             payload["reason"] = payload["skip_reason"]
-        if receipt is not None:
-            payload["flush_receipt"] = flush_receipt_to_dict(receipt)
-        if flush_receipt_status is not None:
-            payload["flush_receipt_status"] = flush_receipt_status
         final_event = (
             COMPACTION_PERSISTED_EVENT if removed_count > 0 else COMPACTION_TRIGGERED_EVENT
         )
@@ -2277,7 +2056,6 @@ async def _handle_sessions_compact(params: dict | None, ctx: RpcContext) -> dict
 
 @_d.method("sessions.truncate")
 async def _handle_sessions_truncate(params: dict | None, ctx: RpcContext) -> dict:
-    from agentos.memory.session_flush import FlushReceipt
 
     key = _require_key(params)
     if ctx.session_manager is None:
@@ -2290,121 +2068,40 @@ async def _handle_sessions_truncate(params: dict | None, ctx: RpcContext) -> dic
     lock = get_session_lock(turn_runner, key)
 
     async def _run_locked() -> dict[str, Any]:
-        receipt: FlushReceipt | None = None
         storage = get_session_storage(ctx.session_manager)
         session = None
         if storage is not None:
             session = await storage.get_session(key)
         previous_session_id = getattr(session, "session_id", None) if session else None
 
-        if ctx.flush_service is None:
-            # Fail-closed: refuse to truncate a non-empty transcript without
-            # an explicit force override. Empty transcripts are safe to truncate.
-            transcript = await ctx.session_manager.get_transcript(key)
-            if transcript and not force:
-                checkpoint_safe = (
-                    storage is not None
-                    and await _durable_receipt_allows_covered_destructive_compaction(
-                        storage,
-                        key,
-                        previous_session_id,
-                        _truncate_checkpoint_scope_entries(transcript, max_messages),
-                    )
-                )
-                if not checkpoint_safe:
-                    raise RpcHandlerError(
-                        code="flush_unavailable",
-                        message=(
-                            "Truncate aborted: flush service is unavailable and "
-                            "the transcript is non-empty. Re-run with force=true "
-                            "to truncate without backup."
-                        ),
-                        details={
-                            "key": key,
-                            "session_id": previous_session_id,
-                            "reason": "flush_service_disabled",
-                            "message_count": len(transcript),
-                        },
-                    )
-        else:
-            if storage is None:
-                raise KeyError("No session storage available")
-            if session is None:
-                raise KeyError(f"Session not found: {key}")
-            agent_id = normalize_agent_id(getattr(session, "agent_id", None) or "main")
-            transcript = await ctx.session_manager.get_transcript(key)
-            if transcript:
-                try:
-                    receipt = await ctx.flush_service.execute(
-                        transcript,
-                        key,
-                        agent_id=agent_id,
-                        timeout=30.0,
-                        message_window=0,
-                        segment_mode="auto",
-                        raw_capture_policy="required",
-                    )
-                except Exception as exc:  # noqa: BLE001 — both LLM and raw-dump failed
-                    receipt = FlushReceipt(
-                        mode="error",
-                        flushed_paths=[],
-                        slug=None,
-                        message_count=len(transcript),
-                        duration_ms=0,
-                        raw_reason=None,
-                        error=str(exc),
-                        result_status="archive_failed",
-                    )
-                    raise RpcHandlerError(
-                        code="CONTEXT_FLUSH_FAILED",
-                        message=f"Truncate aborted: flush failed ({receipt.error})",
-                        details={
-                            "flush_receipt": receipt.to_dict(),
-                            "key": key,
-                            "session_id": previous_session_id,
-                        },
-                    ) from exc
-
-                durable_receipt_safe = await _durable_receipt_allows_covered_destructive_compaction(
+        # Fail-closed: refuse to truncate a non-empty transcript without
+        # an explicit force override. Empty transcripts are safe to truncate.
+        transcript = await ctx.session_manager.get_transcript(key)
+        if transcript and not force:
+            checkpoint_safe = (
+                storage is not None
+                and await _durable_receipt_allows_covered_destructive_compaction(
                     storage,
                     key,
                     previous_session_id,
                     _truncate_checkpoint_scope_entries(transcript, max_messages),
                 )
-                memory_status = compaction_memory_status(
-                    receipt,
-                    deterministic_receipt_safe=durable_receipt_safe,
-                    required=True,
+            )
+            if not checkpoint_safe:
+                raise RpcHandlerError(
+                    code="flush_unavailable",
+                    message=(
+                        "Truncate aborted: flush service is unavailable and "
+                        "the transcript is non-empty. Re-run with force=true "
+                        "to truncate without backup."
+                    ),
+                    details={
+                        "key": key,
+                        "session_id": previous_session_id,
+                        "reason": "flush_service_disabled",
+                        "message_count": len(transcript),
+                    },
                 )
-                if not memory_status.allows_destructive_compaction:
-                    flush_status = flush_receipt_status_for_compaction(receipt, ctx.config)
-                    raise RpcHandlerError(
-                        code="CONTEXT_FLUSH_FAILED",
-                        message=(
-                            f"Truncate aborted: flush status {flush_status!r} is not "
-                            "sufficient for destructive truncate."
-                        ),
-                        details={
-                            "flush_receipt": flush_receipt_to_dict(receipt),
-                            "key": key,
-                            "session_id": previous_session_id,
-                            "reason": "destructive_truncate_requires_safe_flush",
-                            "flush_receipt_status": flush_status,
-                            "memory_safety_status": memory_status.safety_status,
-                            "semantic_memory_status": memory_status.semantic_status,
-                        },
-                    )
-            else:
-                receipt = FlushReceipt(
-                    mode="skipped",
-                    flushed_paths=[],
-                    slug=None,
-                    message_count=0,
-                    duration_ms=0,
-                    raw_reason=None,
-                    error=None,
-                )
-
         result = await ctx.session_manager.truncate(key, max_messages=max_messages)
         payload = {
             "key": key,
@@ -2413,8 +2110,6 @@ async def _handle_sessions_truncate(params: dict | None, ctx: RpcContext) -> dic
             "before_count": result["before_count"],
             "after_count": result["after_count"],
         }
-        if receipt is not None:
-            payload["flush_receipt"] = flush_receipt_to_dict(receipt)
         return payload
 
     if lock is None:

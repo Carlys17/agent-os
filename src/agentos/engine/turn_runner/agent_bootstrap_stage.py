@@ -20,7 +20,7 @@ future AgentConfig-validation early-yield branch.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from agentos.engine.agent import Agent, ToolHandler
@@ -66,18 +66,8 @@ class _AgentConfigAuxiliaries:
     """
 
     thinking: bool | ThinkingLevel
-    flush_workspace_dir: str
     tool_result_store_dir: str
     tool_result_store_session_id: str
-    # Memory-cfg-derived (defaults match the inline ``getattr`` defaults)
-    flush_enabled: bool
-    flush_timeout_seconds: float
-    flush_background_timeout_seconds: float
-    flush_backoff_initial_seconds: float
-    flush_backoff_max_seconds: float
-    flush_archive_max_bytes: int
-    flush_compaction_requires_safe_receipt: bool
-    flush_compaction_safety_mode: Literal["protect", "best_effort", "block", "off"]
     # Agent-token-cfg-derived
     tool_result_projection_max_inline_chars: int
     tool_result_store_max_bytes: int
@@ -414,17 +404,6 @@ class AgentBootstrapStage:
             max_tokens=catalog.max_tokens,
             context_window_tokens=catalog.context_window,
             max_history_turns=_route_max_history_turns(inp.turn.metadata),
-            flush_enabled=aux.flush_enabled,
-            flush_timeout_seconds=aux.flush_timeout_seconds,
-            flush_background_timeout_seconds=aux.flush_background_timeout_seconds,
-            flush_backoff_initial_seconds=aux.flush_backoff_initial_seconds,
-            flush_backoff_max_seconds=aux.flush_backoff_max_seconds,
-            flush_archive_max_bytes=aux.flush_archive_max_bytes,
-            flush_compaction_requires_safe_receipt=(
-                aux.flush_compaction_requires_safe_receipt
-            ),
-            flush_compaction_safety_mode=aux.flush_compaction_safety_mode,
-            flush_workspace_dir=aux.flush_workspace_dir,
             model_capabilities=catalog.capabilities,
             thinking=aux.thinking,
             tool_result_projection_max_inline_chars=(

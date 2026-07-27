@@ -126,7 +126,6 @@ from agentos.execution_status import (
     mark_execution_status_truncated,
     normalize_execution_status,
 )
-from agentos.memory.session_flush import SessionFlushService
 from agentos.observability.decision_log import (
     DecisionEntry,
     PipelineStepRecord,
@@ -161,7 +160,6 @@ from agentos.session.compaction_lifecycle import (
     COMPACTION_TRIGGERED_EVENT,
     compaction_effect_payload,
     compaction_lifecycle_payload,
-    compaction_memory_status,
     compaction_result_payload,
     durable_receipt_allows_destructive_compaction,
     flush_receipt_allows_destructive_compaction,
@@ -169,7 +167,6 @@ from agentos.session.compaction_lifecycle import (
     flush_receipt_status_for_compaction,
     mark_compaction_flush_status_with_retry,
     new_compaction_id,
-    pre_compaction_flush_requires_safe_receipt,
 )
 from agentos.session.context_view import (
     build_compaction_context_records,
@@ -1430,7 +1427,6 @@ class TurnRunner:
         memory_retrievers: dict[str, Any] | None = None,
         turn_capture_services: dict[str, Any] | None = None,
         memory_provider_managers: dict[str, Any] | None = None,
-        session_flush_service: SessionFlushService | None = None,
         session_lock_provider: Callable[[str], asyncio.Lock] | None = None,
         diagnostics_state: Any | None = None,
         turn_hooks: Sequence[TurnHook] | None = None,
@@ -1452,7 +1448,6 @@ class TurnRunner:
         # provider wiring site is a single ``None``/empty-dict check so the
         # disabled default path adds zero awaits/imports to the hot path.
         self._memory_provider_managers = memory_provider_managers
-        self._session_flush_service = session_flush_service
         self._diagnostics_state = diagnostics_state
         self._router_control_hold_store = RouterControlHoldStore()
         # TurnHook surface. The default trace hook reproduces the inline trace
@@ -2750,7 +2745,7 @@ class TurnRunner:
             # 11. Observability: best-effort DecisionEntry for this turn.
             #     Must never break turn execution — wrap in try/except.
             turn.metadata.update(
-                self._collect_session_flush_metadata(agent_id, session_key=session_key)
+                {}
             )
             prompt_report_for_decision = build_prompt_report(
                 turn_id=turn_id,
@@ -4394,39 +4389,6 @@ class TurnRunner:
 
         return final_prompt, cache_breakpoints, request_context_prompt
 
-    def _collect_session_flush_metadata(
-        self,
-        agent_id: str,
-        *,
-        session_key: str | None = None,
-    ) -> dict[str, Any]:
-        """Collect last SessionFlush extraction attribution for decision logs."""
-
-        svc = self._session_flush_service
-        get_stats = getattr(svc, "last_extraction_stats", None)
-        if not callable(get_stats):
-            return {}
-        try:
-            try:
-                stats = get_stats(agent_id, session_key) if session_key is not None else get_stats()
-            except TypeError:
-                stats = get_stats()
-        except Exception:
-            return {}
-        if not isinstance(stats, dict) or not stats:
-            return {}
-        stat_agent = stats.get("agent_id")
-        if stat_agent and str(stat_agent) != agent_id:
-            return {}
-        stat_session_key = stats.get("session_key")
-        if session_key and stat_session_key and str(stat_session_key) != session_key:
-            return {}
-        fallback_reason = str(stats.get("fallback_reason") or "")
-        return {
-            "session_flush_extraction_model": str(stats.get("extraction_model") or ""),
-            "session_flush_fallback_used": bool(fallback_reason),
-            "session_flush_fallback_reason": fallback_reason,
-        }
 
     async def _record_checkpoint_before_compaction(
         self,
@@ -4720,15 +4682,6 @@ class TurnRunner:
                 runtime_context_chars=(
                     done_event.runtime_context_chars if done_event is not None else 0
                 ),
-                session_flush_extraction_model=(
-                    prompt_report.session_flush_extraction_model if prompt_report else None
-                ),
-                session_flush_fallback_used=(
-                    prompt_report.session_flush_fallback_used if prompt_report else False
-                ),
-                session_flush_fallback_reason=(
-                    prompt_report.session_flush_fallback_reason if prompt_report else None
-                ),
             )
             write_decision_entry(entry)
         except Exception as exc:  # pragma: no cover — observability must not break turns
@@ -4864,59 +4817,16 @@ class TurnRunner:
             **compaction_lifecycle_payload(compaction_id, COMPACTION_TRIGGERED_EVENT),
         )
 
-        checkpoint_saved = await self._record_checkpoint_before_compaction(
+        # Still recorded: the checkpoint is the pre-image compaction repairs
+        # from. Its result is no longer consulted here now that the flush
+        # receipt it gated is gone.
+        await self._record_checkpoint_before_compaction(
             session_key,
             transcript,
             turn_id=compaction_id,
             source="t3_upgrade_compaction",
         )
-        flush_receipt = None
         flush_receipt_status = "not_required"
-        requires_safe_receipt = self._pre_compaction_flush_requires_safe_receipt()
-        if self._pre_compaction_flush_enabled():
-            flush_receipt = await self._await_pre_compaction_flush_grace(
-                transcript,
-                session_key,
-                event_prefix="t3_upgrade_compaction",
-                wait_for_receipt=requires_safe_receipt,
-                turn_id=compaction_id,
-                checkpoint_exists=checkpoint_saved,
-            )
-            flush_receipt_status = flush_receipt_status_for_compaction(
-                flush_receipt,
-                self._config,
-            )
-            memory_status = compaction_memory_status(
-                flush_receipt,
-                deterministic_receipt_safe=checkpoint_saved and not requires_safe_receipt,
-                required=self._pre_compaction_flush_enabled(),
-            )
-            if requires_safe_receipt and not memory_status.allows_destructive_compaction:
-                log.warning(
-                    "t3_upgrade_compaction.skipped",
-                    session_key=session_key,
-                    reason="unsafe_flush_receipt",
-                )
-                notify_compaction(
-                    session_key,
-                    source="automatic",
-                    phase="t3_upgrade",
-                    status="skipped",
-                    reason="unsafe_flush_receipt",
-                    context_window_tokens=context_window_tokens,
-                    flush_receipt_status=flush_receipt_status,
-                    memory_safety_status=memory_status.safety_status,
-                    semantic_memory_status=memory_status.semantic_status,
-                    **compaction_effect_payload(
-                        status="skipped",
-                        reason="unsafe_flush_receipt",
-                    ),
-                    **compaction_lifecycle_payload(
-                        compaction_id,
-                        COMPACTION_TRIGGERED_EVENT,
-                    ),
-                )
-                return _T3_HANDLED
 
         try:
             from agentos.session.compaction import call_compact_with_optional_config
@@ -5141,60 +5051,15 @@ class TurnRunner:
             **compaction_effect_payload(status="started"),
             **compaction_lifecycle_payload(compaction_id, COMPACTION_TRIGGERED_EVENT),
         )
-        checkpoint_saved = await self._record_checkpoint_before_compaction(
+        # Still recorded: the checkpoint is the pre-image compaction repairs
+        # from, independent of the removed flush receipt.
+        await self._record_checkpoint_before_compaction(
             session_key,
             transcript,
             turn_id=compaction_id,
             source="preflight_compaction",
         )
-        flush_receipt = None
         flush_receipt_status = "not_required"
-        requires_safe_receipt = self._pre_compaction_flush_requires_safe_receipt()
-        if self._pre_compaction_flush_enabled():
-            flush_receipt = await self._await_pre_compaction_flush_grace(
-                transcript,
-                session_key,
-                event_prefix="preflight_compaction",
-                wait_for_receipt=requires_safe_receipt,
-                turn_id=compaction_id,
-                checkpoint_exists=checkpoint_saved,
-            )
-            flush_receipt_status = flush_receipt_status_for_compaction(
-                flush_receipt,
-                self._config,
-            )
-            memory_status = compaction_memory_status(
-                flush_receipt,
-                deterministic_receipt_safe=checkpoint_saved and not requires_safe_receipt,
-                required=self._pre_compaction_flush_enabled(),
-            )
-            if requires_safe_receipt and not memory_status.allows_destructive_compaction:
-                log.warning(
-                    "preflight_compaction.skipped",
-                    session_key=session_key,
-                    reason="unsafe_flush_receipt",
-                )
-                notify_compaction(
-                    session_key,
-                    source="automatic",
-                    phase="preflight",
-                    status="skipped",
-                    reason="unsafe_flush_receipt",
-                    tokens_before=total_tokens,
-                    context_window_tokens=context_window_tokens,
-                    flush_receipt_status=flush_receipt_status,
-                    memory_safety_status=memory_status.safety_status,
-                    semantic_memory_status=memory_status.semantic_status,
-                    **compaction_effect_payload(
-                        status="skipped",
-                        reason="unsafe_flush_receipt",
-                    ),
-                    **compaction_lifecycle_payload(
-                        compaction_id,
-                        COMPACTION_TRIGGERED_EVENT,
-                    ),
-                )
-                return
         compaction_config = None
         skip_reason = "empty_summary"
         if compaction_provider is not None or compaction_model:
@@ -5372,23 +5237,7 @@ class TurnRunner:
                 ),
             )
 
-    def _pre_compaction_flush_enabled(self) -> bool:
-        from agentos.memory.flush_config import is_session_flush_enabled
 
-        if not is_session_flush_enabled():
-            return False
-
-        memory_cfg = getattr(self._config, "memory", None)
-        if memory_cfg is None:
-            return False
-
-        raw_enabled = getattr(memory_cfg, "flush_enabled", False)
-        if isinstance(raw_enabled, str):
-            return raw_enabled.strip().lower() not in {"0", "false", "no", "off"}
-        return bool(raw_enabled)
-
-    def _pre_compaction_flush_requires_safe_receipt(self) -> bool:
-        return pre_compaction_flush_requires_safe_receipt(self._config)
 
     def _pre_compaction_flush_timeout_seconds(self) -> float:
         memory_cfg = getattr(self._config, "memory", None)
@@ -5408,124 +5257,6 @@ class TurnRunner:
             return 120.0
         return max(timeout, 0.0)
 
-    async def _await_pre_compaction_flush_grace(
-        self,
-        transcript: list[Any],
-        session_key: str,
-        *,
-        event_prefix: str,
-        wait_for_receipt: bool | None = None,
-        turn_id: str | None = None,
-        checkpoint_exists: bool | None = None,
-    ) -> Any | None:
-        if self._session_flush_service is None:
-            log.warning(
-                f"{event_prefix}.flush_unavailable",
-                session_key=session_key,
-                error="flush_service_unavailable",
-            )
-            return None
-
-        should_wait = (
-            self._pre_compaction_flush_requires_safe_receipt()
-            if wait_for_receipt is None
-            else bool(wait_for_receipt)
-        )
-        background_timeout = self._pre_compaction_flush_background_timeout_seconds()
-        task = self._active_pre_compaction_flush_tasks.get(session_key)
-        if task is not None:
-            if task.done():
-                try:
-                    receipt = task.result()
-                except asyncio.CancelledError:
-                    log.debug(f"{event_prefix}.flush_cancelled", session_key=session_key)
-                    return None
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        f"{event_prefix}.flush_failed",
-                        session_key=session_key,
-                        error=str(exc),
-                    )
-                    return None
-                self._consume_pre_compaction_flush_task(session_key, task, event_prefix)
-                return receipt
-            log.debug(
-                f"{event_prefix}.flush_skipped",
-                session_key=session_key,
-                reason="already_running",
-                waiting=should_wait,
-            )
-            if not should_wait:
-                return None
-
-        else:
-            from agentos.session.keys import parse_agent_id
-
-            task = asyncio.create_task(
-                self._session_flush_service.execute(
-                    transcript,
-                    session_key,
-                    agent_id=parse_agent_id(session_key),
-                    message_window=0,
-                    segment_mode="auto",
-                    timeout=background_timeout,
-                    raw_capture_policy="required",
-                    turn_id=turn_id,
-                    checkpoint_exists=checkpoint_exists,
-                )
-            )
-            self._active_pre_compaction_flush_tasks[session_key] = task
-            task.add_done_callback(
-                lambda completed: self._consume_pre_compaction_flush_task(
-                    session_key,
-                    completed,
-                    event_prefix,
-                    background=True,
-                    compaction_id=turn_id,
-                )
-            )
-            if not should_wait:
-                log.info(
-                    f"{event_prefix}.flush_background_started",
-                    session_key=session_key,
-                    background_timeout_seconds=background_timeout,
-                )
-                return None
-
-        grace_timeout = self._pre_compaction_flush_timeout_seconds()
-        flush_t0 = time.monotonic()
-        try:
-            receipt = await asyncio.wait_for(asyncio.shield(task), timeout=grace_timeout)
-        except TimeoutError:
-            log.warning(
-                f"{event_prefix}.flush_timed_out",
-                session_key=session_key,
-                timeout_seconds=grace_timeout,
-                background_timeout_seconds=background_timeout,
-            )
-            return None
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            if self._active_pre_compaction_flush_tasks.get(session_key) is task:
-                self._active_pre_compaction_flush_tasks.pop(session_key, None)
-            log.warning(
-                f"{event_prefix}.flush_failed",
-                session_key=session_key,
-                error=str(exc),
-            )
-            return None
-
-        if self._active_pre_compaction_flush_tasks.get(session_key) is task:
-            self._active_pre_compaction_flush_tasks.pop(session_key, None)
-        self._log_pre_compaction_flush_receipt(
-            event_prefix,
-            session_key,
-            receipt,
-            duration_ms=int((time.monotonic() - flush_t0) * 1000),
-            background=False,
-        )
-        return receipt
 
     def _consume_pre_compaction_flush_task(
         self,

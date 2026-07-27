@@ -565,19 +565,6 @@ class MemoryConfig(BaseSettings):
     # when entry_ttl_days = 0.
     ttl_sweep_interval_minutes: float = Field(default=60.0, ge=0.0)
 
-    # Flush (pre-compaction memory save)
-    flush_enabled: bool = False
-    flush_timeout_seconds: float = 15.0
-    flush_background_timeout_seconds: float = 120.0
-    flush_backoff_initial_seconds: float = 30.0
-    flush_backoff_max_seconds: float = 300.0
-    flush_archive_max_bytes: int = 800_000
-    flush_compaction_requires_safe_receipt: bool = False
-    flush_compaction_safety_mode: Literal["protect", "best_effort", "block", "off"] = "protect"
-    repair_enabled: bool = True
-    repair_interval_seconds: float = Field(default=60.0, ge=0.0)
-    repair_max_items_per_tick: int = Field(default=5, ge=1)
-
     # Per-turn auto capture / recall
     auto_capture_enabled: bool = True
     capture_mode: Literal["turn_pair", "off"] = "turn_pair"

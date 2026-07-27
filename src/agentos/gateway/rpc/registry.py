@@ -60,7 +60,6 @@ class RpcContext:
     cron_scheduler: Any = None  # SchedulerEngine instance (injected at boot)
     turn_runner: TurnRunner | None = None  # TurnRunner instance (injected at boot)
     task_runtime: Any = None  # TaskRuntime instance (injected at boot)
-    flush_service: Any = None  # SessionFlushService | None (injected at boot)
     heartbeat_service: Any = None  # Task-style heartbeat service (injected at boot)
     heartbeat_loop: Any = None  # Background heartbeat loop (injected at boot)
     agent_registry: Any = None  # AgentRegistry instance (injected at boot)
@@ -70,6 +69,7 @@ class RpcContext:
     memory_retrievers: dict[str, Any] = field(default_factory=dict)
     originating_envelope: Any = None  # Channel RouteEnvelope for RPC side effects
     model_catalog: Any = None  # Boot-fetched ModelCatalog instance
+
 
 @dataclass
 class RpcMethodEntry:
@@ -369,8 +369,6 @@ def validate_classification(registry: RpcRegistry | None = None) -> None:
                 f"{name!r} channel audience disagrees with CHANNEL_RPC_METHODS"
             )
         if has_node != (name in NODE_RPC_METHODS):
-            raise AudienceDriftError(
-                f"{name!r} node audience disagrees with NODE_RPC_METHODS"
-            )
+            raise AudienceDriftError(f"{name!r} node audience disagrees with NODE_RPC_METHODS")
     if registry is None:
         target.lock_registration()

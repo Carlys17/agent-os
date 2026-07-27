@@ -15,7 +15,6 @@ from agentos.engine.session_sanitize import (
     sanitize_session_messages,
 )
 from agentos.engine.types import ThinkingLevel
-from agentos.memory.session_flush import _usage_from_complete_response
 from agentos.provider import (
     ChatConfig,
     ContentBlockText,
@@ -1079,24 +1078,6 @@ async def test_agent_static_cost_source_is_explicitly_distinct_from_provider_bil
     assert done.cost_source == "agentos_static_estimate"
 
 
-def test_complete_response_usage_cost_is_not_provider_billed_for_direct_providers() -> None:
-    response = SimpleNamespace(
-        model="deepseek-v4-flash",
-        usage={
-            "prompt_tokens": 1000,
-            "completion_tokens": 1000,
-            "cost": 0.0123,
-        },
-    )
-    provider = SimpleNamespace(provider_name="deepseek")
-
-    usage = _usage_from_complete_response(response, provider)
-
-    assert usage["billed_cost"] == 0.0
-    assert usage["cost_source"] == "agentos_static_estimate"
-    assert usage["estimated_cost_usd"] > 0.0
-
-
 @pytest.mark.asyncio
 async def test_agent_uses_sanitized_request_view_and_records_context_stages() -> None:
     provider = CapturingProvider()
@@ -1153,7 +1134,7 @@ async def test_agent_provider_view_omits_loaded_history_tool_arguments() -> None
     large_argument = "STALE_HISTORY_ARGUMENT\n" + ("x" * 20_000)
     agent = Agent(
         provider=provider,
-        config=AgentConfig(max_iterations=1, flush_enabled=False),
+        config=AgentConfig(max_iterations=1),
     )
     agent.set_history(
         [
@@ -1212,7 +1193,6 @@ async def test_agent_preserves_deepseek_reasoning_while_projecting_history_paylo
                 supports_tools=True,
                 reasoning_format="deepseek",
             ),
-            flush_enabled=False,
         ),
     )
     agent.set_history(
@@ -1711,61 +1691,6 @@ def test_agent_provider_request_messages_project_overflow_retry_tool_results() -
     assert "tool_result_handle:" not in request_result.content
     assert len(request_result.content) < len(raw_output)
 
-
-@pytest.mark.asyncio
-async def test_agent_inline_strict_flush_receipt_refuses_destructive_compaction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    agent = Agent(
-        provider=CapturingProvider(),
-        config=AgentConfig(
-            context_window_tokens=10,
-            context_overflow_threshold=0.1,
-            flush_enabled=True,
-            flush_timeout_seconds=0.1,
-            flush_compaction_requires_safe_receipt=True,
-        ),
-    )
-    messages = [Message(role="user", content="important history")]
-    compact_called = False
-
-    monkeypatch.setattr(
-        "agentos.memory.flush.should_flush",
-        lambda **_kwargs: True,
-    )
-    monkeypatch.setattr(
-        "agentos.memory.flush.resolve_flush_plan",
-        lambda **_kwargs: SimpleNamespace(relative_path="flush.md"),
-    )
-
-    async def degraded_flush(_plan: Any, _messages: list[Message]) -> Any:
-        return SimpleNamespace(
-            mode="llm",
-            indexed_chunk_count=1,
-            integrity_status="missing_chunks",
-            output_coverage_status="ok",
-            invalid_candidate_count=0,
-            candidate_missing_ids=[],
-            obligation_status="ok",
-            obligation_missing_ids=[],
-        )
-
-    async def compact_context_should_not_run(_request: Any) -> Any:
-        nonlocal compact_called
-        compact_called = True
-        return SimpleNamespace(summary="", kept_entries=[], removed_count=0)
-
-    monkeypatch.setattr(agent, "_run_flush", degraded_flush)
-    monkeypatch.setattr(
-        "agentos.engine.agent.compact_context",
-        compact_context_should_not_run,
-    )
-
-    outcome = await agent._check_context_overflow(messages, estimated_context_tokens=100)
-
-    assert outcome is None
-    assert compact_called is False
-    assert agent._last_compaction_refusal_reason == "memory_flush_degraded_before_compaction"
 
 
 @pytest.mark.asyncio

@@ -62,17 +62,8 @@ def _default_aux(
 ) -> _AgentConfigAuxiliaries:
     return _AgentConfigAuxiliaries(
         thinking=thinking,
-        flush_workspace_dir="/tmp/flush",
         tool_result_store_dir="/tmp/tool-results",
         tool_result_store_session_id="session-test",
-        flush_enabled=True,
-        flush_timeout_seconds=15.0,
-        flush_background_timeout_seconds=120.0,
-        flush_backoff_initial_seconds=30.0,
-        flush_backoff_max_seconds=300.0,
-        flush_archive_max_bytes=800_000,
-        flush_compaction_requires_safe_receipt=flush_compaction_requires_safe_receipt,
-        flush_compaction_safety_mode="protect",
         tool_result_projection_max_inline_chars=60_000,
         tool_result_store_max_bytes=400_000,
         tool_result_store_disk_budget_bytes=4_000_000,

@@ -46,6 +46,27 @@ DEPRECATED_MEMORY_FIELDS: frozenset[str] = frozenset(
         # existing agentos.toml carrying [memory.dream] would fail validation
         # at boot without this. The whole sub-table is dropped and warned about.
         "memory.dream",
+        # Session flush was removed; MemoryConfig forbids extras, so an
+        # existing agentos.toml carrying these would fail validation at boot.
+        #
+        # The safety-gate keys go too, and dropping them is load-bearing rather
+        # than cosmetic. No flush service is constructed any more, so no receipt
+        # can ever be produced. Left in place, `flush_enabled = true` with
+        # `block` (or the legacy `requires_safe_receipt`) makes compaction demand
+        # a receipt that nothing can write: it refuses on every turn, the context
+        # window fills, and the only clue is one warning line. Removing the key
+        # forces `pre_compaction_flush_enabled()` false for good.
+        "memory.flush_enabled",
+        "memory.flush_compaction_requires_safe_receipt",
+        "memory.flush_compaction_safety_mode",
+        "memory.flush_timeout_seconds",
+        "memory.flush_background_timeout_seconds",
+        "memory.flush_backoff_initial_seconds",
+        "memory.flush_backoff_max_seconds",
+        "memory.flush_archive_max_bytes",
+        "memory.repair_enabled",
+        "memory.repair_interval_seconds",
+        "memory.repair_max_items_per_tick",
     }
 )
 

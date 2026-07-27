@@ -8,11 +8,11 @@ import logging
 import os
 import secrets
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agentos.engine.usage import UsageTracker
@@ -58,14 +58,6 @@ from agentos.router_tiers import DEFAULT_ROUTER_STRATEGY
 from agentos.session.terminal_reply import build_terminal_reply, sanitize_agent_error
 
 log = structlog.get_logger(__name__)
-
-
-class _FlushReceiptSessionStorage(Protocol):
-    async def get_session(self, session_key: str) -> Any | None: ...
-
-    async def list_memory_durable_receipts(self, **kwargs: Any) -> list[Any]: ...
-
-    async def upsert_memory_durable_receipt(self, receipt: Any) -> Any: ...
 
 
 _DEBUG_FILE_HANDLER_ATTR = "_agentos_debug_file_handler"
@@ -135,7 +127,7 @@ def _make_channel_rpc_context_factory(svc: ServiceContainer, config: GatewayConf
     from agentos.channels.command_registry import build_channel_rpc_context
 
     def _factory(envelope: Any) -> Any:
-        names = ("session_manager", "provider_selector", "tool_registry", "usage_tracker", "skill_loader", "cron_scheduler", "task_runtime", "flush_service", "heartbeat_loop", "agent_registry", "memory_managers", "memory_stores", "memory_retrievers")  # noqa: E501
+        names = ("session_manager", "provider_selector", "tool_registry", "usage_tracker", "skill_loader", "cron_scheduler", "task_runtime", "heartbeat_loop", "agent_registry", "memory_managers", "memory_stores", "memory_retrievers")  # noqa: E501
         return build_channel_rpc_context(
             envelope,
             gateway_config=config,
@@ -271,7 +263,6 @@ class ServiceContainer:
     # unless a provider is configured AND available at boot — a derived view
     # over `memory_managers` (each manager's `.provider_manager`).
     memory_provider_managers: dict[str, Any] = field(default_factory=dict)
-    flush_service: Any = None  # SessionFlushService | None (gated by AGENTOS_SESSION_FLUSH)
     task_runtime: Any = None
     heartbeat_loop: Any = None
     heartbeat_watcher: Any = None
@@ -969,195 +960,6 @@ class GatewayServer:
             await self._services.close()
 
         log.info("gateway.stopped", reason=reason)
-
-
-def build_flush_service(
-    *,
-    tool_registry: Any,
-    provider_selector: Any,
-    config: GatewayConfig | None = None,
-    session_manager: Any | None = None,
-    memory_managers: Mapping[str, Any] | None = None,
-) -> Any:
-    """Construct a :class:`SessionFlushService` gated by flush config.
-
-    Returns ``None`` when the kill-switch env var is disabled or gateway memory
-    config does not explicitly enable flush. Otherwise returns a service wired to the gateway's tool
-    registry and provider selector. ``agent_id`` is threaded through the
-    callable signature for future multi-agent support, but today AgentOS
-    uses a single ModelSelector so we just call its ``resolve()`` and ignore
-    the agent id.
-    """
-    from agentos.memory.flush_config import is_session_flush_enabled
-
-    if not is_session_flush_enabled():
-        return None
-    memory_cfg = getattr(config, "memory", None)
-    if memory_cfg is None or not getattr(memory_cfg, "flush_enabled", False):
-        return None
-
-    from agentos.memory.session_flush import SessionFlushService
-    from agentos.tools.dispatch import build_tool_handler
-
-    tool_handler = build_tool_handler(tool_registry)
-    raw_session_storage = get_session_storage(session_manager)
-    session_storage: _FlushReceiptSessionStorage | None = None
-    if (
-        raw_session_storage is not None
-        and callable(getattr(raw_session_storage, "get_session", None))
-        and callable(getattr(raw_session_storage, "list_memory_durable_receipts", None))
-        and callable(getattr(raw_session_storage, "upsert_memory_durable_receipt", None))
-    ):
-        session_storage = cast(_FlushReceiptSessionStorage, raw_session_storage)
-
-    def _resolve_provider(_agent_id: str) -> Any:
-        if provider_selector is None:
-            return None
-        resolver = getattr(provider_selector, "resolve", None)
-        if resolver is None:
-            return None
-        try:
-            return resolver()
-        except Exception:  # noqa: BLE001
-            return None
-
-    async def _resolve_flush_session_id(session_key: str) -> str | None:
-        if session_storage is None:
-            return None
-        session = await session_storage.get_session(session_key)
-        if session is None:
-            return None
-        return str(getattr(session, "session_id", "") or "") or None
-
-    async def _resolve_flush_checkpoint_exists(
-        session_key: str,
-        session_id: str | None,
-    ) -> bool:
-        if session_storage is None or not session_id:
-            return False
-        rows = await session_storage.list_memory_durable_receipts(
-            session_key=session_key,
-            session_id=session_id,
-            scope="checkpoint",
-            status="checkpoint_saved",
-            limit=1,
-        )
-        return bool(rows)
-
-    async def _write_durable_flush_receipt(receipt: Any, **row: Any) -> None:
-        if session_storage is None:
-            return
-
-        from agentos.session.models import MemoryDurableReceipt
-
-        session_key = str(row.get("session_key") or "")
-        if not session_key:
-            return
-        captured_session_id = str(row.get("session_id") or "")
-        if not captured_session_id:
-            log.warning(
-                "session_flush.receipt_write_skipped",
-                reason="session_id_missing",
-                session_key=session_key,
-                result_status=getattr(receipt, "result_status", None),
-            )
-            return
-        current_session = await session_storage.get_session(session_key)
-        current_session_id = (
-            str(getattr(current_session, "session_id", "") or "")
-            if current_session is not None
-            else ""
-        )
-        if current_session_id and current_session_id != captured_session_id:
-            log.warning(
-                "session_flush.receipt_session_mismatch",
-                session_key=session_key,
-                captured_session_id=captured_session_id,
-                current_session_id=current_session_id,
-                result_status=getattr(receipt, "result_status", None),
-            )
-
-        scope = str(row.get("scope") or "")
-        status = str(row.get("status") or "")
-        reason = row.get("reason")
-        target_path = row.get("target_path")
-        target_path = str(target_path) if target_path else None
-        source_path = row.get("source_path")
-        source_path = str(source_path) if source_path else None
-        turn_id = row.get("turn_id")
-        turn_id = str(turn_id) if turn_id else None
-        content_hash = row.get("content_hash")
-        content_hash = str(content_hash) if content_hash else None
-        idempotency_key = ":".join(
-            [
-                "flush-receipt",
-                scope,
-                session_key,
-                captured_session_id,
-                turn_id or "",
-                status,
-                str(reason or ""),
-                source_path or "",
-                target_path or "",
-                content_hash or "",
-                str(getattr(receipt, "input_message_count", 0) or 0),
-                str(getattr(receipt, "first_included_message", "") or ""),
-                str(getattr(receipt, "last_included_message", "") or ""),
-            ]
-        )
-        await session_storage.upsert_memory_durable_receipt(
-            MemoryDurableReceipt(
-                session_key=session_key,
-                session_id=captured_session_id,
-                turn_id=turn_id,
-                scope=scope,
-                source_path=source_path,
-                target_path=target_path,
-                content_hash=content_hash,
-                idempotency_key=idempotency_key,
-                status=status,
-                reason=str(reason) if reason else None,
-                attempt_count=1,
-            )
-        )
-
-    def _resolve_archive_workspace(agent_id: str) -> Path | None:
-        if not memory_managers:
-            return None
-        managers = [memory_managers.get(agent_id), memory_managers.get("main")]
-        for attr_name in ("workspace_dir", "memory_dir"):
-            for manager in managers:
-                if manager is None:
-                    continue
-                path_value = getattr(manager, attr_name, None)
-                if path_value is not None:
-                    return Path(path_value).expanduser()
-        return None
-
-    service_kwargs: dict[str, Any] = {}
-    if memory_cfg is not None:
-        service_kwargs["default_timeout"] = getattr(
-            memory_cfg,
-            "flush_background_timeout_seconds",
-            30.0,
-        )
-        service_kwargs["raw_archive_max_chars"] = getattr(
-            memory_cfg,
-            "flush_archive_max_bytes",
-            800_000,
-        )
-    if session_storage is not None:
-        service_kwargs["receipt_writer"] = _write_durable_flush_receipt
-        service_kwargs["session_identity_resolver"] = _resolve_flush_session_id
-        service_kwargs["checkpoint_exists_resolver"] = _resolve_flush_checkpoint_exists
-
-    return SessionFlushService(
-        provider_selector=_resolve_provider,
-        tool_registry=tool_registry,
-        tool_handler=tool_handler,
-        archive_workspace_resolver=_resolve_archive_workspace,
-        **service_kwargs,
-    )
 
 
 def emit_skill_filter_banner(skills_cfg: Any) -> None:
@@ -1899,19 +1701,6 @@ async def build_services(
     # ── MCP discovery (boot order 22) ───────────────────────────────
     await _discover_configured_mcp_servers(config, tool_registry)
 
-    flush_service = build_flush_service(
-        tool_registry=tool_registry,
-        provider_selector=provider_selector,
-        config=config,
-        session_manager=session_manager,
-        memory_managers=memory_managers,
-    )
-    if flush_service is not None:
-        log.info("build_services.session_flush_service_ready")
-    else:
-        log.info("build_services.session_flush_service_disabled")
-
-
     svc = ServiceContainer(
         config=config,
         provider_selector=provider_selector,
@@ -1929,7 +1718,6 @@ async def build_services(
         memory_retrievers=memory_retrievers,
         turn_capture_services=turn_capture_services,
         memory_provider_managers=memory_provider_managers,
-        flush_service=flush_service,
     )
     # Attach deferred callback ref so start_gateway_server can wire TurnRunner
     svc._turn_runner_ref = _turn_runner_ref  # type: ignore[attr-defined]
@@ -1974,7 +1762,6 @@ def build_turn_runner_from_services(
         memory_retrievers=getattr(svc, "memory_retrievers", None) or None,
         turn_capture_services=getattr(svc, "turn_capture_services", None) or None,
         memory_provider_managers=getattr(svc, "memory_provider_managers", None) or None,
-        session_flush_service=getattr(svc, "flush_service", None),
         session_lock_provider=_standalone_lock_provider,
         diagnostics_state=diagnostics_state,
         # Hook registries forwarded from services when present so any future
@@ -2450,7 +2237,6 @@ async def start_gateway_server(
         cron_scheduler=svc.cron_scheduler,
         turn_runner=turn_runner,
         task_runtime=task_runtime,
-        flush_service=svc.flush_service,
         heartbeat_service=heartbeat_service,
         heartbeat_loop=heartbeat_loop,
         agent_registry=svc.agent_registry,
