@@ -25,7 +25,6 @@ def assemble_system_prompt(
     tools: list[str] | None = None,
     skills: list[str] | None = None,
     memory: str | None = None,
-    timezone: str = "UTC",
     runtime_info: dict[str, str] | None = None,
     docs_path: str | None = None,
     owner_line: str | None = None,
@@ -46,7 +45,6 @@ def assemble_system_prompt(
         tools: List of available tool names.
         skills: List of available skill names.
         memory: Memory section content (omitted in minimal mode).
-        timezone: Current timezone string.
         runtime_info: OS/shell/workspace metadata for Runtime section.
         docs_path: Path to local documentation directory.
         owner_line: Authorized senders line (e.g. phone/ID allowlist).
@@ -72,7 +70,6 @@ def assemble_system_prompt(
         "tools": tools or [],
         "skills": skills or [],
         "memory": memory,
-        "timezone": timezone,
         "prompt_mode": profile.prompt_mode,
         "runtime_info": runtime_info,
         "docs_path": docs_path,

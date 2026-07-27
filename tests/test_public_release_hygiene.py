@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import tomllib
 from pathlib import Path
+
+import pytest
 
 from agentos.gateway.config import GatewayConfig
 
@@ -27,6 +30,18 @@ LOCAL_PATH_PATTERNS = {
     "linux_user_home_path": re.compile(r"/home/(?!node/)[A-Za-z0-9_.-]{2,}/"),
     "posix_user_home_path": re.compile(r"/Users/[A-Za-z0-9_.-]{2,}/"),
 }
+
+# A regional IANA zone locates a contributor as precisely as a home path does,
+# and it arrives the same way: someone writes a fixture from the machine in
+# front of them. A benchmark corpus did exactly that, and the value then
+# propagated into recorded model output.
+#
+# Banning regional zones outright would be wrong -- the scheduler suite needs
+# real zones to exercise DST, and the docs need example values. What is never
+# legitimate is *this* machine's zone appearing in a tracked file, so that is
+# what the check looks for. It fires on the machine where the mistake is being
+# made and stays quiet in CI, which is the right trade for an authoring guard.
+LOCAL_TZ_EXEMPT_FILES = frozenset({"tests/test_public_release_hygiene.py"})
 
 # Generic placeholder names that the wheelhouse build script's release
 # denylist must reference. These names are intentionally generic so the
@@ -99,6 +114,64 @@ def test_tracked_public_files_do_not_contain_real_secret_shapes_or_local_paths()
                 violations.append(f"{path}: {name}")
 
     assert violations == []
+
+
+def _host_timezone_name() -> str | None:
+    """Resolve the host's IANA zone name, or None if it cannot be determined.
+
+    ``datetime.now().astimezone().tzinfo`` is not enough: on macOS it yields a
+    fixed-offset ``timezone`` with no ``.key``, so the obvious one-liner reports
+    nothing and the check would pass vacuously on the very machines it is meant
+    to protect. ``/etc/localtime`` is a symlink into the zoneinfo tree on both
+    macOS and Linux and carries the real name.
+    """
+    from datetime import datetime
+
+    key = getattr(datetime.now().astimezone().tzinfo, "key", None)
+    if key:
+        return str(key)
+
+    localtime = Path("/etc/localtime")
+    if localtime.is_symlink():
+        target = os.readlink(localtime)
+        _, sep, zone = target.partition("zoneinfo/")
+        if sep and zone:
+            return zone
+
+    env_zone = os.environ.get("TZ", "").strip()
+    return env_zone or None
+
+
+def test_tracked_public_files_do_not_carry_this_machines_timezone() -> None:
+    """The running host's own zone must not appear in a tracked file.
+
+    Regional zones in general are fine -- the scheduler suite needs them for
+    DST and the docs need examples. A zone matching *this* machine is the
+    signal that a value was copied out of the environment rather than chosen,
+    which is how a contributor's location leaks into a public fixture.
+
+    Use ``UTC`` or a fixed offset. Skips when the host is already UTC, so CI
+    neither fails nor pretends to have checked anything.
+    """
+    local_zone = _host_timezone_name()
+    if not local_zone or local_zone in {"UTC", "Etc/UTC"}:
+        pytest.skip("host zone is UTC or undeterminable; nothing to leak")
+
+    violations: list[str] = []
+    for path in _tracked_text_files():
+        if path.as_posix() in LOCAL_TZ_EXEMPT_FILES:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if local_zone in text:
+            violations.append(path.as_posix())
+
+    assert violations == [], (
+        f"{local_zone} is this machine's timezone and must not be committed; "
+        "use UTC or a fixed offset"
+    )
 
 
 def test_release_text_marker_policy_uses_public_internal_fixture_names() -> None:

@@ -809,7 +809,7 @@ def create_memory_tools(
             "indexed transcript snippets when session source is enabled, or "
             "source=all for both. Use session_search only when exact transcript "
             "full-text search is needed. User identity/profile fields such as "
-            "name, preferred address, pronouns, and timezone belong in injected "
+            "name, preferred address, and pronouns belong in injected "
             "USER.md when present. Do not use memory_search for current user "
             "identity/profile questions when injected USER.md contains the answer."
         ),

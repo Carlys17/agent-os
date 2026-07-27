@@ -49,7 +49,12 @@ def test_system_prompt_routes_profile_to_user_md() -> None:
     )
 
     assert "USER.md" in prompt
-    assert "name, preferred address, pronouns, timezone" in prompt
+    assert "name, preferred address, pronouns" in prompt
+    # Timezone is deliberately absent. It is injected ambient context, not
+    # something the user stated, and naming it as a USER.md field taught the
+    # model to record the host's zone as a fact about the user.
+    assert "timezone" not in prompt.lower()
+    assert "Never record the runtime environment" in prompt
     # Durable facts route through the `memory` tool, not memory_save / filesystem tools.
     assert "Durable facts go through the `memory` tool" in prompt
     assert "target` = `memory`" in prompt or "`target` = `memory`" in prompt

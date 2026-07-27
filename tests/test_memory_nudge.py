@@ -154,18 +154,40 @@ def test_review_cannot_trigger_another_review():
     assert r._memory_nudge_counters == {}
 
 
-# -- self-directed writes reset the counter --------------------------------
+# -- self-directed writes hold the counter ---------------------------------
 
 
 @pytest.mark.parametrize("tool_name", ["memory", "memory_save"])
-def test_agent_writing_memory_itself_resets_the_counter(tool_name: str):
-    """An agent that curates unprompted does not need to be nudged."""
+def test_agent_writing_memory_itself_defers_the_review(tool_name: str):
+    """A self-directed write delays the review; it must not cancel it.
+
+    Clearing the counter meant a diligent model -- one that saves on most
+    turns -- never reached the interval, so the review never ran. A per-turn
+    save and the review's whole-conversation sweep are different jobs, and
+    only the latter consolidates.
+    """
     r = _Runner(MemoryNudgeConfig(interval=3))
     _note(r)
     _note(r)
+    # The interval turn itself wrote memory, so the review waits...
     assert _note(r, turn_segments=[{"type": "tool_result", "name": tool_name}]) is False
-    # Counter restarted: the next fire is a full interval away.
-    assert [_note(r) for _ in range(3)] == [False, False, True]
+    # ...but the counter kept advancing, so the next turn fires.
+    assert _note(r) is True
+
+
+@pytest.mark.parametrize("tool_name", ["memory", "memory_save"])
+def test_saving_on_every_turn_still_reaches_a_review(tool_name: str):
+    """The regression the benchmark caught: 0 reviews across 10 trials.
+
+    Deferral is bounded, so an unbroken run of self-directed writes is
+    reviewed at 2x the interval rather than never.
+    """
+    r = _Runner(MemoryNudgeConfig(interval=3))
+    saves = [{"type": "tool_result", "name": tool_name}]
+
+    fired = [_note(r, turn_segments=saves) for _ in range(6)]
+
+    assert fired == [False] * 5 + [True]
 
 
 def test_unrelated_tool_calls_do_not_reset():
@@ -375,3 +397,62 @@ def test_review_prompt_offers_an_explicit_way_to_decline():
 
     assert "Nothing to save." in _MEMORY_REVIEW_PROMPT
     assert "memory tool" in _MEMORY_REVIEW_PROMPT
+
+
+# -- the review reports what it wrote --------------------------------------
+
+
+def test_review_records_its_writes_instead_of_discarding_them():
+    """A silent review is indistinguishable from one that never ran.
+
+    That is not hypothetical: the counter bug above went unnoticed precisely
+    because the review's outcome was drained and thrown away.
+    """
+    import inspect
+
+    src = inspect.getsource(TurnRunner._run_memory_nudge_review)
+    assert "memory_nudge.review_done" in src
+    assert "_MEMORY_WRITE_TOOL_NAMES" in src
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ({"target": "user", "action": "add", "content": "Prefers Go"}, "user/add: Prefers Go"),
+        ({"action": "add", "content": "no target"}, "memory/add: no target"),
+        ({"target": "memory", "action": "remove", "old_text": "stale"}, "memory/remove: stale"),
+        ({"target": "memory", "action": "add"}, "memory/add"),
+        (None, "write"),
+    ],
+)
+def test_write_summary_renders_target_action_and_content(arguments, expected):
+    from agentos.engine.runtime import _summarize_memory_write
+
+    assert _summarize_memory_write(arguments) == expected
+
+
+def test_write_summary_collapses_a_batch_to_its_operation_count():
+    """Naming every op would push one log line past anything readable."""
+    from agentos.engine.runtime import _summarize_memory_write
+
+    summary = _summarize_memory_write(
+        {
+            "target": "memory",
+            "operations": [
+                {"action": "remove", "old_text": "a"},
+                {"action": "remove", "old_text": "b"},
+                {"action": "add", "content": "merged"},
+            ],
+        }
+    )
+
+    assert summary == "memory/batch[3 ops: add,remove]"
+
+
+def test_write_summary_truncates_a_long_entry():
+    from agentos.engine.runtime import _summarize_memory_write
+
+    summary = _summarize_memory_write({"action": "add", "content": "x" * 400})
+
+    assert summary.endswith("…")
+    assert len(summary) < 200
