@@ -20,6 +20,7 @@ import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
 import bankrSymbolUrl from '@/assets/bankr-symbol.svg'
+import capminalSymbolUrl from '@/assets/capminal-symbol.svg'
 import robinhoodSymbolUrl from '@/assets/robinhood-symbol.png'
 import {
   CAT_LABEL,
@@ -58,16 +59,22 @@ import {
 // skills.js:7 — the Bankr partner tab is shown; the BankrSource backend stays
 // wired either way so Bankr skills remain reachable via Community.
 const SHOW_BANKR = true
+const SHOW_CAPMINAL = true
 
-type Tab = 'installed' | 'bankr' | 'robinhood' | 'community'
-type RegistryGroup = 'bankr' | 'community'
-type PartnerBrand = 'bankr' | 'robinhood'
-const TAB_ORDER: Tab[] = SHOW_BANKR
-  ? ['installed', 'bankr', 'robinhood', 'community']
-  : ['installed', 'robinhood', 'community']
+type Tab = 'installed' | 'bankr' | 'capminal' | 'robinhood' | 'community'
+type RegistryGroup = 'bankr' | 'capminal' | 'community'
+type PartnerBrand = 'bankr' | 'capminal' | 'robinhood'
+const TAB_ORDER: Tab[] = [
+  'installed',
+  ...(SHOW_BANKR ? ['bankr' as const] : []),
+  ...(SHOW_CAPMINAL ? ['capminal' as const] : []),
+  'robinhood',
+  'community',
+]
 
 const PARTNER_BRANDS: Record<PartnerBrand, { label: string; asset: string }> = {
   bankr: { label: 'Bankr', asset: bankrSymbolUrl },
+  capminal: { label: 'Capminal', asset: capminalSymbolUrl },
   robinhood: { label: 'Robinhood', asset: robinhoodSymbolUrl },
 }
 
@@ -326,10 +333,12 @@ export function SkillsPage() {
 
   // Registry (bankr/community) query text + debounced community query.
   const [bankrQuery, setBankrQuery] = useState('')
+  const [capminalQuery, setCapminalQuery] = useState('')
   const [robinhoodQuery, setRobinhoodQuery] = useState('')
   const [communityText, setCommunityText] = useState('')
   const [communityQuery, setCommunityQuery] = useState('')
   const [bankrCat, setBankrCat] = useState('all')
+  const [capminalCat, setCapminalCat] = useState('all')
   const [robinhoodStatus, setRobinhoodStatus] = useState<StatusFilter>('all')
   const [communityCat, setCommunityCat] = useState('all')
   const [githubUrl, setGithubUrl] = useState('')
@@ -388,6 +397,21 @@ export function SkillsPage() {
     },
   })
 
+  const capminalSnapshot = useQuery<RegistryItem[]>({
+    queryKey: ['skills.search', 'capminal'],
+    enabled: SHOW_CAPMINAL && tab === 'capminal',
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      await rpc.waitForConnection()
+      const data = await rpc.call<SearchResponse>('skills.search', {
+        query: '',
+        limit: 500,
+        source: 'capminal',
+      })
+      return data.results ?? []
+    },
+  })
+
   const communitySnapshot = useQuery<RegistryItem[]>({
     queryKey: ['skills.search', 'community'],
     enabled: tab === 'community',
@@ -395,7 +419,7 @@ export function SkillsPage() {
     queryFn: async () => {
       await rpc.waitForConnection()
       const data = await rpc.call<SearchResponse>('skills.search', { query: '', limit: 500 })
-      return communityFilter(data.results ?? [], SHOW_BANKR)
+      return communityFilter(data.results ?? [], SHOW_BANKR, SHOW_CAPMINAL)
     },
   })
 
@@ -412,7 +436,7 @@ export function SkillsPage() {
         query: communityQuery,
         limit: 100,
       })
-      return communityFilter(data.results ?? [], SHOW_BANKR)
+      return communityFilter(data.results ?? [], SHOW_BANKR, SHOW_CAPMINAL)
     },
   })
 
@@ -548,6 +572,7 @@ export function SkillsPage() {
 
   const refresh = () => {
     if (tab === 'bankr') void bankrSnapshot.refetch()
+    else if (tab === 'capminal') void capminalSnapshot.refetch()
     else if (tab === 'community') {
       void communitySnapshot.refetch()
       if (communityQuery) void communitySearch.refetch()
@@ -589,6 +614,16 @@ export function SkillsPage() {
               label="Bankr"
               description="Partner catalog"
               icon={<PartnerLogo brand="bankr" className="sk-tab__brand" decorative />}
+              onSelect={setTab}
+            />
+          ) : null}
+          {SHOW_CAPMINAL ? (
+            <TabButton
+              current={tab}
+              tab="capminal"
+              label="Capminal"
+              description="Partner catalog"
+              icon={<PartnerLogo brand="capminal" className="sk-tab__brand" decorative />}
               onSelect={setTab}
             />
           ) : null}
@@ -682,6 +717,23 @@ export function SkillsPage() {
           forceArmed={forceArmed}
           busyKeys={busyKeys}
           onOpen={(key) => setDialog({ kind: 'registry', group: 'bankr', key })}
+          onInstall={runInstall}
+        />
+      ) : null}
+
+      {SHOW_CAPMINAL && tab === 'capminal' ? (
+        <RegistryPanel
+          group="capminal"
+          snapshot={capminalSnapshot.data ?? []}
+          loading={capminalSnapshot.isLoading}
+          error={capminalSnapshot.isError ? String(capminalSnapshot.error) : ''}
+          query={capminalQuery}
+          onQuery={setCapminalQuery}
+          category={capminalCat}
+          onCategory={setCapminalCat}
+          forceArmed={forceArmed}
+          busyKeys={busyKeys}
+          onOpen={(key) => setDialog({ kind: 'registry', group: 'capminal', key })}
           onInstall={runInstall}
         />
       ) : null}
@@ -795,9 +847,11 @@ export function SkillsPage() {
               const base =
                 dialog.group === 'bankr'
                   ? (bankrSnapshot.data ?? [])
-                  : communityQuery && communitySearch.data
-                    ? communitySearch.data
-                    : (communitySnapshot.data ?? [])
+                  : dialog.group === 'capminal'
+                    ? (capminalSnapshot.data ?? [])
+                    : communityQuery && communitySearch.data
+                      ? communitySearch.data
+                      : (communitySnapshot.data ?? [])
               const item = base.find((r) => registryKey(r) === dialog.key)
               if (!item) return null
               return (

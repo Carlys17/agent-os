@@ -108,6 +108,7 @@ export const CAT_LABEL: Record<string, string> = {
   nft: 'NFT',
   dev: 'Dev tools',
   infra: 'Infra',
+  crypto: 'Crypto',
   other: 'Other',
 }
 
@@ -281,8 +282,19 @@ export function robinhoodEmptyMessage(filterText: string, statusFilter: StatusFi
  * skills.js:503-505 — when the dedicated Bankr tab is showing, Community
  * excludes source==='bankr' rows; otherwise Bankr falls through into Community.
  */
-export function communityFilter(results: RegistryItem[], showBankr: boolean): RegistryItem[] {
-  return showBankr ? results.filter((r) => r.source !== 'bankr') : results
+export function communityFilter(
+  results: RegistryItem[],
+  showBankr: boolean,
+  showCapminal: boolean,
+): RegistryItem[] {
+  let out = results
+  if (showBankr) {
+    out = out.filter((r) => r.source !== 'bankr')
+  }
+  if (showCapminal) {
+    out = out.filter((r) => r.source !== 'capminal')
+  }
+  return out
 }
 
 /** skills.js:560-564 — category → count map over a registry list. */
@@ -347,12 +359,15 @@ export function filterRegistry(
 }
 
 /** skills.js:622-626 — the empty message for a registry group + query. */
-export function registryEmptyMessage(group: 'bankr' | 'community', query: string): string {
+export function registryEmptyMessage(
+  group: 'bankr' | 'capminal' | 'community',
+  query: string,
+): string {
   const q = (query || '').trim()
   if (q) return `No skills match ${q}.`
-  return group === 'bankr'
-    ? 'No Bankr skills available right now.'
-    : 'No community skills available right now.'
+  if (group === 'bankr') return 'No Bankr skills available right now.'
+  if (group === 'capminal') return 'No Capminal skills available right now.'
+  return 'No community skills available right now.'
 }
 
 /** skills.js:662,715,283 — the stable identifier key for a registry row. */

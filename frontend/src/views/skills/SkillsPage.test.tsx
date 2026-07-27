@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 import { SkillsPage } from './SkillsPage'
 import bankrSymbolUrl from '@/assets/bankr-symbol.svg'
+import capminalSymbolUrl from '@/assets/capminal-symbol.svg'
 import robinhoodSymbolUrl from '@/assets/robinhood-symbol.png'
 
 vi.mock('sonner', () => ({
@@ -215,6 +216,7 @@ describe('SkillsPage', () => {
     expect(tabs.map((tab) => tab.getAttribute('aria-label'))).toEqual([
       'Installed',
       'Bankr',
+      'Capminal',
       'Robinhood',
       'Community',
     ])
@@ -223,6 +225,11 @@ describe('SkillsPage', () => {
         .getByRole('presentation')
         .getAttribute('src'),
     ).toBe(bankrSymbolUrl)
+    expect(
+      within(screen.getByRole('tab', { name: 'Capminal' }))
+        .getByRole('presentation')
+        .getAttribute('src'),
+    ).toBe(capminalSymbolUrl)
     expect(
       within(screen.getByRole('tab', { name: 'Robinhood' }))
         .getByRole('presentation')
@@ -242,6 +249,11 @@ describe('SkillsPage', () => {
     const bankr = screen.getByRole('tab', { name: 'Bankr' })
     expect(bankr).toHaveAttribute('aria-selected', 'true')
     expect(bankr).toHaveFocus()
+
+    fireEvent.keyDown(bankr, { key: 'ArrowRight' })
+    const capminal = screen.getByRole('tab', { name: 'Capminal' })
+    expect(capminal).toHaveAttribute('aria-selected', 'true')
+    expect(capminal).toHaveFocus()
   })
 
   it('the status pill filters the installed list', async () => {
@@ -611,5 +623,40 @@ describe('SkillsPage', () => {
     wireRpc()
     renderPage()
     await waitFor(() => expect(document.title).toBe('Skills - AgentOS Control'))
+  })
+
+  it('loads and searches Capminal skills when entering the Capminal tab', async () => {
+    wireRpc({
+      searchResults: [
+        {
+          name: 'capminal',
+          identifier: 'https://github.com/capminal-skills/capminal',
+          provider: 'Capminal',
+          source: 'capminal',
+          description: 'Cap World interaction',
+          category: 'crypto',
+        },
+      ],
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Capminal' }))
+
+    const card = await screen.findByLabelText('Catalog skill capminal')
+    expect(card).toBeInTheDocument()
+    expect(within(card).getByText('Cap World interaction')).toBeInTheDocument()
+    expect(within(card).getByText('Crypto')).toBeInTheDocument()
+
+    fireEvent.click(within(card).getByRole('button', { name: 'View details for capminal' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Capminal')).toBeInTheDocument()
+    expect(within(dialog).getByText('Crypto')).toBeInTheDocument()
+
+    expect(mockRpc.call).toHaveBeenCalledWith('skills.search', {
+      query: '',
+      limit: 500,
+      source: 'capminal',
+    })
   })
 })
