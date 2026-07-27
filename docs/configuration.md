@@ -215,17 +215,19 @@ for the canonical setup, model catalog, routing, and pricing behavior.
 ### Ollama plain-text mode
 
 AgentOS supports Ollama native tool calls. For a local model that does not
-reliably implement Ollama's tool-call protocol, disable model-visible tools and
-route directly to the configured model:
+reliably implement Ollama's tool-call protocol, select the model separately,
+then turn on plain-text mode.
+
+Check which models are installed with `ollama list`, then configure the
+provider and model:
+
+```sh
+agentos configure provider --provider ollama --model <your-local-model>
+```
+
+Then disable model-visible tools and the router in `agentos.toml`:
 
 ```toml
-agent_max_iterations = 8
-
-[llm]
-provider = "ollama"
-model = "qwen2.5:7b"
-base_url = "http://localhost:11434"
-
 [tools]
 enabled = false
 
@@ -233,10 +235,13 @@ enabled = false
 enabled = false
 ```
 
+For a remote or non-default host, set `base_url` under `[llm]` (e.g.
+`http://10.0.0.42:11434`).
+
 `tools.enabled = false` is a hard plain-text mode: no tool definitions are sent
-to the provider and no tool handler is exposed for the turn. Keep a positive
-`agent_max_iterations` when enabling tools on smaller local models so malformed
-or repetitive tool calls terminate predictably.
+to the provider and no tool handler is exposed for the turn. When you do enable
+tools on smaller local models, keep a positive `agent_max_iterations` so
+malformed or repetitive tool calls terminate predictably.
 
 ## Router Configuration
 
