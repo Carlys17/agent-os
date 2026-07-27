@@ -29,22 +29,29 @@ import {
   filterRegistry,
   filterSkills,
   firstUpdateResult,
-  groupSkillsByLayer,
+  groupSkills,
   initials,
   installAction,
   installSource,
   installedEmptyMessage,
   layerHelp,
   layerLabel,
+  markInstalled,
+  mergeRegistryRows,
   registryEmptyMessage,
   registryKey,
-  robinhoodEmptyMessage,
-  robinhoodSkills,
+  partnerEmptyMessage,
   safeUrl,
+  skillAvailabilityLabel,
+  skillAvailabilityTitle,
+  skillAvailabilityTone,
+  skillCanRemove,
+  skillCanUpdate,
   skillDotClass,
   skillDotTitle,
   skillStats,
   skillStatus,
+  skillsByPublisher,
   stillMissingCount,
   type DepsInstallResult,
   type RawSkill,
@@ -66,9 +73,57 @@ const TAB_ORDER: Tab[] = SHOW_BANKR
   ? ['installed', 'bankr', 'robinhood', 'community']
   : ['installed', 'robinhood', 'community']
 
+// The bundled brand artwork stays a client-side asset: a local import is not
+// something a SKILL.md could carry. Membership, however, is the payload's call —
+// `publisher.id` is resolved against a server-side allowlist.
 const PARTNER_BRANDS: Record<PartnerBrand, { label: string; asset: string }> = {
   bankr: { label: 'Bankr', asset: bankrSymbolUrl },
   robinhood: { label: 'Robinhood', asset: robinhoodSymbolUrl },
+}
+
+/**
+ * The short provenance label on a card: where the skill actually came from,
+ * rather than which directory it happens to load from. A hub install shows the
+ * hub it came from, which is the same string the catalog card prints.
+ */
+function acquisitionSourceLabel(skill: RawSkill): string {
+  const acq = skill.acquisition
+  if (acq?.kind === 'hub') return acq.source_id || 'hub'
+  if (acq?.kind === 'shipped') return 'shipped'
+  if (acq?.kind === 'local') return 'local'
+  // Pre-#130 gateway: fall back to the location layer rather than claim one.
+  return layerLabel(skill.layer).toLowerCase()
+}
+
+/**
+ * `skills.uninstall` deletes `<managed_dir>/<name>` and nothing else, so the
+ * gateway reports `removable: false` when the recorded install sits somewhere
+ * else (a re-pointed `skills.managed_dir`, or none configured). Its reason
+ * string names filesystem paths and is deliberately kept off the wire, so say
+ * what the operator has to do instead of rendering a button that half-succeeds.
+ */
+const REMOVE_BLOCKED_NOTE =
+  'AgentOS cannot remove this skill: the configured managed skills directory does not hold it. Check skills.managed_dir, or delete the files by hand.'
+
+/**
+ * The "installed, but the agent is not being offered it" chip.
+ *
+ * Renders nothing when the skill IS offered (the status chip already says the
+ * skill is fine) and nothing when availability was not computed — an absent
+ * block means unknown, never not-offered. The reason is spelled out in text so
+ * the state does not depend on the dot colour alone.
+ */
+function AvailabilityChip({ skill, className }: { skill: RawSkill; className?: string }) {
+  if (skillAvailabilityTone(skill) !== 'not-offered') return null
+  return (
+    <span
+      className={`sk-chip sk-chip--withheld${className ? ' ' + className : ''}`}
+      title={skillAvailabilityTitle(skill)}
+    >
+      <span className="sk-chip__dot" aria-hidden="true" />
+      {skillAvailabilityLabel(skill)}
+    </span>
+  )
 }
 
 interface SkillsListResponse {
@@ -168,6 +223,14 @@ function SkillCard({ skill, onOpen }: { skill: RawSkill; onOpen: () => void }) {
         </span>
       </div>
       <p className="sk-card__desc">{desc}</p>
+      {/* The Installed tab groups on provenance now, so the loading layer moves
+          to the card — precedence still has to be debuggable at a glance. */}
+      <span className="sk-card__meta">
+        <span className="sk-chip sk-chip--layer" title={layerHelp(skill.layer)}>
+          {layerLabel(skill.layer)}
+        </span>
+        <AvailabilityChip skill={skill} />
+      </span>
       <span className="sk-card__foot" aria-hidden="true">
         View details
         <ChevronRightIcon />
@@ -227,7 +290,16 @@ function RegistryCard({
   )
 }
 
-function PartnerSkillCard({ skill, onOpen }: { skill: RawSkill; onOpen: () => void }) {
+function PartnerSkillCard({
+  brand,
+  skill,
+  onOpen,
+}: {
+  brand: PartnerBrand
+  skill: RawSkill
+  onOpen: () => void
+}) {
+  const label = PARTNER_BRANDS[brand].label
   const status = skillStatus(skill)
   const statusLabel =
     status === 'ready' ? 'Ready' : status === 'needs_setup' ? 'Setup required' : 'No manifest'
@@ -239,7 +311,7 @@ function PartnerSkillCard({ skill, onOpen }: { skill: RawSkill; onOpen: () => vo
         : 'sk-chip--unverified'
 
   return (
-    <article className="sk-rcard sk-rcard--partner" aria-label={`Robinhood skill ${skill.name}`}>
+    <article className="sk-rcard sk-rcard--partner" aria-label={`${label} skill ${skill.name}`}>
       <button
         type="button"
         className="sk-rcard__details"
@@ -247,16 +319,19 @@ function PartnerSkillCard({ skill, onOpen }: { skill: RawSkill; onOpen: () => vo
         onClick={onOpen}
       >
         <div className="sk-rcard__head">
-          <PartnerLogo brand="robinhood" className="sk-rcard__logo" decorative />
+          <PartnerLogo brand={brand} className="sk-rcard__logo" decorative />
           <div className="sk-rcard__titles">
             <span className="sk-rcard__name">{skill.name}</span>
-            <span className="sk-rcard__provider">Robinhood</span>
+            <span className="sk-rcard__provider">{label}</span>
           </div>
         </div>
         <span className="sk-rcard__desc">{skill.description || 'Open details'}</span>
       </button>
       <div className="sk-rcard__foot">
-        <span className="sk-rcard__src sk-mono">bundled</span>
+        {/* Not every partner skill ships with AgentOS — a partner hub install
+            reaches this same tab, so the label comes off the payload. */}
+        <span className="sk-rcard__src sk-mono">{acquisitionSourceLabel(skill)}</span>
+        <AvailabilityChip skill={skill} />
         <span className={`sk-chip ${statusClass}`} title={skillDotTitle(skill)}>
           {status === 'ready' ? <CheckIcon aria-hidden="true" /> : null}
           {status === 'needs_setup' ? <TriangleAlertIcon aria-hidden="true" /> : null}
@@ -316,7 +391,10 @@ function InstallButton({
 type Dialog =
   | { kind: 'none' }
   | { kind: 'skill'; name: string }
-  | { kind: 'registry'; group: RegistryGroup; key: string }
+  // The row is captured on open, not only its key: the list under the dialog is
+  // a query result that changes when the search text does, and looking the row
+  // up again is what used to unmount an open dialog on a cleared query.
+  | { kind: 'registry'; group: RegistryGroup; key: string; item: RegistryItem }
 
 export function SkillsPage() {
   const rpc = useRpc()
@@ -346,6 +424,13 @@ export function SkillsPage() {
   // Force-armed identifiers (skills.js:34) + per-item busy keys.
   const [forceArmed, setForceArmed] = useState<Set<string>>(new Set())
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set())
+
+  // Catalog rows installed during this session. The gateway now synthesizes a
+  // row for an install no catalog lists, so a refetch alone brings it back —
+  // but only once the refetch lands. Merging locally keeps the row on screen
+  // from the same tick the install succeeds, and the server's richer row wins
+  // as soon as it arrives (mergeRegistryRows lets `base` win a collision).
+  const [sessionInstalls, setSessionInstalls] = useState<RegistryItem[]>([])
 
   useEffect(() => {
     document.title = 'Skills - AgentOS Control'
@@ -426,6 +511,16 @@ export function SkillsPage() {
   })
 
   const invalidateSkills = () => queryClient.invalidateQueries({ queryKey: ['skills'] })
+  const invalidateRegistry = () => queryClient.invalidateQueries({ queryKey: ['skills.search'] })
+
+  // Flip the Installed chip on every cached catalog list before the refetch
+  // lands, so it never lags a network round trip behind the button. Lists that
+  // hold no data yet are left alone: writing `[]` into a query that is still
+  // in flight would resolve it to a "no results" state until the fetch lands.
+  const markCached = (identifier: string, name: string, installed: boolean) =>
+    queryClient.setQueriesData<RegistryItem[]>({ queryKey: ['skills.search'] }, (old) =>
+      old ? markInstalled(old, identifier, name, installed) : old,
+    )
 
   const setBusy = (key: string, on: boolean) =>
     setBusyKeys((prev) => {
@@ -447,16 +542,33 @@ export function SkillsPage() {
   // skills.js:926-977 — install. Per-item busy; a "dangerous" scan verdict
   // arms an explicit force-install override (not an error).
   const installMutation = useMutation({
-    mutationFn: (vars: { identifier: string; source: string; force: boolean }) =>
-      rpc.call<InstallResponse>('skills.install', vars),
+    // `item` never reaches the wire — it is the catalog row to keep on screen
+    // while the refetch is out. A GitHub install has none, and the gateway's
+    // synthesized row covers it on the next fetch.
+    mutationFn: (vars: {
+      identifier: string
+      source: string
+      force: boolean
+      item?: RegistryItem
+    }) =>
+      rpc.call<InstallResponse>('skills.install', {
+        identifier: vars.identifier,
+        source: vars.source,
+        force: vars.force,
+      }),
     onMutate: (vars) => setBusy(vars.identifier, true),
     onSettled: (_d, _e, vars) => setBusy(vars.identifier, false),
     onSuccess: (res, vars) => {
       if (res?.success) {
         armForce(vars.identifier, false)
         toast.success('Installed ' + (res.name || vars.identifier), { id: 'skills-install' })
+        if (vars.item) {
+          const row = { ...vars.item, installed: true }
+          setSessionInstalls((prev) => mergeRegistryRows([row], prev))
+        }
+        markCached(vars.identifier, res.name || '', true)
         void invalidateSkills()
-        void queryClient.invalidateQueries({ queryKey: ['skills.search'] })
+        void invalidateRegistry()
         return
       }
       const blocked = res?.scan_verdict === 'dangerous'
@@ -480,14 +592,26 @@ export function SkillsPage() {
 
   // skills.js:979-991 — uninstall (managed skills only). Per-item busy.
   const uninstallMutation = useMutation({
-    mutationFn: (name: string) => rpc.call<MutationResponse>('skills.uninstall', { name }),
-    onMutate: (name) => setBusy('uninstall:' + name, true),
-    onSettled: (_d, _e, name) => setBusy('uninstall:' + name, false),
-    onSuccess: (res, name) => {
+    // `identifier` is the lockfile identifier the catalog row is keyed by; it
+    // is not sent, it is what lets the Installed chip be un-flipped.
+    mutationFn: (vars: { name: string; identifier: string }) =>
+      rpc.call<MutationResponse>('skills.uninstall', { name: vars.name }),
+    onMutate: (vars) => setBusy('uninstall:' + vars.name, true),
+    onSettled: (_d, _e, vars) => setBusy('uninstall:' + vars.name, false),
+    onSuccess: (res, vars) => {
+      const name = vars.name
       if (res?.success) {
         toast.success('Removed ' + name, { id: 'skills-uninstall' })
         setDialog({ kind: 'none' })
+        setSessionInstalls((prev) =>
+          prev.filter((r) => r.name !== name && registryKey(r) !== vars.identifier),
+        )
+        markCached(vars.identifier, name, false)
         void invalidateSkills()
+        // The catalog's "Installed" chip is derived from the same lockfile the
+        // removal just edited, so it is stale until this refetch — install has
+        // always invalidated it; removal never did.
+        void invalidateRegistry()
       } else {
         toast.error(res?.message || 'Uninstall failed', { id: 'skills-uninstall-err' })
       }
@@ -545,15 +669,68 @@ export function SkillsPage() {
   const allSkills = skillsQuery.data ?? []
   const stats = skillStats(allSkills)
   const filtered = filterSkills(allSkills, filterText, statusFilter)
-  const groups = groupSkillsByLayer(filtered)
-  const rhSkills = robinhoodSkills(allSkills)
+  const groups = groupSkills(filtered)
+  const rhSkills = skillsByPublisher(allSkills, 'robinhood')
 
   const runInstall = (item: RegistryItem, force: boolean) =>
     installMutation.mutate({
       identifier: registryKey(item),
       source: installSource(item),
       force,
+      item,
     })
+
+  // ── Catalog lists ─────────────────────────────────────────────────────────
+  // A live query answers a question the snapshot cannot (the snapshot is only
+  // each source's first page), so it still supersedes the snapshot as the base
+  // list. What is new is that the browse list is a MERGE, not a swap: a row
+  // installed while searching survives the search being cleared.
+  const bankrRows = useMemo(
+    () =>
+      mergeRegistryRows(
+        bankrSnapshot.data ?? [],
+        sessionInstalls.filter((r) => r.source === 'bankr'),
+      ),
+    [bankrSnapshot.data, sessionInstalls],
+  )
+
+  const communityLive = communityQuery ? communitySearch.data : undefined
+  const communityBrowse = useMemo(
+    () =>
+      mergeRegistryRows(communitySnapshot.data ?? [], communityFilter(sessionInstalls, SHOW_BANKR)),
+    [communitySnapshot.data, sessionInstalls],
+  )
+  const communityRows = communityLive ?? communityBrowse
+
+  // The rows on screen are the server's own answer only once the committed
+  // query has caught up with the input and the response has landed; until then
+  // the client text pass still narrows the stale list optimistically.
+  const communityServerFiltered = Boolean(communityLive) && communityText.trim() === communityQuery
+
+  // A failed live search used to fall through to the snapshot's error state,
+  // which is empty — so a search that errored rendered as "no results".
+  const communityError =
+    communityQuery && communitySearch.isError
+      ? String(communitySearch.error)
+      : communitySnapshot.isError
+        ? String(communitySnapshot.error)
+        : ''
+
+  /**
+   * The row behind an open registry dialog. Prefers the live lists so the
+   * Installed chip inside the dialog stays current, and falls back to the row
+   * captured when the dialog opened — clearing the search swaps the list out
+   * from under it, and the dialog must not vanish because of that.
+   */
+  const registryItemFor = (d: Extract<Dialog, { kind: 'registry' }>): RegistryItem => {
+    const pools =
+      d.group === 'bankr' ? [bankrRows] : [communityRows, communityBrowse, communitySearch.data]
+    for (const pool of pools) {
+      const hit = (pool ?? []).find((r) => registryKey(r) === d.key)
+      if (hit) return hit
+    }
+    return d.item
+  }
 
   const refresh = () => {
     if (tab === 'bankr') void bankrSnapshot.refetch()
@@ -681,7 +858,7 @@ export function SkillsPage() {
       {SHOW_BANKR && tab === 'bankr' ? (
         <RegistryPanel
           group="bankr"
-          snapshot={bankrSnapshot.data ?? []}
+          snapshot={bankrRows}
           loading={bankrSnapshot.isLoading}
           error={bankrSnapshot.isError ? String(bankrSnapshot.error) : ''}
           query={bankrQuery}
@@ -690,7 +867,9 @@ export function SkillsPage() {
           onCategory={setBankrCat}
           forceArmed={forceArmed}
           busyKeys={busyKeys}
-          onOpen={(key) => setDialog({ kind: 'registry', group: 'bankr', key })}
+          onOpen={(item) =>
+            setDialog({ kind: 'registry', group: 'bankr', key: registryKey(item), item })
+          }
           onInstall={runInstall}
         />
       ) : null}
@@ -758,22 +937,20 @@ export function SkillsPage() {
           </section>
           <RegistryPanel
             group="community"
-            // A live query supersedes the snapshot as the base list.
-            snapshot={
-              communityQuery && communitySearch.data
-                ? communitySearch.data
-                : (communitySnapshot.data ?? [])
-            }
-            chipSnapshot={communitySnapshot.data ?? []}
+            snapshot={communityRows}
+            chipSnapshot={communityBrowse}
+            serverFiltered={communityServerFiltered}
             loading={communityQuery ? communitySearch.isLoading : communitySnapshot.isLoading}
-            error={communitySnapshot.isError ? String(communitySnapshot.error) : ''}
+            error={communityError}
             query={communityText}
             onQuery={setCommunityText}
             category={communityCat}
             onCategory={setCommunityCat}
             forceArmed={forceArmed}
             busyKeys={busyKeys}
-            onOpen={(key) => setDialog({ kind: 'registry', group: 'community', key })}
+            onOpen={(item) =>
+              setDialog({ kind: 'registry', group: 'community', key: registryKey(item), item })
+            }
             onInstall={runInstall}
           />
         </>
@@ -790,7 +967,12 @@ export function SkillsPage() {
                   busyKeys={busyKeys}
                   onClose={() => setDialog({ kind: 'none' })}
                   onUpdate={() => updateMutation.mutate(skill.name!)}
-                  onRemove={() => uninstallMutation.mutate(skill.name!)}
+                  onRemove={() =>
+                    uninstallMutation.mutate({
+                      name: skill.name!,
+                      identifier: skill.acquisition?.identifier || '',
+                    })
+                  }
                   onInstallDeps={(installId) =>
                     depsMutation.mutate({ name: skill.name!, installId })
                   }
@@ -829,14 +1011,7 @@ export function SkillsPage() {
 
         {dialog.kind === 'registry'
           ? (() => {
-              const base =
-                dialog.group === 'bankr'
-                  ? (bankrSnapshot.data ?? [])
-                  : communityQuery && communitySearch.data
-                    ? communitySearch.data
-                    : (communitySnapshot.data ?? [])
-              const item = base.find((r) => registryKey(r) === dialog.key)
-              if (!item) return null
+              const item = registryItemFor(dialog)
               return (
                 <RegistryDialog
                   item={item}
@@ -948,7 +1123,7 @@ function InstalledPanel({
 }: {
   loading: boolean
   error: string
-  groups: ReturnType<typeof groupSkillsByLayer>
+  groups: ReturnType<typeof groupSkills>
   empty: boolean
   emptyMessage: string
   onOpen: (name: string) => void
@@ -974,12 +1149,12 @@ function InstalledPanel({
       className="sk-panel"
     >
       {groups.map((g) => (
-        <details key={g.layer} className="sk-group" open>
+        <details key={g.key} className="sk-group" open>
           <summary className="sk-group__head">
             <ChevronDownIcon className="sk-group__caret" aria-hidden="true" />
-            <span className="sk-group__label">{g.label}</span>
+            <h2 className="sk-group__label">{g.label}</h2>
             <span className="sk-group__count">{g.skills.length}</span>
-            <span className="sk-group__meta">{layerHelp(g.layer)}</span>
+            <span className="sk-group__meta">{g.help}</span>
           </summary>
           <div className="sk-grid">
             <AnimatePresence initial={false}>
@@ -1119,13 +1294,19 @@ function RobinhoodPanel({
         ) : loading ? (
           <SkillsSkeleton label="Loading Robinhood skills" />
         ) : filtered.length === 0 ? (
-          <div className="sk-registry__hint">{robinhoodEmptyMessage(query, statusFilter)}</div>
+          <div className="sk-registry__hint">
+            {partnerEmptyMessage('Robinhood', query, statusFilter)}
+          </div>
         ) : (
           <div className="sk-grid sk-grid--registry">
             <AnimatePresence initial={false}>
               {filtered.map((skill) => (
                 <MotionListItem key={skill.name}>
-                  <PartnerSkillCard skill={skill} onOpen={() => onOpen(skill.name!)} />
+                  <PartnerSkillCard
+                    brand="robinhood"
+                    skill={skill}
+                    onOpen={() => onOpen(skill.name!)}
+                  />
                 </MotionListItem>
               ))}
             </AnimatePresence>
@@ -1140,6 +1321,7 @@ function RegistryPanel({
   group,
   snapshot,
   chipSnapshot,
+  serverFiltered,
   loading,
   error,
   query,
@@ -1154,6 +1336,7 @@ function RegistryPanel({
   group: RegistryGroup
   snapshot: RegistryItem[]
   chipSnapshot?: RegistryItem[]
+  serverFiltered?: boolean
   loading: boolean
   error: string
   query: string
@@ -1162,7 +1345,7 @@ function RegistryPanel({
   onCategory: (c: string) => void
   forceArmed: Set<string>
   busyKeys: Set<string>
-  onOpen: (key: string) => void
+  onOpen: (item: RegistryItem) => void
   onInstall: (item: RegistryItem, force: boolean) => void
 }) {
   // skills.js:567 — chips derive from the FULL snapshot only.
@@ -1170,10 +1353,13 @@ function RegistryPanel({
     () => categoryChips(chipSnapshot ?? snapshot, category),
     [chipSnapshot, snapshot, category],
   )
-  // skills.js:610-620 — apply category then text filter.
+  // skills.js:610-620 — apply category then text filter. The text pass is
+  // skipped once these rows ARE the server's answer to the query: the server
+  // also matches on tags, which never reach the client, so re-filtering there
+  // can only drop real hits.
   const items = useMemo(
-    () => filterRegistry(snapshot, category, query),
-    [snapshot, category, query],
+    () => filterRegistry(snapshot, category, query, { serverFiltered }),
+    [snapshot, category, query, serverFiltered],
   )
 
   return (
@@ -1251,7 +1437,7 @@ function RegistryPanel({
                     item={r}
                     forceArmed={forceArmed}
                     busy={busyKeys.has(registryKey(r))}
-                    onOpen={() => onOpen(registryKey(r))}
+                    onOpen={() => onOpen(r)}
                     onInstall={(force) => onInstall(r, force)}
                   />
                 </MotionListItem>
@@ -1356,7 +1542,11 @@ function SkillDialog({
 }) {
   const titleId = useId()
   const status = skillStatus(skill)
-  const isManaged = skill.layer === 'managed'
+  const canUpdate = skillCanUpdate(skill)
+  const canRemove = skillCanRemove(skill)
+  const removeBlocked = skill.acquisition?.kind === 'hub' && !canRemove
+  const availabilityDetail =
+    skillAvailabilityTone(skill) === 'not-offered' ? skillAvailabilityTitle(skill) : ''
   const hasMissingBins = (skill.missing_bins || []).length > 0
   const installs = hasMissingBins ? skill.install || [] : []
   const homepage = safeUrl(skill.homepage)
@@ -1395,6 +1585,7 @@ function SkillDialog({
             ) : (
               <span className="sk-chip sk-chip--warn">needs deps</span>
             )}
+            <AvailabilityChip skill={skill} />
           </div>
         </div>
         <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close">
@@ -1403,6 +1594,15 @@ function SkillDialog({
       </header>
       <section className="sk-dialog__body">
         <p className="sk-dialog__desc">{skill.description || ''}</p>
+        {/* Installed and even "ready" is not the same as reaching the agent.
+            This section is the answer to "I installed it, why can the agent
+            still not find it?" — the gateway writes the prose. */}
+        {availabilityDetail ? (
+          <div className="sk-dialog__section sk-dialog__withheld">
+            <div className="sk-dialog__section-title">Agent availability</div>
+            <p className="sk-dialog__desc">{availabilityDetail}</p>
+          </div>
+        ) : null}
         <RequirementsSection requirements={skill.requirements} />
         {hasMissing ? (
           <div className="sk-dialog__section">
@@ -1478,30 +1678,32 @@ function SkillDialog({
         ) : null}
       </section>
       <footer className="sk-dialog__foot">
-        {skill.file_path ? (
+        {removeBlocked ? (
+          <small className="sk-dim sk-dialog__note">{REMOVE_BLOCKED_NOTE}</small>
+        ) : skill.file_path ? (
           <small className="sk-dim sk-dialog__path">{skill.file_path}</small>
         ) : null}
-        {isManaged ? (
-          <>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={updateBusy}
-              onClick={onUpdate}
-            >
-              {updateBusy ? 'Updating…' : 'Update'}
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              disabled={removeBusy}
-              onClick={onRemove}
-            >
-              {removeBusy ? 'Removing…' : 'Remove'}
-            </Button>
-          </>
+        {canUpdate ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={updateBusy}
+            onClick={onUpdate}
+          >
+            {updateBusy ? 'Updating…' : 'Update'}
+          </Button>
+        ) : null}
+        {canRemove ? (
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            disabled={removeBusy}
+            onClick={onRemove}
+          >
+            {removeBusy ? 'Removing…' : 'Remove'}
+          </Button>
         ) : null}
       </footer>
     </ModalShell>

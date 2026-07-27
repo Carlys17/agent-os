@@ -17,6 +17,7 @@ import structlog
 from agentos.skills.hub.defaults import (
     build_default_skill_installer,
     get_default_skill_router,
+    installed_skill_identifiers,
     installed_skill_names,
 )
 from agentos.skills.types import SkillInstallSpec, SkillLayer
@@ -144,9 +145,17 @@ def _find_install_spec(skill_name: str, install_id: str) -> SkillInstallSpec:
     raise ToolError(f"Install spec not found for skill '{skill_name}': {install_id}")
 
 
-def _community_result_to_dict(row: Any, installed: set[str]) -> dict[str, Any]:
+def _community_result_to_dict(
+    row: Any,
+    installed: set[str],
+    installed_identifiers: set[str] | None = None,
+) -> dict[str, Any]:
+    # Names are matched against installed names and identifiers against
+    # installed identifiers — never across the two, which would flag a catalog
+    # row whose name happens to equal a different skill's identifier.
     identifier = getattr(row, "identifier", "") or getattr(row, "name", "")
     name = getattr(row, "name", "")
+    identifiers = installed_identifiers if installed_identifiers is not None else installed
     return {
         "name": name,
         "description": getattr(row, "description", ""),
@@ -158,7 +167,7 @@ def _community_result_to_dict(row: Any, installed: set[str]) -> dict[str, Any]:
         "provider": getattr(row, "provider", ""),
         "category": getattr(row, "category", ""),
         "homepage": getattr(row, "homepage", ""),
-        "installed": identifier in installed or name in installed,
+        "installed": identifier in identifiers or name in installed,
     }
 
 
@@ -306,17 +315,36 @@ def create_skill_tools(loader: SkillLoader) -> None:
     async def skill_list() -> str:
         if _loader is None:
             return "No skill loader available."
-        skills = _loader.load_all()
-        if not skills:
+
+        from agentos.skills.availability import REASON_INELIGIBLE
+        from agentos.skills.inventory import build_skill_inventory
+        from agentos.tools.registry import get_default_registry
+
+        # Same builder the gateway and the CLI render from, so the agent can no
+        # longer believe something about a skill that the Skills page denies.
+        rows = build_skill_inventory(
+            _loader,
+            available_tools=set(get_default_registry().list_names()),
+        )
+        if not rows:
             return "No skills installed."
 
-        from agentos.skills.eligibility import EligibilityContext, diagnose_eligibility
-
-        ctx = EligibilityContext.auto()
-        lines = [f"Available skills ({len(skills)}):"]
-        for s in sorted(skills, key=lambda x: x.name):
-            report = diagnose_eligibility(s, ctx)
+        lines = [f"Available skills ({len(rows)}):"]
+        for row in sorted(rows, key=lambda r: r.spec.name):
+            s = row.spec
+            report = row.eligibility
             lines.append(f"  - {s.name}: {s.description}")
+            availability = row.availability
+            if (
+                availability is not None
+                and not availability.offered
+                # Ineligibility already has a richer rendering below; the
+                # reasons worth adding are the ones nothing else reports —
+                # model invocation switched off, a missing tool, a native
+                # tool superseding a fallback skill.
+                and availability.reason != REASON_INELIGIBLE
+            ):
+                lines.append(f"      [not offered] {availability.detail}")
             if not report.eligible:
                 missing = []
                 for b in report.missing_bins:
@@ -437,12 +465,15 @@ def create_skill_tools(loader: SkillLoader) -> None:
         router = get_default_skill_router()
         results = await router.search(clean_query, limit=result_limit, source_id=source_id)
         installed = installed_skill_names()
+        identifiers = installed_skill_identifiers()
         return json.dumps(
             {
                 "status": "ok",
                 "query": clean_query,
                 "source": source_id or "all",
-                "results": [_community_result_to_dict(row, installed) for row in results],
+                "results": [
+                    _community_result_to_dict(row, installed, identifiers) for row in results
+                ],
             }
         )
 

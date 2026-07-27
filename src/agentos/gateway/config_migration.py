@@ -18,6 +18,7 @@ import tomli_w
 
 from agentos.paths import default_agentos_home
 from agentos.router_strategies import PILOT_STRATEGY_ID, V4_STRATEGY_ID
+from agentos.skills.injector import DEFAULT_MAX_SKILLS_PROMPT_CHARS
 
 DEPRECATED_MEMORY_FIELDS: frozenset[str] = frozenset(
     {
@@ -100,6 +101,11 @@ LEGACY_OPENROUTER_MODEL_IDS: dict[str, str] = {
     "anthropic/claude-opus-4.7": "anthropic/claude-opus-4.8",
     "moonshotai/kimi-k2.6": "minimax/minimax-m3",
 }
+
+#: The skills-block budget every config written before 2026-07 carries. Only
+#: this exact value is refreshed to the current default — see the migration at
+#: the end of :func:`migrate_config_payload`.
+LEGACY_MAX_SKILLS_PROMPT_CHARS = 8000
 
 OPENROUTER_PROVIDER_ID = "openrouter"
 
@@ -550,6 +556,22 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
                     "agent_token_saving.tool_result_compression_* was removed; "
                     "tokenjuice projection is now the built-in tool-result path"
                 )
+
+    # 2026-07: the skills-block budget default rose from 8000 to 24000 once the
+    # block stopped emitting a filesystem path per skill. 8000 could not fit the
+    # descriptions for the shipped set, so every install that saved a config was
+    # pinned to a name-only skill list — the raised default alone would never
+    # have reached them. Refresh only the exact old default, the same rule the
+    # legacy model ids use: a value someone chose deliberately is left alone.
+    skills_section = builder.payload.get("skills")
+    if isinstance(skills_section, dict):
+        current_budget = skills_section.get("max_skills_prompt_chars")
+        if current_budget == LEGACY_MAX_SKILLS_PROMPT_CHARS:
+            skills_section["max_skills_prompt_chars"] = DEFAULT_MAX_SKILLS_PROMPT_CHARS
+            builder.changes.append(
+                f"skills.max_skills_prompt_chars: {LEGACY_MAX_SKILLS_PROMPT_CHARS} -> "
+                f"{DEFAULT_MAX_SKILLS_PROMPT_CHARS}"
+            )
 
     return builder.result()
 

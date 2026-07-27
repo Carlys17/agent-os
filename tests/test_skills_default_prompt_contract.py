@@ -132,13 +132,14 @@ async def test_default_prompt_only_injects_retained_bundled_skills(
     class MockBinCache(dict):
         def __contains__(self, key: object) -> bool:
             return True
+
         def __getitem__(self, key: str) -> bool:
             return True
 
     monkeypatch.setattr(
         skills_filter_step,
-        "_elig_ctx",
-        EligibilityContext(
+        "_eligibility_context",
+        lambda: EligibilityContext(
             os_name="linux",
             has_bin_cache=MockBinCache(),
         ),

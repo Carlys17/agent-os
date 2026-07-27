@@ -35,6 +35,7 @@ from agentos.router_tiers import (
     normalize_tier_mapping,
 )
 from agentos.sandbox.config import SandboxSettings
+from agentos.skills.injector import DEFAULT_MAX_SKILLS_PROMPT_CHARS
 
 
 class ContextOverflowPolicy(StrEnum):
@@ -129,7 +130,10 @@ class SkillsConfig(BaseSettings):
     managed_dir: str | None = None
     allow_bundled: bool = True
     extra_dirs: list[str] = Field(default_factory=list)
-    max_skills_prompt_chars: int = 8000
+    # The bundled set renders ~16k with descriptions; 8000 silently forced
+    # every default install into name-only mode, then truncation. Keep enough
+    # headroom that installed skills also fit before either fallback kicks in.
+    max_skills_prompt_chars: int = DEFAULT_MAX_SKILLS_PROMPT_CHARS
     filter_enabled: bool = False
     filter_top_k: int = 5
     # "system" = full system prompt (default)

@@ -7,6 +7,17 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from agentos.paths import default_agentos_home
+
+
+def default_lockfile_path() -> Path:
+    """Return the shared skills lockfile path.
+
+    Installer, CLI, and the Installed inventory must read the same file; each
+    of them deriving it separately is how they drift apart.
+    """
+    return default_agentos_home() / "skills-lock.json"
+
 
 @dataclass
 class LockEntry:
@@ -20,6 +31,16 @@ class LockEntry:
     sha256: str = ""
     license: str = ""
     upstream_url: str = ""
+    #: Publisher slug the installing catalog row claimed. A *selector*, not a
+    #: description: it is looked up in the server-side allowlist
+    #: (:func:`agentos.skills.publishers.resolve_publisher`) before anything is
+    #: displayed, so a hub cannot mint brand identity by naming itself here any
+    #: more than a ``SKILL.md`` can.
+    publisher_id: str = ""
+    #: Raw ``provider`` string from the catalog row, kept for diagnostics —
+    #: it tells an operator which brand an *unrecognized* publisher claimed to
+    #: be. Never rendered as branding; only :attr:`publisher_id` is resolved.
+    publisher_name: str = ""
     source_trust: str = ""
     scan_verdict: str = ""
     scan_strategy: str = ""
@@ -40,6 +61,8 @@ class Lockfile:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             lf = Lockfile(version=data.get("version", 1))
+            # Every LockEntry field must be listed here or it is silently
+            # dropped on load, however faithfully install-time wrote it.
             known_fields = {
                 "source",
                 "identifier",
@@ -49,6 +72,8 @@ class Lockfile:
                 "sha256",
                 "license",
                 "upstream_url",
+                "publisher_id",
+                "publisher_name",
                 "source_trust",
                 "scan_verdict",
                 "scan_strategy",

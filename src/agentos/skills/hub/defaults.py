@@ -5,12 +5,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from agentos.paths import default_agentos_home
 from agentos.skills.hub.bankr import BankrSource
 from agentos.skills.hub.clawhub import ClawHubSource
 from agentos.skills.hub.github import GitHubSource
 from agentos.skills.hub.installer import SkillInstaller
-from agentos.skills.hub.lockfile import Lockfile
+from agentos.skills.hub.lockfile import Lockfile, default_lockfile_path
 from agentos.skills.hub.router import SourceRouter
 from agentos.skills.hub.source import SkillSource
 
@@ -44,8 +43,7 @@ def build_default_skill_installer(*, managed_dir: Path | None = None) -> SkillIn
 def installed_skill_names() -> set[str]:
     """Return skill names recorded as Community installs in the lockfile."""
 
-    lockfile_path = default_agentos_home() / "skills-lock.json"
-    return set(Lockfile.load(lockfile_path).installed.keys())
+    return set(Lockfile.load(default_lockfile_path()).installed.keys())
 
 
 def installed_skill_identifiers() -> set[str]:
@@ -58,9 +56,8 @@ def installed_skill_identifiers() -> set[str]:
     by name keeps its "installed" badge correct across a page reload.
     """
 
-    lockfile_path = default_agentos_home() / "skills-lock.json"
     return {
         entry.identifier
-        for entry in Lockfile.load(lockfile_path).installed.values()
+        for entry in Lockfile.load(default_lockfile_path()).installed.values()
         if entry.identifier
     }

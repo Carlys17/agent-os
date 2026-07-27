@@ -10,11 +10,13 @@ import structlog
 import yaml
 
 from agentos.paths import default_agentos_home
+from agentos.skills.publishers import resolve_declared_publisher
 from agentos.skills.types import (
     SkillInstallSpec,
     SkillLayer,
     SkillPlatformMeta,
     SkillProvenance,
+    SkillPublisher,
     SkillRequires,
     SkillSpec,
 )
@@ -29,7 +31,10 @@ MAX_SKILLS_PER_SOURCE = 200  # per layer cap
 # 9: requires_env carries declared descriptions/URLs instead of bare names,
 #    and config_vars was added. A version-8 snapshot would parse without error
 #    and silently strip both.
-_SNAPSHOT_SCHEMA_VERSION = 9
+# 10: publisher was added. A version-9 snapshot parses cleanly and would restore
+#    every skill without a publisher, so partner skills would silently lose
+#    their brand grouping until something else invalidated the cache.
+_SNAPSHOT_SCHEMA_VERSION = 10
 
 
 def _string_list(value: object) -> list[str]:
@@ -166,6 +171,17 @@ def _resolve_provenance(frontmatter: dict) -> SkillProvenance:
     )
 
 
+def _resolve_skill_publisher(frontmatter: dict, layer: SkillLayer) -> SkillPublisher:
+    """Extract the publisher a top-level ``publisher:`` block selects.
+
+    The frontmatter only picks an id; the allowlist supplies the displayed
+    fields, and only a bundled manifest may pick one at all, so a directory
+    dropped into a writable skills path cannot claim a partner's brand. No block
+    at all means no publisher.
+    """
+    return resolve_declared_publisher(frontmatter.get("publisher"), layer)
+
+
 def _snapshot_provenance(raw: object) -> SkillProvenance:
     if not isinstance(raw, dict):
         return SkillProvenance()
@@ -175,17 +191,6 @@ def _snapshot_provenance(raw: object) -> SkillProvenance:
         upstream_url=str(raw.get("upstream_url") or ""),
         maintained_by=str(raw.get("maintained_by") or "AgentOS"),
     )
-
-
-# Layer ordering: low precedence → high precedence
-_LAYER_ORDER = [
-    SkillLayer.EXTRA,
-    SkillLayer.BUNDLED,
-    SkillLayer.MANAGED,
-    SkillLayer.PERSONAL,
-    SkillLayer.PROJECT,
-    SkillLayer.WORKSPACE,
-]
 
 
 class SkillLoader:
@@ -211,6 +216,9 @@ class SkillLoader:
             snapshot_path or default_agentos_home() / "cache" / "skills_snapshot.json"
         )
         self._cached: list[SkillSpec] | None = None
+        #: Manifest the in-memory cache was built from. Compared on every
+        #: ``load_all()`` so a write nobody told us about still lands.
+        self._cached_manifest: dict[str, dict[str, float | int]] | None = None
 
     @property
     def workspace_dir(self) -> Path | None:
@@ -225,8 +233,14 @@ class SkillLoader:
     def invalidate_cache(self) -> None:
         """Clear cached skills so next load_all() re-scans from disk."""
         self._cached = None
+        self._cached_manifest = None
 
     def _get_layer_dirs(self) -> list[tuple[Path, SkillLayer]]:
+        """Return the layer directories in low → high precedence order.
+
+        This order is the precedence: ``load_all()`` walks it and lets each
+        later layer overwrite a same-named skill from an earlier one.
+        """
         layer_dirs: list[tuple[Path, SkillLayer]] = []
         for d in self._extra_dirs:
             layer_dirs.append((d, SkillLayer.EXTRA))
@@ -286,6 +300,12 @@ class SkillLoader:
                         "upstream_url": s.provenance.upstream_url,
                         "maintained_by": s.provenance.maintained_by,
                     },
+                    "publisher": {
+                        "id": s.publisher.id,
+                        "name": s.publisher.name,
+                        "url": s.publisher.url,
+                        "logo": s.publisher.logo,
+                    },
                     "metadata": {
                         "os": s.metadata.os if s.metadata else [],
                         "emoji": s.metadata.emoji if s.metadata else "",
@@ -337,8 +357,14 @@ class SkillLoader:
         self._snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         self._snapshot_path.write_text(json.dumps(data), encoding="utf-8")
 
-    def load_snapshot(self) -> list[SkillSpec] | None:
-        """Load from snapshot if manifest matches. Returns None on miss."""
+    def load_snapshot(
+        self, manifest: dict[str, dict[str, float | int]] | None = None
+    ) -> list[SkillSpec] | None:
+        """Load from snapshot if manifest matches. Returns None on miss.
+
+        ``manifest`` lets a caller that has already stat-ed the layer dirs pass
+        the result in rather than pay for a second sweep.
+        """
         import json
 
         if not self._snapshot_path.exists():
@@ -351,7 +377,7 @@ class SkillLoader:
         if data.get("version") != _SNAPSHOT_SCHEMA_VERSION:
             return None
         saved_manifest = data.get("manifest", {})
-        current_manifest = self._build_manifest()
+        current_manifest = manifest if manifest is not None else self._build_manifest()
         if saved_manifest != current_manifest:
             return None
 
@@ -399,11 +425,12 @@ class SkillLoader:
                     config_vars=raw_meta.get("config_vars", []),
                 )
 
+            layer = SkillLayer(s.get("layer", "bundled"))
             skills.append(
                 SkillSpec(
                     name=s["name"],
                     description=s.get("description", ""),
-                    layer=SkillLayer(s.get("layer", "bundled")),
+                    layer=layer,
                     always=s.get("always", False),
                     triggers=s.get("triggers", []),
                     content=s.get("content", ""),
@@ -415,6 +442,10 @@ class SkillLoader:
                     homepage=s.get("homepage", ""),
                     metadata=meta,
                     provenance=_snapshot_provenance(s.get("provenance")),
+                    # Re-resolved rather than trusted: the cache is a writable
+                    # file on disk, so it gets the same allowlist *and* layer
+                    # check the manifest got.
+                    publisher=resolve_declared_publisher(s.get("publisher"), layer),
                     requires_tools=s.get("requires_tools", []),
                     fallback_for_toolsets=s.get("fallback_for_toolsets", []),
                 )
@@ -425,14 +456,24 @@ class SkillLoader:
         """Load all skills with layer precedence (high overrides low).
 
         Tries snapshot cache first for fast cold starts.
+
+        The in-memory cache is validated against the on-disk manifest rather
+        than trusted outright. ``invalidate_cache()`` is only reached through
+        AgentOS's own install/update/remove paths, but the skill directories are
+        not exclusively ours: ``agentos skills install`` runs in a separate
+        process, and ``.agents/skills`` is shared with every other agent on the
+        machine. A skill written by any of them used to stay invisible to a
+        running gateway until it restarted, with nothing said about it.
         """
-        if self._cached is not None:
+        manifest = self._build_manifest()
+        if self._cached is not None and self._cached_manifest == manifest:
             return list(self._cached)
 
         # Try snapshot cache
-        cached = self.load_snapshot()
+        cached = self.load_snapshot(manifest)
         if cached is not None:
             self._cached = cached
+            self._cached_manifest = manifest
             return list(cached)
 
         # Full scan: load in low→high order; higher layers override by name
@@ -456,6 +497,10 @@ class SkillLoader:
 
         skills = list(merged.values())
         self._cached = list(skills)
+        # Set before save_snapshot(), which calls back into load_all(): with the
+        # manifest already recorded that call is a cache hit rather than a
+        # second full scan.
+        self._cached_manifest = manifest
 
         # Save snapshot for next cold start
         try:
@@ -516,6 +561,7 @@ class SkillLoader:
             # Platform metadata fields
             metadata = _resolve_metadata(frontmatter)
             provenance = _resolve_provenance(frontmatter)
+            publisher = _resolve_skill_publisher(frontmatter, layer)
             # metadata.always overrides top-level always if set
             if metadata and metadata.always is not None:
                 always = metadata.always
@@ -547,6 +593,7 @@ class SkillLoader:
                 path=skill_dir,
                 metadata=metadata,
                 provenance=provenance,
+                publisher=publisher,
                 user_invocable=user_invocable,
                 disable_model_invocation=disable_model_invocation,
                 homepage=homepage,

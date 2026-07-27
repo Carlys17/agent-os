@@ -411,12 +411,35 @@ Read:
 
 ```sh
 agentos skills list
+agentos skills list --json
 agentos skills search pdf
 agentos skills view pdf-toolkit
 agentos skills install <skill-name>
 agentos skills update --all
 agentos skills uninstall <skill-name>
 ```
+
+The `skills list` table is unchanged: name, layer, eligible, description.
+`--json` carries more, and now reports the same facts the Web UI shows for the
+same skill instead of a separate, thinner answer:
+
+| Key | What it says |
+| --- | --- |
+| `layer` | where the files are — `bundled`, `managed`, `personal`, `project`, `workspace`, `extra` |
+| `acquisition` | how the skill got there: `kind` is `shipped`, `hub`, or `local`, plus `source_id`, `identifier`, `version`, `installed_at`, `source_trust`, `scan_verdict`, and the `removable` / `updatable` booleans |
+| `publisher` | `{id, name, url, logo}`, all empty strings when the skill is unbranded. Only publishers on an allowlist inside AgentOS resolve to a name; a skill cannot brand itself by writing one into its manifest |
+| `provenance` | unchanged, and independent of `publisher` — where the text came from and under what licence |
+
+`acquisition.removable` is the honest answer to "can `agentos skills uninstall`
+remove this", not a restatement of the layer: a hub install whose recorded path
+no longer matches the configured `skills.managed_dir` reports `false`, while
+`updatable` stays `true` because an update re-fetches by identifier.
+
+There is deliberately **no `availability` key** in CLI output. Whether the
+agent is currently being offered a skill depends on a chat session's tool
+surface, which a CLI process does not have; the gateway's `skills.list` and the
+Web UI answer that instead. An absent key means "not computed", not "not
+offered".
 
 Read:
 

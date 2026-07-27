@@ -39,6 +39,68 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   behind the approval queue and hidden by default, `env_set`. There is no
   reveal tool: a model that can read back stored credentials is one prompt
   injection away from exfiltrating them.
+- "Is the agent actually being offered this skill?" is now a question with an
+  answer. Every skill row from the gateway, and every line the agent's own
+  skill listing prints, carries whether the skill is offered and — when it is
+  not — which of six reasons applies: model invocation is disabled in its
+  manifest, a requirement is missing, a tool it needs is not enabled in this
+  session, a native tool supersedes it as a fallback, relevance filtering
+  skipped it for this message, or the injected skills block was full. The
+  explanation is one sentence naming what to do, and it never contains a
+  filesystem path. Ready and offered were previously the same green dot, which
+  is why a perfectly installed skill could sit there being silently withheld.
+  Five of the six answer from the installed set alone, so the Skills page shows
+  them before you send anything; only the relevance-filtering one needs a
+  message to rank against and stays in the decision log.
+- With `[tools] enabled = false`, skills that require a tool are now reported as
+  withheld rather than available. The Skills page previously answered against
+  everything the install could offer while chat answered against a turn with no
+  tools at all — the same skill, two answers.
+- How a skill was acquired — `shipped` with AgentOS, installed from a `hub`, or
+  a `local` directory you added — is now a fact AgentOS records and reports,
+  alongside the source, identifier, version, and install time for hub installs.
+  It is derived from the install record rather than guessed from which
+  directory the files sit in, so moving a skill does not change the story of
+  where it came from.
+- The same record answers whether Update and Remove will actually work. A
+  hub-installed skill whose files no longer sit where the lockfile recorded
+  them keeps Update — an update re-fetches by identifier — and loses Remove,
+  because AgentOS will not delete files it cannot prove it owns. The Web UI
+  says so instead of offering a button that fails.
+- Skills can name a publisher, so a partner's skills carry that partner's
+  identity whether they shipped with AgentOS or you installed them from that
+  partner's hub. Publishers are allowlisted **inside AgentOS**: a `SKILL.md` or
+  a hub catalog can only *select* a recognized publisher by id, never describe
+  one. A third-party skill that writes a partner's name, URL, and logo into its
+  own frontmatter renders as an ordinary unbranded skill. Selecting an id is
+  restricted too: only a skill shipping inside the release may name its own
+  publisher, and an installed one is branded by the hub catalog row it came
+  from, so a directory dropped into a skills path can never appear as a
+  partner. Publisher is independent of provenance — one says whose name is on a
+  skill, the other where the text came from and under what licence.
+- `agentos skills list --json` gained `publisher` and `acquisition`, built by
+  the same code the gateway and the Web UI use. It deliberately has no
+  `availability` key: that depends on a chat session's tool surface, which a
+  CLI process does not have, and an absent key means "not computed" rather than
+  "not offered".
+
+### Changed
+
+- The Skills screen's Installed tab now groups cards by where a skill came
+  from — **Partners**, **Shipped with AgentOS**, **Installed from a hub**,
+  **Your local skills** — instead of by which directory holds the files. The
+  storage layer is still shown, as a chip on each card, because it decides
+  which skill wins a name collision; it no longer decides the heading. If you
+  navigated by the old `Bundled` / `Managed` headings, the cards under them are
+  now under `Shipped with AgentOS` and `Installed from a hub`.
+- `skills.max_skills_prompt_chars` now defaults to **24000**, up from 8000. The
+  bundled skill set renders to about 16k characters with descriptions, so the
+  old default silently forced every default install past the budget and into
+  name-only mode — the model had never seen a skill description on a stock
+  install. Raise it further if you install many skills; lower it if you run a
+  model with a small context window, where the whole-request ceiling can be
+  smaller than this budget. See
+  [configuration.md](docs/configuration.md#skill-prompt-budget).
 
 ### Security
 
@@ -113,6 +175,76 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `/reset` in the standalone chat TUI works again on sessions with a non-empty
   transcript. It had been gated on a flush service that is never constructed,
   so it aborted every time; `/compact` printed a matching false warning.
+- The skills block no longer writes an absolute filesystem path for every
+  skill into the system prompt. Nothing read it — skills are looked up by name,
+  and the skill-reading tool explicitly tells the model not to go looking on
+  disk — while it accounted for roughly two thirds of the block and put the
+  user's home directory in front of the model on every turn. Removing it, with
+  the raised budget above, is what lets a stock install list every skill with
+  its description.
+- Upgrading lifts an existing `skills.max_skills_prompt_chars = 8000` to the new
+  default. The key is materialised into every saved `config.toml`, so raising the
+  default alone would have reached new installs only, and 8000 is exactly the
+  value that cannot fit the shipped skills' descriptions. The rewrite runs with
+  the config migrations on the next gateway start, takes the usual timestamped
+  backup, and touches only that exact old default — a budget someone chose is
+  left alone.
+- A skill that appears in a skills directory while the gateway is running is
+  now picked up on the next turn instead of at the next restart. The cache was
+  only cleared through AgentOS's own install paths, but the directories are
+  shared: `agentos skills install` runs in a separate process, and
+  `~/.agents/skills` is written to by other agents on the same machine. A skill
+  from either was on disk, absent from `skills.list`, absent from the prompt,
+  and unmentioned in any log. The cache is now validated against the same
+  file manifest the on-disk snapshot already used, which costs one stat sweep —
+  measured at 0.6 ms for 65 skills — on each load.
+- `~/.agents/skills` and `<project>/.agents/skills` are honoured when they are
+  created after startup. Both resolved once at boot and a missing one collapsed
+  to "no such layer", so the first cross-agent install on a machine stayed
+  invisible until a restart. The managed directory was already exempt for this
+  exact reason; these two now match it.
+- The guidance above the skills list no longer argues against using it. It
+  opened with "Skills are optional task playbooks" and told the model to load
+  one "only when a listed entry clearly matches" — while the same block, in the
+  compact mode a stock install always fell into, listed nothing but names. A
+  bare name matches nothing clearly, so the instruction could not be followed
+  and the honest reading was "skip it". The two failure modes are not
+  symmetric: loading a skill that turned out to be unnecessary costs a little
+  context, and skipping one that carried the right endpoints, commands, or
+  conventions produces a confidently wrong answer. The block now says so, asks
+  the model to load on partial relevance, and — when only names are listed —
+  states plainly that a name is not enough to rule a skill out.
+- When the skills block does overflow its budget, the skills it drops are no
+  longer chosen by load order, which always landed the cut on the skills an
+  operator had installed. The cut now follows layer precedence, so `extra` and
+  then `bundled` skills go before the ones in a writable skills path. The drop is
+  also reported instead of being silent: a `skills_filter.budget_truncated`
+  warning naming the dropped skills, and a `prompt_budget` reason on each
+  affected skill.
+- The skill count and skill-id list in turn metadata and the
+  `skills_filter.applied` log counted skills that the budget had already thrown
+  away, so the one place that could have revealed the problem asserted
+  everything was fine.
+- Setting an environment variable or installing a missing binary now takes
+  effect for the agent without a gateway restart, which is what the
+  Environment feature promised. The chat path built one eligibility cache at
+  import time and remembered a *negative* lookup for the life of the process,
+  while every other surface rebuilt its own per call — so the Skills screen
+  reported a skill as ready while the agent refused to be given it, forever.
+- Browsing or searching a skill hub now also shows skills you already installed
+  from that source, including ones its catalog does not list. A skill installed
+  from a GitHub URL used to vanish from the page it was installed on, because
+  an empty browse never returned a row for it.
+- The Installed marker in the community list no longer goes stale after a
+  removal, and no longer fires on a catalog entry whose *name* happens to match
+  an unrelated skill's install *identifier*. Names are matched against
+  installed names and identifiers against installed identifiers.
+- Installing a skill while a search is open no longer loses the row when the
+  search is cleared, and the skill dialog no longer unmounts itself when the
+  list underneath it changes.
+- A failed hub search reports the failure instead of rendering as "no skills
+  match your query", and results the hub matched on a tag are no longer
+  discarded by a second client-side filter that could not see the tag.
 
 ## [2026.7.26] - 2026-07-26
 

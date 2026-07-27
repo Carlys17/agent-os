@@ -25,7 +25,61 @@ export interface RawSkill {
   missing_env_detail?: MissingEnvDetail[]
   install?: SkillInstallOption[]
   requirements?: SkillRequirements
+  /** Allowlisted brand, or all-empty. Absent only on a pre-#130 gateway. */
+  publisher?: SkillPublisher
+  /** How the skill got here and what an operator may do to it. */
+  acquisition?: SkillAcquisition
+  /** Whether the agent is actually being offered the skill. Absent from the CLI. */
+  availability?: SkillAvailability
   [key: string]: unknown
+}
+
+/**
+ * The publisher block from a skill row. The server resolves it against a
+ * server-side allowlist (`src/agentos/skills/publishers.py`), so `id` is the
+ * ONLY trustworthy "is this a partner skill" signal — a SKILL.md cannot mint a
+ * brand by writing one into its frontmatter, and the client must never infer a
+ * partner from a name prefix or a homepage host.
+ */
+export interface SkillPublisher {
+  id?: string
+  name?: string
+  url?: string
+  logo?: string
+}
+
+/** Where a skill came from. Always present on a current gateway. */
+export type SkillAcquisitionKind = 'shipped' | 'hub' | 'local'
+
+export interface SkillAcquisition {
+  kind?: SkillAcquisitionKind | string
+  source_id?: string
+  identifier?: string
+  version?: string
+  installed_at?: string
+  source_trust?: string
+  scan_verdict?: string
+  /** Gates the Remove button. */
+  removable?: boolean
+  /** Gates the Update button. */
+  updatable?: boolean
+}
+
+/** Why the agent is not being offered an installed, eligible skill. */
+export type SkillAvailabilityReason =
+  | ''
+  | 'model_invocation_disabled'
+  | 'ineligible'
+  | 'tool_gate'
+  | 'fallback_superseded'
+  | 'not_retrieved'
+  | 'prompt_budget'
+
+export interface SkillAvailability {
+  offered?: boolean
+  reason?: SkillAvailabilityReason | string
+  /** Tooltip prose; never carries a filesystem path. */
+  detail?: string
 }
 
 export interface MissingEnvDetail {
@@ -80,14 +134,10 @@ export type StatusFilter = 'all' | 'ready' | 'needs-setup' | 'not-declared'
 
 // ── Constants (skills.js:36-58) ──────────────────────────────────────────────
 
-export const LAYER_ORDER = [
-  'workspace',
-  'bundled',
-  'managed',
-  'personal',
-  'project',
-  'extra',
-] as const
+// `layer` is a location, not a provenance: it says which directory a SKILL.md
+// was loaded from. It is still shown as a per-card detail chip, but it no
+// longer groups the Installed tab (see SKILL_GROUP_ORDER below) — grouping on
+// it split the same partner's skills across two headings.
 
 export const LAYER_LABEL: Record<string, string> = {
   workspace: 'Workspace',
@@ -190,7 +240,7 @@ export function installedEmptyMessage(filterText: string, statusFilter: StatusFi
   return 'No skills installed.'
 }
 
-// ── Layer grouping + ready-first sort (skills.js:407-442) ─────────────────────
+// ── Provenance grouping + ready-first sort (skills.js:407-442) ────────────────
 
 /** skills.js:407-411 — sort rank: ready(0) < not_declared(1) < needs_setup(2). */
 export function skillRank(s: RawSkill): number {
@@ -199,37 +249,108 @@ export function skillRank(s: RawSkill): number {
   return 2
 }
 
+/** The Installed tab's headings, in the order they render. */
+export type SkillGroupKey = 'partners' | 'shipped' | 'hub' | 'local'
+
+export const SKILL_GROUP_ORDER: readonly SkillGroupKey[] = [
+  'partners',
+  'shipped',
+  'hub',
+  'local',
+] as const
+
+export const SKILL_GROUP_LABEL: Record<SkillGroupKey, string> = {
+  partners: 'Partners',
+  shipped: 'Shipped with AgentOS',
+  hub: 'Installed from a hub',
+  local: 'Your local skills',
+}
+
+export const SKILL_GROUP_HELP: Record<SkillGroupKey, string> = {
+  partners: 'Skills published by an AgentOS partner.',
+  shipped: 'Skills that ship with AgentOS.',
+  hub: 'Skills you installed from a skill hub.',
+  local: 'Skills you added yourself, from a local skill directory.',
+}
+
+/**
+ * The single group a skill belongs to. Partners wins over provenance so a
+ * partner's skills sit under one heading whether they shipped with AgentOS or
+ * were installed from that partner's hub — grouping on `layer` split them.
+ *
+ * A row from a pre-#130 gateway carries no `acquisition`; fall back to the
+ * location layer so an older gateway still renders something sane rather than
+ * filing every skill under "Shipped with AgentOS".
+ */
+export function skillGroupKey(skill: RawSkill): SkillGroupKey {
+  if (isPartnerSkill(skill)) return 'partners'
+  const kind = skill.acquisition?.kind
+  if (kind === 'shipped' || kind === 'hub' || kind === 'local') return kind
+  if (skill.layer === 'bundled') return 'shipped'
+  if (skill.layer === 'managed') return 'hub'
+  return 'local'
+}
+
+/**
+ * Whether an operator may update / remove a skill.
+ *
+ * What an operator may do comes off `acquisition`, not off the layer: a hub
+ * install stays removable when `skills.managed_dir` moves, and a hand-copied
+ * directory inside the managed dir was never removable in the first place.
+ *
+ * A row from a pre-#130 gateway carries no `acquisition` at all. Reading the
+ * flags directly would then be `undefined === true` → `false`, silently hiding
+ * both buttons rather than degrading — so fall back to the layer test these
+ * buttons used before, exactly as `skillGroupKey` does.
+ */
+export function skillCanUpdate(skill: RawSkill): boolean {
+  if (skill.acquisition) return skill.acquisition.updatable === true
+  return skill.layer === 'managed'
+}
+
+export function skillCanRemove(skill: RawSkill): boolean {
+  if (skill.acquisition) return skill.acquisition.removable === true
+  return skill.layer === 'managed'
+}
+
 export interface SkillGroup {
-  layer: string
+  key: SkillGroupKey
   label: string
   help: string
   skills: RawSkill[]
 }
 
-/**
- * skills.js:413-442 — bucket the filtered skills by layer, sort each bucket
- * ready-first then name-asc, and emit groups in LAYER_ORDER (skipping empties).
- * An unknown layer buckets under 'extra' (legacy `s.layer || 'extra'`).
- */
-export function groupSkillsByLayer(skills: RawSkill[]): SkillGroup[] {
-  const groups: Record<string, RawSkill[]> = {}
-  skills.forEach((s) => {
-    const l = s.layer || 'extra'
-    ;(groups[l] = groups[l] || []).push(s)
+/** Sort a bucket ready-first (skills.js:407-411) then name-asc. */
+function sortByReady(list: RawSkill[]): RawSkill[] {
+  return list.sort((a, b) => {
+    const ra = skillRank(a)
+    const rb = skillRank(b)
+    if (ra !== rb) return ra - rb
+    return (a.name || '').localeCompare(b.name || '')
   })
-  const sortByReady = (list: RawSkill[]) =>
-    list.sort((a, b) => {
-      const ra = skillRank(a)
-      const rb = skillRank(b)
-      if (ra !== rb) return ra - rb
-      return (a.name || '').localeCompare(b.name || '')
-    })
-  Object.values(groups).forEach(sortByReady)
+}
+
+/**
+ * skills.js:413-442, regrouped — bucket the filtered skills by provenance,
+ * sort each bucket ready-first then name-asc, and emit groups in
+ * SKILL_GROUP_ORDER (skipping empties). A skill lands in exactly one group.
+ */
+export function groupSkills(skills: RawSkill[]): SkillGroup[] {
+  const groups: Partial<Record<SkillGroupKey, RawSkill[]>> = {}
+  skills.forEach((s) => {
+    const k = skillGroupKey(s)
+    ;(groups[k] = groups[k] || []).push(s)
+  })
   const out: SkillGroup[] = []
-  LAYER_ORDER.forEach((layer) => {
-    const list = groups[layer]
+  SKILL_GROUP_ORDER.forEach((key) => {
+    const list = groups[key]
     if (!list || list.length === 0) return
-    out.push({ layer, label: layerLabel(layer), help: layerHelp(layer), skills: list })
+    out.push({
+      key,
+      label: SKILL_GROUP_LABEL[key],
+      help: SKILL_GROUP_HELP[key],
+      skills: sortByReady(list),
+    })
   })
   return out
 }
@@ -257,32 +378,92 @@ export function skillDotTitle(skill: RawSkill): string {
   return skill.status_detail || (skill.eligible ? 'Ready' : 'Needs setup')
 }
 
-// ── Robinhood partner grouping (skills.js:469-497) ────────────────────────────
+// ── Availability: installed and eligible, but is it offered? ──────────────────
 
 /**
- * skills.js:469-477 — partner grouping is a brand surface: only BUNDLED skills
- * whose name starts with `robinhood` or whose homepage mentions robinhood.com
- * qualify (a user-installed community skill can't wear the partner banner).
+ * The card's third state. `status` answers "can this skill run"; availability
+ * answers "is the agent even being told about it" — a skill can be perfectly
+ * ready and still never reach the model (model invocation disabled, a missing
+ * tool, the prompt budget). 'unknown' is what an absent block means: the CLI
+ * never computes availability, and treating that as not-offered would be a
+ * fabricated verdict.
  */
-export function isRobinhoodSkill(skill: RawSkill): boolean {
-  if (skill.layer !== 'bundled') return false
-  const name = (skill.name || '').toLowerCase()
-  const home = (skill.homepage || '').toLowerCase()
-  return name.startsWith('robinhood') || home.includes('robinhood.com')
+export type SkillAvailabilityTone = 'offered' | 'not-offered' | 'unknown'
+
+export function skillAvailabilityTone(skill: RawSkill): SkillAvailabilityTone {
+  const offered = skill.availability?.offered
+  if (typeof offered !== 'boolean') return 'unknown'
+  return offered ? 'offered' : 'not-offered'
 }
 
-/** skills.js:484-486 — the installed Robinhood-family skills, name-sorted. */
-export function robinhoodSkills(skills: RawSkill[]): RawSkill[] {
-  return skills.filter(isRobinhoodSkill).sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+/** Short labels per withheld reason, for the card chip. */
+export const AVAILABILITY_REASON_LABEL: Record<string, string> = {
+  model_invocation_disabled: 'Not offered — agent cannot invoke',
+  ineligible: 'Not offered — needs setup',
+  tool_gate: 'Not offered — missing tools',
+  fallback_superseded: 'Not offered — superseded',
+  not_retrieved: 'Not offered — not retrieved',
+  prompt_budget: 'Not offered — prompt too long',
 }
 
-export function robinhoodEmptyMessage(filterText: string, statusFilter: StatusFilter): string {
-  const query = filterText.trim()
-  if (query) return `No Robinhood skills match ${query}.`
-  if (statusFilter === 'ready') return 'No Robinhood skills are ready.'
-  if (statusFilter === 'needs-setup') return 'No Robinhood skills currently need setup.'
-  if (statusFilter === 'not-declared') return 'No Robinhood skills without a manifest.'
-  return 'Robinhood skills are on the way. No Robinhood skills are installed yet.'
+/** The chip label; '' when availability was not computed (nothing to show). */
+export function skillAvailabilityLabel(skill: RawSkill): string {
+  const tone = skillAvailabilityTone(skill)
+  if (tone === 'unknown') return ''
+  if (tone === 'offered') return 'Offered to the agent'
+  const reason = String(skill.availability?.reason || '')
+  return AVAILABILITY_REASON_LABEL[reason] || 'Not offered to the agent'
+}
+
+/** The chip tooltip: the server's prose when it wrote any, else the label. */
+export function skillAvailabilityTitle(skill: RawSkill): string {
+  return skill.availability?.detail || skillAvailabilityLabel(skill)
+}
+
+// ── Partner (publisher) selection ─────────────────────────────────────────────
+
+/**
+ * The skill's brand slug, or '' for an ordinary skill.
+ *
+ * This is the ONLY partner signal the client honours. The old heuristic read
+ * the skill's own name and homepage and leaned on `layer === 'bundled'` to stop
+ * a community skill wearing the banner; that guard now lives server-side, where
+ * `publisher.id` is resolved against an allowlist before it reaches the wire.
+ * Re-deriving a brand from a name here would reopen exactly the hole the
+ * allowlist closes, so nothing below looks at `name` or `homepage`.
+ */
+export function skillPublisherId(skill: RawSkill): string {
+  return String(skill.publisher?.id || '')
+    .trim()
+    .toLowerCase()
+}
+
+/** True when the row carries any allowlisted brand. */
+export function isPartnerSkill(skill: RawSkill): boolean {
+  return skillPublisherId(skill) !== ''
+}
+
+/** The installed skills of one partner, name-sorted (skills.js:484-486). */
+export function skillsByPublisher(skills: RawSkill[], publisherId: string): RawSkill[] {
+  const want = (publisherId || '').trim().toLowerCase()
+  if (!want) return []
+  return skills
+    .filter((s) => skillPublisherId(s) === want)
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+}
+
+/** The empty-state prose for a partner tab, e.g. `partnerEmptyMessage('Robinhood', …)`. */
+export function partnerEmptyMessage(
+  brand: string,
+  filterText: string,
+  statusFilter: StatusFilter,
+): string {
+  const query = (filterText || '').trim()
+  if (query) return `No ${brand} skills match ${query}.`
+  if (statusFilter === 'ready') return `No ${brand} skills are ready.`
+  if (statusFilter === 'needs-setup') return `No ${brand} skills currently need setup.`
+  if (statusFilter === 'not-declared') return `No ${brand} skills without a manifest.`
+  return `${brand} skills are on the way. No ${brand} skills are installed yet.`
 }
 
 // ── Registry (community / bankr) derivations ──────────────────────────────────
@@ -331,26 +512,49 @@ export function categoryChips(snapshot: RegistryItem[], activeCat: string): Cate
   }))
 }
 
+export interface RegistryFilterOptions {
+  /**
+   * True when `items` IS the server's answer to `query`. The text pass is then
+   * skipped entirely and only the category chip narrows the list.
+   *
+   * The server matches over name, provider, category, description and **tags**
+   * (`skills/hub/bankr.py:_matches`), and tags are not on the wire — so no
+   * client matcher can ever reproduce it, and re-filtering a server result can
+   * only throw away legitimate hits. The text pass survives for the debounce
+   * window, where it narrows a stale list optimistically while the request is
+   * still out; dropping a row there is harmless because the answer replaces it.
+   */
+  serverFiltered?: boolean
+}
+
 /**
  * skills.js:610-620 — apply the category filter then the case-insensitive text
- * filter (name / provider / description) to a registry list. `query` is trimmed
- * + lowercased here (legacy trims/lowercases inline).
+ * filter to a registry list. `query` is trimmed + lowercased here (legacy
+ * trims/lowercases inline).
+ *
+ * The text pass also matches `category`, which the server matches and the
+ * original client matcher did not; that is as close to the server as the
+ * payload allows. Pass `{ serverFiltered: true }` once the rows on screen are
+ * the server's own answer.
  */
 export function filterRegistry(
   items: RegistryItem[],
   category: string,
   query: string,
+  options: RegistryFilterOptions = {},
 ): RegistryItem[] {
   let out = items
   const cat = category || 'all'
   if (cat !== 'all') out = out.filter((r) => (r.category || 'other') === cat)
+  if (options.serverFiltered) return out
   const q = (query || '').trim().toLowerCase()
   if (q) {
     out = out.filter(
       (r) =>
         (r.name || '').toLowerCase().includes(q) ||
         (r.provider || '').toLowerCase().includes(q) ||
-        (r.description || '').toLowerCase().includes(q),
+        (r.description || '').toLowerCase().includes(q) ||
+        (r.category || '').toLowerCase().includes(q),
     )
   }
   return out
@@ -368,6 +572,32 @@ export function registryEmptyMessage(group: 'bankr' | 'community', query: string
 /** skills.js:662,715,283 — the stable identifier key for a registry row. */
 export function registryKey(r: RegistryItem): string {
   return r.identifier || r.name || ''
+}
+
+/**
+ * Union two registry lists by `registryKey`, `base` winning on a collision.
+ *
+ * The gateway now synthesizes a row for an install no catalog lists, so a
+ * refetch alone is enough to make it appear — but only once the refetch lands.
+ * Merging the just-installed row in locally shows it on the same tick, and the
+ * server's richer row replaces it on the next fetch because `base` (the query
+ * result) wins. `extra` rows are appended for the same reason the server
+ * appends its synthesized ones: they carry no relevance score and must not push
+ * ranked catalog rows off the top of the grid.
+ *
+ * A row with no identifier and no name cannot be keyed, deduped or installed,
+ * so it is dropped rather than appended blind.
+ */
+export function mergeRegistryRows(base: RegistryItem[], extra: RegistryItem[]): RegistryItem[] {
+  const seen = new Set(base.map(registryKey).filter(Boolean))
+  const out = [...base]
+  extra.forEach((r) => {
+    const key = registryKey(r)
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    out.push(r)
+  })
+  return out
 }
 
 // ── Install-action state (skills.js:633-641) ──────────────────────────────────
@@ -435,9 +665,17 @@ export function safeUrl(url?: string): string {
 }
 
 /**
- * skills.js:911-924 — flip `installed` in-place on rows matching by identifier
- * or name across the cached registry lists. Returns a NEW array (React-friendly)
- * rather than mutating, but preserves the legacy match semantics.
+ * skills.js:911-924 — flip `installed` on rows matching by identifier or name
+ * across a cached registry list. Returns a NEW array (React-friendly) rather
+ * than mutating, but preserves the legacy match semantics.
+ *
+ * Kept, not deleted: this is the optimistic half of the install/uninstall
+ * round trip. It is applied from `installMutation.onSuccess` /
+ * `uninstallMutation.onSuccess` in SkillsPage.tsx over the cached
+ * `['skills.search', …]` data before the invalidation refetch lands, so the
+ * Installed chip flips on the same tick instead of after a network round trip.
+ * Both paths then invalidate `['skills.search']` so the server's own answer
+ * replaces the optimistic one.
  */
 export function markInstalled(
   list: RegistryItem[],

@@ -29,7 +29,7 @@ from collections.abc import Sequence
 import structlog
 
 from agentos.env import trust_env as _trust_env
-from agentos.skills.hub.github import GitHubSource, _frontmatter_field
+from agentos.skills.hub.github import GitHubSource, _frontmatter_field, _parse_identifier
 from agentos.skills.hub.source import SkillBundle, SkillMeta, SkillSource
 
 log = structlog.get_logger(__name__)
@@ -141,10 +141,35 @@ class BankrSource(SkillSource):
         results = [m for m in metas if _matches(m, query)]
         return results[:limit]
 
+    def _is_allowlisted(self, identifier: str) -> bool:
+        """Return True when ``identifier`` names an allowlisted skill in this repo.
+
+        ``inspect``/``fetch`` delegate to :class:`GitHubSource`, which will
+        download any repository it is pointed at. The delegation has to be
+        gated: a hub install records its publisher from the *source* it came
+        through, so an unchecked delegate lets
+        ``skills.install(identifier="…/attacker/skill", source="bankr")``
+        install arbitrary code and have it render under Bankr's name. The
+        allowlist is the boundary this source already declares — enforce it on
+        the install path too, not only when listing the catalog.
+        """
+        ref = _parse_identifier(identifier)
+        if ref is None:
+            return False
+        if ref.repo_full.lower() != self._repo.lower():
+            return False
+        return ref.skill_dir.strip("/") in self._allowlist
+
     async def inspect(self, identifier: str) -> SkillMeta | None:
+        if not self._is_allowlisted(identifier):
+            log.warning("bankr.identifier_rejected", op="inspect")
+            return None
         return await self._github.inspect(identifier)
 
     async def fetch(self, identifier: str) -> SkillBundle | None:
+        if not self._is_allowlisted(identifier):
+            log.warning("bankr.identifier_rejected", op="fetch")
+            return None
         return await self._github.fetch(identifier)
 
     async def _load_catalog(self) -> list[SkillMeta]:

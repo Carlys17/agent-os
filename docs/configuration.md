@@ -118,6 +118,36 @@ agentos config set skills.config.wiki.path /srv/wiki
 When the agent opens the skill, the values currently in effect are appended to
 what it reads, so it does not have to ask or go looking.
 
+## Skill Prompt Budget
+
+Every eligible skill is listed for the agent in a block appended to the system
+prompt. `[skills].max_skills_prompt_chars` caps how large that block may get:
+
+```toml
+[skills]
+max_skills_prompt_chars = 24000
+```
+
+The budget is spent in three stages. Under it, each skill is listed with its
+description. Over it, the block falls back to names only. Over it even then,
+skills are dropped, lowest-precedence layer first — `extra` (the directories
+you listed in `skills.extra_dirs`), then `bundled`, and only then `managed`,
+`personal`, `project`, `workspace`. A drop is logged as
+`skills_filter.budget_truncated` with the names, and the affected skills report
+a `prompt_budget` reason on the Skills screen.
+
+The default of 24000 is sized so a default install lists every bundled skill
+*with* its description and still has room for skills you add. Lower it only if
+you are running a model with a small context window: the whole-request ceiling
+on a model below roughly 64k tokens can be smaller than this budget, in which
+case the skills block alone would not fit.
+
+```sh
+agentos config get skills.max_skills_prompt_chars
+agentos config set skills.max_skills_prompt_chars 32000
+agentos gateway restart
+```
+
 ## First-Run Wizard
 
 ```sh

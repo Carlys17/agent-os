@@ -11,15 +11,23 @@ from pathlib import Path
 import structlog
 
 from agentos.paths import default_agentos_home
-from agentos.skills.hub.lockfile import LockEntry, Lockfile, compute_sha256
+from agentos.skills.hub.lockfile import (
+    LockEntry,
+    Lockfile,
+    compute_sha256,
+    default_lockfile_path,
+)
 from agentos.skills.hub.router import SourceRouter
 from agentos.skills.hub.scanner import ScanResult, scan_skill_bundle
+from agentos.skills.hub.source import SkillMeta
 from agentos.skills.paths import default_managed_skills_dir
 
 log = structlog.get_logger(__name__)
 
 # Path traversal protection: only allow safe skill names
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
+
+_SLUG_SEPARATORS_RE = re.compile(r"[^a-z0-9]+")
 
 
 def _default_managed_dir() -> Path:
@@ -31,7 +39,21 @@ def _default_quarantine_dir() -> Path:
 
 
 def _default_lockfile() -> Path:
-    return default_agentos_home() / "skills-lock.json"
+    return default_lockfile_path()
+
+
+def _publisher_slug(meta: SkillMeta | None, source_id: str) -> str:
+    """Return the publisher slug to record for a hub install.
+
+    A hub-installed skill has no ``publisher:`` block in its frontmatter — the
+    catalog row that installed it is the only thing that knew the brand. Prefer
+    the row's ``provider`` and fall back to the source itself, so a Bankr skill
+    with no declared provider still shows as published by Bankr.
+
+    This is only a *selector*; the allowlist decides whether it means anything.
+    """
+    raw = (meta.provider if meta else "") or source_id
+    return _SLUG_SEPARATORS_RE.sub("-", raw.strip().lower()).strip("-")
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:
@@ -162,11 +184,17 @@ class SkillInstaller:
             LockEntry(
                 source=source_id,
                 identifier=identifier,
+                # The field has existed since the lockfile did and was never
+                # written, so every install reported an empty version — now
+                # that `acquisition.version` is on the wire, that is visible.
+                version=bundle_meta.version if bundle_meta else "",
                 installed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 path=str(install_dir),
                 sha256=sha,
                 license=bundle_meta.license if bundle_meta else "",
                 upstream_url=bundle_meta.homepage if bundle_meta else "",
+                publisher_id=_publisher_slug(bundle_meta, source_id),
+                publisher_name=bundle_meta.provider if bundle_meta else "",
                 source_trust=bundle_meta.trust_level if bundle_meta else "",
                 scan_verdict=scan_result.verdict,
                 scan_strategy=scan_result.strategy,
