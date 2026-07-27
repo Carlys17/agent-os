@@ -17,6 +17,7 @@ is what the original ``rpc.py`` did.
 from __future__ import annotations
 
 from agentos.gateway.rpc.registry import (
+    AudienceDriftError,
     RpcContext,
     RpcDispatcher,
     RpcHandlerError,
@@ -24,7 +25,6 @@ from agentos.gateway.rpc.registry import (
     RpcMethodEntry,
     RpcRegistry,
     RpcUnavailableError,
-    ScopeDriftError,
     get_dispatcher,
     get_registry,
     validate_classification,
@@ -32,13 +32,13 @@ from agentos.gateway.rpc.registry import (
 
 __all__ = [
     "RpcContext",
+    "AudienceDriftError",
     "RpcDispatcher",
     "RpcHandlerError",
     "RpcHandlerFn",
     "RpcMethodEntry",
     "RpcRegistry",
     "RpcUnavailableError",
-    "ScopeDriftError",
     "get_dispatcher",
     "get_registry",
     "validate_classification",
@@ -59,6 +59,7 @@ import agentos.gateway.rpc_config  # noqa: E402, F401
 import agentos.gateway.rpc_cron  # noqa: E402, F401
 import agentos.gateway.rpc_diagnostics  # noqa: E402, F401
 import agentos.gateway.rpc_doctor  # noqa: E402, F401
+import agentos.gateway.rpc_env  # noqa: E402, F401
 import agentos.gateway.rpc_logs  # noqa: E402, F401
 import agentos.gateway.rpc_mcp  # noqa: E402, F401
 import agentos.gateway.rpc_memory  # noqa: E402, F401
@@ -73,5 +74,5 @@ import agentos.gateway.rpc_tools  # noqa: E402, F401
 import agentos.gateway.rpc_usage  # noqa: E402, F401
 import agentos.gateway.rpc_wizard  # noqa: E402, F401
 
-# Fail fast if any registered handler disagrees with ``gateway.scopes``.
+# Fail fast if any registered handler crosses a connection-surface boundary.
 validate_classification()

@@ -57,6 +57,14 @@ APPROVED_PACKAGE_IMPORTS: frozenset[tuple[str, str]] = frozenset({
     # and resolves it via LocalEmbeddingProvider.resolve_onnx_dir rather than
     # duplicating the path convention.
     ("agentos_router", "memory"),
+    # The env catalog describes every variable AgentOS reads. Provider keys are
+    # derived from the onboarding setup specs that already declare them, and
+    # skill-declared variables come from loaded manifests — deriving both keeps
+    # the catalog correct when a provider or skill is added, where a hand-kept
+    # list would drift. Both imports are lazy (inside the builder), so nothing
+    # is pulled in until a surface actually asks for a listing.
+    ("env_catalog.py", "onboarding"),
+    ("env_catalog.py", "skills"),
     ("gateway", "agentos_router"),
     ("onboarding", "agentos_router"),
     ("gateway", "agents"),

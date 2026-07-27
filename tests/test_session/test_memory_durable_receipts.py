@@ -1,16 +1,11 @@
 import threading
-from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
 from agentos.memory.checkpoint import checkpoint_coverage_hash, checkpoint_turn_id
-from agentos.memory.session_flush import FlushReceipt, SessionFlushService
-from agentos.provider import Message
 from agentos.session.manager import SessionManager
 from agentos.session.models import MemoryDurableReceipt
 from agentos.session.storage import SessionStorage
-from agentos.tool_boundary import ToolCall, ToolResult
 
 
 async def test_memory_durable_receipt_upsert_is_idempotent(tmp_path):
@@ -359,62 +354,3 @@ async def test_record_memory_checkpoint_writes_checkpoint_off_event_loop(
         await storage.close()
 
 
-async def test_session_flush_repair_receipt_writer_records_raw_fallback_in_ledger(
-    tmp_path,
-):
-    class InvalidJsonProvider:
-        async def complete(self, **_kwargs: Any) -> SimpleNamespace:
-            return SimpleNamespace(content='{"candidates": [')
-
-    storage = await SessionStorage.open(tmp_path / "sessions.db")
-    try:
-        session_key = "agent:main:webchat:abc"
-        session_id = "session-1"
-
-        async def handler(call: ToolCall) -> ToolResult:
-            raise AssertionError(f"raw fallback must not call {call.tool_name}")
-
-        async def receipt_writer(receipt: FlushReceipt, **row: Any) -> None:
-            await storage.upsert_memory_durable_receipt(
-                MemoryDurableReceipt(
-                    session_key=row["session_key"],
-                    session_id=session_id,
-                    scope=row["scope"],
-                    target_path=row["target_path"],
-                    idempotency_key=(
-                        f"{row['scope']}:{row['session_key']}:{row['status']}:"
-                        f"{row['target_path']}"
-                    ),
-                    status=row["status"],
-                    reason=row["reason"],
-                    attempt_count=1,
-                )
-            )
-
-        service = SessionFlushService(
-            provider_selector=lambda _agent_id: InvalidJsonProvider(),
-            tool_registry=SimpleNamespace(
-                to_tool_definitions=lambda: [SimpleNamespace(name="memory_save")]
-            ),
-            tool_handler=handler,
-            receipt_writer=receipt_writer,
-            archive_workspace_resolver=lambda _agent_id: tmp_path,
-        )
-
-        receipt = await service.execute(
-            [Message(role="user", content="temporary transcript")],
-            session_key,
-            agent_id="main",
-        )
-
-        rows = await storage.list_memory_durable_receipts(session_key=session_key)
-
-        assert receipt.result_status == "parse_failed_archived"
-        assert len(rows) == 2
-        assert rows[0].scope == "preimage"
-        assert rows[1].scope == "repair"
-        assert rows[1].status == "repair_pending"
-        assert rows[1].reason == "parse_failed_archived"
-        assert rows[1].target_path == receipt.flushed_paths[0]
-    finally:
-        await storage.close()

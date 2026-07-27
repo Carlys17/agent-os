@@ -8,10 +8,11 @@ import structlog
 
 _FATAL_MODULES = frozenset({"shell", "patch", "filesystem"})
 _NAMES = [
-    "admin",
     "agents",
     "artifacts",
     "code_exec",
+    "control",
+    "env_tools",
     "file_authoring",
     "filesystem",
     "git",

@@ -38,7 +38,7 @@ agentos <command> --help
 | `agentos agents` | Manage durable agents. |
 | `agentos mcp-server` | Run the AgentOS MCP server bridge. |
 | `agentos dist` | Emit a reproducible workspace-state inventory. |
-| `agentos reset` | Reset a session and flush memory synchronously. |
+| `agentos reset` | Reset a session, rotating it to a fresh transcript. |
 
 ## Run Surfaces
 
@@ -285,6 +285,9 @@ agentos providers configure openrouter
 agentos providers status
 ```
 
+Provider-specific setup examples, including OpenCAP, live in
+[`providers-and-models.md`](providers-and-models.md).
+
 Search:
 
 ```sh
@@ -309,6 +312,10 @@ agentos channels native-commands slack --request-url https://agent.example/slack
 agentos channels add telegram --name personal
 agentos channels list
 agentos channels status
+agentos channels pairing list personal
+agentos channels pairing approve personal ABCD2345
+agentos channels pairing deny personal <telegram-user-id>
+agentos channels pairing revoke personal <telegram-user-id>
 agentos channels enable personal
 agentos channels disable personal
 agentos channels restart personal
@@ -322,6 +329,12 @@ at startup when its channel entry has `app_id`, a short-lived app configuration
 `manifest_token`, and `command_request_url`. Otherwise import the exported
 Slack manifest fragment manually; its `--request-url` must point to the
 gateway's Slack webhook endpoint.
+
+Telegram direct messages always require pairing. Pairing is binary
+(`unpaired`/`paired`), with no admin or owner tier. Groups are disabled by
+default and require an explicit group chat ID, a paired sender, and—by
+default—a bot mention. Any connected Control client may approve, deny, or
+disconnect a pairing.
 
 Raw config:
 
@@ -342,16 +355,91 @@ More detail:
 - [`search.md`](search.md)
 - [`channels.md`](channels.md)
 
+## Environment Variables
+
+`agentos config` edits the TOML config. `agentos env` edits `~/.agentos/.env`,
+which is where OS environment variables live — the credentials skills and
+external binaries read, and provider keys you would rather not keep in the
+config file.
+
+```sh
+agentos env list                       # every variable AgentOS knows about
+agentos env list --missing             # only the ones that are not set
+agentos env list --category skill      # provider | search | image | audio | memory | skill | custom
+agentos env get OPENAI_API_KEY         # state and description, value masked
+agentos env get OPENAI_API_KEY --reveal
+agentos env set OPENAI_API_KEY --stdin # value read from stdin
+agentos env import GITHUB_TOKEN         # copy from a tool that already has it
+agentos env unset OPENAI_API_KEY
+```
+
+`agentos env import` covers the case where the credential is not really
+missing. If you have run `gh auth login`, AgentOS can see that the GitHub CLI
+holds a token and copy it in rather than asking you to go find one; `agentos
+env list` marks such variables. Nothing is imported without you asking — a
+token you granted to another tool is not automatically something an agent
+should get. The copy does not follow that tool's own rotation, so re-run the
+import after rotating.
+
+Values are never printed unless you ask for them with `--reveal`, which
+prompts first. Prefer `--stdin` or the interactive prompt over `--value`: a
+value passed as a flag lands in your shell history and in the process list.
+
+When the gateway is running, the change applies to it immediately, so a skill
+that needed the variable becomes eligible without a restart. When no gateway
+is running the file is written directly and the command says the value applies
+at next start. Provider keys always need a restart to take full effect,
+because the client was constructed at boot with the previous value — the
+command tells you when that is the case.
+
+Names that steer subprocess execution (`PATH`, `LD_PRELOAD`, `PYTHONPATH`,
+`EDITOR`, …) or AgentOS runtime posture (`AGENTOS_AGENT_PERMISSIONS`,
+`AGENTOS_GATEWAY_TOKEN`, `AGENTOS_STATE_DIR`, …) are refused, so this surface
+cannot be used to widen what the agent is allowed to do. Edit
+`~/.agentos/.env` by hand if you genuinely need one of them. Variables already
+set that way keep working; only writing through AgentOS is gated.
+
+If `agentos env list` reports a variable as coming from `process env`, the
+shell that started the gateway exported it and that value wins over the file.
+Editing the file will not change anything until the export is removed.
+
+Read:
+
+- [`configuration.md`](configuration.md)
+
 ## Skills
 
 ```sh
 agentos skills list
+agentos skills list --json
 agentos skills search pdf
 agentos skills view pdf-toolkit
 agentos skills install <skill-name>
 agentos skills update --all
 agentos skills uninstall <skill-name>
 ```
+
+The `skills list` table is unchanged: name, layer, eligible, description.
+`--json` carries more, and now reports the same facts the Web UI shows for the
+same skill instead of a separate, thinner answer:
+
+| Key | What it says |
+| --- | --- |
+| `layer` | where the files are — `bundled`, `managed`, `personal`, `project`, `workspace`, `extra` |
+| `acquisition` | how the skill got there: `kind` is `shipped`, `hub`, or `local`, plus `source_id`, `identifier`, `version`, `installed_at`, `source_trust`, `scan_verdict`, and the `removable` / `updatable` booleans |
+| `publisher` | `{id, name, url, logo}`, all empty strings when the skill is unbranded. Only publishers on an allowlist inside AgentOS resolve to a name; a skill cannot brand itself by writing one into its manifest |
+| `provenance` | unchanged, and independent of `publisher` — where the text came from and under what licence |
+
+`acquisition.removable` is the honest answer to "can `agentos skills uninstall`
+remove this", not a restatement of the layer: a hub install whose recorded path
+no longer matches the configured `skills.managed_dir` reports `false`, while
+`updatable` stays `true` because an update re-fetches by identifier.
+
+There is deliberately **no `availability` key** in CLI output. Whether the
+agent is currently being offered a skill depends on a chat session's tool
+surface, which a CLI process does not have; the gateway's `skills.list` and the
+Web UI answer that instead. An absent key means "not computed", not "not
+offered".
 
 Read:
 
@@ -378,9 +466,6 @@ agentos memory index
 agentos memory list
 agentos memory search "preference"
 agentos memory show <path>
-agentos memory dream
-agentos memory flush-session <session-key>
-agentos memory repair list
 agentos memory raw-fallbacks list
 ```
 

@@ -53,7 +53,7 @@ log = structlog.get_logger(__name__)
 # Channel-contract constants pinned by the adapter audit.
 CAPABILITY_TIER = "GREEN-shipping"
 
-# Teams is a DM/group channel — the permission matrix denies admin-only.
+# Teams is a DM/group channel; runtime capability and sandbox policy still apply.
 DM_SAFETY_TIERS: tuple[str, ...] = ("safe", "confirm")
 
 RETRYABLE_ERROR_CLASSES: tuple[str, ...] = (

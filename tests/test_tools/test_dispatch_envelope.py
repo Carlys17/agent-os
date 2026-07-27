@@ -102,8 +102,7 @@ async def test_dispatch_missing_tool_returns_five_field_error_envelope() -> None
     handler = build_tool_handler(
         _build_registry(),
         ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.CLI,
+                        caller_kind=CallerKind.CLI,
             agent_id="main",
             session_key="cli:main:envelope",
         ),
@@ -137,8 +136,7 @@ async def test_dispatch_unknown_bash_tool_points_to_exec_command() -> None:
     handler = build_tool_handler(
         _build_registry(),
         ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.CLI,
+                        caller_kind=CallerKind.CLI,
             agent_id="main",
             session_key="cli:main:envelope",
         ),
@@ -243,8 +241,7 @@ async def test_dispatch_unsupported_surface_approval_payload_is_pending_status()
     handler = build_tool_handler(_build_registry())
     token = current_tool_context.set(
         ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.CHANNEL,
+                        caller_kind=CallerKind.CHANNEL,
             interaction_mode=InteractionMode.UNATTENDED,
             session_key="agent:main:demo",
             agent_id="main",
@@ -278,8 +275,7 @@ async def test_dispatch_unattended_cli_approval_payload_is_pending_status() -> N
     handler = build_tool_handler(_build_registry())
     token = current_tool_context.set(
         ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.CLI,
+                        caller_kind=CallerKind.CLI,
             interaction_mode=InteractionMode.UNATTENDED,
             session_key="agent:main:demo",
             agent_id="main",
@@ -324,8 +320,7 @@ async def test_dispatch_unknown_tool_in_skill_name_context_raises_unsupported_su
     handler = build_tool_handler(
         _build_registry(),
         ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.CLI,
+                        caller_kind=CallerKind.CLI,
             agent_id="main",
             session_key="cli:main:envelope",
         ),

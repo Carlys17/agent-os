@@ -28,6 +28,7 @@ from agentos.session.models import AgentTaskRecord
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_envelope(session_key: str = "agent-1::sess-1") -> RouteEnvelope:
     return RouteEnvelope(
         source_kind=SourceKind.WEB,
@@ -87,6 +88,7 @@ def _make_runtime(
 # terminal_clears_all_dicts
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_terminal_clears_all_dicts() -> None:
     """After a task succeeds, tracking dicts (except _session_locks) must not contain its key.
@@ -111,6 +113,7 @@ async def test_terminal_clears_all_dicts() -> None:
 # ---------------------------------------------------------------------------
 # cancel_clears_dicts
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_cancel_clears_dicts() -> None:
@@ -142,6 +145,7 @@ async def test_cancel_clears_dicts() -> None:
 # ---------------------------------------------------------------------------
 # session_lock_kept_during_pending
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_session_lock_kept_during_pending() -> None:
@@ -185,6 +189,7 @@ async def test_session_lock_kept_during_pending() -> None:
 # exception path cleans up
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_exception_path_clears_dicts() -> None:
     """Even when the turn handler raises, cleanup must run for 4 tracking dicts.
@@ -216,6 +221,7 @@ async def test_exception_path_clears_dicts() -> None:
 # ---------------------------------------------------------------------------
 # no_leak_under_load (tracemalloc quantitative)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_no_leak_under_load(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -292,6 +298,4 @@ async def test_no_leak_under_load(monkeypatch: pytest.MonkeyPatch) -> None:
     # Task/Future/Event objects; allow up to 200 MB of incidental growth.
     top_stats = snap_after.compare_to(snap_before, "lineno")
     total_added = sum(s.size_diff for s in top_stats if s.size_diff > 0)
-    assert total_added < 200 * 1024 * 1024, (
-        f"Unexpected memory growth: {total_added / 1024:.1f} KB"
-    )
+    assert total_added < 200 * 1024 * 1024, f"Unexpected memory growth: {total_added / 1024:.1f} KB"

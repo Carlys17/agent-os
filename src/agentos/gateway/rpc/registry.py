@@ -1,21 +1,4 @@
-"""RPC method registry and dispatcher.
-
-Historically every gateway RPC handler registered against a module-level
-``_dispatcher`` singleton. That singleton is now a
-first-class :class:`RpcRegistry` living in this module so the set of
-method names is discoverable, testable, and mockable without import
-side-effects.
-
-The legacy surface (``RpcDispatcher`` / ``get_dispatcher``) still resolves
-from ``agentos.gateway.rpc`` — see this package's ``__init__.py`` — so every
-``from agentos.gateway.rpc import ...`` caller keeps working.
-
-Scope policy is owned by :mod:`agentos.gateway.scopes`. Registrations on
-the module-level singleton are audited at import time via
-:func:`validate_classification` once every release-surface ``rpc_*.py``
-sibling has loaded; the registry is then locked so late imports cannot
-silently grow the RPC surface.
-"""
+"""RPC method registry with connection-surface authorization."""
 
 from __future__ import annotations
 
@@ -28,7 +11,15 @@ if TYPE_CHECKING:
     from agentos.engine.runtime import TurnRunner
 
 from agentos import __version__
-from agentos.gateway.auth import Principal
+from agentos.gateway.access import (
+    CHANNEL_RPC_METHODS,
+    CONTROL_AND_CHANNEL,
+    CONTROL_ONLY,
+    NODE_RPC_METHODS,
+    ConnectionSurface,
+    normalize_audiences,
+)
+from agentos.gateway.auth import AccessContext
 from agentos.gateway.protocol import (
     ERROR_METHOD_NOT_FOUND,
     ERROR_UNAUTHORIZED,
@@ -36,13 +27,6 @@ from agentos.gateway.protocol import (
     ResFrame,
     make_error_res,
     make_ok_res,
-)
-from agentos.gateway.scopes import (
-    NODE_ROLE_METHODS,
-    authorize_call,
-    is_classified,
-    operator_scope_satisfies,
-    resolve_required_scope,
 )
 from agentos.gateway.session_services import get_session_storage
 
@@ -55,16 +39,13 @@ class RpcContext:
     """Per-request execution context passed to RPC handlers."""
 
     conn_id: str
-    # Test-friendly default. Production call sites (``websocket._message_loop``,
-    # ``app.create_rpc_context``, channel dispatch) always pass ``principal``
-    # explicitly, so this fallback is only reached by unit tests that construct
-    # a bare ``RpcContext``.
-    principal: Principal = field(
-        default_factory=lambda: Principal(
-            role="operator",
-            scopes=frozenset(["operator.admin"]),
-            is_owner=True,
-            authenticated=False,
+    # Test-friendly default. Production call sites always pass an access
+    # context explicitly.
+    access: AccessContext = field(
+        default_factory=lambda: AccessContext(
+            surface=ConnectionSurface.CONTROL,
+            admitted=True,
+            credential_verified=False,
         )
     )
     session_manager: Any = None
@@ -79,7 +60,6 @@ class RpcContext:
     cron_scheduler: Any = None  # SchedulerEngine instance (injected at boot)
     turn_runner: TurnRunner | None = None  # TurnRunner instance (injected at boot)
     task_runtime: Any = None  # TaskRuntime instance (injected at boot)
-    flush_service: Any = None  # SessionFlushService | None (injected at boot)
     heartbeat_service: Any = None  # Task-style heartbeat service (injected at boot)
     heartbeat_loop: Any = None  # Background heartbeat loop (injected at boot)
     agent_registry: Any = None  # AgentRegistry instance (injected at boot)
@@ -88,32 +68,14 @@ class RpcContext:
     memory_stores: dict[str, Any] = field(default_factory=dict)
     memory_retrievers: dict[str, Any] = field(default_factory=dict)
     originating_envelope: Any = None  # Channel RouteEnvelope for RPC side effects
-
-    @property
-    def role(self) -> str:
-        return self.principal.role
-
-    @property
-    def scopes(self) -> list[str]:
-        return list(self.principal.scopes)
-
-    def has_scope(self, required: str) -> bool:
-        """Namespace-bounded scope check.
-
-        Delegates to :func:`operator_scope_satisfies` so that the same
-        implication rules (``admin ⇒ operator.*``, ``write ⇒ read``,
-        ``admin ⇒ node`` as a superuser pragma) are honored whether the
-        call arrives via this helper or through the dispatcher's
-        authorization path.
-        """
-        return operator_scope_satisfies(required, self.principal.scopes)
+    model_catalog: Any = None  # Boot-fetched ModelCatalog instance
 
 
 @dataclass
 class RpcMethodEntry:
     name: str
     handler: RpcHandlerFn
-    required_scope: str
+    audiences: frozenset[ConnectionSurface]
 
 
 class RpcUnavailableError(RuntimeError):
@@ -141,8 +103,8 @@ class RpcHandlerError(Exception):
         self.retryable = retryable
 
 
-class ScopeDriftError(RuntimeError):
-    """Raised when a registered scope disagrees with the central table."""
+class AudienceDriftError(RuntimeError):
+    """Raised when an RPC registration violates a surface invariant."""
 
 
 class RpcRegistry:
@@ -154,41 +116,53 @@ class RpcRegistry:
 
     The method surface is intentionally tiny and stable:
 
-    * :meth:`register` / :meth:`method` add a handler. ``scope`` is required;
-      there is no silent default.
+    * :meth:`register` / :meth:`method` add a handler. The fail-closed default
+      is the Control surface.
     * :meth:`unregister` removes one.
     * :meth:`methods` / :meth:`list_methods` enumerate registered names.
-    * :meth:`dispatch` routes a request to a registered handler with scope
-      enforcement.
+    * :meth:`dispatch` routes requests only when their admitted surface is an
+      explicit audience.
     """
 
     def __init__(self) -> None:
         self._methods: dict[str, RpcMethodEntry] = {}
         self._locked = False
 
-    def register(self, name: str, handler: RpcHandlerFn, scope: str) -> None:
+    def register(
+        self,
+        name: str,
+        handler: RpcHandlerFn,
+        audiences: ConnectionSurface | frozenset[ConnectionSurface] = CONTROL_ONLY,
+    ) -> None:
         """Register ``handler`` for ``name``.
 
-        ``scope`` must be supplied explicitly; no default is applied. The
-        process-wide registry is locked after boot-time classification so
+        The process-wide registry is locked after boot-time validation so
         retained/deprecated modules cannot register handlers through a late
         import.
         """
         if self._locked:
-            raise ScopeDriftError(
+            raise AudienceDriftError(
                 f"RPC registry is locked; refusing late registration for {name!r}"
             )
-        self._methods[name] = RpcMethodEntry(name=name, handler=handler, required_scope=scope)
+        self._methods[name] = RpcMethodEntry(
+            name=name,
+            handler=handler,
+            audiences=normalize_audiences(audiences),
+        )
 
     def lock_registration(self) -> None:
         """Prevent additional methods from being registered after boot."""
         self._locked = True
 
-    def method(self, name: str, scope: str) -> Callable:
-        """Decorator form of :meth:`register`. ``scope`` is required."""
+    def method(
+        self,
+        name: str,
+        audiences: ConnectionSurface | frozenset[ConnectionSurface] = CONTROL_ONLY,
+    ) -> Callable:
+        """Decorator form of :meth:`register`."""
 
         def decorator(fn: RpcHandlerFn) -> RpcHandlerFn:
-            self.register(name, fn, scope)
+            self.register(name, fn, audiences)
             return fn
 
         return decorator
@@ -215,16 +189,11 @@ class RpcRegistry:
         if entry is None:
             return make_error_res(req_id, ERROR_METHOD_NOT_FOUND, f"Method not found: {method}")
 
-        allowed, missing = authorize_call(
-            method,
-            entry.required_scope,
-            ctx.principal.role,
-            ctx.principal.scopes,
-        )
-        if not allowed:
-            detail = f": missing {missing}" if missing else ""
+        if not ctx.access.admitted or ctx.access.surface not in entry.audiences:
             return make_error_res(
-                req_id, ERROR_UNAUTHORIZED, f"Insufficient scope for method: {method}{detail}"
+                req_id,
+                ERROR_UNAUTHORIZED,
+                f"Method {method} is unavailable on the {ctx.access.surface.value} surface",
             )
 
         try:
@@ -358,12 +327,12 @@ async def _last_heartbeat(params: Any, ctx: RpcContext) -> dict[str, Any]:
 
 
 # Register all built-in methods against the singleton.
-_registry.register("health", _health, "operator.read")
-_registry.register("status", _status, "operator.read")
-_registry.register("config.get", _config_get, "operator.read")
-_registry.register("sessions.get", _sessions_get, "operator.read")
-_registry.register("gateway.identity.get", _gateway_identity_get, "operator.read")
-_registry.register("last-heartbeat", _last_heartbeat, "operator.read")
+_registry.register("health", _health)
+_registry.register("status", _status, CONTROL_AND_CHANNEL)
+_registry.register("config.get", _config_get)
+_registry.register("sessions.get", _sessions_get)
+_registry.register("gateway.identity.get", _gateway_identity_get)
+_registry.register("last-heartbeat", _last_heartbeat)
 
 
 def get_registry() -> RpcRegistry:
@@ -386,52 +355,20 @@ def get_dispatcher() -> RpcRegistry:
 
 
 def validate_classification(registry: RpcRegistry | None = None) -> None:
-    """Audit the registry against the central scope table.
+    """Audit the small non-Control RPC surface and lock registrations."""
 
-    Called at the end of ``agentos.gateway.rpc.__init__`` once every
-    sibling ``rpc_*.py`` module has registered its handlers. Raises
-    :class:`ScopeDriftError` on the first violation so startup fails
-    loudly rather than serving a method under the wrong policy.
-
-    Three violations are checked per registered method:
-
-    1. The name has no classification (neither an explicit entry in
-       ``METHOD_SCOPES``, a match in ``ADMIN_METHOD_PREFIXES``, nor
-       membership in ``NODE_ROLE_METHODS``).
-    2. The method is a node-role method but its recorded scope is not
-       the ``node`` scope.
-    3. The method is classified as operator-scope but the recorded
-       scope disagrees with :func:`resolve_required_scope`.
-    """
     target = registry if registry is not None else _registry
     for name in target.methods():
         entry = target.get_entry(name)
-        if entry is None:  # defensive; methods() returns live names
+        if entry is None:
             continue
-        declared = entry.required_scope
-
-        if name in NODE_ROLE_METHODS:
-            if declared != "node":
-                raise ScopeDriftError(
-                    f"{name!r} is a node-role method but was registered with "
-                    f"scope={declared!r}; expected 'node'"
-                )
-            continue
-
-        if not is_classified(name):
-            raise ScopeDriftError(
-                f"{name!r} is registered but has no entry in METHOD_SCOPES "
-                f"and does not match any admin prefix — classify it in "
-                f"agentos/gateway/scopes.py"
+        has_channel = ConnectionSurface.CHANNEL in entry.audiences
+        has_node = ConnectionSurface.NODE in entry.audiences
+        if has_channel != (name in CHANNEL_RPC_METHODS):
+            raise AudienceDriftError(
+                f"{name!r} channel audience disagrees with CHANNEL_RPC_METHODS"
             )
-
-        expected = resolve_required_scope(name)
-        if expected is None:  # should be unreachable given is_classified
-            continue
-        if declared != expected:
-            raise ScopeDriftError(
-                f"{name!r} registered with scope={declared!r} disagrees with "
-                f"central table expecting {expected!r}"
-            )
+        if has_node != (name in NODE_RPC_METHODS):
+            raise AudienceDriftError(f"{name!r} node audience disagrees with NODE_RPC_METHODS")
     if registry is None:
         target.lock_registration()

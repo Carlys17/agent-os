@@ -9,7 +9,6 @@ from starlette.testclient import TestClient
 
 import agentos.gateway.rpc_config  # noqa: F401  ensure registration
 from agentos.gateway.app import create_gateway_app
-from agentos.gateway.auth import Principal
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
@@ -31,12 +30,6 @@ def _patch_base_path(config: GatewayConfig, base_path: str):
     context = RpcContext(
         conn_id="ui-exemption-test",
         config=config,
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.admin"}),
-            is_owner=True,
-            authenticated=True,
-        ),
     )
     result = asyncio.run(
         get_dispatcher().dispatch(
@@ -67,9 +60,7 @@ def test_runtime_ui_base_path_change_cannot_disable_auth(tmp_path, base_path: st
 
 
 @pytest.mark.parametrize("base_path", ["/", "/api", "/api/v1"])
-def test_runtime_ui_base_path_change_cannot_disable_rate_limit(
-    tmp_path, base_path: str
-) -> None:
+def test_runtime_ui_base_path_change_cannot_disable_rate_limit(tmp_path, base_path: str) -> None:
     config = _config(tmp_path, base_path="/control", max_requests=2)
     headers = {"authorization": "Bearer test-token"}
     with TestClient(create_gateway_app(config), base_url="http://localhost") as client:

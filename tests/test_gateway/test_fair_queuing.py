@@ -23,6 +23,7 @@ from agentos.session.models import AgentTaskRecord
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_envelope(agent_id: str, session_key: str) -> RouteEnvelope:
     return RouteEnvelope(
         source_kind=SourceKind.WEB,
@@ -80,6 +81,7 @@ def _make_runtime(
 # ---------------------------------------------------------------------------
 # DM not starved
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_dm_not_starved() -> None:
@@ -158,6 +160,7 @@ async def test_dm_not_starved() -> None:
 # Round-robin within same agent_id
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_round_robin_within_agent() -> None:
     """Same agent_id, 3 sessions A/B/C each push 9 tasks.
@@ -218,6 +221,7 @@ async def test_round_robin_within_agent() -> None:
 # Cross-agent_id unaffected
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_cross_agent_unaffected() -> None:
     """Two different agent_ids each have 1 session.
@@ -261,6 +265,7 @@ async def test_cross_agent_unaffected() -> None:
 # Terminal cleanup includes RR state
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_terminal_cleanup_includes_rr() -> None:
     """After all tasks complete, _agent_in_flight must be empty (no leaks)."""
@@ -292,6 +297,7 @@ async def test_terminal_cleanup_includes_rr() -> None:
 # ---------------------------------------------------------------------------
 # Strict ABCABC round-robin order (max_concurrency=1 for determinism)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_round_robin_strict_abcabc_order() -> None:
@@ -347,14 +353,13 @@ async def test_round_robin_strict_abcabc_order() -> None:
 
     # With max_concurrency=1 and true RR, the order must be A,B,C,A,B,C,A,B,C.
     expected = ["A", "B", "C"] * tasks_per_session
-    assert completion_order == expected, (
-        f"Expected strict ABCABC order, got: {completion_order}"
-    )
+    assert completion_order == expected, f"Expected strict ABCABC order, got: {completion_order}"
 
 
 # ---------------------------------------------------------------------------
 # No underutilization: 5 sessions, max_concurrency=4, slot always full
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_no_underutilization() -> None:
@@ -397,10 +402,7 @@ async def test_no_underutilization() -> None:
         max_pending_per_session=None,
     )
 
-    envs = [
-        _make_envelope(agent_id, f"{agent_id}::sess-{i}")
-        for i in range(num_sessions)
-    ]
+    envs = [_make_envelope(agent_id, f"{agent_id}::sess-{i}") for i in range(num_sessions)]
 
     handles = []
     for env in envs:

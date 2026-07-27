@@ -60,6 +60,7 @@ from agentos.provider import (
     ProviderHeartbeatEvent,
     ToolDefinition,
     ToolUseEndEvent,
+    provider_metadata,
 )
 from agentos.provider import (
     DoneEvent as ProviderDoneEvent,
@@ -94,8 +95,6 @@ from agentos.session.compaction_lifecycle import (
     compaction_effect_payload,
     compaction_lifecycle_payload,
     compaction_result_payload,
-    flush_receipt_allows_destructive_compaction,
-    flush_receipt_is_successful_flush,
     new_compaction_id,
 )
 from agentos.session.terminal_reply import build_terminal_reply
@@ -141,6 +140,7 @@ _PROVIDER_OUTPUT_CONTINUE_PROMPT = (
     "been written. If a tool call was interrupted or incomplete, regenerate a complete "
     "tool call from scratch."
 )
+
 
 def _cost_source_for_usage(cost_usd: float, billed_cost: float) -> str:
     if billed_cost > 0.0 and abs(cost_usd - billed_cost) <= 1e-9:
@@ -360,9 +360,7 @@ def _forced_tool_name(tool_choice: Any) -> str | None:
     return None
 
 
-def _forced_tool_present(
-    tool_choice: Any, tools: list[ToolDefinition] | None
-) -> bool:
+def _forced_tool_present(tool_choice: Any, tools: list[ToolDefinition] | None) -> bool:
     """Whether a forced ``tool_choice`` names a tool actually present in ``tools``.
 
     Forcing a specific tool that is absent from the request's tool list is a hard
@@ -622,7 +620,6 @@ class Agent:
         session_key: str | None = None,
         turn_call_logger: TurnCallLogger | None = None,
         memory_sync_manager: Any | None = None,
-        session_flush_service: Any | None = None,
         tool_registry: ToolRegistry | None = None,
         tool_context: ToolContext | None = None,
     ) -> None:
@@ -647,35 +644,12 @@ class Agent:
         # internal slot.
         self._memory_sync_manager: Any | None = memory_sync_manager
 
-        # Memory flush state (sub-agent based, re-entrant per compaction cycle)
-        self._flush_done_this_cycle: bool = False
-        self._active_flush_task: asyncio.Task | None = None
-        self._flush_wait_timed_out_task: asyncio.Task | None = None
-        self._flush_backoff_until: float = 0.0
-        self._flush_backoff_seconds: float = 0.0
-        self._session_flush_service = session_flush_service
         self._last_compaction_refusal_reason: str | None = None
         self._tool_failure_loop_counts: dict[tuple[str, str], int] = {}
         self._provider_tool_result_overrides: dict[str, ContentBlockToolResult] = {}
 
     def _context_overflow_error(self) -> ErrorEvent:
         reason = self._last_compaction_refusal_reason
-        if reason == "memory_flush_timeout_before_compaction":
-            return ErrorEvent(
-                message=(
-                    "Context compaction could not run because the pre-compaction "
-                    "memory flush timed out."
-                ),
-                code="compaction_refused_flush_timeout",
-            )
-        if reason == "memory_flush_degraded_before_compaction":
-            return ErrorEvent(
-                message=(
-                    "Context compaction could not run because the pre-compaction "
-                    "memory flush did not produce a verified summary."
-                ),
-                code="compaction_refused_memory_flush",
-            )
         if reason == "empty_summary_rejected":
             return ErrorEvent(
                 message="Context compaction produced no replacement summary.",
@@ -1003,9 +977,7 @@ class Agent:
             return messages
 
         recent_ids = {id(block) for _message_index, _block_index, block in tool_result_refs[-2:]}
-        budget_tokens = int(
-            self.config.context_window_tokens * _AGGREGATE_TOOL_RESULT_MAX_SHARE
-        )
+        budget_tokens = int(self.config.context_window_tokens * _AGGREGATE_TOOL_RESULT_MAX_SHARE)
         eligible_refs: list[tuple[int, int, ContentBlockToolResult, str, int]] = []
         total_tool_result_tokens = 0
         for message_index, block_index, block in tool_result_refs:
@@ -2007,14 +1979,9 @@ class Agent:
 
         try:
             while True:
-                if (
-                    self.config.max_iterations > 0
-                    and iterations >= self.config.max_iterations
-                ):
+                if self.config.max_iterations > 0 and iterations >= self.config.max_iterations:
                     max_iterations_source = str(
-                        self.config.metadata.get(
-                            "agent_max_iterations_source", "agent_config"
-                        )
+                        self.config.metadata.get("agent_max_iterations_source", "agent_config")
                     )
                     if max_iterations_source == "session config":
                         max_iterations_guidance = (
@@ -2026,13 +1993,11 @@ class Agent:
                         )
                     elif max_iterations_source.startswith("env "):
                         max_iterations_guidance = (
-                            "Set AGENTOS_AGENT_MAX_ITERATIONS=0 "
-                            "for unlimited tasks."
+                            "Set AGENTOS_AGENT_MAX_ITERATIONS=0 for unlimited tasks."
                         )
                     elif max_iterations_source == "explicit argument":
                         max_iterations_guidance = (
-                            "Pass --max-iterations 0 or max_iterations=0 "
-                            "for unlimited tasks."
+                            "Pass --max-iterations 0 or max_iterations=0 for unlimited tasks."
                         )
                     else:
                         max_iterations_guidance = (
@@ -2336,6 +2301,7 @@ class Agent:
                                     # gateway/rpc_usage.py:_reconcile_breakdown_to_row
                                     # (the pro-rate fallback now skips when items
                                     # already carry real billed totals).
+                                    metadata = provider_metadata(self.provider)
                                     self._usage_tracker.add(
                                         self._session_key,
                                         input_tokens=raw_ev.input_tokens,
@@ -2344,6 +2310,9 @@ class Agent:
                                         cache_read_tokens=raw_ev.cached_tokens,
                                         cache_write_tokens=raw_ev.cache_write_tokens,
                                         billed_cost=raw_ev.billed_cost,
+                                        provider_id=(
+                                            metadata.provider_kind or metadata.provider_name
+                                        ),
                                     )
 
                             elif isinstance(raw_ev, ProviderErrorEvent):
@@ -2764,9 +2733,7 @@ class Agent:
 
                     if provider_error is not None:
                         provider_error_status_code = (
-                            int(provider_error.code)
-                            if str(provider_error.code).isdigit()
-                            else None
+                            int(provider_error.code) if str(provider_error.code).isdigit() else None
                         )
                         failure_kind = classify_provider_error(
                             provider_name=getattr(self.provider, "provider_name", ""),
@@ -3618,7 +3585,11 @@ class Agent:
             done_model = self.config.model_id or ""
         from agentos.engine.pricing import lookup_price
 
-        price = lookup_price(done_model)
+        done_provider = provider_metadata(self.provider)
+        price = lookup_price(
+            done_model,
+            provider_id=done_provider.provider_kind or done_provider.provider_name,
+        )
         estimated_cost = (
             total_input_tokens * price.input_per_m + total_output_tokens * price.output_per_m
         ) / 1_000_000
@@ -3991,9 +3962,7 @@ class Agent:
         if isinstance(value, list | tuple):
             return [Agent._live_request_jsonable(item) for item in value]
         if isinstance(value, dict):
-            return {
-                str(key): Agent._live_request_jsonable(item) for key, item in value.items()
-            }
+            return {str(key): Agent._live_request_jsonable(item) for key, item in value.items()}
         if hasattr(value, "__dict__"):
             return {
                 str(key): Agent._live_request_jsonable(item)
@@ -4042,11 +4011,7 @@ class Agent:
         runtime_context_insert_index: int | None = None,
         compaction_window_tokens: int | None = None,
     ) -> CompactionOutcome | None:
-        """Check if estimated live context tokens exceed the overflow threshold.
-
-        Uses sub-agent flush instead of prompt injection.
-        The flush is re-entrant: it can trigger on every approach to threshold.
-        """
+        """Check if estimated live context tokens exceed the overflow threshold."""
         self._last_compaction_refusal_reason = None
         window_tokens = compaction_window_tokens or self.config.context_window_tokens
         threshold = self.config.context_overflow_threshold * window_tokens
@@ -4058,142 +4023,6 @@ class Agent:
             )
 
         compaction_id = new_compaction_id()
-        # --- Pre-compaction flush; inline compaction can continue on degraded flush. ---
-        flush_task: asyncio.Task | None = None
-        self._consume_completed_flush_task()
-
-        async def _await_flush_task() -> Any | None:
-            # Give flush a grace period to complete instead of cancelling immediately.
-            # Adds up to flush_timeout_seconds (default 15s) of latency, but without
-            # this the flush is effectively dead code (always cancelled before finishing).
-            if flush_task is not None and not flush_task.done():
-                if flush_task is self._flush_wait_timed_out_task:
-                    return None
-                try:
-                    receipt = await asyncio.wait_for(
-                        asyncio.shield(flush_task),
-                        timeout=self.config.flush_timeout_seconds,
-                    )
-                    logger.info("memory_flush.completed_after_compaction")
-                    self._flush_wait_timed_out_task = None
-                    self._mark_flush_task_completed(flush_task)
-                    return receipt
-                except TimeoutError:
-                    self._flush_wait_timed_out_task = flush_task
-                    next_retry_seconds = self._record_flush_timeout_backoff()
-                    logger.warning(
-                        "memory_flush.timed_out",
-                        timeout_seconds=self.config.flush_timeout_seconds,
-                        next_retry_seconds=next_retry_seconds,
-                    )
-                except Exception as exc:
-                    logger.warning("memory_flush.await_failed", error=str(exc))
-                    self._mark_flush_task_completed(flush_task)
-                    return None
-            if flush_task is not None and flush_task.done():
-                try:
-                    receipt = flush_task.result()
-                    self._flush_wait_timed_out_task = None
-                    self._mark_flush_task_completed(flush_task)
-                    return receipt
-                except Exception as exc:
-                    logger.warning("memory_flush.await_failed", error=str(exc))
-                    self._flush_wait_timed_out_task = None
-                    self._mark_flush_task_completed(flush_task)
-                    return None
-            return None
-
-        if not self._flush_done_this_cycle and self.config.flush_enabled:
-            try:
-                from agentos.memory.flush import (
-                    resolve_flush_plan,
-                    should_flush,
-                )
-
-                now = time.monotonic()
-                if self._active_flush_task is not None and not self._active_flush_task.done():
-                    logger.debug("memory_flush.skipped", reason="already_running")
-                    flush_task = self._active_flush_task
-                elif now < self._flush_backoff_until:
-                    logger.warning(
-                        "memory_flush.skipped",
-                        reason="backoff",
-                        retry_after_seconds=round(self._flush_backoff_until - now, 3),
-                    )
-                else:
-                    transcript_bytes = sum(
-                        len(m.content.encode("utf-8")) if isinstance(m.content, str) else 0
-                        for m in messages
-                    )
-
-                    if should_flush(
-                        total_tokens=estimated_context_tokens,
-                        threshold_tokens=int(threshold),
-                        transcript_bytes=transcript_bytes,
-                    ):
-                        plan = resolve_flush_plan(
-                            workspace_dir=self.config.flush_workspace_dir,
-                            archive_max_bytes=self.config.flush_archive_max_bytes,
-                        )
-                        logger.info(
-                            "memory_flush.triggered",
-                            path=plan.relative_path,
-                            total_tokens=estimated_context_tokens,
-                            threshold=int(threshold),
-                        )
-                        flush_task = asyncio.create_task(self._run_flush(plan, list(messages)))
-                        flush_task.add_done_callback(self._on_flush_task_done)
-                        self._active_flush_task = flush_task
-                        self._flush_done_this_cycle = True
-            except Exception:
-                logger.debug("memory_flush.skipped", reason="flush module unavailable")
-
-        if self.config.flush_enabled:
-            if (
-                flush_task is not None
-                and not flush_task.done()
-                and time.monotonic() < self._flush_backoff_until
-            ):
-                logger.warning(
-                    "memory_flush.skipped",
-                    reason="backoff",
-                    retry_after_seconds=round(self._flush_backoff_until - time.monotonic(), 3),
-                )
-                self._flush_done_this_cycle = False
-            receipt = await _await_flush_task()
-            if not flush_receipt_allows_destructive_compaction(receipt):
-                reason = "memory_flush_degraded_before_compaction"
-                if flush_task is not None and self._flush_wait_timed_out_task is flush_task:
-                    reason = "memory_flush_timeout_before_compaction"
-                logger.warning(
-                    "memory_flush.degraded_before_compaction",
-                    reason=reason,
-                    mode=getattr(receipt, "mode", None),
-                    integrity_status=getattr(receipt, "integrity_status", None),
-                    indexed_chunk_count=getattr(receipt, "indexed_chunk_count", None),
-                )
-                self._flush_done_this_cycle = False
-                if self.config.flush_compaction_requires_safe_receipt:
-                    self._last_compaction_refusal_reason = reason
-                    if self._session_key:
-                        notify_compaction(
-                            self._session_key,
-                            source="automatic",
-                            phase="agent_inline_overflow",
-                            status="skipped",
-                            reason=reason,
-                            tokens_before=estimated_context_tokens,
-                            context_window_tokens=window_tokens,
-                            **compaction_effect_payload(
-                                status="skipped",
-                                reason=reason,
-                            ),
-                            **compaction_lifecycle_payload(
-                                compaction_id,
-                                COMPACTION_TRIGGERED_EVENT,
-                            ),
-                        )
-                    return None
 
         # --- Compaction ---
         entries = [
@@ -4303,8 +4132,6 @@ class Agent:
 
         has_structured_content = any(not isinstance(m.content, str) for m in messages)
         if result.removed_count == 0 and not result.summary and has_structured_content:
-            await _await_flush_task()
-            self._flush_done_this_cycle = False
             skip_reason = result.skip_reason or "structured_content_noop"
             if self._session_key:
                 notify_compaction(
@@ -4339,11 +4166,6 @@ class Agent:
         for entry in result.kept_entries:
             compacted.append(Message(role=entry["role"], content=entry["content"]))
 
-        await _await_flush_task()
-
-        # Reset flush flag so it can trigger again after next compaction
-        self._flush_done_this_cycle = False
-
         # Trigger 6: post-compaction sync
         if self._memory_sync_manager is not None:
             self._memory_sync_manager.mark_dirty()
@@ -4371,66 +4193,6 @@ class Agent:
             request_context_insert_index=adjusted_request_idx,
             runtime_context_insert_index=adjusted_runtime_idx,
         )
-
-    def _consume_completed_flush_task(self) -> None:
-        task = self._active_flush_task
-        if task is None or not task.done():
-            return
-        self._mark_flush_task_completed(task)
-
-    def _on_flush_task_done(self, task: asyncio.Task) -> None:
-        self._mark_flush_task_completed(task)
-
-    def _mark_flush_task_completed(self, task: asyncio.Task) -> None:
-        if self._flush_wait_timed_out_task is task:
-            self._flush_wait_timed_out_task = None
-        if self._active_flush_task is not task:
-            return
-        try:
-            receipt = task.result()
-        except asyncio.CancelledError:
-            logger.debug("memory_flush.cancelled")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("memory_flush.background_failed", error=str(exc))
-        else:
-            mode = getattr(receipt, "mode", None)
-            if not flush_receipt_is_successful_flush(receipt):
-                next_retry_seconds = self._ensure_flush_degraded_backoff()
-                logger.warning(
-                    "memory_flush.degraded",
-                    mode=mode,
-                    result_status=getattr(receipt, "result_status", None),
-                    integrity_status=getattr(receipt, "integrity_status", None),
-                    output_coverage_status=getattr(receipt, "output_coverage_status", None),
-                    obligation_status=getattr(receipt, "obligation_status", None),
-                    raw_reason=getattr(receipt, "raw_reason", None),
-                    next_retry_seconds=next_retry_seconds,
-                )
-            else:
-                self._flush_backoff_seconds = 0.0
-                self._flush_backoff_until = 0.0
-        self._active_flush_task = None
-
-    def _record_flush_timeout_backoff(self) -> float:
-        initial = max(0.0, float(self.config.flush_backoff_initial_seconds))
-        maximum = max(initial, float(self.config.flush_backoff_max_seconds))
-        if initial == 0:
-            self._flush_backoff_seconds = 0.0
-            self._flush_backoff_until = 0.0
-            return 0.0
-        if self._flush_backoff_seconds <= 0:
-            next_retry_seconds = initial
-        else:
-            next_retry_seconds = min(self._flush_backoff_seconds * 2, maximum)
-        self._flush_backoff_seconds = next_retry_seconds
-        self._flush_backoff_until = time.monotonic() + next_retry_seconds
-        return next_retry_seconds
-
-    def _ensure_flush_degraded_backoff(self) -> float:
-        remaining = self._flush_backoff_until - time.monotonic()
-        if remaining > 0:
-            return remaining
-        return self._record_flush_timeout_backoff()
 
     @staticmethod
     def _adjust_compacted_insert_index(
@@ -4460,60 +4222,6 @@ class Agent:
                 adjusted += 1
             search_start = matched_index + 1
         return adjusted
-
-    async def _run_flush(
-        self,
-        plan: Any,
-        messages: list[Message],
-    ) -> Any | None:
-        """Run memory flush before compaction; delegates to SessionFlushService.
-
-        When a ``SessionFlushService`` is injected, this method forwards the
-        call and returns its receipt. When no service is injected (standalone
-        Agent instances in unit tests or legacy paths), it falls back to an
-        inline raw-dump so we don't silently drop data.
-        """
-        service = getattr(self, "_session_flush_service", None)
-        if service is not None:
-            try:
-                from agentos.session.keys import parse_agent_id
-
-                sk = getattr(self, "_session_key", None) or "agent:main:legacy"
-                return await service.execute(
-                    messages,
-                    session_key=sk,
-                    agent_id=parse_agent_id(sk),
-                    timeout=self.config.flush_background_timeout_seconds,
-                    message_window=0,
-                    segment_mode="auto",
-                )
-            except asyncio.CancelledError:
-                logger.debug("memory_flush.cancelled")
-                raise
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("memory_flush.service_failed", error=str(exc))
-            return None
-
-        # Legacy fallback — only hit when no service is injected.
-        from agentos.memory.flush import dump_transcript_excerpt
-
-        if self.provider is None and self.tool_handler is not None:
-            excerpt = dump_transcript_excerpt(messages)
-            if excerpt.strip():
-                from agentos.tool_boundary import ToolCall as _FlushToolCall
-
-                await self.tool_handler(
-                    _FlushToolCall(
-                        tool_use_id="flush-fallback",
-                        tool_name="memory_save",
-                        arguments={
-                            "content": excerpt,
-                            "path": plan.relative_path,
-                            "mode": "append",
-                        },
-                    )
-                )
-        return None
 
     @staticmethod
     def _has_provider_context_replay_marker(arguments: dict[str, Any]) -> bool:
@@ -4586,14 +4294,8 @@ class Agent:
                 )
             )
 
-        if (
-            stripped_blocks
-            and stripped_messages
-            and stripped_messages[-1].role == "assistant"
-        ):
-            stripped_messages.append(
-                Message(role="user", content=_PROVIDER_CONTEXT_REPAIR_PROMPT)
-            )
+        if stripped_blocks and stripped_messages and stripped_messages[-1].role == "assistant":
+            stripped_messages.append(Message(role="user", content=_PROVIDER_CONTEXT_REPAIR_PROMPT))
 
         self.config.metadata["tool_argument_projection_replay_stripped"] = (
             self.config.metadata.get("tool_argument_projection_replay_stripped", 0)
@@ -4877,7 +4579,6 @@ class Agent:
         # Schema-time filtering: subagents cannot see dangerous tools
         filtered_defs = [td for td in self.tool_definitions if td.name not in SUBAGENT_TOOL_DENY]
         subagent_ctx = ToolContext(
-            is_owner=True,
             caller_kind=CallerKind.SUBAGENT,
             interaction_mode=InteractionMode.UNATTENDED,
             subagent_depth=depth,
@@ -4923,16 +4624,6 @@ class Agent:
             length_capped_continuations=self.config.length_capped_continuations,
             context_window_tokens=self.config.context_window_tokens,
             workspace_dir=spec.workspace_dir or self.config.workspace_dir,
-            flush_enabled=self.config.flush_enabled,
-            flush_timeout_seconds=self.config.flush_timeout_seconds,
-            flush_background_timeout_seconds=self.config.flush_background_timeout_seconds,
-            flush_backoff_initial_seconds=self.config.flush_backoff_initial_seconds,
-            flush_backoff_max_seconds=self.config.flush_backoff_max_seconds,
-            flush_archive_max_bytes=self.config.flush_archive_max_bytes,
-            flush_compaction_requires_safe_receipt=(
-                self.config.flush_compaction_requires_safe_receipt
-            ),
-            flush_compaction_safety_mode=self.config.flush_compaction_safety_mode,
             tool_result_projection_max_inline_chars=(
                 self.config.tool_result_projection_max_inline_chars
             ),

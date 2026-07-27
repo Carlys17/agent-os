@@ -23,6 +23,15 @@ def _supported_entry(name: str, token: str) -> dict[str, Any]:
     }
 
 
+def _migrated_supported_entry(name: str, token: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "type": "telegram",
+        "token": token,
+        "groups_enabled": False,
+    }
+
+
 @pytest.mark.parametrize(
     ("raw_type", "canonical_type"),
     [
@@ -59,7 +68,10 @@ def test_retired_channel_types_and_qq_aliases_are_removed_before_validation(
     result = migrate_config_payload(source)
 
     assert result.changed is True
-    assert result.payload["channels"]["channels"] == [supported_before, supported_after]
+    assert result.payload["channels"]["channels"] == [
+        _migrated_supported_entry("primary", "supported-secret"),
+        _migrated_supported_entry("secondary", "another-supported-secret"),
+    ]
     assert source["channels"]["channels"][1]["type"] == raw_type
     assert result.changes == (
         f"channels.channels: removed 1 retired channel adapter entry ({canonical_type}=1)",
@@ -95,7 +107,10 @@ def test_retired_channel_migration_is_order_preserving_and_idempotent() -> None:
     first_result = migrate_config_payload(source)
     second_result = migrate_config_payload(first_result.payload)
 
-    assert first_result.payload["channels"]["channels"] == [first, second]
+    assert first_result.payload["channels"]["channels"] == [
+        _migrated_supported_entry("first", "first-secret"),
+        _migrated_supported_entry("second", "second-secret"),
+    ]
     assert first_result.changes == (
         "channels.channels: removed 4 retired channel adapter entries "
         "(dingtalk=1, matrix=1, qq=1, wecom=1)",

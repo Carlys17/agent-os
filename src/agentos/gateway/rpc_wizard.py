@@ -6,8 +6,9 @@ machine. The heavy lifting — typed schemas, state transitions, validation
 between the JSON-over-RPC shape (camelCase field names) and the Python
 registry (snake_case attributes).
 
-Scope on every method is ``operator.admin``. The registry is in-memory and
-process-local; session persistence is deferred to a future slice.
+Every method is available only to an admitted Control connection. The
+registry is in-memory and process-local; session persistence is deferred to
+a future slice.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from agentos.gateway.rpc import RpcContext, get_dispatcher
 _d = get_dispatcher()
 
 
-@_d.method("wizard.start", scope="operator.admin")
+@_d.method("wizard.start")
 async def _handle_wizard_start(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict) or "wizardType" not in params:
         raise ValueError("params.wizardType is required")
@@ -39,7 +40,7 @@ async def _handle_wizard_start(params: dict | None, ctx: RpcContext) -> dict[str
     return wizard_start_rpc_payload(wizard_id, first_step)
 
 
-@_d.method("wizard.next", scope="operator.admin")
+@_d.method("wizard.next")
 async def _handle_wizard_next(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict) or "wizardId" not in params:
         raise ValueError("params.wizardId is required")
@@ -61,7 +62,7 @@ async def _handle_wizard_next(params: dict | None, ctx: RpcContext) -> dict[str,
     return wizard_next_rpc_payload(outcome)
 
 
-@_d.method("wizard.cancel", scope="operator.admin")
+@_d.method("wizard.cancel")
 async def _handle_wizard_cancel(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict) or "wizardId" not in params:
         raise ValueError("params.wizardId is required")
@@ -74,7 +75,7 @@ async def _handle_wizard_cancel(params: dict | None, ctx: RpcContext) -> dict[st
     return wizard_cancel_rpc_payload(wizard_id)
 
 
-@_d.method("wizard.status", scope="operator.admin")
+@_d.method("wizard.status")
 async def _handle_wizard_status(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict) or "wizardId" not in params:
         raise ValueError("params.wizardId is required")

@@ -9,7 +9,7 @@ import hmac
 import json
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,7 +45,7 @@ _MENTION_RE = re.compile(r"<@(U[A-Z0-9]+)(?:\|[^>]*)?>")
 # Channel-contract constants pinned by the adapter audit.
 CAPABILITY_TIER = "GREEN-shipping"
 
-# Slack is a DM/group channel; the permission matrix denies admin-only tools.
+# Slack is a DM/group channel; runtime capability and sandbox policy still apply.
 DM_SAFETY_TIERS: tuple[str, ...] = ("safe", "confirm")
 
 RETRYABLE_ERROR_CLASSES: tuple[str, ...] = (
@@ -289,12 +289,14 @@ class SlackChannel:
         thread_ts = event.get("thread_ts")
 
         # channel_type: "channel"/"group" = group, "im"/"mpim" = DM
-        # Fallback: infer from channel ID prefix (C/G = group, D = direct)
+        # Fallback: infer from channel ID prefix (C = public, G = private, D = direct)
         channel_type = event.get("channel_type")
         if channel_type is None:
             ch = event.get("channel", "")
-            if ch.startswith(("C", "G")):
+            if ch.startswith("C"):
                 channel_type = "channel"
+            elif ch.startswith("G"):
+                channel_type = "group"
             elif ch.startswith("D"):
                 channel_type = "im"
 
@@ -305,6 +307,8 @@ class SlackChannel:
             "channel_type": channel_type,
             "is_group": channel_type in {"channel", "group"},
         }
+        if interaction_type := event.get("interaction_type"):
+            metadata["interaction_type"] = interaction_type
 
         # Detect thread root: thread_ts == ts
         if thread_ts is not None and ts is not None:
@@ -679,9 +683,13 @@ class SlackChannel:
             with contextlib.suppress(Exception):
                 await ws.close()
             return
+        payload = msg.get("payload")
+        if mtype == "slash_commands":
+            if isinstance(payload, dict):
+                self._ingest_slash_command(payload)
+            return
         if mtype != "events_api":
             return
-        payload = msg.get("payload")
         if isinstance(payload, dict) and payload.get("type") == "event_callback":
             self._ingest_event_callback(payload)
 
@@ -721,20 +729,8 @@ class SlackChannel:
         content_type = request.headers.get("content-type", "")
         if content_type.startswith("application/x-www-form-urlencoded"):
             form = await request.form()
-            command = str(form.get("command") or "").strip()
-            if not command.startswith("/"):
+            if not self._ingest_slash_command(form):
                 return Response(status_code=400)
-            text = str(form.get("text") or "").strip()
-            self.enqueue(
-                self.parse_event(
-                    {
-                        "user": str(form.get("user_id") or "unknown"),
-                        "channel": str(form.get("channel_id") or self.slack_channel_id),
-                        "text": f"{command} {text}".strip(),
-                        "channel_type": str(form.get("channel_name") or "channel"),
-                    }
-                )
-            )
             return Response(status_code=200)
 
         try:
@@ -752,6 +748,25 @@ class SlackChannel:
             self._ingest_event_callback(data)
 
         return Response(status_code=200)
+
+    def _ingest_slash_command(self, payload: Mapping[str, Any]) -> bool:
+        """Normalize and enqueue a Slack slash command from either transport."""
+        command = str(payload.get("command") or "").strip()
+        if not command.startswith("/"):
+            return False
+        text = str(payload.get("text") or "").strip()
+        self.enqueue(
+            self.parse_event(
+                {
+                    "user": str(payload.get("user_id") or "unknown"),
+                    "channel": str(payload.get("channel_id") or self.slack_channel_id),
+                    "text": f"{command} {text}".strip(),
+                    "team": payload.get("team_id"),
+                    "interaction_type": "slash_command",
+                }
+            )
+        )
+        return True
 
     def _ingest_event_callback(self, data: dict[str, Any]) -> None:
         """Shared inbound path for an Events API ``event_callback`` payload,

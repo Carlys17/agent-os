@@ -83,7 +83,7 @@ def _missing_artifact_error(path: str, workspace: Path, target: Path) -> ToolErr
 
 
 def _should_expose_local_path(ctx: ToolContext) -> bool:
-    return bool(ctx.is_owner and ctx.caller_kind in {CallerKind.CLI, CallerKind.WEB})
+    return ctx.caller_kind in {CallerKind.CLI, CallerKind.WEB}
 
 
 def _llm_artifact_payload(

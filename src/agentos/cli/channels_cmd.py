@@ -45,7 +45,7 @@ from agentos.onboarding.mutations import (
 )
 
 channels_app = typer.Typer(help="Manage messaging channels.")
-pairing_app = typer.Typer(help="Manage DM pairing requests and approved channel users.")
+pairing_app = typer.Typer(help="Manage Telegram pairing requests and paired connections.")
 channels_app.add_typer(pairing_app, name="pairing")
 
 
@@ -161,12 +161,19 @@ def pairing_list(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
     config_path: Path | None = typer.Option(None, "--config"),
 ) -> None:
-    """List pending pairing codes and approved users."""
+    """List pending requests and paired Telegram connections."""
     store = ChannelPairingStore()
-    rows = [
-        {"channel": channel_name, **store.snapshot(channel_name)}
-        for channel_name in _pairing_channel_names(config_path, name)
-    ]
+    rows = []
+    for channel_name in _pairing_channel_names(config_path, name):
+        snapshot = store.snapshot(channel_name)
+        rows.append(
+            {
+                "channel": channel_name,
+                "pending": snapshot["pending"],
+                "paired": snapshot["approved"],
+                "locked_until": snapshot["locked_until"],
+            }
+        )
     if json_output:
         print_json({"channels": rows})
         return
@@ -191,16 +198,16 @@ def pairing_list(
                 str(request.get("code") or ""),
                 str(request.get("expires_at") or ""),
             )
-        for user in row["approved"]:
+        for user in row["paired"]:
             identity = user.get("username") or user.get("display_name") or user.get("sender_id")
             table.add_row(
                 row["channel"],
-                "approved",
+                "paired",
                 str(identity or ""),
                 "—",
                 str(user.get("approved_at") or ""),
             )
-        if not row["pending"] and not row["approved"]:
+        if not row["pending"] and not row["paired"]:
             table.add_row(row["channel"], "empty", "—", "—", "—")
     Console(width=180, force_terminal=False).print(table)
 
@@ -211,14 +218,30 @@ def pairing_approve(
     code: str = typer.Argument(..., help="8-character pairing code."),
     config_path: Path | None = typer.Option(None, "--config"),
 ) -> None:
-    """Approve a pending Telegram DM pairing code."""
+    """Pair the Telegram sender for a pending code."""
     channel_name = _resolve_pairing_channel(config_path, name)
     try:
         request = ChannelPairingStore().approve(channel_name, code)
     except (InvalidPairingCodeError, PairingApprovalLockedError, PairingStoreError) as exc:
         typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
-    typer.echo(f"Approved {request.get('sender_id')} for Telegram channel {channel_name}.")
+    typer.echo(f"Paired {request.get('sender_id')} with Telegram channel {channel_name}.")
+
+
+@pairing_app.command("deny")
+def pairing_deny(
+    name: str = typer.Argument(..., help="Telegram channel name."),
+    sender_id: str = typer.Argument(..., help="Telegram user ID."),
+    config_path: Path | None = typer.Option(None, "--config"),
+) -> None:
+    """Deny and remove a pending Telegram pairing request."""
+    channel_name = _resolve_pairing_channel(config_path, name)
+    try:
+        ChannelPairingStore().deny(channel_name, sender_id)
+    except (KeyError, PairingStoreError) as exc:
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"Denied pending Telegram connection {sender_id} on {channel_name}.")
 
 
 @pairing_app.command("revoke")
@@ -227,14 +250,14 @@ def pairing_revoke(
     sender_id: str = typer.Argument(..., help="Telegram user ID."),
     config_path: Path | None = typer.Option(None, "--config"),
 ) -> None:
-    """Revoke a paired Telegram user's access."""
+    """Disconnect a paired Telegram sender."""
     channel_name = _resolve_pairing_channel(config_path, name)
     try:
         ChannelPairingStore().revoke(channel_name, sender_id)
     except (KeyError, PairingStoreError) as exc:
         typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
-    typer.echo(f"Revoked {sender_id} from Telegram channel {channel_name}.")
+    typer.echo(f"Disconnected {sender_id} from Telegram channel {channel_name}.")
 
 
 @pairing_app.command("clear-pending")

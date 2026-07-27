@@ -46,6 +46,96 @@ Some skills may be ineligible when optional dependencies are missing or when the
 skill is intentionally demo-only. `skills list` is the source of truth for your
 current install.
 
+## How a Skill Is Described
+
+Four separate facts describe an installed skill. They are easy to confuse, and
+using one to answer another is the usual cause of a confusing Skills screen.
+
+| Fact | Question it answers | Values |
+| --- | --- | --- |
+| Acquisition | How did it get here? | `shipped`, `hub`, `local` |
+| Publisher | Whose name is on it? | An allowlisted partner, or nothing |
+| Layer | Where are the files? | `extra`, `bundled`, `managed`, `personal`, `project`, `workspace` |
+| Availability | Is the agent being offered it right now? | offered, or a reason |
+
+**Acquisition** is what the Web UI groups by, and what `agentos skills list
+--json` reports under `acquisition`. A `shipped` skill came with AgentOS. A
+`hub` skill was fetched by `agentos skills install` and has a lockfile entry
+recording its source, identifier, version, and install time. A `local` skill is
+a directory you put in a skills folder yourself.
+
+The same block carries `removable` and `updatable`. These are answers, not
+guesses from the layer: if a hub-installed skill's recorded path no longer
+matches the configured `skills.managed_dir`, `removable` is `false` — AgentOS
+will not delete files it cannot prove it owns — while `updatable` stays `true`,
+because an update re-fetches by identifier into the current managed directory.
+
+**Publisher** is allowlisted inside AgentOS. A skill manifest can only *select*
+a recognized publisher by id; it can never *describe* one. A third-party skill
+that writes a partner's name, URL, and logo into its own frontmatter renders as
+an ordinary unbranded skill, because none of those fields are read.
+
+Selecting an id is also restricted by where the skill lives. Only a `bundled`
+manifest — one that ships inside the release — may name its own publisher; a
+directory you (or anything else) drop into a writable skills path gets no brand
+from its own frontmatter, so a look-alike cannot sit in the Partners group. An
+installed partner skill is branded by the hub catalog row that installed it,
+recorded in the lockfile, not by its own text. This is why a partner's skills
+sit under one heading whether they shipped with AgentOS or you installed them
+from that partner's hub.
+
+**Layer** is only about file location and name-collision precedence (later
+overrides earlier): `extra` (config dirs) → `bundled` (shipped) → `managed`
+(`~/.agentos/skills`, where installs land) → `personal` (`~/.agents/skills`) →
+`project` (`<workspace>/.agents/skills`) → `workspace` (`<workspace>/skills`).
+It is shown as a detail on each card and it decides which skills are sacrificed
+first if the prompt budget is exceeded, but it does not tell you where a skill
+came from.
+
+The two `.agents/skills` layers are shared with other agents on the machine —
+Codex, Cursor, and anything else following that convention install there too.
+AgentOS treats them as ordinary layers: a skill another tool writes appears on
+the next turn, and one it removes stops being offered, without a restart and
+without going through `agentos skills`. The directories are also honoured when
+they do not exist yet, so the first cross-agent install on a fresh machine does
+not need one either. Note the precedence that follows from the order above: a
+skill in `.agents/skills` overrides a bundled or hub-installed skill of the same
+name.
+
+Provenance (`origin`, `license`, `upstream_url`) is separate from all four: it
+records where the *text* came from and under what licence. A skill can be
+AgentOS-original text published by a partner, or upstream text with no
+publisher at all.
+
+## Whether the Agent Is Offered a Skill
+
+Installed, eligible, and offered are three different states. A skill can be
+installed and fully eligible and still not reach the agent on a given turn.
+
+The gateway reports this as `availability` on every skill row, and the agent's
+own skill listing prints a `[not offered]` line with the same explanation:
+
+| Reason | Meaning | What to do |
+| --- | --- | --- |
+| offered | the agent has it | — |
+| `model_invocation_disabled` | the manifest opts out of model invocation | nothing; run it yourself |
+| `ineligible` | a required binary, environment variable, or OS is missing | the detail names what is missing |
+| `tool_gate` | its required tools are not enabled in this session | enable the tools |
+| `fallback_superseded` | it is a fallback for a tool the session already has natively | nothing; the native tool is better |
+| `not_retrieved` | relevance filtering is on and this message did not match | raise `skills.filter_top_k`, or reword |
+| `prompt_budget` | ready, but the skills block is full | raise `skills.max_skills_prompt_chars` |
+
+Every reason above appears in a `skills.list` row except `not_retrieved`.
+Retrieval ranks skills against the wording of one message, so there is no query
+to answer it with outside a turn — it reaches the decision log, never the Skills
+page. The other six, `prompt_budget` included, are answerable from the installed
+set plus the configured budget, so the page can show them before you send
+anything.
+
+`agentos skills list --json` does not carry `availability`. A CLI process has
+no chat session and no tool surface, so it cannot answer honestly; an absent
+key means "not computed", never "not offered".
+
 ## Install, Update, and Remove Skills
 
 Install a managed skill:
@@ -122,7 +212,8 @@ matches their description and triggers.
 
 ## Troubleshooting
 
-If a skill is not selected:
+If a skill is not used, start by finding out whether the agent was ever offered
+it. Guessing from the layer or from "it says ready" is what makes this hard.
 
 1. Confirm it appears in the installed catalog:
 
@@ -130,16 +221,48 @@ If a skill is not selected:
    agentos skills list
    ```
 
-2. Inspect its description and eligibility:
+2. Open the skill on the Skills screen, or ask the agent to list its skills.
+   Either surface names the reason it is being withheld. Match it below.
+
+3. **"Needs setup" / `ineligible`.** The reason names the missing binary or
+   environment variable. Install the binary, or set the variable:
 
    ```sh
-   agentos skills view <skill-name>
+   agentos env set <NAME> --stdin
    ```
 
-3. Ask for the outcome in normal language. Skill names can help, but user
-   intent should still be clear.
+   The value applies to the running gateway — no restart — and the skill
+   becomes eligible on the next turn.
 
-4. If optional dependencies are missing, install or update the skill and retry.
+4. **"Skills section is full" / `prompt_budget`.** The skill is ready and was
+   dropped only because the injected skills block hit its character budget.
+   Raise it:
+
+   ```sh
+   agentos config get skills.max_skills_prompt_chars     # default 24000
+   agentos config set skills.max_skills_prompt_chars 32000
+   agentos gateway restart
+   ```
+
+   The gateway also logs `skills_filter.budget_truncated` with the names it
+   dropped and the budget it hit. Truncation goes lowest-precedence layer
+   first — `extra` directories, then `bundled` — so the symptom is usually
+   shipped skills quietly disappearing while what you installed into
+   `managed`, `personal`, `project`, or `workspace` survives.
+
+5. **`not_retrieved`.** Only reachable when `skills.filter_enabled = true`,
+   which is off by default. Raise `skills.filter_top_k` or reword the request;
+   the answer depends on the wording of that one message.
+
+6. **`tool_gate` or `fallback_superseded`.** These are about the session's
+   tools, not the skill. The first means a tool the skill needs is not enabled;
+   the second means AgentOS already has a native tool that does the job better.
+
+7. **`model_invocation_disabled`.** Working as declared. The skill opted out of
+   model invocation and is for you to run, not the agent.
+
+8. If none of the above applies, ask for the outcome in normal language. Skill
+   names can help, but user intent should still be clear.
 
 ---
 

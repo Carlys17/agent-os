@@ -34,7 +34,6 @@ def _registered_tool(
     name: str,
     *,
     exposed_by_default: bool = True,
-    owner_only: bool = False,
 ) -> RegisteredTool:
     return RegisteredTool(
         spec=ToolSpec(
@@ -42,7 +41,6 @@ def _registered_tool(
             description=f"{name} tool",
             parameters={},
             exposed_by_default=exposed_by_default,
-            owner_only=owner_only,
         ),
         handler=_handler,
     )
@@ -107,8 +105,6 @@ def test_registry_delegates_visibility_policy_to_tools_visibility_boundary() -> 
     assert "resolve_profile" not in registry_functions
     assert {
         "ToolProfile",
-        "_CHANNEL_DEFAULT_ALLOW",
-        "_CHANNEL_HARD_DENY_NON_OWNER",
         "filter_by_profile",
         "profile_allows_tool",
         "resolve_profile",
@@ -116,18 +112,16 @@ def test_registry_delegates_visibility_policy_to_tools_visibility_boundary() -> 
 
     visibility_classes = _top_level_classes(VISIBILITY)
     visibility_functions = _top_level_functions(VISIBILITY)
-    visibility_assignments = _top_level_assignments(VISIBILITY)
     assert "ToolProfile" in visibility_classes
     assert "filter_by_profile" in visibility_functions
     assert "profile_allows_tool" in visibility_functions
     assert "resolve_profile" in visibility_functions
     assert "effective_tool_context" in visibility_functions
     assert "visible_registered_tools" in visibility_functions
-    assert "_CHANNEL_DEFAULT_ALLOW" in visibility_assignments
 
 
-def test_visibility_boundary_preserves_channel_profile_filtering() -> None:
-    channel_ctx = ToolContext(is_owner=False, caller_kind=CallerKind.CHANNEL)
+def test_visibility_boundary_uses_single_configured_profile() -> None:
+    channel_ctx = ToolContext(caller_kind=CallerKind.CHANNEL)
     profile = resolve_profile(channel_ctx)
 
     filtered = filter_by_profile(
@@ -139,28 +133,31 @@ def test_visibility_boundary_preserves_channel_profile_filtering() -> None:
         profile,
     )
 
-    assert profile is ToolProfile.CHANNEL_DEFAULT
-    assert [tool.name for tool in filtered] == ["publish_artifact", "read_file"]
+    assert profile is ToolProfile.CONFIGURED
+    assert [tool.name for tool in filtered] == [
+        "publish_artifact",
+        "git_commit",
+        "read_file",
+    ]
     assert profile_allows_tool("cron", profile) is True
-    assert profile_allows_tool("git_commit", profile) is False
+    assert profile_allows_tool("git_commit", profile) is True
 
 
 def test_visibility_boundary_preserves_context_visibility_rules() -> None:
     tools = [
         _registered_tool("visible"),
-        _registered_tool("owner_only", owner_only=True),
+        _registered_tool("configured"),
         _registered_tool("hidden", exposed_by_default=False),
     ]
     ctx = ToolContext(
-        is_owner=False,
-        caller_kind=CallerKind.CHANNEL,
-        allowed_tools={"visible", "hidden", "owner_only"},
+                caller_kind=CallerKind.CHANNEL,
+        allowed_tools={"visible", "hidden", "configured"},
         surfaced_tools={"hidden"},
     )
 
     visible = visible_registered_tools(tools, ctx, sort=True)
 
-    assert [tool.spec.name for tool in visible] == ["hidden", "visible"]
+    assert [tool.spec.name for tool in visible] == ["configured", "hidden", "visible"]
 
 
 def test_visibility_boundary_preserves_effective_runtime_contexts() -> None:
@@ -169,28 +166,27 @@ def test_visibility_boundary_preserves_effective_runtime_contexts() -> None:
         caller_kind=None,
         interaction_mode=None,
         tool_surface_capabilities=ToolSurfaceCapabilities(session_manager=True),
-        is_owner=True,
-    )
-    owner_cron_ctx = effective_tool_context(
+            )
+    cron_ctx = effective_tool_context(
         session_key="cron:nightly",
         caller_kind=None,
         interaction_mode=None,
         tool_surface_capabilities=ToolSurfaceCapabilities(scheduler=True),
-        is_owner=True,
-    )
+            )
     channel_ctx = effective_tool_context(
         caller_kind=CallerKind.CHANNEL,
         tool_surface_capabilities=ToolSurfaceCapabilities(
             channel_backing=True,
             scheduler=True,
         ),
-        is_owner=False,
-    )
+            )
 
     assert subagent_ctx.caller_kind is CallerKind.SUBAGENT
     assert subagent_ctx.interaction_mode is InteractionMode.UNATTENDED
     assert "publish_artifact" in subagent_ctx.denied_tools
-    assert owner_cron_ctx.caller_kind is CallerKind.CRON
-    assert owner_cron_ctx.is_owner is True
+    assert cron_ctx.caller_kind is CallerKind.CRON
+    assert cron_ctx.allowed_tools is not None
+    assert "read_file" in cron_ctx.allowed_tools
+    assert "exec_command" in cron_ctx.denied_tools
     assert channel_ctx.caller_kind is CallerKind.CHANNEL
-    assert "cron" in (channel_ctx.allowed_tools or set())
+    assert channel_ctx.allowed_tools is None

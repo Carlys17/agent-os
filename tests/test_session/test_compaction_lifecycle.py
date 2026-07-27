@@ -98,8 +98,6 @@ def test_disabled_flush_decision_is_explicit() -> None:
 def test_noop_flush_receipt_has_distinct_compaction_status() -> None:
     config = SimpleNamespace(
         memory=SimpleNamespace(
-            flush_compaction_safety_mode="protect",
-            flush_compaction_requires_safe_receipt=False,
         )
     )
     receipt = _receipt(
@@ -117,8 +115,6 @@ def test_noop_flush_receipt_has_distinct_compaction_status() -> None:
 def test_raw_archive_flush_receipt_has_distinct_compaction_status() -> None:
     config = SimpleNamespace(
         memory=SimpleNamespace(
-            flush_compaction_safety_mode="protect",
-            flush_compaction_requires_safe_receipt=False,
         )
     )
     receipt = _receipt(

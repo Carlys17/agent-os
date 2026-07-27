@@ -367,12 +367,18 @@ def evaluate_memory(payload: dict[str, Any]) -> list[HealthFinding]:
                 id="memory.repair.pending",
                 severity="warn",
                 surface="memory",
-                title="Memory repair work is pending",
-                detail=f"{pending} compaction repair item(s) require attention.",
+                title="Memory from earlier sessions did not land",
+                detail=(
+                    f"{pending} session(s) recorded memory that was never written. "
+                    "Automatic repair was removed; the raw transcripts are still "
+                    "on disk if the content matters."
+                ),
                 evidence={"pendingRepairCount": pending},
                 fix_steps=[
-                    FixStep(label="List repairs", command="agentos memory repair list --json"),
-                    FixStep(label="Run repairs", command="agentos memory repair run --json"),
+                    FixStep(
+                        label="Inspect the archived transcripts",
+                        command="agentos memory raw-fallbacks list --json",
+                    ),
                 ],
             )
         )

@@ -10,6 +10,7 @@ import structlog
 from agentos.chat.conversation import ChatSendRequest, sessions_send_params
 from agentos.chat.history import transcript_entries_to_chat_messages
 from agentos.chat.source import chat_source_metadata
+from agentos.gateway.access import CONTROL_AND_CHANNEL
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.context_overflow import apply_context_overflow_policy
 from agentos.gateway.rpc import RpcContext, RpcUnavailableError, get_dispatcher
@@ -312,7 +313,6 @@ async def _enforce_context_overflow(
         session_key=session_key,
         session_manager=ctx.session_manager,
         compaction_config=await _build_context_overflow_compaction_config(ctx, session_key),
-        flush_service=getattr(ctx, "flush_service", None),
         compaction_marker=getattr(ctx, "turn_runner", None),
         policy_override=policy_override,
         budget_override=budget_override,
@@ -336,7 +336,7 @@ async def _enforce_context_overflow(
     return None
 
 
-@_d.method("chat.send", scope="operator.write")
+@_d.method("chat.send")
 async def _handle_chat_send(params: dict | None, ctx: RpcContext) -> dict:
     if not isinstance(params, dict) or "message" not in params:
         raise ValueError("params.message is required")
@@ -410,7 +410,7 @@ async def _handle_chat_send(params: dict | None, ctx: RpcContext) -> dict:
                 caller_kind="web",
                 channel_kind="webchat",
                 channel_id=f"webchat:{session_key}",
-                sender_id=ctx.principal.role,
+                sender_id=ctx.conn_id or "control",
                 source_kind="webui",
                 source_name="WebChat",
                 elevated=elevated_hint if isinstance(elevated_hint, str) else None,
@@ -426,7 +426,7 @@ async def _handle_chat_send(params: dict | None, ctx: RpcContext) -> dict:
         raise
 
 
-@_d.method("chat.abort", scope="operator.write")
+@_d.method("chat.abort")
 async def _handle_chat_abort(params: dict | None, ctx: RpcContext) -> dict:
     raw_params = params or {}
     session_key = _canonical_webchat_session_key(raw_params.get("sessionKey"))
@@ -447,7 +447,7 @@ async def _handle_chat_abort(params: dict | None, ctx: RpcContext) -> dict:
     return {"sessionKey": session_key, **result}
 
 
-@_d.method("chat.history", scope="operator.read")
+@_d.method("chat.history", CONTROL_AND_CHANNEL)
 async def _handle_chat_history(params: dict | None, ctx: RpcContext) -> dict:
     raw_params = params or {}
     session_key = _canonical_webchat_session_key(raw_params.get("sessionKey"))
@@ -510,7 +510,7 @@ async def _handle_chat_history(params: dict | None, ctx: RpcContext) -> dict:
     }
 
 
-@_d.method("chat.inject", scope="operator.admin")
+@_d.method("chat.inject")
 async def _handle_chat_inject(params: dict | None, ctx: RpcContext) -> dict:
     if not isinstance(params, dict):
         raise ValueError("params required: sessionKey, role, content")

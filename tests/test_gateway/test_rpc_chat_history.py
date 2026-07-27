@@ -1,5 +1,4 @@
 import json
-from types import SimpleNamespace
 
 import pytest
 
@@ -62,7 +61,6 @@ async def test_chat_history_returns_pagination_metadata_with_legacy_messages() -
         {"sessionKey": "agent:main:webchat:test", "limit": 2},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=_FakeSessionManager(entries, canonical_entries=entries),
         ),
     )
@@ -85,7 +83,6 @@ async def test_chat_history_before_cursor_returns_older_page() -> None:
         {"sessionKey": "agent:main:webchat:test", "limit": 2, "before": "4|4"},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=_FakeSessionManager(entries, canonical_entries=entries),
         ),
     )
@@ -106,7 +103,6 @@ async def test_chat_history_uses_canonical_transcript_when_available() -> None:
         {"sessionKey": "agent:main:webchat:test", "limit": 10},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=mgr,
         ),
     )
@@ -129,7 +125,6 @@ async def test_chat_history_falls_back_when_canonical_unavailable() -> None:
         {"sessionKey": "agent:main:webchat:test", "limit": 10},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=mgr,
         ),
     )
@@ -151,7 +146,6 @@ async def test_chat_history_falls_back_when_canonical_session_missing() -> None:
         {"sessionKey": "agent:main:webchat:test", "limit": 10},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=mgr,
         ),
     )
@@ -182,7 +176,6 @@ async def test_chat_history_returns_empty_for_missing_webchat_session(
         {"sessionKey": session_key, "limit": "2"},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=mgr,
         ),
     )
@@ -214,7 +207,6 @@ async def test_chat_history_keeps_not_found_for_missing_non_webchat_session() ->
             {"sessionKey": session_key},
             RpcContext(
                 conn_id="test",
-                principal=SimpleNamespace(role="operator"),
                 session_manager=mgr,
             ),
         )
@@ -236,7 +228,6 @@ async def test_chat_history_exposes_subagent_completion_provenance() -> None:
         {"sessionKey": "agent:main:webchat:test"},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=_FakeSessionManager([entry]),
         ),
     )
@@ -269,7 +260,6 @@ async def test_chat_history_exposes_stable_message_identity() -> None:
         {"sessionKey": "agent:main:webchat:test"},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=_FakeSessionManager([entry]),
         ),
     )
@@ -299,7 +289,6 @@ async def test_chat_history_exposes_compaction_summary_anchor() -> None:
         {"sessionKey": "agent:main:webchat:test"},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=_FakeSessionManager([], summaries=[summary]),
         ),
     )
@@ -330,7 +319,6 @@ async def test_chat_history_exposes_persisted_turn_usage() -> None:
         {"sessionKey": "agent:main:webchat:test"},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=_FakeSessionManager([entry]),
         ),
     )
@@ -370,7 +358,6 @@ async def test_chat_history_exposes_assistant_artifacts() -> None:
         {"sessionKey": "agent:main:webchat:test"},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=_FakeSessionManager([entry]),
         ),
     )
@@ -414,7 +401,6 @@ async def test_chat_history_strips_artifact_omitted_marker_from_visible_text() -
         {"sessionKey": "agent:main:webchat:test"},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=_FakeSessionManager([entry]),
         ),
     )
@@ -449,7 +435,6 @@ async def test_chat_history_prefers_attachment_display_text() -> None:
         {"sessionKey": "agent:main:webchat:test"},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=_FakeSessionManager([entry]),
         ),
     )
@@ -485,7 +470,6 @@ async def test_chat_history_exposes_download_url_for_transcript_attachment_refs(
         {"sessionKey": "agent:main:webchat:test"},
         RpcContext(
             conn_id="test",
-            principal=SimpleNamespace(role="operator"),
             session_manager=_FakeSessionManager([entry]),
         ),
     )

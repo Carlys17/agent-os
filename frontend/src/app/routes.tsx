@@ -49,6 +49,9 @@ const loadSkills: LazyRoute = async () => ({
 const loadLogs: LazyRoute = async () => ({
   Component: (await import('@/views/logs/LogsPage')).LogsPage,
 })
+const loadEnv: LazyRoute = async () => ({
+  Component: (await import('@/views/env/EnvPage')).EnvPage,
+})
 
 const VIEW_ROUTES: ReadonlyArray<ViewRoute> = [
   { path: 'overview', title: 'Overview', lazy: loadOverview },
@@ -65,6 +68,7 @@ const VIEW_ROUTES: ReadonlyArray<ViewRoute> = [
   { path: 'mcp', title: 'MCP Servers', lazy: loadMcp },
   { path: 'approvals', title: 'Approvals', lazy: loadApprovals },
   { path: 'skills', title: 'Skills', lazy: loadSkills },
+  { path: 'env', title: 'Environment', lazy: loadEnv },
   { path: 'logs', title: 'Logs', lazy: loadLogs },
 ]
 

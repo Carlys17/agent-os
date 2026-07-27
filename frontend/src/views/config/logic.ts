@@ -87,7 +87,6 @@ export const TABS: readonly TabDef[] = [
     prefixes: [
       'channel',
       'channels',
-      'channel_admin_senders',
       'telegram',
       'slack',
       'discord',
@@ -125,7 +124,7 @@ const HELP: Record<string, string> = {
   host: 'Network interface the gateway binds to. Read-only here — set via agentos gateway run --bind (CLI only). Defaults to 127.0.0.1 (loopback); 0.0.0.0 exposes on all interfaces and requires auth.',
   port: 'TCP port for the ASGI gateway. Read-only here — set via agentos gateway run --port (CLI only). Default 18791; the WebSocket and REST endpoints share it.',
   debug:
-    'Security-sensitive developer mode. Auth scope expansion can take effect immediately for new connections; Starlette debug, uvicorn log level, and some startup wiring need a gateway restart. Keep it off in shared deployments.',
+    'Security-sensitive developer mode. Starlette debug, uvicorn log level, and some startup wiring need a gateway restart. Keep it off in shared deployments.',
   diagnostics_enabled:
     'Default standard diagnostics mode at gateway startup. Raw turn-call capture stays off unless AGENTOS_TURN_CALL_LOG=1 or the running gateway is switched with agentos diagnostics on --raw.',
   log_file_enabled:
@@ -196,7 +195,7 @@ const HELP: Record<string, string> = {
   'sandbox.security_grading':
     'Risk grading and approval gate for tool actions. Keep this paired with sandbox.sandbox unless using the sandbox CLI posture commands.',
   'permissions.default_mode':
-    'Default owner/operator permission mode: bypass is the out-of-box local posture, off keeps sandboxed execution, on uses host execution with approvals, and full bypasses sensitive-path gates too.',
+    'Default interactive Control permission mode: bypass is the out-of-box local posture, off keeps sandboxed execution, on uses host execution with approvals, and full bypasses sensitive-path gates too.',
   'prompt_cache.mode':
     'Anthropic prompt cache control. "auto" (default) lets the provider decide; "on" forces caching; "off" disables it entirely.',
   context_budget_tokens:
@@ -205,8 +204,6 @@ const HELP: Record<string, string> = {
     '"auto_summarize" compacts older history via a small LLM; "hard_truncate" drops oldest turns; "refuse" rejects the turn with a stable error.',
   auth_mode:
     'Gateway auth scheme. "token" requires a static bearer token; "none" is open (loopback only); other modes per deployment.',
-  'auth.allow_unauthenticated_public':
-    'Break-glass opt-in. By default the gateway refuses to start with auth.mode "none" on a non-loopback bind; enabling this serves anyway, giving every peer that can reach the port full operator access. Only enable behind a reverse proxy with auth, VPN, or firewall.',
   'control_ui.allowed_origins':
     'Extra browser origins allowed to open the Control UI WebSocket, call the HTTP API, and send Host headers, beyond loopback (which is always allowed). Add your reverse-proxy origin here (e.g. https://agent.example.com) when serving the UI off another host; default ports 80/443 are normalized. Cross-origin requests are otherwise rejected to block cross-site WebSocket hijacking and DNS rebinding.',
 }

@@ -38,8 +38,7 @@ class _StubSessionManager:
 
 def _ctx(session_key: str | None) -> ToolContext:
     return ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.AGENT,
+                caller_kind=CallerKind.AGENT,
         session_key=session_key,
         agent_id="main",
     )

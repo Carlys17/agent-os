@@ -29,7 +29,6 @@ def _clean_auth_env(monkeypatch, tmp_path):
     for var in (
         "AGENTOS_AUTH_MODE",
         "AGENTOS_AUTH_TOKEN",
-        "AGENTOS_AUTH_ALLOW_UNAUTHENTICATED_PUBLIC",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -71,7 +70,7 @@ def test_lan_bind_prompts_like_any_non_loopback(tmp_path) -> None:
 
     def _prompt(_msg: str) -> str:
         prompted.append(True)
-        return "3"  # cancel — we only assert the prompt fired
+        return "2"  # cancel — we only assert the prompt fired
 
     outcome, _ = provision_public_bind_auth(
         config, interactive=True, prompt=_prompt, emit=lambda _m: None
@@ -88,7 +87,7 @@ def test_warning_names_the_specific_lan_host_not_only_wildcard(tmp_path) -> None
     emitted: list[str] = []
 
     provision_public_bind_auth(
-        config, interactive=True, prompt=lambda _m: "3", emit=emitted.append
+        config, interactive=True, prompt=lambda _m: "2", emit=emitted.append
     )
 
     output = "\n".join(emitted)
@@ -96,20 +95,16 @@ def test_warning_names_the_specific_lan_host_not_only_wildcard(tmp_path) -> None
     assert "non-loopback" in output
 
 
-def test_break_glass_forces_mode_none_for_unsupported_modes(tmp_path) -> None:
-    """[P2] The prompt fires for password/trusted-proxy/typo (only token is
-    enforced). Break-glass [2] must set mode="none" so the gateway actually
-    serves openly — otherwise the guard starts it but resolve_auth has no
-    resolver for the mode, so the WS/chat surface rejects everyone."""
+def test_unsupported_auth_mode_can_only_be_cancelled_or_replaced(tmp_path) -> None:
     config = _config(tmp_path, auth=AuthConfig(mode="password"))
 
     outcome, result = provision_public_bind_auth(
         config, interactive=True, prompt=lambda _m: "2", emit=lambda _m: None
     )
 
-    assert outcome is AuthProvisionOutcome.PROCEED
-    assert result.auth.mode == "none"
-    assert result.auth.allow_unauthenticated_public is True
+    assert outcome is AuthProvisionOutcome.CANCEL
+    assert result is config
+    assert result.auth.mode == "password"
 
 
 def test_public_bind_with_token_mode_is_unchanged(tmp_path) -> None:
@@ -123,19 +118,19 @@ def test_public_bind_with_token_mode_is_unchanged(tmp_path) -> None:
     assert result is config
 
 
-def test_public_bind_with_opt_in_is_unchanged_and_warns_lan_open(tmp_path) -> None:
-    config = _config(tmp_path, auth=AuthConfig(mode="none", allow_unauthenticated_public=True))
+def test_public_bind_without_token_never_claims_to_be_lan_open(tmp_path) -> None:
+    config = _config(tmp_path)
     emitted: list[str] = []
 
     outcome, result = provision_public_bind_auth(
-        config, interactive=True, prompt=_no_prompt, emit=emitted.append
+        config, interactive=True, prompt=lambda _msg: "2", emit=emitted.append
     )
 
-    assert outcome is AuthProvisionOutcome.UNCHANGED
+    assert outcome is AuthProvisionOutcome.CANCEL
     assert result is config
     output = "\n".join(emitted)
     assert "wildcard" in output
-    assert "LAN-open" in output
+    assert "LAN-open" not in output
 
 
 def test_public_bind_non_interactive_is_unchanged_without_prompt(tmp_path) -> None:
@@ -276,7 +271,7 @@ def test_invalid_input_defaults_to_token_choice(tmp_path) -> None:
     assert result.auth.mode == "token"
 
 
-def test_choice_2_break_glass_is_session_only(tmp_path) -> None:
+def test_choice_2_cancels_without_mutating_or_persisting(tmp_path) -> None:
     config = _config(tmp_path)
     emitted: list[str] = []
 
@@ -284,43 +279,32 @@ def test_choice_2_break_glass_is_session_only(tmp_path) -> None:
         config, interactive=True, prompt=lambda _msg: "2", emit=emitted.append
     )
 
-    assert outcome is AuthProvisionOutcome.PROCEED
-    assert result.auth.allow_unauthenticated_public is True
+    assert outcome is AuthProvisionOutcome.CANCEL
+    assert result is config
     assert result.auth.mode == "none"
-    assert "LAN-open" in "\n".join(emitted)
-    # Break-glass must NOT be written to disk — the stored config stays safe.
+    assert "LAN-open" not in "\n".join(emitted)
     assert not (tmp_path / "agentos.toml").exists()
 
 
-def test_choice_2_break_glass_registers_auth_overrides_in_global_map(tmp_path) -> None:
-    """Break-glass forces auth.mode=none in memory; a LATER RPC write would
-    freeze that unless the prompt records the on-disk auth originals in the
-    runtime-override map. Assert the map now carries auth.mode / opt-in."""
-    # Runtime posture is an unprotected mode (only token is enforced), so the
-    # prompt fires; break-glass [2] will flip it to none for the session.
+def test_choice_2_cancel_does_not_add_auth_runtime_overrides(tmp_path) -> None:
     config = _config(tmp_path, auth=AuthConfig(mode="password"))
-    # run_gateway already recorded the bind overrides before the prompt.
     set_runtime_overrides({"host": "127.0.0.1", "port": 18791, "debug": False})
 
     outcome, _ = provision_public_bind_auth(
         config, interactive=True, prompt=lambda _msg: "2", emit=lambda _m: None
     )
 
-    assert outcome is AuthProvisionOutcome.PROCEED
+    assert outcome is AuthProvisionOutcome.CANCEL
     overrides = get_runtime_overrides()
-    # The bind overrides survive...
     assert overrides["host"] == "127.0.0.1"
-    # ...and the on-disk auth posture is now restorable, so no later writer
-    # can freeze the break-glass mode=none / opt-in.
-    assert overrides["auth.mode"] == "password"
-    assert overrides["auth.allow_unauthenticated_public"] is False
+    assert "auth.mode" not in overrides
 
 
-def test_choice_3_cancels(tmp_path) -> None:
+def test_choice_2_cancels(tmp_path) -> None:
     config = _config(tmp_path)
 
     outcome, result = provision_public_bind_auth(
-        config, interactive=True, prompt=lambda _msg: "3", emit=lambda _msg: None
+        config, interactive=True, prompt=lambda _msg: "2", emit=lambda _msg: None
     )
 
     assert outcome is AuthProvisionOutcome.CANCEL
@@ -418,7 +402,7 @@ def _invoke_gateway_run(tmp_path, monkeypatch, *, stdin: str, captured: dict):
 def test_gateway_run_cancel_exits_zero_without_starting(tmp_path, monkeypatch) -> None:
     captured: dict = {}
 
-    result = _invoke_gateway_run(tmp_path, monkeypatch, stdin="3\n", captured=captured)
+    result = _invoke_gateway_run(tmp_path, monkeypatch, stdin="2\n", captured=captured)
 
     assert result.exit_code == 0
     assert "config" not in captured  # server never started
@@ -438,12 +422,11 @@ def test_gateway_run_token_choice_starts_with_token_auth(tmp_path, monkeypatch) 
     assert persisted["auth"]["token"] == captured["config"].auth.token
 
 
-def test_gateway_run_break_glass_starts_without_persisting(tmp_path, monkeypatch) -> None:
+def test_gateway_run_invalid_choice_defaults_to_token_auth(tmp_path, monkeypatch) -> None:
     captured: dict = {}
 
-    result = _invoke_gateway_run(tmp_path, monkeypatch, stdin="2\n", captured=captured)
+    result = _invoke_gateway_run(tmp_path, monkeypatch, stdin="invalid\n", captured=captured)
 
     assert result.exit_code == 0
-    assert captured["config"].auth.allow_unauthenticated_public is True
-    assert (tmp_path / "agentos.toml").read_text(encoding="utf-8") == ""
-    assert "LAN-open" in result.stdout
+    assert captured["config"].auth.mode == "token"
+    assert captured["config"].auth.token

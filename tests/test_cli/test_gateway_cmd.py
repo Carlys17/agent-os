@@ -141,7 +141,6 @@ def test_gateway_run_refuses_wildcard_bind_without_auth(tmp_path, monkeypatch) -
     target = tmp_path / "agentos.toml"
     target.write_text("", encoding="utf-8")
     monkeypatch.setenv("AGENTOS_STATE_DIR", str(tmp_path / "home"))
-    monkeypatch.delenv("AGENTOS_AUTH_ALLOW_UNAUTHENTICATED_PUBLIC", raising=False)
     monkeypatch.delenv("AGENTOS_AUTH_MODE", raising=False)
 
     result = runner.invoke(
@@ -151,16 +150,14 @@ def test_gateway_run_refuses_wildcard_bind_without_auth(tmp_path, monkeypatch) -
     assert result.exit_code == 1
     output = result.stdout + (result.stderr or "")
     assert "Gateway could not start" in output
-    assert "allow_unauthenticated_public" in output
-    # The "LAN-open" warning implies the server will serve — contradictory
-    # noise right before a refusal. It belongs to the opt-in path only.
+    assert "wildcard address 0.0.0.0" in output
     assert "LAN-open" not in output
 
 
-def test_gateway_run_warns_lan_open_when_opt_in_set(tmp_path, monkeypatch) -> None:
+def test_gateway_run_warns_for_authenticated_non_loopback_bind(tmp_path, monkeypatch) -> None:
     target = tmp_path / "agentos.toml"
     target.write_text(
-        "[auth]\nallow_unauthenticated_public = true\n",
+        '[auth]\nmode = "token"\ntoken = "test-control-token"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("AGENTOS_STATE_DIR", str(tmp_path / "home"))
@@ -176,7 +173,8 @@ def test_gateway_run_warns_lan_open_when_opt_in_set(tmp_path, monkeypatch) -> No
     )
 
     output = result.stdout + (result.stderr or "")
-    assert "LAN-open" in output
+    assert "wildcard address 0.0.0.0" in output
+    assert "LAN-open" not in output
 
 
 def test_gateway_run_records_raw_toml_bind_originals_not_env_merged(

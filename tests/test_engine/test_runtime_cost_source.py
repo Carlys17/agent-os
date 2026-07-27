@@ -111,7 +111,7 @@ async def test_runtime_persists_billed_and_estimated_cost_source_rollup() -> Non
         provider_selector=_ProviderSelector(provider),
         session_manager=manager,
     )
-    tool_context = ToolContext(is_owner=True, caller_kind=CallerKind.CLI)
+    tool_context = ToolContext(caller_kind=CallerKind.CLI)
 
     try:
         async for _ in runner.run(
@@ -172,7 +172,7 @@ async def test_runtime_persists_usage_before_yielding_terminal_error() -> None:
         provider_selector=_ProviderSelector(provider),
         session_manager=manager,
     )
-    tool_context = ToolContext(is_owner=True, caller_kind=CallerKind.CLI)
+    tool_context = ToolContext(caller_kind=CallerKind.CLI)
 
     try:
         events = []

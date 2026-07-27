@@ -7,25 +7,33 @@ import {
   filterRegistry,
   filterSkills,
   firstUpdateResult,
-  groupSkillsByLayer,
+  groupSkills,
   initials,
   installAction,
   installSource,
   installedEmptyMessage,
-  isRobinhoodSkill,
+  isPartnerSkill,
   layerHelp,
   layerLabel,
   markInstalled,
+  mergeRegistryRows,
+  partnerEmptyMessage,
   registryEmptyMessage,
   registryKey,
-  robinhoodEmptyMessage,
-  robinhoodSkills,
   safeUrl,
+  skillAvailabilityLabel,
+  skillAvailabilityTitle,
+  skillAvailabilityTone,
   skillDotClass,
   skillDotTitle,
+  skillCanRemove,
+  skillCanUpdate,
+  skillGroupKey,
+  skillPublisherId,
   skillRank,
   skillStats,
   skillStatus,
+  skillsByPublisher,
   stillMissingCount,
   type RawSkill,
   type RegistryItem,
@@ -91,7 +99,10 @@ describe('installedEmptyMessage', () => {
   })
 })
 
-describe('skillRank / groupSkillsByLayer', () => {
+const acquired = (kind: string, o: Partial<RawSkill> = {}): RawSkill =>
+  skill({ acquisition: { kind }, ...o })
+
+describe('skillRank / skillGroupKey / groupSkills', () => {
   it('ranks ready < not_declared < needs_setup', () => {
     expect(skillRank(skill({ status: 'ready' }))).toBe(0)
     expect(skillRank(skill({ status: 'not_declared' }))).toBe(1)
@@ -99,25 +110,65 @@ describe('skillRank / groupSkillsByLayer', () => {
     expect(skillRank(skill({ status: 'weird' }))).toBe(2)
   })
 
-  it('buckets by layer in LAYER_ORDER, sorts ready-first then name, drops empties', () => {
+  it('maps acquisition.kind to a group key', () => {
+    expect(skillGroupKey(acquired('shipped'))).toBe('shipped')
+    expect(skillGroupKey(acquired('hub'))).toBe('hub')
+    expect(skillGroupKey(acquired('local'))).toBe('local')
+  })
+
+  it('partners wins over acquisition, whichever kind it is', () => {
+    const shipped = acquired('shipped', { publisher: { id: 'robinhood', name: 'Robinhood' } })
+    const hub = acquired('hub', { publisher: { id: 'bankr', name: 'Bankr' } })
+    expect(skillGroupKey(shipped)).toBe('partners')
+    expect(skillGroupKey(hub)).toBe('partners')
+  })
+
+  it('falls back to layer when a pre-#130 gateway sends no acquisition', () => {
+    expect(skillGroupKey(skill({ layer: 'bundled' }))).toBe('shipped')
+    expect(skillGroupKey(skill({ layer: 'managed' }))).toBe('hub')
+    expect(skillGroupKey(skill({ layer: 'project' }))).toBe('local')
+    expect(skillGroupKey(skill({}))).toBe('local')
+  })
+
+  it('groups partners → shipped → hub → local, ready-first then name, dropping empties', () => {
     const list = [
-      skill({ name: 'z-ready', layer: 'managed', status: 'ready' }),
-      skill({ name: 'a-needs', layer: 'managed', status: 'needs_setup' }),
-      skill({ name: 'm-decl', layer: 'managed', status: 'not_declared' }),
-      skill({ name: 'b', layer: 'bundled', status: 'ready' }),
-      skill({ name: 'x', status: 'ready' }), // no layer → extra
+      acquired('hub', { name: 'z-ready', status: 'ready' }),
+      acquired('hub', { name: 'a-needs', status: 'needs_setup' }),
+      acquired('hub', { name: 'm-decl', status: 'not_declared' }),
+      acquired('shipped', { name: 'b', status: 'ready' }),
+      // A partner skill that ships with AgentOS and one installed from a hub
+      // land under the SAME heading — the issue's acceptance criterion.
+      acquired('shipped', { name: 'rh', publisher: { id: 'robinhood' }, status: 'ready' }),
+      acquired('hub', { name: 'bankr-swap', publisher: { id: 'bankr' }, status: 'ready' }),
     ]
-    const groups = groupSkillsByLayer(list)
-    // bundled before managed before extra (LAYER_ORDER)
-    expect(groups.map((g) => g.layer)).toEqual(['bundled', 'managed', 'extra'])
-    // managed: ready(0) then not_declared(1) then needs_setup(2)
-    const managed = groups.find((g) => g.layer === 'managed')!
-    expect(managed.skills.map((s) => s.name)).toEqual(['z-ready', 'm-decl', 'a-needs'])
-    expect(managed.label).toBe('Managed')
+    const groups = groupSkills(list)
+    expect(groups.map((g) => g.key)).toEqual(['partners', 'shipped', 'hub'])
+    expect(groups[0]!.label).toBe('Partners')
+    expect(groups[0]!.skills.map((s) => s.name)).toEqual(['bankr-swap', 'rh'])
+    expect(groups[0]!.help).toContain('partner')
+    const hub = groups.find((g) => g.key === 'hub')!
+    expect(hub.skills.map((s) => s.name)).toEqual(['z-ready', 'm-decl', 'a-needs'])
+    expect(hub.label).toBe('Installed from a hub')
+  })
+
+  it('emits every non-empty group in order', () => {
+    const groups = groupSkills([
+      acquired('local', { name: 'l' }),
+      acquired('hub', { name: 'h' }),
+      acquired('shipped', { name: 's' }),
+      acquired('shipped', { name: 'p', publisher: { id: 'bankr' } }),
+    ])
+    expect(groups.map((g) => g.key)).toEqual(['partners', 'shipped', 'hub', 'local'])
+    expect(groups.map((g) => g.label)).toEqual([
+      'Partners',
+      'Shipped with AgentOS',
+      'Installed from a hub',
+      'Your local skills',
+    ])
   })
 
   it('returns [] for no skills', () => {
-    expect(groupSkillsByLayer([])).toEqual([])
+    expect(groupSkills([])).toEqual([])
   })
 })
 
@@ -141,39 +192,136 @@ describe('skillStatus / skillDotClass / skillDotTitle', () => {
   })
 })
 
-describe('isRobinhoodSkill / robinhoodSkills', () => {
-  it('only bundled skills named robinhood* or homepaged robinhood.com qualify', () => {
-    expect(isRobinhoodSkill(skill({ layer: 'bundled', name: 'robinhood-stocks' }))).toBe(true)
-    expect(
-      isRobinhoodSkill(skill({ layer: 'bundled', name: 'x', homepage: 'https://robinhood.com/x' })),
-    ).toBe(true)
-    // not bundled → excluded even if named robinhood
-    expect(isRobinhoodSkill(skill({ layer: 'managed', name: 'robinhood-fake' }))).toBe(false)
-    // bundled but unrelated → excluded
-    expect(isRobinhoodSkill(skill({ layer: 'bundled', name: 'weather' }))).toBe(false)
+describe('skillAvailability*', () => {
+  it('treats an absent availability block as unknown, never as not-offered', () => {
+    expect(skillAvailabilityTone(skill({}))).toBe('unknown')
+    // `agentos skills list --json` omits the key entirely.
+    expect(skillAvailabilityTone(skill({ status: 'ready', eligible: true }))).toBe('unknown')
+    expect(skillAvailabilityLabel(skill({}))).toBe('')
   })
 
-  it('robinhoodSkills filters + sorts by name', () => {
-    const list = [
-      skill({ layer: 'bundled', name: 'robinhood-z' }),
-      skill({ layer: 'bundled', name: 'robinhood-a' }),
-      skill({ layer: 'managed', name: 'robinhood-nope' }),
-    ]
-    expect(robinhoodSkills(list).map((s) => s.name)).toEqual(['robinhood-a', 'robinhood-z'])
+  it('separates offered from ready — a ready skill can still be withheld', () => {
+    const withheld = skill({
+      status: 'ready',
+      eligible: true,
+      availability: { offered: false, reason: 'model_invocation_disabled', detail: '' },
+    })
+    // The status derivations are untouched: it is still "ready".
+    expect(skillDotClass(withheld)).toBe('is-ready')
+    expect(skillAvailabilityTone(withheld)).toBe('not-offered')
+    expect(skillAvailabilityLabel(withheld)).toBe('Not offered — agent cannot invoke')
+  })
+
+  it('labels each withheld reason and falls back for an unknown one', () => {
+    const withReason = (reason: string) =>
+      skillAvailabilityLabel(skill({ availability: { offered: false, reason } }))
+    expect(withReason('ineligible')).toBe('Not offered — needs setup')
+    expect(withReason('tool_gate')).toBe('Not offered — missing tools')
+    expect(withReason('prompt_budget')).toBe('Not offered — prompt too long')
+    expect(withReason('some_future_reason')).toBe('Not offered to the agent')
+    expect(withReason('')).toBe('Not offered to the agent')
+  })
+
+  it('offered rows read as offered with an empty reason', () => {
+    const offered = skill({ availability: { offered: true, reason: '', detail: '' } })
+    expect(skillAvailabilityTone(offered)).toBe('offered')
+    expect(skillAvailabilityLabel(offered)).toBe('Offered to the agent')
+    expect(skillAvailabilityTitle(offered)).toBe('Offered to the agent')
+  })
+
+  it('the tooltip prefers the server detail prose', () => {
+    const s = skill({
+      availability: { offered: false, reason: 'ineligible', detail: 'Set LEDGER_API_KEY.' },
+    })
+    expect(skillAvailabilityTitle(s)).toBe('Set LEDGER_API_KEY.')
   })
 })
 
-describe('robinhoodEmptyMessage', () => {
+describe('skillPublisherId / isPartnerSkill / skillsByPublisher', () => {
+  it('trusts publisher.id and nothing else', () => {
+    expect(skillPublisherId(skill({ publisher: { id: 'Robinhood' } }))).toBe('robinhood')
+    expect(skillPublisherId(skill({ publisher: { id: ' bankr ' } }))).toBe('bankr')
+    expect(skillPublisherId(skill({}))).toBe('')
+    expect(skillPublisherId(skill({ publisher: { id: '', name: 'Robinhood' } }))).toBe('')
+  })
+
+  it('a robinhood-* name with no publisher is NOT a partner skill', () => {
+    // The old heuristic read the name and the homepage; the allowlist that
+    // replaced it lives server-side, and the client must not re-derive a brand.
+    const impostor = skill({
+      layer: 'bundled',
+      name: 'robinhood-stocks',
+      homepage: 'https://robinhood.com/x',
+    })
+    expect(isPartnerSkill(impostor)).toBe(false)
+    expect(skillsByPublisher([impostor], 'robinhood')).toEqual([])
+    expect(skillGroupKey(impostor)).toBe('shipped')
+  })
+
+  it('an unbranded publisher block reads as unbranded', () => {
+    // The server flattens an unrecognized id to an all-empty publisher.
+    expect(isPartnerSkill(skill({ publisher: { id: '', name: '', url: '', logo: '' } }))).toBe(
+      false,
+    )
+  })
+
+  it('selects one publisher and sorts by name', () => {
+    const list = [
+      skill({ name: 'rh-z', publisher: { id: 'robinhood' } }),
+      skill({ name: 'rh-a', publisher: { id: 'robinhood' } }),
+      skill({ name: 'bankr-swap', publisher: { id: 'bankr' } }),
+      skill({ name: 'robinhood-impostor' }),
+    ]
+    expect(skillsByPublisher(list, 'robinhood').map((s) => s.name)).toEqual(['rh-a', 'rh-z'])
+    expect(skillsByPublisher(list, 'bankr').map((s) => s.name)).toEqual(['bankr-swap'])
+    // An empty id never selects the unbranded rows.
+    expect(skillsByPublisher(list, '')).toEqual([])
+  })
+})
+
+describe('skillCanUpdate / skillCanRemove', () => {
+  it('reads the affordance off acquisition, not the layer', () => {
+    const movedHubInstall = acquired('hub', { layer: 'workspace' })
+    movedHubInstall.acquisition!.updatable = true
+    movedHubInstall.acquisition!.removable = true
+    expect(skillCanUpdate(movedHubInstall)).toBe(true)
+    expect(skillCanRemove(movedHubInstall)).toBe(true)
+
+    // A hand-copied directory sitting in the managed dir was never removable.
+    const handCopied = acquired('local', { layer: 'managed' })
+    expect(skillCanUpdate(handCopied)).toBe(false)
+    expect(skillCanRemove(handCopied)).toBe(false)
+  })
+
+  it('a hub install whose files moved is updatable but not removable', () => {
+    const diverged = acquired('hub')
+    diverged.acquisition!.updatable = true
+    diverged.acquisition!.removable = false
+    expect(skillCanUpdate(diverged)).toBe(true)
+    expect(skillCanRemove(diverged)).toBe(false)
+  })
+
+  it('falls back to layer when a pre-#130 gateway sends no acquisition', () => {
+    // Reading the flags directly would be `undefined === true` -> false, which
+    // hides both buttons on a stale bundle instead of degrading to the old gate.
+    expect(skillCanUpdate(skill({ layer: 'managed' }))).toBe(true)
+    expect(skillCanRemove(skill({ layer: 'managed' }))).toBe(true)
+    expect(skillCanUpdate(skill({ layer: 'bundled' }))).toBe(false)
+    expect(skillCanRemove(skill({ layer: 'bundled' }))).toBe(false)
+  })
+})
+
+describe('partnerEmptyMessage', () => {
   it('explains query, status, and default empty states', () => {
-    expect(robinhoodEmptyMessage('rwa', 'all')).toBe('No Robinhood skills match rwa.')
-    expect(robinhoodEmptyMessage('', 'ready')).toBe('No Robinhood skills are ready.')
-    expect(robinhoodEmptyMessage('', 'needs-setup')).toBe(
-      'No Robinhood skills currently need setup.',
+    expect(partnerEmptyMessage('Robinhood', 'rwa', 'all')).toBe('No Robinhood skills match rwa.')
+    expect(partnerEmptyMessage('Robinhood', '', 'ready')).toBe('No Robinhood skills are ready.')
+    expect(partnerEmptyMessage('Bankr', '', 'needs-setup')).toBe(
+      'No Bankr skills currently need setup.',
     )
-    expect(robinhoodEmptyMessage('', 'not-declared')).toBe(
-      'No Robinhood skills without a manifest.',
+    expect(partnerEmptyMessage('Bankr', '', 'not-declared')).toBe(
+      'No Bankr skills without a manifest.',
     )
-    expect(robinhoodEmptyMessage('', 'all')).toContain('Robinhood skills are on the way')
+    expect(partnerEmptyMessage('Robinhood', '', 'all')).toContain('Robinhood skills are on the way')
   })
 })
 
@@ -240,6 +388,56 @@ describe('filterRegistry', () => {
   it('combines category and text', () => {
     expect(filterRegistry(rows, 'trading', 'buy').map((r) => r.name)).toEqual(['Buy'])
     expect(filterRegistry(rows, 'defi', 'buy')).toEqual([])
+  })
+
+  it('also matches category, which the server matches and the client used not to', () => {
+    expect(filterRegistry(rows, 'all', 'defi').map((r) => r.name)).toEqual(['Swap'])
+  })
+
+  it('skips the text pass for rows that ARE the server answer', () => {
+    // The server matches over tags too, and tags are not on the wire — so a
+    // legitimate hit like this one has nothing the client can match on.
+    const serverHit = [item({ name: 'Swap', description: 'DEX', category: 'defi' })]
+    expect(filterRegistry(serverHit, 'all', 'perpetuals')).toEqual([])
+    expect(filterRegistry(serverHit, 'all', 'perpetuals', { serverFiltered: true })).toHaveLength(1)
+  })
+
+  it('still applies the category chip to server-filtered rows', () => {
+    expect(filterRegistry(rows, 'defi', 'anything', { serverFiltered: true }).map((r) => r.name)) //
+      .toEqual(['Swap'])
+  })
+})
+
+describe('mergeRegistryRows', () => {
+  it('unions by registryKey with base winning and extras appended', () => {
+    const base = [item({ identifier: 'id1', name: 'a', installed: false, description: 'rich' })]
+    const extra = [
+      item({ identifier: 'id1', name: 'a', installed: true }),
+      item({ identifier: 'id2', name: 'b', installed: true }),
+    ]
+    const merged = mergeRegistryRows(base, extra)
+    expect(merged.map((r) => r.identifier)).toEqual(['id1', 'id2'])
+    // base wins the collision, keeping its catalog metadata
+    expect(merged[0]!.description).toBe('rich')
+    expect(merged[0]!.installed).toBe(false)
+  })
+
+  it('dedupes on name when a row has no identifier', () => {
+    const merged = mergeRegistryRows([item({ name: 'a' })], [item({ name: 'a', installed: true })])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]!.installed).toBeUndefined()
+  })
+
+  it('drops unkeyable extras and never mutates the inputs', () => {
+    const base = [item({ name: 'a' })]
+    const extra = [item({ description: 'no key' })]
+    expect(mergeRegistryRows(base, extra)).toHaveLength(1)
+    expect(base).toHaveLength(1)
+  })
+
+  it('handles empty inputs', () => {
+    expect(mergeRegistryRows([], [])).toEqual([])
+    expect(mergeRegistryRows([], [item({ name: 'a' })]).map((r) => r.name)).toEqual(['a'])
   })
 })
 

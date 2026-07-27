@@ -108,7 +108,12 @@ def _memory_source_rel_path(path: Path) -> str | None:
         except ValueError:
             continue
 
-        if rel.parts in {("MEMORY.md",), ("memory.md",)}:
+        # USER.md is a curated store in its own right -- CuratedMemoryStore
+        # loads, sanitizes, and injects it alongside MEMORY.md. Editing it
+        # through a filesystem tool must refresh the frozen snapshot the same
+        # way, or the change stays invisible to the model until the session
+        # ends. (It is also a bootstrap file, so it notifies both paths.)
+        if rel.parts in {("MEMORY.md",), ("memory.md",), ("USER.md",)}:
             return rel.as_posix()
         if len(rel.parts) >= 2 and rel.parts[0] == "memory" and rel.suffix == ".md":
             return rel.as_posix()

@@ -32,7 +32,13 @@ async def test_channel_bytes_attachment_normalizes_to_engine_shape() -> None:
 async def test_url_only_channel_attachment_degrades_with_marker() -> None:
     result = await ingest_attachments(
         "read it",
-        [{"name": "remote.pdf", "mime_type": "application/pdf", "url": "https://example.test/x.pdf"}],
+        [
+            {
+                "name": "remote.pdf",
+                "mime_type": "application/pdf",
+                "url": "https://example.test/x.pdf",
+            }
+        ],
         failure_mode="mark",
         mark_bytes_as_staged=True,
     )

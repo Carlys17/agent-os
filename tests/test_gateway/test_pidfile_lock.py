@@ -14,9 +14,7 @@ def test_pid_file_in_state_dir_not_parent(tmp_path: Path) -> None:
     lock.acquire()
     try:
         # PID file must be inside state_dir
-        assert (state_dir / "gateway.pid").exists(), (
-            f"gateway.pid not found in {state_dir}"
-        )
+        assert (state_dir / "gateway.pid").exists(), f"gateway.pid not found in {state_dir}"
         # PID file must NOT be in the parent directory
         assert not (tmp_path / "gateway.pid").exists(), (
             f"gateway.pid incorrectly written to parent {tmp_path}"

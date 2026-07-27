@@ -1,6 +1,6 @@
 // Chat transcript — imperative streaming renderer.
 //
-// This module is the OWNER-APPROVED imperative boundary of the chat-view
+// This module is the reviewed imperative boundary of the chat-view
 // migration (design §2.1): the transcript/streaming region is ported as
 // near-verbatim imperative DOM code (innerHTML/appendChild/manual scroll)
 // inside a ref container, NOT reactified. The legacy source is

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agentos.gateway.access import CONTROL_AND_CHANNEL
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
 _d = get_dispatcher()
@@ -14,7 +15,8 @@ def _model_info_to_wire(m: dict[str, Any]) -> dict[str, Any]:
     capabilities: list[str] = ["chat"]
     if m.get("supports_tools"):
         capabilities.append("tools")
-    # Providers can signal vision support via extra fields; keep extensible
+    if m.get("supports_vision"):
+        capabilities.append("vision")
     return {
         "id": m.get("model_id", ""),
         "name": m.get("display_name") or m.get("model_id", ""),
@@ -28,17 +30,29 @@ def _model_info_to_wire(m: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@_d.method("models.list", scope="operator.read")
+@_d.method("models.list", CONTROL_AND_CHANNEL)
 async def _handle_models_list(params: dict | None, ctx: RpcContext) -> list[dict[str, Any]]:
     provider_filter = (params or {}).get("provider")
     capabilities_filter: list[str] | None = (params or {}).get("capabilities")
 
     models: list[dict[str, Any]] = []
-    if ctx.provider_selector is not None:
+    catalog = ctx.model_catalog or getattr(ctx.turn_runner, "_model_catalog", None)
+    if catalog is not None:
+        try:
+            models = [_model_info_to_wire(m.model_dump()) for m in catalog.list_models()]
+        except Exception:
+            pass
+
+    active_provider = str(getattr(getattr(ctx.config, "llm", None), "provider", "") or "")
+    catalog_is_canonical = bool(models) and active_provider.strip().lower() == "opencap"
+    if ctx.provider_selector is not None and not catalog_is_canonical:
         try:
             raw = await ctx.provider_selector.list_models()
             if raw:
-                models = [_model_info_to_wire(m) for m in raw]
+                by_provider_model = {(m["provider"], m["id"]): m for m in models}
+                for model in (_model_info_to_wire(m) for m in raw):
+                    by_provider_model[(model["provider"], model["id"])] = model
+                models = list(by_provider_model.values())
         except Exception:
             pass
 

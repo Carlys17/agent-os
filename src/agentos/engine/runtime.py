@@ -90,6 +90,7 @@ from agentos.engine.turn_runner.harness import (
     _TurnRunnerExtraContextAdapter,
     _TurnRunnerHistoryLoaderAdapter,
     _TurnRunnerMemoryFingerprintAdapter,
+    _TurnRunnerMemoryNudgeAdapter,
     _TurnRunnerMemorySnapshotAdapter,
     _TurnRunnerMemorySnapshotRefreshAdapter,
     _TurnRunnerMemorySyncNotifyAdapter,
@@ -125,7 +126,6 @@ from agentos.execution_status import (
     mark_execution_status_truncated,
     normalize_execution_status,
 )
-from agentos.memory.session_flush import SessionFlushService
 from agentos.observability.decision_log import (
     DecisionEntry,
     PipelineStepRecord,
@@ -160,7 +160,6 @@ from agentos.session.compaction_lifecycle import (
     COMPACTION_TRIGGERED_EVENT,
     compaction_effect_payload,
     compaction_lifecycle_payload,
-    compaction_memory_status,
     compaction_result_payload,
     durable_receipt_allows_destructive_compaction,
     flush_receipt_allows_destructive_compaction,
@@ -168,7 +167,6 @@ from agentos.session.compaction_lifecycle import (
     flush_receipt_status_for_compaction,
     mark_compaction_flush_status_with_retry,
     new_compaction_id,
-    pre_compaction_flush_requires_safe_receipt,
 )
 from agentos.session.context_view import (
     build_compaction_context_records,
@@ -415,17 +413,31 @@ def _tier_value(tier: object, key: str, default: object = None) -> object:
     return getattr(tier, key, default)
 
 
-def _iter_text_tier_models(tiers: object) -> list[str]:
+def _iter_text_tier_models(tiers: object) -> list[tuple[str, str]]:
     if not isinstance(tiers, Mapping):
         return []
-    models: list[str] = []
+    models: list[tuple[str, str]] = []
     for tier in tiers.values():
         if bool(_tier_value(tier, "image_only", False)):
             continue
         model = str(_tier_value(tier, "model", "") or "").strip()
         if model:
-            models.append(model)
+            provider = str(_tier_value(tier, "provider", "") or "").strip()
+            models.append((provider, model))
     return models
+
+
+def _provider_for_tier_model(tiers: object, model_id: str) -> str:
+    for provider, model in _iter_text_tier_models(tiers):
+        if model == model_id:
+            return provider
+    return ""
+
+
+def _provider_for_tier(tiers: object, tier_name: str) -> str:
+    if not isinstance(tiers, Mapping) or not tier_name:
+        return ""
+    return str(_tier_value(tiers.get(tier_name), "provider", "") or "").strip()
 
 
 def _select_savings_baseline_model(
@@ -434,8 +446,8 @@ def _select_savings_baseline_model(
     baseline_output_tokens: float,
 ) -> _SavingsBaseline:
     best = _SavingsBaseline(cost_usd=-1.0)
-    for model in _iter_text_tier_models(tiers):
-        price = lookup_price(model)
+    for provider, model in _iter_text_tier_models(tiers):
+        price = lookup_price(model, provider_id=provider)
         cost_usd = _token_cost_usd(baseline_input_tokens, baseline_output_tokens, price)
         if cost_usd > best.cost_usd:
             best = _SavingsBaseline(model=model, price=price, cost_usd=cost_usd)
@@ -475,6 +487,8 @@ def _compute_comprehensive_turn_savings(
     tiers: object,
     routed_model: str,
     *,
+    routed_provider: str = "",
+    routed_tier: str = "",
     estimated_output_savings_pct: float = 0.03,
 ) -> _ComprehensiveTurnSavings:
     """Estimate per-turn savings from token counts and model prices only."""
@@ -495,7 +509,13 @@ def _compute_comprehensive_turn_savings(
         baseline_input_tokens,
         baseline_output_tokens,
     )
-    routed_price = lookup_price(routed_model or event.model)
+    actual_model = routed_model or event.model
+    provider = (
+        routed_provider
+        or _provider_for_tier(tiers, routed_tier)
+        or _provider_for_tier_model(tiers, actual_model)
+    )
+    routed_price = lookup_price(actual_model, provider_id=provider)
     actual_cost_usd = _token_cost_usd(
         actual_input_tokens,
         actual_output_side_tokens,
@@ -525,6 +545,76 @@ def _compute_comprehensive_turn_savings(
 
 def _normalize_capture_kind(value: str) -> str:
     return value.strip().lower().replace("-", "_").replace(".", "_").replace(":", "_")
+
+
+class MemorySourceUnreadableError(Exception):
+    """Curated memory exists on disk but could not be read this attempt.
+
+    Distinct from "there is no memory": callers must not freeze an empty
+    snapshot on this, or a transient read failure blinds the agent for the
+    rest of the session.
+    """
+
+
+# Curated-memory write tools. A turn that calls one of these has already done
+# the thing the nudge would ask for, so it resets the counter instead.
+_MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset({"memory", "memory_save"})
+
+# Cap on retained nudge counters. Far above any realistic concurrent-session
+# count, low enough that the dict cannot grow without bound in a gateway that
+# runs for weeks.
+_MAX_NUDGE_COUNTERS: Final[int] = 2048
+
+# Prompt for the periodic memory review. Adapted from hermes-agent
+# (MIT, © 2025 Nous Research). Two properties matter and are easy to lose:
+# it names what is worth keeping (durable facts about the user, not task
+# chatter), and it gives an explicit way to decline, so a review with nothing
+# to save stops instead of inventing an entry to justify the call.
+_MEMORY_REVIEW_PROMPT: Final[str] = (
+    "Review the conversation above and consider saving to memory.\n\n"
+    "Focus on:\n"
+    "1. Has the user revealed durable things about themselves — their role, "
+    "preferences, working style, or context that will still matter in a "
+    "later session?\n"
+    "2. Has the user stated expectations about how you should work — "
+    "conventions to follow, things to avoid, corrections they had to repeat?\n\n"
+    "Save anything that stands out with the memory tool, consolidating "
+    "existing entries rather than duplicating them. Skip anything one-off, "
+    "already saved, or specific to the current task.\n\n"
+    "If nothing is worth saving, reply exactly 'Nothing to save.' and stop."
+)
+
+# How many review writes to name in one log line. The point is to show the
+# user what landed, not to reproduce the store.
+# How many intervals a run of self-directed writes may defer the review before
+# it runs anyway. Without a ceiling, an agent that saves on every turn is never
+# reviewed -- which is the state the nudge was found in.
+_NUDGE_MAX_DEFERRAL_INTERVALS: Final[int] = 2
+
+_MEMORY_REVIEW_LOG_MAX_ENTRIES: Final[int] = 5
+_MEMORY_REVIEW_LOG_ENTRY_CHARS: Final[int] = 120
+
+
+def _summarize_memory_write(arguments: Any) -> str:
+    """Render one memory tool call as ``target/action: content``.
+
+    Batches collapse to their operation count: naming every op would push a
+    single log line past anything readable, and the count is enough to tell a
+    consolidation from a one-off save.
+    """
+    if not isinstance(arguments, dict):
+        return "write"
+    target = str(arguments.get("target") or "memory")
+    operations = arguments.get("operations")
+    if isinstance(operations, list) and operations:
+        actions = ",".join(sorted({str(op.get("action", "?")) for op in operations
+                                   if isinstance(op, dict)}))
+        return f"{target}/batch[{len(operations)} ops: {actions or '?'}]"
+    action = str(arguments.get("action") or "?")
+    content = str(arguments.get("content") or arguments.get("old_text") or "").strip()
+    if len(content) > _MEMORY_REVIEW_LOG_ENTRY_CHARS:
+        content = content[:_MEMORY_REVIEW_LOG_ENTRY_CHARS] + "…"
+    return f"{target}/{action}: {content}" if content else f"{target}/{action}"
 
 
 # Boot-path initialization of the safety baseline. All four submodules
@@ -1228,9 +1318,7 @@ def _render_preview_only_attachment_text(
         else "read_full: material path unavailable."
     )
     truncation = (
-        f"\n\n[attachment preview truncated: {len(decoded)} chars total]"
-        if truncated
-        else ""
+        f"\n\n[attachment preview truncated: {len(decoded)} chars total]" if truncated else ""
     )
     return (
         "[large text attachment materialized]\n"
@@ -1371,7 +1459,6 @@ class TurnRunner:
         memory_retrievers: dict[str, Any] | None = None,
         turn_capture_services: dict[str, Any] | None = None,
         memory_provider_managers: dict[str, Any] | None = None,
-        session_flush_service: SessionFlushService | None = None,
         session_lock_provider: Callable[[str], asyncio.Lock] | None = None,
         diagnostics_state: Any | None = None,
         turn_hooks: Sequence[TurnHook] | None = None,
@@ -1393,7 +1480,6 @@ class TurnRunner:
         # provider wiring site is a single ``None``/empty-dict check so the
         # disabled default path adds zero awaits/imports to the hot path.
         self._memory_provider_managers = memory_provider_managers
-        self._session_flush_service = session_flush_service
         self._diagnostics_state = diagnostics_state
         self._router_control_hold_store = RouterControlHoldStore()
         # TurnHook surface. The default trace hook reproduces the inline trace
@@ -1429,6 +1515,8 @@ class TurnRunner:
         # Captured on first prompt assembly so bootstrap-source edits do not
         # churn the cacheable prefix mid-session.
         self._bootstrap_snapshots: dict[tuple[str, str, str], BootstrapSnapshot] = {}
+        # User turns since the last memory review, keyed (agent_id, session_key).
+        self._memory_nudge_counters: dict[tuple[str, str], int] = {}
         self._compaction_failures: dict[str, _CompactionFailureState] = {}
         self._turn_compaction_attempted_sessions: set[str] = set()
         self._turn_compacted_sessions: set[str] = set()
@@ -1507,6 +1595,7 @@ class TurnRunner:
             turn_memory_capture=_TurnRunnerTurnMemoryCaptureAdapter(self),
             session_totals=_TurnRunnerSessionTotalsAdapter(self),
             turn_error_persist=_TurnRunnerTurnErrorPersistAdapter(self),
+            memory_nudge=_TurnRunnerMemoryNudgeAdapter(self),
         )
 
     @property
@@ -1548,7 +1637,7 @@ class TurnRunner:
         ws = self._resolve_memory_source_dir(agent_id)
         new_snap = MemorySnapshot(
             memory_md=self._load_memory_md(ws),
-            daily_notes=self._load_daily_notes(ws),
+            daily_notes={},  # dropped before injection; see the omit block below
         )
         for key in list(self._memory_snapshots):
             if key[0] == agent_id:
@@ -1771,6 +1860,244 @@ class TurnRunner:
                 ],
             )
             provider_manager.queue_prefetch_all(runtime_message, session_id=session_id)
+
+    def _memory_nudge_config(self) -> Any | None:
+        memory_cfg = getattr(self._config, "memory", None)
+        return getattr(memory_cfg, "nudge", None) if memory_cfg is not None else None
+
+    def _memory_nudge_allowed(
+        self,
+        *,
+        nudge_cfg: Any | None,
+        no_memory_capture: bool,
+        input_mode: str,
+        run_kind: str | None,
+    ) -> bool:
+        """Whether this turn may advance the nudge counter.
+
+        Deliberately stricter than turn capture: only real user turns count.
+        Machine traffic (cron, heartbeat, subagent, and the review turn
+        itself) says nothing durable about the user, and letting it advance
+        the counter would fire reviews over transcripts that are pure harness.
+        """
+        if nudge_cfg is None or not getattr(nudge_cfg, "enabled", False):
+            return False
+        if int(getattr(nudge_cfg, "interval", 0)) <= 0:
+            return False
+        if no_memory_capture or input_mode != "user":
+            return False
+        return not self._capture_filter_matches(
+            run_kind, getattr(nudge_cfg, "excluded_run_kinds", [])
+        )
+
+    @staticmethod
+    def _turn_used_memory_tool(turn_segments: Any) -> bool:
+        """True when the model called a curated-memory tool this turn.
+
+        A model that curates unprompted does not need to be nudged, so a
+        self-directed write resets the counter the same way a review would.
+        """
+        for segment in turn_segments or []:
+            if not isinstance(segment, dict):
+                continue
+            name = segment.get("name") or segment.get("tool") or segment.get("tool_name")
+            if isinstance(name, str) and name in _MEMORY_WRITE_TOOL_NAMES:
+                return True
+        return False
+
+    def _note_turn_for_memory_nudge(
+        self,
+        *,
+        agent_id: str,
+        session_key: str,
+        input_mode: str,
+        run_kind: str,
+        no_memory_capture: bool,
+        turn_segments: Any,
+        prior_user_turns: int | None = None,
+    ) -> bool:
+        """Advance the nudge counter; return True when a review is due.
+
+        The counter is held in memory rather than recomputed from history on
+        every turn, because the history window caps: its length plateaus in
+        exactly the long sessions the nudge exists for.
+
+        In-memory state alone is not enough, though. A TurnRunner is rebuilt
+        on every CLI invocation, and the gateway evicts idle agents, so a
+        fresh runner starts at zero and a session that spans processes would
+        never reach the interval -- the nudge would silently never fire. When
+        no counter exists yet, *prior_user_turns* seeds it from the persisted
+        transcript so the count survives the process that made it.
+        """
+        nudge_cfg = self._memory_nudge_config()
+        if not self._memory_nudge_allowed(
+            nudge_cfg=nudge_cfg,
+            no_memory_capture=no_memory_capture,
+            input_mode=input_mode,
+            run_kind=run_kind,
+        ):
+            return False
+
+        key = (agent_id, session_key)
+        self._evict_nudge_counters_if_needed()
+        interval = int(getattr(nudge_cfg, "interval", 0))
+        prior = self._memory_nudge_counters.get(key)
+        if prior is None:
+            prior = self._hydrate_nudge_counter(
+                interval=interval, prior_user_turns=prior_user_turns
+            )
+        count = prior + 1
+
+        # Every user turn advances the counter, including one that wrote to
+        # memory itself. A self-directed write saves the fact that was salient
+        # in that turn; the review re-reads the whole conversation and
+        # consolidates, and only the second one prunes and merges.
+        #
+        # A write still defers the review, because running one immediately
+        # after the model curated is mostly wasted. But the deferral is
+        # bounded: clearing the counter outright meant a model that saves on
+        # most turns never reached the interval and was never reviewed at all,
+        # and an unbounded hold has the same end state for a model that saves
+        # on every turn. Past _NUDGE_MAX_DEFERRAL_INTERVALS the review runs
+        # regardless.
+        if (
+            self._turn_used_memory_tool(turn_segments)
+            and count < interval * _NUDGE_MAX_DEFERRAL_INTERVALS
+        ):
+            self._memory_nudge_counters[key] = count
+            return False
+
+        if count < interval:
+            self._memory_nudge_counters[key] = count
+            return False
+        self._memory_nudge_counters[key] = 0
+        return True
+
+    @staticmethod
+    def _hydrate_nudge_counter(
+        *,
+        interval: int,
+        prior_user_turns: int | None,
+    ) -> int:
+        """Seed a missing counter from the number of user turns already stored.
+
+        Modular arithmetic recovers the session's phase: 27 prior turns at an
+        interval of 10 means 7 turns into the current cycle, so the next
+        review is 3 turns away. This is an approximation -- a self-directed
+        memory write earlier in the session shifted the real phase off the
+        multiple -- but the cost of being wrong is nudging a few turns early
+        or late, against the alternative of never nudging at all.
+        """
+        if interval <= 0 or not prior_user_turns or prior_user_turns <= 0:
+            return 0
+        # The current turn is counted by the caller, so exclude it here.
+        return max(0, prior_user_turns - 1) % interval
+
+    def forget_memory_nudge_counter(self, session_key: str) -> None:
+        """Drop nudge counters for *session_key* so they do not outlive it.
+
+        Sessions have no teardown hook reaching this far, so this is a
+        courtesy for callers that do know a session ended; the size cap in
+        ``_note_turn_for_memory_nudge`` is what actually bounds the dict.
+        """
+        for key in [k for k in self._memory_nudge_counters if k[1] == session_key]:
+            self._memory_nudge_counters.pop(key, None)
+
+    def _evict_nudge_counters_if_needed(self) -> None:
+        """Keep the counter dict bounded in a long-lived gateway process.
+
+        Nothing notifies this runner when a session ends, so without a cap
+        the dict grows once per session for the life of the process. Losing a
+        counter only costs a re-seed from the transcript on that session's
+        next turn, so evicting the oldest half is cheap; insertion order
+        approximates least-recently-started.
+        """
+        if len(self._memory_nudge_counters) <= _MAX_NUDGE_COUNTERS:
+            return
+        for key in list(self._memory_nudge_counters)[: _MAX_NUDGE_COUNTERS // 2]:
+            self._memory_nudge_counters.pop(key, None)
+
+    async def _run_memory_nudge_review(
+        self,
+        *,
+        agent_id: str,
+        session_key: str,
+    ) -> None:
+        """Run one background review turn asking the agent to curate memory.
+
+        Runs as its own turn against the same session, so the review sees the
+        conversation it is reviewing. `input_mode="system_event"` plus the
+        `memory_nudge` run kind keep it out of turn capture and out of its own
+        counter, so a review can never trigger another review.
+        """
+        nudge_cfg = self._memory_nudge_config()
+        if nudge_cfg is None:
+            return
+        timeout = float(getattr(nudge_cfg, "timeout_seconds", 90.0))
+
+        async def _drive() -> None:
+            # The review writes to memory on the user's behalf with nobody
+            # watching, so its outcome is recorded rather than discarded. A
+            # memory the user cannot see is one they cannot correct, and a
+            # silent review is indistinguishable from one that never ran --
+            # which is exactly how the counter bug below stayed hidden.
+            tool_context = ToolContext(
+                agent_id=agent_id,
+                session_key=session_key,
+                workspace_dir=str(self._resolve_memory_source_dir(agent_id)),
+                source_kind="memory_nudge",
+            )
+            writes: list[str] = []
+            failures: list[str] = []
+            async for event in self.run(
+                message=_MEMORY_REVIEW_PROMPT,
+                session_key=session_key,
+                tool_context=tool_context,
+                agent_id=agent_id,
+                input_mode="system_event",
+                run_kind="memory_nudge",
+                no_memory_capture=True,
+                persist_input=False,
+                max_iterations=int(getattr(nudge_cfg, "max_iterations", 6)),
+                input_provenance={"kind": "memory_nudge"},
+            ):
+                if (
+                    getattr(event, "kind", "") != "tool_result"
+                    or getattr(event, "tool_name", "") not in _MEMORY_WRITE_TOOL_NAMES
+                ):
+                    continue
+                summary = _summarize_memory_write(getattr(event, "arguments", None))
+                if getattr(event, "is_error", False):
+                    failures.append(summary)
+                else:
+                    writes.append(summary)
+
+            log.info(
+                "memory_nudge.review_done",
+                agent_id=agent_id,
+                session_key=session_key,
+                wrote=len(writes),
+                failed=len(failures),
+                entries=writes[:_MEMORY_REVIEW_LOG_MAX_ENTRIES],
+                errors=failures[:_MEMORY_REVIEW_LOG_MAX_ENTRIES],
+            )
+
+        try:
+            await asyncio.wait_for(_drive(), timeout=timeout)
+        except TimeoutError:
+            log.warning(
+                "memory_nudge.review_timeout",
+                agent_id=agent_id,
+                session_key=session_key,
+                timeout_seconds=timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 — a failed review must not fail the turn
+            log.warning(
+                "memory_nudge.review_failed",
+                agent_id=agent_id,
+                session_key=session_key,
+                error=str(exc),
+            )
 
     @staticmethod
     def _capture_filter_matches(value: str | None, excluded_values: Any) -> bool:
@@ -2235,9 +2562,7 @@ class TurnRunner:
                 agentos_router_tier=pa_out.agentos_router_tier,
             )
             if tool_context is not None:
-                tool_context.router_control_config = getattr(
-                    self._config, "agentos_router", None
-                )
+                tool_context.router_control_config = getattr(self._config, "agentos_router", None)
                 tool_context.router_control_hold_store = self._router_control_hold_store
                 tool_context.router_control_replay_depth = router_control_replay_depth
                 tool_context.router_control_turn_hold_applied = bool(
@@ -2492,7 +2817,7 @@ class TurnRunner:
             # 11. Observability: best-effort DecisionEntry for this turn.
             #     Must never break turn execution — wrap in try/except.
             turn.metadata.update(
-                self._collect_session_flush_metadata(agent_id, session_key=session_key)
+                {}
             )
             prompt_report_for_decision = build_prompt_report(
                 turn_id=turn_id,
@@ -3290,11 +3615,12 @@ class TurnRunner:
             if ctx.tool_policy:
                 from agentos.tools.policy import apply_tool_policy_layer
 
+                hard_denied = set(ctx.denied_tools)
                 ctx = apply_tool_policy_layer(
                     ctx,
                     ctx.tool_policy,
                     available_tools=self._tool_registry.list_names(),
-                    hard_denied=None,
+                    hard_denied=hard_denied,
                 )
             ctx = self._apply_runtime_capability_denies(ctx)
             log.debug(
@@ -3573,7 +3899,7 @@ class TurnRunner:
             memory_text = snap.memory_md
             daily = snap.daily_notes
         else:
-            daily = self._load_daily_notes(memory_source_dir)
+            daily = {}
             memory_text = self._load_memory_md(memory_source_dir)
         # The curated store now owns MEMORY.md / USER.md injection via the
         # ``## Memory`` block (usage header + sanitization). Drop the raw
@@ -3608,15 +3934,23 @@ class TurnRunner:
                     memory_text = (
                         f"{memory_text}\n\n{static_block}" if memory_text else static_block
                     )
+        # Daily notes are not auto-injected, and are no longer read from disk
+        # either: every load was immediately discarded here, so the directory
+        # scan and file reads bought nothing.
+        #
+        # `daily_notes_omitted` reports the POLICY, not a count. Deriving it
+        # from "how many did we drop" would flip it to False now that nothing
+        # is loaded, and the decision log would go quiet about a policy that
+        # is still in force -- the reader could no longer tell "notes were
+        # suppressed" from "this workspace has no notes". The count is 0
+        # because none were read, which is what the separate counter says.
         daily_notes_count_before_omit = len(daily)
-        daily_notes_omitted = daily_notes_count_before_omit > 0
-        if daily_notes_omitted:
-            daily = {}
+        daily_notes_omitted = True
+        daily = {}
         if prompt_metadata is not None:
             prompt_metadata["daily_notes_omitted"] = daily_notes_omitted
             prompt_metadata["daily_notes_count_before_omit"] = daily_notes_count_before_omit
-            if daily_notes_omitted:
-                prompt_metadata["daily_notes_policy_reason"] = "auto_injection_disabled"
+            prompt_metadata["daily_notes_policy_reason"] = "auto_injection_disabled"
             if fresh_user_session:
                 prompt_metadata["daily_notes_fresh_session_omitted"] = True
             prompt_metadata["memory_md_present"] = memory_text is not None
@@ -3844,6 +4178,16 @@ class TurnRunner:
             user_char_limit=user_limit,
         )
         store.load_from_disk()
+        if store.load_failed:
+            # The file exists but could not be read. Returning None here would
+            # be indistinguishable from "no memory yet", and the caller freezes
+            # that result for the whole session -- so one transient lock or
+            # permission blip would blind the agent until the session ends,
+            # silently. Raise so the snapshot is not frozen and the next turn
+            # retries the read.
+            raise MemorySourceUnreadableError(
+                f"curated memory unreadable: {sorted(store.load_failed)}"
+            )
         named_blocks = [
             (name, block)
             for name, block in (
@@ -3884,16 +4228,6 @@ class TurnRunner:
             joined_len = candidate_len
 
         return "\n\n".join(included)
-
-    def _load_daily_notes(self, workspace_dir: Any) -> dict[str, str]:
-        from agentos.identity.workspace import load_daily_notes
-
-        memory_cfg = getattr(self._config, "memory", None)
-        return load_daily_notes(
-            str(workspace_dir),
-            per_note_max_chars=getattr(memory_cfg, "daily_note_max_chars", 4000),
-            total_max_chars=getattr(memory_cfg, "daily_notes_total_max_chars", 8000),
-        )
 
     async def _run_pipeline(
         self,
@@ -3939,8 +4273,7 @@ class TurnRunner:
 
         router_cfg = getattr(self._config, "agentos_router", None)
         router_timeout = float(
-            getattr(router_cfg, "routing_timeout_seconds", None)
-            or DEFAULT_ROUTING_TIMEOUT_SECONDS
+            getattr(router_cfg, "routing_timeout_seconds", None) or DEFAULT_ROUTING_TIMEOUT_SECONDS
         )
 
         def _copy_router_turn(turn: TurnContext) -> TurnContext:
@@ -4128,39 +4461,6 @@ class TurnRunner:
 
         return final_prompt, cache_breakpoints, request_context_prompt
 
-    def _collect_session_flush_metadata(
-        self,
-        agent_id: str,
-        *,
-        session_key: str | None = None,
-    ) -> dict[str, Any]:
-        """Collect last SessionFlush extraction attribution for decision logs."""
-
-        svc = self._session_flush_service
-        get_stats = getattr(svc, "last_extraction_stats", None)
-        if not callable(get_stats):
-            return {}
-        try:
-            try:
-                stats = get_stats(agent_id, session_key) if session_key is not None else get_stats()
-            except TypeError:
-                stats = get_stats()
-        except Exception:
-            return {}
-        if not isinstance(stats, dict) or not stats:
-            return {}
-        stat_agent = stats.get("agent_id")
-        if stat_agent and str(stat_agent) != agent_id:
-            return {}
-        stat_session_key = stats.get("session_key")
-        if session_key and stat_session_key and str(stat_session_key) != session_key:
-            return {}
-        fallback_reason = str(stats.get("fallback_reason") or "")
-        return {
-            "session_flush_extraction_model": str(stats.get("extraction_model") or ""),
-            "session_flush_fallback_used": bool(fallback_reason),
-            "session_flush_fallback_reason": fallback_reason,
-        }
 
     async def _record_checkpoint_before_compaction(
         self,
@@ -4403,9 +4703,7 @@ class TurnRunner:
                 skill_count=prompt_report.skill_count if prompt_report else 0,
                 skills_prompt_chars=prompt_report.skills_prompt_chars if prompt_report else 0,
                 memory_md_present=prompt_report.memory_md_present if prompt_report else False,
-                daily_notes_omitted=(
-                    prompt_report.daily_notes_omitted if prompt_report else False
-                ),
+                daily_notes_omitted=(prompt_report.daily_notes_omitted if prompt_report else False),
                 daily_notes_count_before_omit=(
                     prompt_report.daily_notes_count_before_omit if prompt_report else 0
                 ),
@@ -4455,15 +4753,6 @@ class TurnRunner:
                 ),
                 runtime_context_chars=(
                     done_event.runtime_context_chars if done_event is not None else 0
-                ),
-                session_flush_extraction_model=(
-                    prompt_report.session_flush_extraction_model if prompt_report else None
-                ),
-                session_flush_fallback_used=(
-                    prompt_report.session_flush_fallback_used if prompt_report else False
-                ),
-                session_flush_fallback_reason=(
-                    prompt_report.session_flush_fallback_reason if prompt_report else None
                 ),
             )
             write_decision_entry(entry)
@@ -4600,62 +4889,16 @@ class TurnRunner:
             **compaction_lifecycle_payload(compaction_id, COMPACTION_TRIGGERED_EVENT),
         )
 
-        checkpoint_saved = await self._record_checkpoint_before_compaction(
+        # Still recorded: the checkpoint is the pre-image compaction repairs
+        # from. Its result is no longer consulted here now that the flush
+        # receipt it gated is gone.
+        await self._record_checkpoint_before_compaction(
             session_key,
             transcript,
             turn_id=compaction_id,
             source="t3_upgrade_compaction",
         )
-        flush_receipt = None
         flush_receipt_status = "not_required"
-        requires_safe_receipt = self._pre_compaction_flush_requires_safe_receipt()
-        if self._pre_compaction_flush_enabled():
-            flush_receipt = await self._await_pre_compaction_flush_grace(
-                transcript,
-                session_key,
-                event_prefix="t3_upgrade_compaction",
-                wait_for_receipt=requires_safe_receipt,
-                turn_id=compaction_id,
-                checkpoint_exists=checkpoint_saved,
-            )
-            flush_receipt_status = flush_receipt_status_for_compaction(
-                flush_receipt,
-                self._config,
-            )
-            memory_status = compaction_memory_status(
-                flush_receipt,
-                deterministic_receipt_safe=checkpoint_saved and not requires_safe_receipt,
-                required=self._pre_compaction_flush_enabled(),
-            )
-            if (
-                requires_safe_receipt
-                and not memory_status.allows_destructive_compaction
-            ):
-                log.warning(
-                    "t3_upgrade_compaction.skipped",
-                    session_key=session_key,
-                    reason="unsafe_flush_receipt",
-                )
-                notify_compaction(
-                    session_key,
-                    source="automatic",
-                    phase="t3_upgrade",
-                    status="skipped",
-                    reason="unsafe_flush_receipt",
-                    context_window_tokens=context_window_tokens,
-                    flush_receipt_status=flush_receipt_status,
-                    memory_safety_status=memory_status.safety_status,
-                    semantic_memory_status=memory_status.semantic_status,
-                    **compaction_effect_payload(
-                        status="skipped",
-                        reason="unsafe_flush_receipt",
-                    ),
-                    **compaction_lifecycle_payload(
-                        compaction_id,
-                        COMPACTION_TRIGGERED_EVENT,
-                    ),
-                )
-                return _T3_HANDLED
 
         try:
             from agentos.session.compaction import call_compact_with_optional_config
@@ -4880,63 +5123,15 @@ class TurnRunner:
             **compaction_effect_payload(status="started"),
             **compaction_lifecycle_payload(compaction_id, COMPACTION_TRIGGERED_EVENT),
         )
-        checkpoint_saved = await self._record_checkpoint_before_compaction(
+        # Still recorded: the checkpoint is the pre-image compaction repairs
+        # from, independent of the removed flush receipt.
+        await self._record_checkpoint_before_compaction(
             session_key,
             transcript,
             turn_id=compaction_id,
             source="preflight_compaction",
         )
-        flush_receipt = None
         flush_receipt_status = "not_required"
-        requires_safe_receipt = self._pre_compaction_flush_requires_safe_receipt()
-        if self._pre_compaction_flush_enabled():
-            flush_receipt = await self._await_pre_compaction_flush_grace(
-                transcript,
-                session_key,
-                event_prefix="preflight_compaction",
-                wait_for_receipt=requires_safe_receipt,
-                turn_id=compaction_id,
-                checkpoint_exists=checkpoint_saved,
-            )
-            flush_receipt_status = flush_receipt_status_for_compaction(
-                flush_receipt,
-                self._config,
-            )
-            memory_status = compaction_memory_status(
-                flush_receipt,
-                deterministic_receipt_safe=checkpoint_saved and not requires_safe_receipt,
-                required=self._pre_compaction_flush_enabled(),
-            )
-            if (
-                requires_safe_receipt
-                and not memory_status.allows_destructive_compaction
-            ):
-                log.warning(
-                    "preflight_compaction.skipped",
-                    session_key=session_key,
-                    reason="unsafe_flush_receipt",
-                )
-                notify_compaction(
-                    session_key,
-                    source="automatic",
-                    phase="preflight",
-                    status="skipped",
-                    reason="unsafe_flush_receipt",
-                    tokens_before=total_tokens,
-                    context_window_tokens=context_window_tokens,
-                    flush_receipt_status=flush_receipt_status,
-                    memory_safety_status=memory_status.safety_status,
-                    semantic_memory_status=memory_status.semantic_status,
-                    **compaction_effect_payload(
-                        status="skipped",
-                        reason="unsafe_flush_receipt",
-                    ),
-                    **compaction_lifecycle_payload(
-                        compaction_id,
-                        COMPACTION_TRIGGERED_EVENT,
-                    ),
-                )
-                return
         compaction_config = None
         skip_reason = "empty_summary"
         if compaction_provider is not None or compaction_model:
@@ -5041,9 +5236,7 @@ class TurnRunner:
             )
             return
         if not result:
-            skip_reason = str(
-                getattr(compaction_result, "skip_reason", None) or "empty_summary"
-            )
+            skip_reason = str(getattr(compaction_result, "skip_reason", None) or "empty_summary")
             if skip_reason == "stale_preimage":
                 notify_compaction(
                     session_key,
@@ -5116,23 +5309,7 @@ class TurnRunner:
                 ),
             )
 
-    def _pre_compaction_flush_enabled(self) -> bool:
-        from agentos.memory.flush_config import is_session_flush_enabled
 
-        if not is_session_flush_enabled():
-            return False
-
-        memory_cfg = getattr(self._config, "memory", None)
-        if memory_cfg is None:
-            return False
-
-        raw_enabled = getattr(memory_cfg, "flush_enabled", False)
-        if isinstance(raw_enabled, str):
-            return raw_enabled.strip().lower() not in {"0", "false", "no", "off"}
-        return bool(raw_enabled)
-
-    def _pre_compaction_flush_requires_safe_receipt(self) -> bool:
-        return pre_compaction_flush_requires_safe_receipt(self._config)
 
     def _pre_compaction_flush_timeout_seconds(self) -> float:
         memory_cfg = getattr(self._config, "memory", None)
@@ -5152,124 +5329,6 @@ class TurnRunner:
             return 120.0
         return max(timeout, 0.0)
 
-    async def _await_pre_compaction_flush_grace(
-        self,
-        transcript: list[Any],
-        session_key: str,
-        *,
-        event_prefix: str,
-        wait_for_receipt: bool | None = None,
-        turn_id: str | None = None,
-        checkpoint_exists: bool | None = None,
-    ) -> Any | None:
-        if self._session_flush_service is None:
-            log.warning(
-                f"{event_prefix}.flush_unavailable",
-                session_key=session_key,
-                error="flush_service_unavailable",
-            )
-            return None
-
-        should_wait = (
-            self._pre_compaction_flush_requires_safe_receipt()
-            if wait_for_receipt is None
-            else bool(wait_for_receipt)
-        )
-        background_timeout = self._pre_compaction_flush_background_timeout_seconds()
-        task = self._active_pre_compaction_flush_tasks.get(session_key)
-        if task is not None:
-            if task.done():
-                try:
-                    receipt = task.result()
-                except asyncio.CancelledError:
-                    log.debug(f"{event_prefix}.flush_cancelled", session_key=session_key)
-                    return None
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        f"{event_prefix}.flush_failed",
-                        session_key=session_key,
-                        error=str(exc),
-                    )
-                    return None
-                self._consume_pre_compaction_flush_task(session_key, task, event_prefix)
-                return receipt
-            log.debug(
-                f"{event_prefix}.flush_skipped",
-                session_key=session_key,
-                reason="already_running",
-                waiting=should_wait,
-            )
-            if not should_wait:
-                return None
-
-        else:
-            from agentos.session.keys import parse_agent_id
-
-            task = asyncio.create_task(
-                self._session_flush_service.execute(
-                    transcript,
-                    session_key,
-                    agent_id=parse_agent_id(session_key),
-                    message_window=0,
-                    segment_mode="auto",
-                    timeout=background_timeout,
-                    raw_capture_policy="required",
-                    turn_id=turn_id,
-                    checkpoint_exists=checkpoint_exists,
-                )
-            )
-            self._active_pre_compaction_flush_tasks[session_key] = task
-            task.add_done_callback(
-                lambda completed: self._consume_pre_compaction_flush_task(
-                    session_key,
-                    completed,
-                    event_prefix,
-                    background=True,
-                    compaction_id=turn_id,
-                )
-            )
-            if not should_wait:
-                log.info(
-                    f"{event_prefix}.flush_background_started",
-                    session_key=session_key,
-                    background_timeout_seconds=background_timeout,
-                )
-                return None
-
-        grace_timeout = self._pre_compaction_flush_timeout_seconds()
-        flush_t0 = time.monotonic()
-        try:
-            receipt = await asyncio.wait_for(asyncio.shield(task), timeout=grace_timeout)
-        except TimeoutError:
-            log.warning(
-                f"{event_prefix}.flush_timed_out",
-                session_key=session_key,
-                timeout_seconds=grace_timeout,
-                background_timeout_seconds=background_timeout,
-            )
-            return None
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            if self._active_pre_compaction_flush_tasks.get(session_key) is task:
-                self._active_pre_compaction_flush_tasks.pop(session_key, None)
-            log.warning(
-                f"{event_prefix}.flush_failed",
-                session_key=session_key,
-                error=str(exc),
-            )
-            return None
-
-        if self._active_pre_compaction_flush_tasks.get(session_key) is task:
-            self._active_pre_compaction_flush_tasks.pop(session_key, None)
-        self._log_pre_compaction_flush_receipt(
-            event_prefix,
-            session_key,
-            receipt,
-            duration_ms=int((time.monotonic() - flush_t0) * 1000),
-            background=False,
-        )
-        return receipt
 
     def _consume_pre_compaction_flush_task(
         self,
@@ -5502,11 +5561,7 @@ class TurnRunner:
         kept_entries = [self._emergency_replay_entry(raw) for raw in result.kept_entries]
         if not kept_entries or len(kept_entries) >= len(transcript):
             return False
-        summary = (
-            "Emergency request-scoped compaction\n"
-            f"Reason: {reason}\n\n"
-            f"{result.summary}"
-        )
+        summary = f"Emergency request-scoped compaction\nReason: {reason}\n\n{result.summary}"
         self._emergency_compaction_overrides[session_key] = _EmergencyCompactionOverride(
             summary=summary,
             kept_entries=kept_entries,
@@ -5683,9 +5738,7 @@ class TurnRunner:
                 )
             )
             replay_compaction_id = (
-                replayed_compaction_ids[0]
-                if replayed_compaction_ids
-                else new_compaction_id()
+                replayed_compaction_ids[0] if replayed_compaction_ids else new_compaction_id()
             )
             notify_compaction(
                 session_key,
@@ -5882,10 +5935,7 @@ class TurnRunner:
                 wrapped = _render_file_context_block(filename, media_type, extracted_pdf_text)
                 attachment_blocks.append(ContentBlockText(text=wrapped))
             elif media_type in _ENGINE_TEXT_FAMILY_MIMES:
-                if (
-                    is_attachment_ref(att)
-                    and att.get("_provider_inline_policy") == "preview_only"
-                ):
+                if is_attachment_ref(att) and att.get("_provider_inline_policy") == "preview_only":
                     decoded_text = _render_preview_only_attachment_text(
                         att,
                         filename=filename,

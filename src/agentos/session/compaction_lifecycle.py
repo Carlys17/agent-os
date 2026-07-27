@@ -20,9 +20,7 @@ SemanticMemoryStatus = Literal["healthy", "pending", "degraded", "failed", "not_
 CompactionDurability = Literal["durable", "request_scoped", "none"]
 
 SAFE_FLUSH_OUTPUT_COVERAGE_STATUSES: Final[frozenset[str]] = frozenset({"ok"})
-SAFE_FLUSH_OBLIGATION_STATUSES: Final[frozenset[str]] = frozenset(
-    {"ok", "backfilled"}
-)
+SAFE_FLUSH_OBLIGATION_STATUSES: Final[frozenset[str]] = frozenset({"ok", "backfilled"})
 COMPACTION_TRIGGERED_EVENT: Final[str] = "compaction.triggered"
 COMPACTION_CHUNK_SUMMARIZED_EVENT: Final[str] = "compaction.chunk_summarized"
 COMPACTION_SUMMARY_VERIFIED_EVENT: Final[str] = "compaction.summary_verified"
@@ -41,9 +39,7 @@ BENIGN_AUTOMATIC_COMPACTION_SKIP_REASONS: Final[frozenset[str]] = frozenset(
     }
 )
 NOOP_FLUSH_RESULT_STATUSES: Final[frozenset[str]] = frozenset({"ok_noop_no_memory"})
-ARCHIVE_ONLY_FLUSH_RESULT_STATUSES: Final[frozenset[str]] = frozenset(
-    {"ok_archive_only"}
-)
+ARCHIVE_ONLY_FLUSH_RESULT_STATUSES: Final[frozenset[str]] = frozenset({"ok_archive_only"})
 ARCHIVED_DEGRADED_FLUSH_RESULT_STATUSES: Final[frozenset[str]] = frozenset(
     {"parse_failed_archived", "provider_failed_archived", "apply_failed_archived"}
 )
@@ -151,9 +147,7 @@ def compaction_effect_payload(
         elif normalized_status in {"failed", "error", "cancelled"}:
             user_visible = True
         elif normalized_status == "skipped":
-            user_visible = (
-                normalized_reason not in BENIGN_AUTOMATIC_COMPACTION_SKIP_REASONS
-            )
+            user_visible = normalized_reason not in BENIGN_AUTOMATIC_COMPACTION_SKIP_REASONS
         else:
             user_visible = False
 
@@ -338,9 +332,8 @@ def flush_receipt_allows_destructive_compaction(receipt: Any) -> bool:
         return False
     if _receipt_value(receipt, "candidate_missing_ids", []):
         return False
-    if (
-        _receipt_int(_receipt_value(receipt, "obligation_count", 0)) <= 0
-        and not _receipt_value(receipt, "obligation_missing_ids", [])
+    if _receipt_int(_receipt_value(receipt, "obligation_count", 0)) <= 0 and not _receipt_value(
+        receipt, "obligation_missing_ids", []
     ):
         return True
     obligation_status = str(
@@ -466,6 +459,11 @@ def compaction_memory_status(
 
 
 def pre_compaction_flush_enabled(config: Any) -> bool:
+    # Kept function-local. The memory -> session edge that made this mandatory
+    # is gone (flush_status.py was removed), so this could now be hoisted --
+    # but leaving it here costs nothing and keeps the file safe if a future
+    # memory module imports from this package again.
+    # tests/test_memory_session_import.py guards that direction.
     from agentos.memory.flush_config import is_session_flush_enabled
 
     if not is_session_flush_enabled():
@@ -475,6 +473,19 @@ def pre_compaction_flush_enabled(config: Any) -> bool:
 
 
 def pre_compaction_flush_requires_safe_receipt(config: Any) -> bool:
+    """Whether compaction must refuse to run without a safe flush receipt.
+
+    Gated on the flush path being enabled at all, mirroring
+    ``pre_compaction_flush_enabled`` above. Without that gate, "block" demands
+    a receipt that nothing can produce: compaction is refused on every turn,
+    the context window fills, and the only signal is one warning line. The
+    user sees an agent that stops working for no visible reason.
+
+    Requiring a receipt is only meaningful when something is there to write
+    one.
+    """
+    if not pre_compaction_flush_enabled(config):
+        return False
     return flush_compaction_safety_mode(config) == "block"
 
 

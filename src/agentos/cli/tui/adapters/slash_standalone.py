@@ -26,9 +26,6 @@ from agentos.session.compaction import (
     build_compaction_config_from_provider,
     call_compact_with_optional_config,
 )
-from agentos.session.compaction_lifecycle import (
-    flush_receipt_is_successful_flush,
-)
 
 STANDALONE_SLASH_HANDLER_WORDS = frozenset(
     {
@@ -132,15 +129,6 @@ class StandaloneCompactSession(Protocol):
     ) -> Awaitable[str]: ...
 
 
-class StandaloneFlushTranscript(Protocol):
-    def __call__(
-        self,
-        transcript: object,
-        session_key: str,
-        **kwargs: Any,
-    ) -> Awaitable[Any]: ...
-
-
 @dataclass
 class StandaloneSlashServices:
     create_session: StandaloneCreateSession | None = None
@@ -148,7 +136,6 @@ class StandaloneSlashServices:
     truncate_session: StandaloneTruncateSession | None = None
     compact_session: StandaloneCompactSession | None = None
     compact_with_result: CompactWithResult | None = None
-    flush_transcript: StandaloneFlushTranscript | None = None
     config: object | None = None
     provider_selector: object | None = None
 
@@ -289,79 +276,6 @@ async def _read_standalone_transcript(
     return None
 
 
-async def _flush_before_standalone_rewrite(
-    slash_services: StandaloneSlashServices,
-    session_key: str,
-    *,
-    operation: str,
-) -> bool:
-    """Fail closed before reset; compact can continue on flush degradation."""
-    compaction_operation = operation.strip().lower() == "compact"
-    transcript = await _read_standalone_transcript_handle(
-        slash_services.read_transcript,
-        session_key,
-    )
-    if transcript is None:
-        if compaction_operation:
-            console.print(
-                f"[yellow]{operation}: could not inspect durable transcript; "
-                "continuing with compaction only.[/yellow]"
-            )
-            return True
-        console.print(
-            f"[yellow]{operation} aborted: could not inspect the durable transcript.[/yellow]"
-        )
-        return False
-    if not transcript:
-        return True
-
-    flush_transcript = slash_services.flush_transcript
-    if flush_transcript is None:
-        if compaction_operation:
-            console.print(
-                f"[yellow]{operation}: flush service is unavailable; "
-                "continuing with compaction only.[/yellow]"
-            )
-            return True
-        console.print(
-            f"[yellow]{operation} aborted: flush service is unavailable and "
-            "the durable transcript is non-empty.[/yellow]"
-        )
-        return False
-
-    try:
-        receipt = await flush_transcript(
-            transcript,
-            session_key,
-            agent_id="main",
-            timeout=30.0,
-            message_window=0,
-            segment_mode="auto",
-        )
-    except Exception as exc:  # noqa: BLE001
-        if compaction_operation:
-            console.print(
-                f"[yellow]{operation}: flush failed ({exc}); "
-                "continuing with compaction only.[/yellow]"
-            )
-            return True
-        console.print(f"[yellow]{operation} aborted: flush failed ({exc}).[/yellow]")
-        return False
-
-    if not flush_receipt_is_successful_flush(receipt):
-        if compaction_operation:
-            error = getattr(receipt, "error", None) or "degraded receipt"
-            console.print(
-                f"[yellow]{operation}: flush failed ({error}); "
-                "continuing with compaction only.[/yellow]"
-            )
-            return True
-        error = getattr(receipt, "error", None) or "unknown error"
-        console.print(f"[yellow]{operation} aborted: flush failed ({error}).[/yellow]")
-        return False
-    return True
-
-
 def _save_transcript_command(cmd: str, state: ChatSessionState) -> None:
     parts = cmd.split(maxsplit=1)
     if len(parts) > 1:
@@ -432,14 +346,6 @@ async def _compact_standalone_context(context: StandaloneSlashContext) -> None:
     compact_with_result = slash_services.compact_with_result
     if compact_session is None and compact_with_result is None:
         console.print("[yellow]No session manager available.[/yellow]")
-        return
-
-    safe_to_compact = await _flush_before_standalone_rewrite(
-        slash_services,
-        context.session_key,
-        operation="Compact",
-    )
-    if not safe_to_compact:
         return
 
     console.print(f"[{ACCENT}]compacting context...[/]")
@@ -626,13 +532,6 @@ async def handle_standalone_slash_command(
     if cmd in {"/clear", "/reset"}:
         truncate_session = context.slash_services.truncate_session
         if truncate_session is not None:
-            safe_to_reset = await _flush_before_standalone_rewrite(
-                context.slash_services,
-                context.session_key,
-                operation="Reset",
-            )
-            if not safe_to_reset:
-                return True
             await truncate_session(context.session_key, max_messages=0)
         state.transcript.clear()
         state.usage.reset()

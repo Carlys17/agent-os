@@ -7,6 +7,7 @@ import {
   BotIcon,
   CheckCircle2Icon,
   FileCode2Icon,
+  KeyRoundIcon,
   LoaderCircleIcon,
   RefreshCwIcon,
   SlidersHorizontalIcon,
@@ -15,6 +16,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
 import { SetupPage } from '@/views/setup/SetupPage'
+import { ENV_QUERY_KEY, type EnvListResponse } from '@/views/env/logic'
 import { ConfigPage } from '@/views/config/ConfigPage'
 import {
   loadSettingsSnapshot,
@@ -57,6 +59,17 @@ export function SettingsPage() {
     queryFn: () => loadSettingsSnapshot(rpc),
     refetchOnWindowFocus: false,
   })
+
+  // Shares ENV_QUERY_KEY with the Environment screen, so opening it from here
+  // renders from cache instead of refetching.
+  const envQuery = useQuery<EnvListResponse>({
+    queryKey: ENV_QUERY_KEY,
+    queryFn: () => rpc.call<EnvListResponse>('env.list', {}),
+    refetchOnWindowFocus: false,
+  })
+  const envLabel = envQuery.data
+    ? `${envQuery.data.setCount} of ${envQuery.data.totalCount} set`
+    : 'Manage variables'
 
   const snapshot = snapshotQuery.data
   const snapshotUnavailable = snapshotQuery.isError && !snapshot
@@ -206,6 +219,19 @@ export function SettingsPage() {
               <strong title={activeModel}>{activeModel}</strong>
             </span>
           </div>
+          {/* A pointer, not a second copy of the table: environment variables
+              are managed on their own screen so there is one place to look. */}
+          <button
+            type="button"
+            className="settings-glance__item settings-glance__item--action"
+            onClick={() => navigate('/env')}
+          >
+            <KeyRoundIcon aria-hidden="true" />
+            <span>
+              <small>Environment</small>
+              <strong>{envLabel}</strong>
+            </span>
+          </button>
         </div>
       </section>
 

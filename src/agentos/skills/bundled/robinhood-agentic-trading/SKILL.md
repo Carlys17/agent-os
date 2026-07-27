@@ -5,6 +5,8 @@ provenance:
   origin: agentos-original
   license: MIT
   maintained_by: AgentOS
+publisher:
+  id: robinhood
 ---
 
 # Robinhood Agentic Trading

@@ -22,10 +22,10 @@ from agentos.channels.command_replies import (
 )
 from agentos.channels.types import OutgoingMessage
 from agentos.engine.commands import DEFAULT_REGISTRY, ExecutionKind, ParamsFactory, Surface
-from agentos.gateway.auth import Principal
+from agentos.gateway.access import ConnectionSurface
+from agentos.gateway.auth import AccessContext
 from agentos.gateway.routing import RouteEnvelope, SourceKind
 from agentos.gateway.rpc import RpcContext
-from agentos.gateway.scopes import READ_SCOPE, WRITE_SCOPE
 
 
 class CommandRegistry:
@@ -52,6 +52,12 @@ class CommandRegistry:
         ):
             return None
         bare = head[1:].lower()
+        command_name, separator, target = bare.partition("@")
+        if separator:
+            expected_target = str(envelope.metadata.get("bot_username") or "").strip()
+            if not target or not expected_target or target.casefold() != expected_target.casefold():
+                return None
+            bare = command_name
         command = self._commands.get(bare)
         return (bare, *command) if command else None
 
@@ -109,18 +115,17 @@ def build_channel_rpc_context(
     gateway_config: Any,
     **handles: Any,
 ) -> RpcContext:
-    admin_senders = getattr(gateway_config, "channel_admin_senders", {})
+    """Build a channel-surface RPC context after successful pairing."""
+
     sender_id = envelope.sender_id
-    is_operator = bool(sender_id and sender_id in admin_senders.get(envelope.source_name, []))
-    principal = Principal(
-        role="operator" if is_operator else "viewer",
-        scopes=frozenset({READ_SCOPE, WRITE_SCOPE}) if is_operator else frozenset(),
-        is_owner=False,
-        authenticated=True,
+    access = AccessContext(
+        surface=ConnectionSurface.CHANNEL,
+        admitted=True,
+        credential_verified=True,
     )
     return RpcContext(
         conn_id=f"channel:{envelope.source_name}:{sender_id or 'unknown'}",
-        principal=principal,
+        access=access,
         config=gateway_config,
         originating_envelope=envelope,
         **handles,

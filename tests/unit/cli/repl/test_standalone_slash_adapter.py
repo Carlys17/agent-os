@@ -16,7 +16,6 @@ class _StandaloneSlashHarness:
         self.create_calls: list[dict[str, str]] = []
         self.truncate_calls: list[tuple[str, int]] = []
         self.compact_calls: list[tuple[str, int, object | None]] = []
-        self.flush_calls: list[dict[str, object]] = []
         self.transcripts: dict[str, list[object]] = {}
 
     async def create_session(
@@ -53,27 +52,6 @@ class _StandaloneSlashHarness:
         self.compact_calls.append((session_key, context_window_tokens, config))
         return "summary"
 
-    async def flush_transcript(
-        self,
-        transcript: object,
-        session_key: str,
-        **kwargs: object,
-    ) -> object:
-        self.flush_calls.append(
-            {"transcript": transcript, "session_key": session_key, "kwargs": kwargs}
-        )
-        return SimpleNamespace(
-            mode="llm",
-            error=None,
-            indexed_chunk_count=1,
-            integrity_status="ok",
-            output_coverage_status="ok",
-            invalid_candidate_count=0,
-            candidate_missing_ids=[],
-            obligation_status="ok",
-            obligation_missing_ids=[],
-        )
-
 
 def _slash_services(harness: _StandaloneSlashHarness):
     from agentos.cli.repl.standalone_slash_adapter import StandaloneSlashServices
@@ -83,7 +61,6 @@ def _slash_services(harness: _StandaloneSlashHarness):
         read_transcript=harness.read_transcript,
         truncate_session=harness.truncate_session,
         compact_session=harness.compact_session,
-        flush_transcript=harness.flush_transcript,
     )
 
 
@@ -263,7 +240,7 @@ async def test_standalone_slash_adapter_new_session_uses_typed_create_handle() -
 
 
 @pytest.mark.asyncio
-async def test_standalone_slash_adapter_reset_uses_typed_flush_and_truncate_handles() -> None:
+async def test_standalone_slash_adapter_reset_uses_typed_truncate_handle() -> None:
     from agentos.cli.repl.standalone_slash_adapter import (
         StandaloneSlashContext,
         handle_standalone_slash_command,
@@ -288,14 +265,6 @@ async def test_standalone_slash_adapter_reset_uses_typed_flush_and_truncate_hand
     handled = await handle_standalone_slash_command("/reset", context)
 
     assert handled is True
-    assert len(harness.flush_calls) == 1
-    assert harness.flush_calls[0]["session_key"] == session_key
-    assert harness.flush_calls[0]["kwargs"] == {
-        "agent_id": "main",
-        "timeout": 30.0,
-        "message_window": 0,
-        "segment_mode": "auto",
-    }
     assert harness.truncate_calls == [(session_key, 0)]
     assert not state.transcript.to_markdown()
 
@@ -325,8 +294,7 @@ async def test_standalone_slash_adapter_compact_uses_typed_compact_handles() -> 
             create_session=harness.create_session,
             read_transcript=harness.read_transcript,
             compact_session=harness.compact_session,
-            flush_transcript=harness.flush_transcript,
-            config=config,
+                config=config,
             provider_selector=None,
         ),
         turn_runner=object(),
@@ -337,7 +305,6 @@ async def test_standalone_slash_adapter_compact_uses_typed_compact_handles() -> 
     handled = await handle_standalone_slash_command("/compact", context)
 
     assert handled is True
-    assert len(harness.flush_calls) == 1
     assert len(harness.compact_calls) == 1
     compact_session_key, context_window, compaction_config = harness.compact_calls[0]
     assert compact_session_key == session_key

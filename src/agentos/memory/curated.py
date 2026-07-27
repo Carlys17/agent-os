@@ -14,7 +14,9 @@ via atomic replace, so concurrent agent sessions never clobber each other.
 
 from __future__ import annotations
 
+import errno
 import os
+import shutil
 import tempfile
 import time
 from collections.abc import Iterator
@@ -31,6 +33,11 @@ try:
 except ImportError:  # pragma: no cover - non-POSIX
     fcntl = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - Windows only
+    import msvcrt
+except ImportError:
+    msvcrt = None  # type: ignore[assignment]
+
 ENTRY_DELIMITER = "\n§\n"
 
 # After this many failed consolidation attempts (overflow / zero-match) in ONE
@@ -38,11 +45,68 @@ ENTRY_DELIMITER = "\n§\n"
 # fragile replace/add can't loop the turn to budget exhaustion.
 _MAX_CONSOLIDATION_FAILURES_PER_TURN = 3
 
+# Sentinel returned by _reload_target when the memory file exists but could
+# not be read (transient lock, permission change, I/O error, corrupt UTF-8).
+# It is deliberately NOT a valid .bak path string: every write path checks for
+# it by identity before touching disk. Treating an unreadable file as "empty"
+# and then flushing would silently erase every stored entry.
+_READ_FAILED = "\x00__read_failed__"
+
+# How long a consolidation-failure streak stays "current". The store is cached
+# per workspace for the whole process, so failures must expire on their own --
+# otherwise three failures spread across three unrelated turns would latch the
+# tool into its terminal error state permanently. Comfortably longer than any
+# single turn's retry loop, far shorter than a session.
+_CONSOLIDATION_FAILURE_WINDOW_S = 300.0
+
 
 def _scan(content: str) -> str | None:
     from agentos.tools.builtin.memory_tools import _scan_memory_content
 
     return _scan_memory_content(content)
+
+
+def _atomic_replace(tmp_path: str | Path, target: Path) -> None:
+    """Move *tmp_path* onto *target* atomically, preserving symlinks.
+
+    A plain ``os.replace`` swaps the SYMLINK itself for a regular file, which
+    silently detaches deployments that symlink MEMORY.md / USER.md into a
+    dotfiles repo or a managed profile package. Resolving the link first makes
+    the rename land on the real file so the symlink survives.
+
+    ``EXDEV`` (tmp and target on different filesystems) and ``EBUSY`` (target
+    is a bind mount or held open) cannot be renamed across; fall back to a
+    copy + fsync so those deployments still get a durable write instead of an
+    exception. The copy is not atomic, but the alternative is no write at all.
+    """
+    target_str = str(target)
+    real_path = os.path.realpath(target_str) if os.path.islink(target_str) else target_str
+    tmp_str = str(tmp_path)
+    try:
+        os.replace(tmp_str, real_path)
+        return
+    except OSError as exc:
+        if exc.errno not in (errno.EXDEV, errno.EBUSY):
+            raise
+        log.debug(
+            "curated_memory_atomic_replace_fallback",
+            tmp=tmp_str,
+            target=real_path,
+            errno=errno.errorcode.get(exc.errno, exc.errno),
+        )
+    shutil.copyfile(tmp_str, real_path)
+    try:
+        fd = os.open(real_path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:  # pragma: no cover - best effort durability
+        pass
+    try:
+        os.unlink(tmp_str)
+    except OSError:  # pragma: no cover
+        pass
 
 
 class CuratedMemoryStore:
@@ -60,6 +124,11 @@ class CuratedMemoryStore:
         self.memory_entries: list[str] = []
         self.user_entries: list[str] = []
         self._consolidation_failures = 0
+        self._first_failure_at = 0.0
+        # Targets whose last load_from_disk() could not read the file. Their
+        # in-memory entries are NOT the file's contents, so writes must refuse
+        # rather than flush emptiness over real data.
+        self.load_failed: dict[str, bool] = {}
         # Frozen snapshot for system-prompt injection -- set once per
         # load_from_disk() call and never mutated by mid-session writes.
         self._snapshot: dict[str, str] = {}
@@ -82,8 +151,30 @@ class CuratedMemoryStore:
         stable for the entire session (prefix-cache invariant holds).
         """
         self._memory_dir.mkdir(parents=True, exist_ok=True)
-        self.memory_entries = list(dict.fromkeys(self._read_file(self._path_for("memory"))))
-        self.user_entries = list(dict.fromkeys(self._read_file(self._path_for("user"))))
+
+        # An unreadable file is not an empty one. Loading it as [] would put
+        # the agent into a silent memory blackout for the whole session --
+        # the file still holds every entry on disk, but the snapshot is empty
+        # and nothing anywhere says why. Worse, the store then holds [] in
+        # memory while disk holds real entries, and `add` (which skips the
+        # drift check) would flush that emptiness back over them.
+        #
+        # Record the failure instead: writes refuse, and the caller can tell
+        # "no memory" apart from "could not read memory".
+        self.load_failed = {}
+        memory_raw = self._read_raw_checked(self._path_for("memory"))
+        user_raw = self._read_raw_checked(self._path_for("user"))
+        if memory_raw is None:
+            self.load_failed["memory"] = True
+            log.error(
+                "curated_memory_load_failed", target="memory", path=str(self._path_for("memory"))
+            )
+        if user_raw is None:
+            self.load_failed["user"] = True
+            log.error("curated_memory_load_failed", target="user", path=str(self._path_for("user")))
+
+        self.memory_entries = list(dict.fromkeys(self._parse_entries(memory_raw or "")))
+        self.user_entries = list(dict.fromkeys(self._parse_entries(user_raw or "")))
 
         sanitized_memory = self._sanitize_entries_for_snapshot(self.memory_entries, "MEMORY.md")
         sanitized_user = self._sanitize_entries_for_snapshot(self.user_entries, "USER.md")
@@ -93,7 +184,14 @@ class CuratedMemoryStore:
         }
 
     def reset_consolidation_failures(self) -> None:
+        """Clear the consolidation-failure streak.
+
+        Callers that know a turn boundary was crossed can call this to reset
+        immediately; otherwise the streak expires on its own after
+        ``_CONSOLIDATION_FAILURE_WINDOW_S`` (see ``_consolidation_failure``).
+        """
         self._consolidation_failures = 0
+        self._first_failure_at = 0.0
 
     # -- public state -----------------------------------------------------
 
@@ -128,7 +226,9 @@ class CuratedMemoryStore:
             return {"success": False, "error": scan_error}
 
         with self._file_lock(self._path_for(target)):
-            self._reload_target(target, skip_drift=True)
+            reload_signal = self._reload_target(target, skip_drift=True)
+            if reload_signal is _READ_FAILED:
+                return self._read_failed_error(self._path_for(target))
             entries = self.entries_for(target)
             limit = self._char_limit(target)
             if content in entries:
@@ -136,17 +236,19 @@ class CuratedMemoryStore:
             new_total = len(ENTRY_DELIMITER.join([*entries, content]))
             if new_total > limit:
                 current = self._char_count(target)
-                return self._consolidation_failure({
-                    "success": False,
-                    "error": (
-                        f"Memory at {current:,}/{limit:,} chars. Adding this entry "
-                        f"({len(content)} chars) would exceed the limit. Consolidate now: "
-                        f"use 'replace' to merge overlapping entries or 'remove' stale "
-                        f"ones (see current_entries), then retry — all in this turn."
-                    ),
-                    "current_entries": list(entries),
-                    "usage": f"{current:,}/{limit:,}",
-                })
+                return self._consolidation_failure(
+                    {
+                        "success": False,
+                        "error": (
+                            f"Memory at {current:,}/{limit:,} chars. Adding this entry "
+                            f"({len(content)} chars) would exceed the limit. Consolidate now: "
+                            f"use 'replace' to merge overlapping entries or 'remove' stale "
+                            f"ones (see current_entries), then retry — all in this turn."
+                        ),
+                        "current_entries": list(entries),
+                        "usage": f"{current:,}/{limit:,}",
+                    }
+                )
             entries.append(content)
             self._set_entries(target, entries)
             self._save(target)
@@ -168,19 +270,23 @@ class CuratedMemoryStore:
 
         with self._file_lock(self._path_for(target)):
             bak = self._reload_target(target, skip_drift=False)
+            if bak is _READ_FAILED:
+                return self._read_failed_error(self._path_for(target))
             if bak:
                 return self._drift_error(self._path_for(target), bak)
             entries = self.entries_for(target)
             matches = [(i, e) for i, e in enumerate(entries) if old_text in e]
             if not matches:
-                return self._consolidation_failure({
-                    "success": False,
-                    "error": (
-                        f"No entry matched '{old_text}'. Check current_entries and retry "
-                        f"with the exact text of the entry you want to replace."
-                    ),
-                    "current_entries": list(entries),
-                })
+                return self._consolidation_failure(
+                    {
+                        "success": False,
+                        "error": (
+                            f"No entry matched '{old_text}'. Check current_entries and retry "
+                            f"with the exact text of the entry you want to replace."
+                        ),
+                        "current_entries": list(entries),
+                    }
+                )
             if len({e for _, e in matches}) > 1:
                 return {
                     "success": False,
@@ -194,16 +300,18 @@ class CuratedMemoryStore:
             new_total = len(ENTRY_DELIMITER.join(test_entries))
             if new_total > limit:
                 current = self._char_count(target)
-                return self._consolidation_failure({
-                    "success": False,
-                    "error": (
-                        f"Replacement would put memory at {new_total:,}/{limit:,} chars. "
-                        f"Shorten the new content or 'remove' stale entries first, then "
-                        f"retry — all in this turn."
-                    ),
-                    "current_entries": list(entries),
-                    "usage": f"{current:,}/{limit:,}",
-                })
+                return self._consolidation_failure(
+                    {
+                        "success": False,
+                        "error": (
+                            f"Replacement would put memory at {new_total:,}/{limit:,} chars. "
+                            f"Shorten the new content or 'remove' stale entries first, then "
+                            f"retry — all in this turn."
+                        ),
+                        "current_entries": list(entries),
+                        "usage": f"{current:,}/{limit:,}",
+                    }
+                )
             entries[idx] = new_content
             self._set_entries(target, entries)
             self._save(target)
@@ -215,19 +323,23 @@ class CuratedMemoryStore:
             return {"success": False, "error": "old_text cannot be empty."}
         with self._file_lock(self._path_for(target)):
             bak = self._reload_target(target, skip_drift=False)
+            if bak is _READ_FAILED:
+                return self._read_failed_error(self._path_for(target))
             if bak:
                 return self._drift_error(self._path_for(target), bak)
             entries = self.entries_for(target)
             matches = [(i, e) for i, e in enumerate(entries) if old_text in e]
             if not matches:
-                return self._consolidation_failure({
-                    "success": False,
-                    "error": (
-                        f"No entry matched '{old_text}'. Check current_entries and retry "
-                        f"with the exact text of the entry you want to remove."
-                    ),
-                    "current_entries": list(entries),
-                })
+                return self._consolidation_failure(
+                    {
+                        "success": False,
+                        "error": (
+                            f"No entry matched '{old_text}'. Check current_entries and retry "
+                            f"with the exact text of the entry you want to remove."
+                        ),
+                        "current_entries": list(entries),
+                    }
+                )
             if len({e for _, e in matches}) > 1:
                 return {
                     "success": False,
@@ -267,6 +379,8 @@ class CuratedMemoryStore:
 
         with self._file_lock(self._path_for(target)):
             bak = self._reload_target(target, skip_drift=False)
+            if bak is _READ_FAILED:
+                return self._read_failed_error(self._path_for(target))
             if bak:
                 return self._drift_error(self._path_for(target), bak)
 
@@ -298,9 +412,7 @@ class CuratedMemoryStore:
                         )
                     matches = [j for j, e in enumerate(working) if old_text in e]
                     if not matches:
-                        return self._batch_error(
-                            target, f"{pos}: no entry matched '{old_text}'."
-                        )
+                        return self._batch_error(target, f"{pos}: no entry matched '{old_text}'.")
                     if len({working[j] for j in matches}) > 1:
                         return self._batch_error(
                             target,
@@ -314,9 +426,7 @@ class CuratedMemoryStore:
                         return self._batch_error(target, f"{pos}: old_text is required.")
                     matches = [j for j, e in enumerate(working) if old_text in e]
                     if not matches:
-                        return self._batch_error(
-                            target, f"{pos}: no entry matched '{old_text}'."
-                        )
+                        return self._batch_error(target, f"{pos}: no entry matched '{old_text}'.")
                     if len({working[j] for j in matches}) > 1:
                         return self._batch_error(
                             target,
@@ -334,17 +444,19 @@ class CuratedMemoryStore:
             new_total = len(ENTRY_DELIMITER.join(working)) if working else 0
             if new_total > limit:
                 current = self._char_count(target)
-                return self._consolidation_failure({
-                    "success": False,
-                    "error": (
-                        f"After applying all {len(operations)} operations, memory would be "
-                        f"at {new_total:,}/{limit:,} chars -- over the limit. Remove or "
-                        f"shorten more entries in the same batch (see current_entries "
-                        f"below), then retry."
-                    ),
-                    "current_entries": list(self.entries_for(target)),
-                    "usage": f"{current:,}/{limit:,}",
-                })
+                return self._consolidation_failure(
+                    {
+                        "success": False,
+                        "error": (
+                            f"After applying all {len(operations)} operations, memory would be "
+                            f"at {new_total:,}/{limit:,} chars -- over the limit. Remove or "
+                            f"shorten more entries in the same batch (see current_entries "
+                            f"below), then retry."
+                        ),
+                        "current_entries": list(self.entries_for(target)),
+                        "usage": f"{current:,}/{limit:,}",
+                    }
+                )
 
             # Commit.
             self._set_entries(target, working)
@@ -356,12 +468,14 @@ class CuratedMemoryStore:
         """Build a batch-abort error that reports live (uncommitted) state."""
         current = self._char_count(target)
         limit = self._char_limit(target)
-        return self._consolidation_failure({
-            "success": False,
-            "error": message + " No operations were applied (batch is all-or-nothing).",
-            "current_entries": list(self.entries_for(target)),
-            "usage": f"{current:,}/{limit:,}",
-        })
+        return self._consolidation_failure(
+            {
+                "success": False,
+                "error": message + " No operations were applied (batch is all-or-nothing).",
+                "current_entries": list(self.entries_for(target)),
+                "usage": f"{current:,}/{limit:,}",
+            }
+        )
 
     # -- internals ---------------------------------------------------------
 
@@ -399,9 +513,7 @@ class CuratedMemoryStore:
                 continue
             threat = _scan(entry)
             if threat:
-                log.warning(
-                    "memory_entry_blocked_at_load", filename=filename, threat=threat
-                )
+                log.warning("memory_entry_blocked_at_load", filename=filename, threat=threat)
                 sanitized.append(
                     f"[BLOCKED: {filename} entry contained threat pattern(s): "
                     f"{threat}. Removed from system prompt; use the memory "
@@ -433,24 +545,37 @@ class CuratedMemoryStore:
         """Re-read entries from disk into in-memory state.
 
         Called under the file lock to get the latest state before mutating.
-        Returns the backup path if external drift was detected (the on-disk
-        file contains content that wouldn't round-trip through our
-        parser/serializer, OR an entry larger than the store's char limit).
-        When drift is detected the caller must abort the mutation — flushing
-        would discard the un-roundtrippable content. Returns None on clean
-        reload.
+        Reads the file EXACTLY ONCE and feeds those bytes to both the drift
+        check and the parse, so no external writer can slip between the two
+        (a second read would reopen the TOCTOU window this closes).
+
+        Returns:
+          - ``_READ_FAILED`` when the file could not be read at all. In-memory
+            state is left untouched and the caller MUST abort the mutation.
+          - the ``.bak`` path string when external drift was detected.
+          - ``None`` on a clean reload.
 
         When *skip_drift* is True the round-trip / entry-size check is
         bypassed. Used by ``add``, which appends without rewriting, so
         existing content is never clobbered.
         """
-        bak = None if skip_drift else self._detect_external_drift(target)
-        fresh = list(dict.fromkeys(self._read_file(self._path_for(target))))
+        path = self._path_for(target)
+        raw = self._read_raw_checked(path)
+        if raw is None:
+            # Unreadable != empty. Leave in-memory entries alone so a caller
+            # that ignores this signal still cannot flush [] over real data.
+            return _READ_FAILED
+        bak = None if skip_drift else self._detect_external_drift(target, raw)
+        fresh = list(dict.fromkeys(self._parse_entries(raw)))
         self._set_entries(target, fresh)
         return bak
 
-    def _detect_external_drift(self, target: str) -> str | None:
+    def _detect_external_drift(self, target: str, raw: str) -> str | None:
         """Return a backup-path string if on-disk content shows external drift.
+
+        *raw* is the already-read file content -- callers pass the same bytes
+        they will parse, so this check and the parse can never disagree about
+        what is on disk.
 
         The memory file is supposed to be a list of small entries the store
         wrote, joined by §. Detect drift via two signals:
@@ -471,12 +596,6 @@ class CuratedMemoryStore:
         backed up; returns None when the file looks tool-shaped.
         """
         path = self._path_for(target)
-        if not path.exists():
-            return None
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError:
-            return None
         if not raw.strip():
             return None
 
@@ -504,6 +623,32 @@ class CuratedMemoryStore:
     def _save(self, target: str) -> None:
         self._memory_dir.mkdir(parents=True, exist_ok=True)
         self._write_file(self._path_for(target), self.entries_for(target))
+
+    @staticmethod
+    def _read_failed_error(path: Path) -> dict[str, Any]:
+        """Build the error returned when the memory file could not be read.
+
+        Refusing the write is the whole point: the alternative is to treat an
+        unreadable file as an empty one and flush, which deletes every entry
+        the store already held. The write is dropped, disk is untouched, and
+        the model is told to move on rather than retry into the same error.
+        """
+        return {
+            "success": False,
+            "done": True,
+            "error": (
+                f"Refusing to write {path.name}: the existing file could not be "
+                f"read (locked by another process, permission change, I/O error, "
+                f"or invalid UTF-8). Writing now would overwrite its current "
+                f"contents with an empty store and lose every saved entry. "
+                f"Memory is unchanged — continue with your reply; the fact can "
+                f"be saved in a later turn."
+            ),
+            "remediation": (
+                f"Check that {path} is readable (permissions, encoding) and that "
+                f"no other process is holding it open, then retry."
+            ),
+        }
 
     @staticmethod
     def _drift_error(path: Path, bak_path: str) -> dict[str, Any]:
@@ -536,6 +681,23 @@ class CuratedMemoryStore:
         }
 
     def _consolidation_failure(self, response: dict[str, Any]) -> dict[str, Any]:
+        """Count a failed consolidation and cut the model off after N in a row.
+
+        The budget is scoped to a WINDOW rather than a literal turn: this
+        store is cached per workspace for the life of the process, so a plain
+        counter would accumulate failures across unrelated turns and then
+        refuse every future write forever -- the tool would go permanently
+        dead with no way back. Any failure older than the window is stale
+        evidence about a turn that already ended, so the count restarts.
+
+        A successful write also resets it (see ``_success``).
+        """
+        now = time.monotonic()
+        if now - self._first_failure_at > _CONSOLIDATION_FAILURE_WINDOW_S:
+            self._consolidation_failures = 0
+            self._first_failure_at = now
+        if self._consolidation_failures == 0:
+            self._first_failure_at = now
         self._consolidation_failures += 1
         if self._consolidation_failures <= _MAX_CONSOLIDATION_FAILURES_PER_TURN:
             return response
@@ -550,7 +712,17 @@ class CuratedMemoryStore:
         }
 
     def _success(self, target: str, message: str | None = None) -> dict[str, Any]:
+        """Build the terminal success response for a committed write.
+
+        Deliberately does NOT echo the entries list. Handing the model the
+        full store right after a successful write invites it to spot "one
+        more thing to fix" and re-issue the same operations -- observed as a
+        correct batch on call 1 followed by several redundant repeats. The
+        entries only appear on the error paths, where the model genuinely
+        needs them to decide what to consolidate.
+        """
         self._consolidation_failures = 0
+        self._first_failure_at = 0.0
         entries = self.entries_for(target)
         current = self._char_count(target)
         limit = self._char_limit(target)
@@ -561,7 +733,6 @@ class CuratedMemoryStore:
             "target": target,
             "usage": f"{pct}% — {current:,}/{limit:,} chars",
             "entry_count": len(entries),
-            "current_entries": list(entries),
         }
         if message:
             resp["message"] = message
@@ -575,30 +746,71 @@ class CuratedMemoryStore:
     @staticmethod
     @contextmanager
     def _file_lock(path: Path) -> Iterator[None]:
+        """Hold an exclusive lock across a read-modify-write of *path*.
+
+        The lock lives in a sibling ``.lock`` file so the memory file itself
+        stays free to be swapped by atomic replace.
+
+        Windows has no ``fcntl``; without the ``msvcrt`` branch the lock was a
+        bare ``yield``, so two concurrent sessions on Windows interleaved
+        their read-modify-write and one of the writes was lost. Only a
+        platform with neither primitive falls through unlocked.
+        """
         lock_path = path.with_suffix(path.suffix + ".lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        if fcntl is None:  # pragma: no cover - non-POSIX
+        if fcntl is None and msvcrt is None:  # pragma: no cover - exotic platform
             yield
             return
         fd = open(lock_path, "a+", encoding="utf-8")
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
+            else:  # pragma: no cover - Windows only
+                fd.seek(0)
+                msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]
             yield
         finally:
             try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                if fcntl is not None:
+                    fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+                else:  # pragma: no cover - Windows only
+                    fd.seek(0)
+                    msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
             except OSError:  # pragma: no cover
                 pass
             fd.close()
 
     @staticmethod
-    def _read_file(path: Path) -> list[str]:
+    def _read_raw_checked(path: Path) -> str | None:
+        """Return the file's raw text, or ``None`` when the read FAILED.
+
+        ``None`` means "we could not determine the current contents" -- it is
+        NOT the same as "the file is empty". Callers must refuse to write on
+        ``None``: treating an unreadable file as ``[]`` and then flushing
+        would erase every existing entry (see ``_read_failed_error``).
+
+        A genuinely absent or empty file returns ``""``, which is a known
+        state and safe to write against.
+        """
         if not path.exists():
-            return []
+            return ""
         try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError:
-            return []
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    @classmethod
+    def _read_file(cls, path: Path) -> list[str]:
+        """Parse *path* into entries. Returns [] for both empty AND unreadable.
+
+        Prefer ``_read_raw_checked`` + ``_parse_entries`` on any write path so
+        an unreadable file can be distinguished from an empty one.
+        """
+        raw = cls._read_raw_checked(path)
+        return cls._parse_entries(raw or "")
+
+    @staticmethod
+    def _parse_entries(raw: str) -> list[str]:
         if not raw.strip():
             return []
         return [e for e in (part.strip() for part in raw.split(ENTRY_DELIMITER)) if e]
@@ -606,15 +818,13 @@ class CuratedMemoryStore:
     @staticmethod
     def _write_file(path: Path, entries: list[str]) -> None:
         content = ENTRY_DELIMITER.join(entries) if entries else ""
-        fd, tmp_path = tempfile.mkstemp(
-            dir=str(path.parent), suffix=".tmp", prefix=".mem_"
-        )
+        fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=".mem_")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(content)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_path, path)
+            _atomic_replace(tmp_path, path)
         except BaseException:
             try:
                 os.unlink(tmp_path)

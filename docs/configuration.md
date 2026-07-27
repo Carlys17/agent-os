@@ -28,6 +28,126 @@ agentos configure provider --provider openrouter --api-key-env OPENROUTER_API_KE
 Avoid committing raw API keys to TOML files, shell history, examples, or issue
 reports.
 
+## Environment Variables
+
+Environment variables live in `~/.agentos/.env` and are managed with
+[`agentos env`](cli.md#environment-variables) or the Environment screen in the
+Web UI. They are where credentials belong — skills and external binaries read
+them, and AgentOS masks them in every listing.
+
+### Load order and the shadowing trap
+
+`.env` files are read once at process start, in this order, and **an existing
+environment variable is never overridden**:
+
+1. `os.environ` — whatever the shell that started AgentOS exported
+2. `$CWD/.env`, then `$CWD/.env.test`
+3. `~/.agentos/.env`
+
+The first rule is the one that surprises people. If your shell exported
+`OPENAI_API_KEY`, then writing that variable through AgentOS updates the file
+and the running process, but a restart goes back to the shell's value. `agentos
+env list` reports the source of each value (`process env` / `project .env` /
+`AgentOS .env`) and the Web UI warns on the row, so this is visible rather than
+something to discover through a confusing hour. To make the file authoritative,
+remove the export and restart.
+
+Likewise, a `.env` in the directory the gateway was started from wins over
+`~/.agentos/.env`.
+
+### What cannot be written through AgentOS
+
+Names that steer subprocess execution or AgentOS runtime posture are refused by
+every AgentOS surface — the Web UI, the CLI, the RPC, and the agent tool:
+
+- Loader and interpreter: `LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_*`,
+  `PYTHONPATH`, `PYTHONHOME`, `PYTHONSTARTUP`, `NODE_OPTIONS`, `NODE_PATH`
+- Shell and implicitly-invoked commands: `PATH`, `SHELL`, `IFS`, `BASH_ENV`,
+  `EDITOR`, `VISUAL`, `PAGER`, `BROWSER`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`
+- AgentOS posture and state location: `AGENTOS_SENSITIVE_PATHS_DISABLED`,
+  `AGENTOS_SHELL_DENYLIST`, `AGENTOS_SAFE_BIN_*`, `AGENTOS_AGENT_PERMISSIONS`,
+  `AGENTOS_HOOKS`, `AGENTOS_GATEWAY_TOKEN`, `AGENTOS_GATEWAY_CONFIG_PATH`,
+  `AGENTOS_STATE_DIR`, `AGENTOS_ROOT`, and the bind settings
+
+Every tool AgentOS spawns inherits `os.environ`, and several AgentOS guards are
+themselves read from it, so a surface that could write these names could widen
+what the agent is allowed to do. The `AGENTOS_` prefix is not blanket-blocked —
+ordinary credentials such as `AGENTOS_LLM_API_KEY` remain writable.
+
+The gate applies on *write* only. Values you set in your shell or by editing
+`~/.agentos/.env` by hand keep working exactly as before.
+
+### Credentials that already exist elsewhere
+
+Before telling you a variable is missing, AgentOS checks whether it is already
+obtainable. Today that means the GitHub CLI: if `gh auth login` has been run,
+`GITHUB_TOKEN` and `GH_TOKEN` are reported as available and can be imported
+with one command or one click.
+
+Two properties are deliberate. Checking never reads the credential — it runs
+`gh auth status`, not `gh auth token` — so a listing that mentions a source has
+not touched a secret. And importing only ever happens when you ask for it,
+because a token you granted to another tool becoming available to an agent
+should not be something that happens quietly.
+
+An imported value is a copy. It stays as it was when imported and will not
+follow the source's own rotation; re-import to refresh it.
+
+### Skill settings are not secrets
+
+A skill may also declare ordinary settings — a directory, a format, a default —
+under `metadata.agentos.config` in its `SKILL.md`:
+
+```yaml
+metadata:
+  agentos:
+    config:
+      - key: wiki.path
+        description: Path to the knowledge base directory
+        default: "~/wiki"
+```
+
+These live in the TOML config under `[skills.config]`, not in `.env`, because
+there is nothing to hide and a visible, diffable setting is easier to share and
+review:
+
+```sh
+agentos config set skills.config.wiki.path /srv/wiki
+```
+
+When the agent opens the skill, the values currently in effect are appended to
+what it reads, so it does not have to ask or go looking.
+
+## Skill Prompt Budget
+
+Every eligible skill is listed for the agent in a block appended to the system
+prompt. `[skills].max_skills_prompt_chars` caps how large that block may get:
+
+```toml
+[skills]
+max_skills_prompt_chars = 24000
+```
+
+The budget is spent in three stages. Under it, each skill is listed with its
+description. Over it, the block falls back to names only. Over it even then,
+skills are dropped, lowest-precedence layer first — `extra` (the directories
+you listed in `skills.extra_dirs`), then `bundled`, and only then `managed`,
+`personal`, `project`, `workspace`. A drop is logged as
+`skills_filter.budget_truncated` with the names, and the affected skills report
+a `prompt_budget` reason on the Skills screen.
+
+The default of 24000 is sized so a default install lists every bundled skill
+*with* its description and still has room for skills you add. Lower it only if
+you are running a model with a small context window: the whole-request ceiling
+on a model below roughly 64k tokens can be smaller than this budget, in which
+case the skills block alone would not fit.
+
+```sh
+agentos config get skills.max_skills_prompt_chars
+agentos config set skills.max_skills_prompt_chars 32000
+agentos gateway restart
+```
+
 ## First-Run Wizard
 
 ```sh
@@ -99,6 +219,7 @@ Onboarding-verified providers include:
 
 - OpenRouter
 - Bankr LLM Gateway
+- OpenCAP
 - OpenAI
 - Anthropic
 - Ollama
@@ -116,20 +237,27 @@ your install to see the current catalog.
 
 Read: [`providers-and-models.md`](providers-and-models.md)
 
+### OpenCAP
+
+See [Providers and Models — OpenCAP routing](providers-and-models.md#opencap-routing)
+for the canonical setup, model catalog, routing, and pricing behavior.
+
 ### Ollama plain-text mode
 
 AgentOS supports Ollama native tool calls. For a local model that does not
-reliably implement Ollama's tool-call protocol, disable model-visible tools and
-route directly to the configured model:
+reliably implement Ollama's tool-call protocol, select the model separately,
+then turn on plain-text mode.
+
+Check which models are installed with `ollama list`, then configure the
+provider and model:
+
+```sh
+agentos configure provider --provider ollama --model <your-local-model>
+```
+
+Then disable model-visible tools and the router in `agentos.toml`:
 
 ```toml
-agent_max_iterations = 8
-
-[llm]
-provider = "ollama"
-model = "qwen2.5:7b"
-base_url = "http://localhost:11434"
-
 [tools]
 enabled = false
 
@@ -137,10 +265,13 @@ enabled = false
 enabled = false
 ```
 
+For a remote or non-default host, set `base_url` under `[llm]` (e.g.
+`http://10.0.0.42:11434`).
+
 `tools.enabled = false` is a hard plain-text mode: no tool definitions are sent
-to the provider and no tool handler is exposed for the turn. Keep a positive
-`agent_max_iterations` when enabling tools on smaller local models so malformed
-or repetitive tool calls terminate predictably.
+to the provider and no tool handler is exposed for the turn. When you do enable
+tools on smaller local models, keep a positive `agent_max_iterations` so
+malformed or repetitive tool calls terminate predictably.
 
 ## Router Configuration
 
@@ -348,8 +479,6 @@ agentos memory index
 agentos memory list
 agentos memory search "project preference"
 agentos memory show <path>
-agentos memory dream
-agentos memory flush-session <session-key>
 ```
 
 Configure embedding behavior:

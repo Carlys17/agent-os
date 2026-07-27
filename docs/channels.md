@@ -88,20 +88,22 @@ for an already-loaded live adapter.
 
 ## Telegram Account Pairing
 
-Telegram direct messages use `pairing` mode by default. An unknown account is
-stopped before commands or agent execution, then receives a one-time
-8-character code. Give that code to an operator, who can approve it from the
-Channels page or with:
+Telegram direct messages always require pairing. There is no Telegram
+admin/owner role and no open or allowlist mode. An unknown sender is stopped
+before commands or agent execution, then receives a one-time 8-character code.
+Any connected Control client can pair the sender from the Channels page or
+with:
 
 ```sh
 agentos channels pairing list personal
 agentos channels pairing approve personal ABCD2345
 ```
 
-Approvals survive gateway restarts. To review or remove access:
+Pairing survives gateway restarts. To review or disconnect a sender:
 
 ```sh
 agentos channels pairing list personal --json
+agentos channels pairing deny personal <telegram-user-id>
 agentos channels pairing revoke personal <telegram-user-id>
 agentos channels pairing clear-pending personal
 ```
@@ -110,23 +112,38 @@ Pairing codes expire after one hour. Requests are limited to one per account
 every 10 minutes and three pending accounts per configured Telegram channel.
 Five invalid approval attempts lock approval for one hour. Pairing state is
 stored outside the main config under `$AGENTOS_STATE_DIR/pairing` (by default
-`~/.agentos/pairing`) with owner-only permissions.
+`~/.agentos/pairing`) with `0600` filesystem permissions.
 
-DM access and group access are separate. Pairing a user does not grant that
-user access in Telegram groups. Configure them independently during setup or
-with channel fields:
+Telegram groups are disabled by default. Enabling groups requires all three
+admission checks: the chat ID is explicitly configured, the sender is paired,
+and the bot is mentioned when `group_mention_required` is true. Configure the
+group posture during setup or with channel fields:
 
 ```sh
 agentos channels add telegram --name personal --token <bot-token> \
-  --field access_mode=pairing \
-  --field group_access_mode=allowlist \
-  --field group_allowed_sender_ids=123456789,987654321
+  --field groups_enabled=true \
+  --field group_chat_ids=-1001234567890,-1009876543210 \
+  --field group_mention_required=true
 ```
 
-DM modes are `pairing`, `allowlist`, `open`, and `disabled`; group modes are
-`allowlist`, `open`, and `disabled`. Group messages still require a bot mention
-where the adapter's mention policy applies. Use `open` only when unrestricted
-access is intentional.
+Pairing is sender-level: the same paired sender may use direct messages and
+explicitly configured groups. Removing the pairing disconnects that sender
+from both surfaces immediately.
+
+## Channel Command Authorization
+
+Channel admission runs before native or text slash-command dispatch. An
+unpaired Telegram sender cannot execute commands or start an agent turn. Once
+paired, the sender gets the channel command surface, including session and
+router operations such as `/new`, `/reset`, `/compact`, `/abort`, `/c0`
+through `/c3`, and `/auto`. Direct messages and configured groups use the same
+rules; there is no command privilege tier.
+
+Tool visibility is not derived from a sender role. It is resolved from the
+agent/global tool configuration, runtime capabilities, sandbox policy, and
+approval gates. Channel RPC exposure is a separate protocol boundary: channel
+clients receive only the explicitly registered channel-safe RPC methods, while
+Control-only configuration and lifecycle RPCs remain unavailable.
 
 ## Slack Modes
 
@@ -167,6 +184,14 @@ agentos channels native-commands slack \
 The command endpoint acknowledges Slack's form submission and routes the
 resulting `/command` through the same channel dispatcher. Keep text command
 interception as the fallback for platforms without native command menus.
+
+## In-Flight Reply Feedback
+
+Telegram and Discord show their native typing indicator while AgentOS is
+working on a reply. Telegram refreshes `sendChatAction` every four seconds
+because Telegram clients expire the status after at most five seconds. Forum
+topic replies keep the typing indicator scoped to the incoming topic. Typing
+feedback is best-effort and never interrupts the underlying agent turn.
 
 ## Webhook Channels
 

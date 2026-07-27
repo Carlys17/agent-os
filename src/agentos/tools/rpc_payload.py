@@ -50,7 +50,6 @@ async def tools_catalog_payload(
     params: Mapping[str, Any] | None,
     *,
     tool_registry: ToolRegistry | None = None,
-    is_owner: bool = True,
     tool_surface_capabilities: ToolSurfaceCapabilities | None = None,
     session_manager: object | None = None,
     task_runtime: object | None = None,
@@ -78,7 +77,6 @@ async def tools_catalog_payload(
             channel_manager=channel_manager,
             originating_envelope=originating_envelope,
         ),
-        is_owner=is_owner,
     )
     return {"tools": tools}
 
@@ -87,7 +85,6 @@ async def tools_effective_payload(
     params: Mapping[str, Any] | None,
     *,
     tool_registry: ToolRegistry | None = None,
-    is_owner: bool = True,
     tool_surface_capabilities: ToolSurfaceCapabilities | None = None,
     session_manager: object | None = None,
     task_runtime: object | None = None,
@@ -114,6 +111,5 @@ async def tools_effective_payload(
             channel_manager=channel_manager,
             originating_envelope=originating_envelope,
         ),
-        is_owner=is_owner,
     )
     return {"tools": tools}

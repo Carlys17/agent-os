@@ -5,11 +5,14 @@ import base64
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from agentos.artifacts import ArtifactStore
+from agentos.channels._util import ChannelAccessPolicy
 from agentos.channels.stream_policy import resolve_channel_stream_policy
+from agentos.channels.telegram import TelegramChannel, TelegramChannelConfig
 from agentos.channels.types import Attachment, IncomingMessage, OutgoingMessage
 from agentos.engine.types import (
     ArtifactEvent,
@@ -36,11 +39,12 @@ from agentos.gateway.channel_dispatch import (
     _run_turn_batch_path,
     _run_turn_with_streaming,
     _RuntimeChannelStreamRelay,
+    _should_skip_unmentioned,
 )
 from agentos.gateway.config import AgentEntryConfig, GatewayConfig
 from agentos.gateway.protocol import make_ok_res
 from agentos.gateway.routing import build_channel_route_envelope
-from agentos.safety.permission_matrix import Principal, is_tool_allowed
+from agentos.safety.permission_matrix import is_tool_allowed
 from agentos.tools.types import CallerKind
 
 
@@ -66,6 +70,59 @@ def _message() -> IncomingMessage:
 
 def _tool_ctx(agent_id: str = "main") -> SimpleNamespace:
     return SimpleNamespace(agent_id=agent_id)
+
+
+def test_explicit_slash_interaction_satisfies_group_mention_policy() -> None:
+    class MentionOnlyChannel:
+        policy = ChannelAccessPolicy(
+            dm_allowed=True,
+            group_allowed=True,
+            mention_required_in_group=True,
+        )
+
+        def is_group_mentioned(self, _msg: IncomingMessage) -> bool:
+            raise AssertionError("explicit interactions must not invoke the mention parser")
+
+    msg = IncomingMessage(
+        sender_id="U1",
+        channel_id="C1",
+        content="/status",
+        metadata={"is_group": True, "interaction_type": "slash_command"},
+    )
+
+    assert (
+        _should_skip_unmentioned(
+            MentionOnlyChannel(),
+            msg,
+            "agent:main:slack:group:C1",
+        )
+        is False
+    )
+
+
+def test_explicit_slash_interaction_does_not_bypass_group_access_policy() -> None:
+    channel = SimpleNamespace(
+        policy=ChannelAccessPolicy(
+            dm_allowed=True,
+            group_allowed=False,
+            mention_required_in_group=True,
+        )
+    )
+    msg = IncomingMessage(
+        sender_id="U1",
+        channel_id="C1",
+        content="/status",
+        metadata={"is_group": True, "interaction_type": "slash_command"},
+    )
+
+    assert (
+        _should_skip_unmentioned(
+            channel,
+            msg,
+            "agent:main:slack:group:C1",
+        )
+        is True
+    )
 
 
 def _exact_pdf(size: int) -> bytes:
@@ -149,6 +206,71 @@ async def test_registered_slash_command_preserves_channel_for_thread_target() ->
     assert reply.metadata["command"] == "compact"
 
 
+@pytest.mark.asyncio
+async def test_telegram_forum_command_reply_keeps_chat_and_topic_targets() -> None:
+    channel = TelegramChannel(TelegramChannelConfig(token="token"))
+    msg = channel.parse_incoming(
+        {
+            "update_id": 1,
+            "message": {
+                "message_id": 10,
+                "message_thread_id": 777,
+                "chat": {"id": -100123, "type": "supergroup"},
+                "from": {"id": 42},
+                "text": "/compact",
+            },
+        }
+    )
+    route_envelope = build_channel_route_envelope(
+        msg,
+        session_key="agent:main:telegram:group:-100123:thread:777",
+        session_prefix="telegram",
+        agent_id="main",
+    )
+
+    class FakeDispatcher:
+        async def dispatch(self, req_id, method, params, ctx):
+            return make_ok_res(
+                req_id,
+                {
+                    "status": "skipped",
+                    "compacted": False,
+                },
+            )
+
+    reply = await _dispatch_channel_slash_command(
+        route_envelope=route_envelope,
+        msg=msg,
+        session_manager=object(),
+        session_key=route_envelope.session_key,
+        session_prefix="telegram",
+        rpc_dispatcher=FakeDispatcher(),
+        context_factory=lambda _envelope: object(),
+    )
+    assert reply is not None
+
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_api(method: str, payload: dict | None = None) -> dict:
+        calls.append((method, payload or {}))
+        return {"message_id": 11}
+
+    channel._api = fake_api  # type: ignore[method-assign]  # noqa: SLF001
+    await channel.send(reply)
+
+    assert calls == [
+        (
+            "sendMessage",
+            {
+                "chat_id": "-100123",
+                "text": "Already within context budget; no compact was applied.",
+                "message_thread_id": 777,
+                "parse_mode": "HTML",
+            },
+        )
+    ]
+
+
 def test_channel_stream_policy_prefers_adapter_stream_updates() -> None:
     class StreamingChannel:
         async def send_streaming(self, chunks):
@@ -160,6 +282,115 @@ def test_channel_stream_policy_prefers_adapter_stream_updates() -> None:
     assert policy.mode == "adapter_stream"
     assert policy.relay_stream is True
     assert policy.typing_keepalive is False
+
+
+# ── Channel /new "fresh session" pointer (New Chat parity) ────────────────
+
+
+def _channel_access() -> Any:
+    from agentos.gateway.access import ConnectionSurface
+    from agentos.gateway.auth import AccessContext
+
+    return AccessContext(
+        surface=ConnectionSurface.CHANNEL,
+        admitted=True,
+        credential_verified=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_channel_new_command_sets_pointer_and_does_not_reset() -> None:
+    """`/new` must mint a fresh key + point the chat at it (non-destructive).
+
+    Regression for "Reset aborted: flush service is unavailable": channel /new
+    previously routed to destructive sessions.reset. It must now never call the
+    dispatcher at all — it only sets a per-chat pointer to a fresh session key.
+    """
+    from agentos.gateway.channel_dispatch import ChannelSessionPointers
+
+    base_key = "agent:main:telegram:direct:42"
+    pointers = ChannelSessionPointers()
+    msg = IncomingMessage(sender_id="42", channel_id="42", content="/new")
+    route_envelope = build_channel_route_envelope(
+        msg,
+        session_key=base_key,
+        session_prefix="telegram",
+        agent_id="main",
+    )
+
+    class ExplodingDispatcher:
+        async def dispatch(self, req_id, method, params, ctx):  # pragma: no cover
+            raise AssertionError("dispatcher must not be called for /new fresh-key flow")
+
+    reply = await _dispatch_channel_slash_command(
+        route_envelope=route_envelope,
+        msg=msg,
+        session_manager=object(),
+        session_key=base_key,
+        session_prefix="telegram",
+        rpc_dispatcher=ExplodingDispatcher(),
+        context_factory=lambda _envelope: SimpleNamespace(access=_channel_access()),
+        session_pointers=pointers,
+        base_session_key=base_key,
+    )
+
+    assert reply is not None
+    assert reply.content == "Started a new chat session."
+    assert reply.metadata["denied"] is False
+    # A fresh key was minted and the chat now points at it.
+    new_key = reply.metadata["session_key"]
+    assert new_key != base_key
+    assert new_key.startswith(base_key + ":new:")
+    assert pointers.resolve(base_key) == new_key
+
+
+@pytest.mark.asyncio
+async def test_channel_new_command_without_pointer_falls_back_to_reset() -> None:
+    """Without a pointer map, /new retains the legacy destructive reset path."""
+    msg = IncomingMessage(sender_id="42", channel_id="42", content="/new")
+    base_key = "agent:main:telegram:direct:42"
+    route_envelope = build_channel_route_envelope(
+        msg,
+        session_key=base_key,
+        session_prefix="telegram",
+        agent_id="main",
+    )
+    calls: list[tuple[str, dict]] = []
+
+    class FakeDispatcher:
+        async def dispatch(self, req_id, method, params, ctx):
+            calls.append((method, params))
+            return make_ok_res(req_id, {"reset": True, "key": params.get("key")})
+
+    class FakeSessionManager:
+        async def get_or_create(self, session_key, agent_id="main", **fields):
+            return SimpleNamespace(session_key=session_key, session_id="sid"), True
+
+    reply = await _dispatch_channel_slash_command(
+        route_envelope=route_envelope,
+        msg=msg,
+        session_manager=FakeSessionManager(),
+        session_key=base_key,
+        session_prefix="telegram",
+        rpc_dispatcher=FakeDispatcher(),
+        context_factory=lambda _envelope: SimpleNamespace(access=_channel_access()),
+        session_pointers=None,
+        base_session_key=base_key,
+    )
+
+    assert reply is not None
+    assert calls == [("sessions.reset", {"key": base_key})]
+
+
+def test_channel_session_pointers_resolve_and_set() -> None:
+    from agentos.gateway.channel_dispatch import ChannelSessionPointers
+
+    pointers = ChannelSessionPointers()
+    base = "agent:main:telegram:direct:7"
+    # No pointer → resolve returns base unchanged.
+    assert pointers.resolve(base) == base
+    pointers.set(base, "agent:main:telegram:direct:7:new:abcd1234")
+    assert pointers.resolve(base) == "agent:main:telegram:direct:7:new:abcd1234"
 
 
 def test_channel_stream_policy_uses_typing_placeholder_without_stream_editing() -> None:
@@ -576,7 +807,7 @@ async def test_direct_channel_batch_turn_removes_artifact_markers_from_channel_t
 
 
 @pytest.mark.asyncio
-async def test_channel_admin_sender_gets_owner_tool_context_for_agent_turn(tmp_path) -> None:
+async def test_channel_sender_gets_role_free_tool_context_for_agent_turn(tmp_path) -> None:
     captured: dict[str, object] = {}
 
     class FakeTurnRunner:
@@ -593,7 +824,6 @@ async def test_channel_admin_sender_gets_owner_tool_context_for_agent_turn(tmp_p
         agent_id="main",
     )
     config = SimpleNamespace(
-        channel_admin_senders={"feishu": ["u1"]},
         workspace_dir=str(tmp_path),
         workspace_strict=True,
         agent_stream_heartbeat_interval_seconds=0.0,
@@ -610,21 +840,17 @@ async def test_channel_admin_sender_gets_owner_tool_context_for_agent_turn(tmp_p
     )
 
     tool_context = captured["tool_context"]
-    assert tool_context.is_owner is True
+    assert not hasattr(tool_context, "is_owner")
     assert tool_context.caller_kind is CallerKind.CHANNEL
     assert tool_context.channel_kind == "feishu"
     assert tool_context.sender_id == "u1"
-    decision = is_tool_allowed(
-        "write_file",
-        "dm",
-        Principal(role="operator", channel_id=tool_context.session_key),
-    )
+    decision = is_tool_allowed("write_file", "dm")
     assert decision.allowed is True
-    assert decision.reason == "operator_override"
+    assert decision.reason == "confirmation_required"
 
 
 @pytest.mark.asyncio
-async def test_unlisted_channel_sender_keeps_restricted_tool_context_for_agent_turn(
+async def test_channel_config_cannot_promote_a_sender_tool_context(
     tmp_path,
 ) -> None:
     captured: dict[str, object] = {}
@@ -643,7 +869,6 @@ async def test_unlisted_channel_sender_keeps_restricted_tool_context_for_agent_t
         agent_id="main",
     )
     config = SimpleNamespace(
-        channel_admin_senders={"feishu": ["other-user"]},
         workspace_dir=str(tmp_path),
         workspace_strict=True,
         agent_stream_heartbeat_interval_seconds=0.0,
@@ -660,7 +885,7 @@ async def test_unlisted_channel_sender_keeps_restricted_tool_context_for_agent_t
     )
 
     tool_context = captured["tool_context"]
-    assert tool_context.is_owner is False
+    assert not hasattr(tool_context, "is_owner")
     assert tool_context.caller_kind is CallerKind.CHANNEL
     assert tool_context.channel_kind == "feishu"
     assert tool_context.sender_id == "u1"
@@ -685,10 +910,7 @@ def test_channel_artifact_fallback_uses_only_channel_safe_absolute_links() -> No
                 "signed_download_url": "https://gateway.example/artifacts/art-2?sig=short",
             }
         ]
-    ) == [
-        "Generated file: signed.txt -> "
-        "https://gateway.example/artifacts/art-2?sig=short"
-    ]
+    ) == ["Generated file: signed.txt -> https://gateway.example/artifacts/art-2?sig=short"]
 
     assert _artifact_fallback_lines(
         [

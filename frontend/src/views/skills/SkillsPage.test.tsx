@@ -51,6 +51,15 @@ const READY_MANAGED = {
   name: 'trader',
   description: 'Trades things',
   layer: 'managed',
+  acquisition: {
+    kind: 'hub',
+    source_id: 'clawhub',
+    identifier: 'uniswap-swap',
+    removable: true,
+    updatable: true,
+  },
+  publisher: { id: '', name: '', url: '', logo: '' },
+  availability: { offered: true, reason: '', detail: '' },
   status: 'ready',
   emoji: '📈',
 }
@@ -58,9 +67,62 @@ const NEEDS_BUNDLED = {
   name: 'weather',
   description: 'Weather lookups',
   layer: 'bundled',
+  acquisition: { kind: 'shipped', removable: false, updatable: false },
+  publisher: { id: '', name: '', url: '', logo: '' },
+  availability: {
+    offered: false,
+    reason: 'ineligible',
+    detail: 'Installed, but not offered to the agent: the binary curl is not on PATH.',
+  },
   status: 'needs_setup',
   missing_bins: ['curl'],
   install: [{ id: 'brew-curl', kind: 'brew', label: 'Install curl', bins: ['curl'] }],
+}
+// A hub install the gateway will not offer to remove: `skills.uninstall` only
+// deletes from the configured managed dir, and this one is recorded elsewhere.
+const STRANDED_HUB = {
+  name: 'stranded',
+  description: 'Installed from a hub AgentOS can no longer delete from.',
+  layer: 'managed',
+  acquisition: {
+    kind: 'hub',
+    source_id: 'clawhub',
+    identifier: 'stranded-skill',
+    removable: false,
+    updatable: true,
+  },
+  status: 'ready',
+}
+// Hand-copied into the managed directory: same `layer`, no lockfile entry, so
+// neither affordance applies. Grouping and buttons must follow acquisition.
+const LOCAL_IN_MANAGED = {
+  name: 'handrolled',
+  description: 'Copied in by hand',
+  layer: 'managed',
+  acquisition: { kind: 'local', removable: false, updatable: false },
+  status: 'ready',
+}
+const BANKR_HUB_SKILL = {
+  name: 'bankr-swaps',
+  description: 'Swap tokens through Bankr.',
+  layer: 'managed',
+  acquisition: { kind: 'hub', source_id: 'bankr', identifier: 'bankr-swaps', removable: true },
+  publisher: { id: 'bankr', name: 'Bankr', url: 'https://bankr.bot', logo: '' },
+  status: 'ready',
+}
+// Ready, eligible, and still never reaching the model.
+const WITHHELD_SKILL = {
+  name: 'quiet',
+  description: 'The agent is never told about this one.',
+  layer: 'bundled',
+  acquisition: { kind: 'shipped' },
+  status: 'ready',
+  eligible: true,
+  availability: {
+    offered: false,
+    reason: 'model_invocation_disabled',
+    detail: 'This skill declares disable_model_invocation, so the agent is never offered it.',
+  },
 }
 const CATALOG_ITEM = {
   name: 'Uniswap',
@@ -71,6 +133,13 @@ const CATALOG_ITEM = {
   description: 'DEX swaps',
   category: 'defi',
   demo: { code: 'swap(1, ETH)', language: 'python', title: 'Quote a swap' },
+}
+const BANKR_CATALOG_ITEM = {
+  name: 'bankr-token-scam-analysis',
+  identifier: 'bankr-token-scam-analysis',
+  provider: 'BankrBot',
+  source: 'bankr',
+  description: 'Analyze token risk.',
 }
 // A needs_setup skill carrying both a Requirements manifest and Missing bins/env
 // (skills.js:743-777,792-803). requirements.items exercises the ready /
@@ -103,10 +172,14 @@ const REQ_BUNDLED = {
   },
 }
 
+// Partner identity comes from the server-side publisher allowlist, never from
+// the `robinhood-` name prefix — the client no longer reads the name at all.
 const ROBINHOOD_READY = {
   name: 'robinhood-rwa-addresses',
   description: 'Look up tokenized-stock contract addresses.',
   layer: 'bundled',
+  acquisition: { kind: 'shipped' },
+  publisher: { id: 'robinhood', name: 'Robinhood', url: 'https://robinhood.com', logo: '' },
   status: 'ready',
 }
 
@@ -114,7 +187,19 @@ const ROBINHOOD_UNDECLARED = {
   name: 'robinhood-agentic-trading',
   description: 'Operate Robinhood Agentic Trading through the Robinhood Trading MCP.',
   layer: 'bundled',
+  acquisition: { kind: 'shipped' },
+  publisher: { id: 'robinhood', name: 'Robinhood', url: 'https://robinhood.com', logo: '' },
   status: 'not_declared',
+}
+
+// A catalog row the empty-query browse does NOT return — the case where the
+// installed row used to vanish the moment the search was cleared.
+const SEARCH_ONLY_ITEM = {
+  name: 'Ledger Watch',
+  identifier: 'ledger-watch',
+  provider: 'Ledger',
+  source: 'clawhub',
+  description: 'Watch a ledger address.',
 }
 
 function wireRpc(
@@ -124,6 +209,12 @@ function wireRpc(
     listPromise?: Promise<unknown>
     listReject?: boolean
     searchResults?: unknown[]
+    /**
+     * The catalog's own answer to a query. The mock used to return the same
+     * rows for every call, which is exactly why a list that swaps on the query
+     * text could break without a test noticing.
+     */
+    search?: (query: string, source: string) => unknown[] | Promise<{ results: unknown[] }>
     installResponse?: Record<string, unknown>
     uninstallResponse?: Record<string, unknown>
     updateResponse?: Record<string, unknown>
@@ -131,7 +222,8 @@ function wireRpc(
   } = {},
 ) {
   let listIndex = 0
-  mockRpc.call.mockImplementation((method: string) => {
+  mockRpc.call.mockImplementation((method: string, params?: unknown) => {
+    const p = (params ?? {}) as { query?: string; source?: string }
     switch (method) {
       case 'skills.list':
         if (opts.listPromise) return opts.listPromise
@@ -143,8 +235,27 @@ function wireRpc(
         return opts.listReject
           ? Promise.reject(new Error('list down'))
           : Promise.resolve({ skills: opts.skills ?? [READY_MANAGED, NEEDS_BUNDLED] })
-      case 'skills.search':
-        return Promise.resolve({ results: opts.searchResults ?? [CATALOG_ITEM] })
+      case 'skills.search': {
+        const query = (p.query ?? '').trim()
+        const source = p.source ?? ''
+        if (opts.search) {
+          const answer = opts.search(query, source)
+          return Array.isArray(answer) ? Promise.resolve({ results: answer }) : answer
+        }
+        const all = (opts.searchResults ?? [CATALOG_ITEM]) as Record<string, unknown>[]
+        const scoped = source ? all.filter((r) => r.source === source) : all
+        const q = query.toLowerCase()
+        const results = q
+          ? scoped.filter((r) =>
+              [r.name, r.description, r.provider].some((f) =>
+                String(f ?? '')
+                  .toLowerCase()
+                  .includes(q),
+              ),
+            )
+          : scoped
+        return Promise.resolve({ results })
+      }
       case 'skills.install':
         return Promise.resolve(opts.installResponse ?? { success: true, name: 'uniswap-swap' })
       case 'skills.uninstall':
@@ -159,16 +270,26 @@ function wireRpc(
   })
 }
 
-function renderPage() {
+function makeClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } })
+}
+
+function renderPage(client: QueryClient = makeClient()) {
   return render(
     <MemoryRouter>
-      <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-      >
+      <QueryClientProvider client={client}>
         <SkillsPage />
       </QueryClientProvider>
     </MemoryRouter>,
   )
+}
+
+/** The <details> block whose heading is `label`, i.e. one Installed group. */
+function groupNamed(label: string): HTMLElement {
+  const heading = screen.getByRole('heading', { name: label })
+  const block = heading.closest('details')
+  expect(block).not.toBeNull()
+  return block as HTMLElement
 }
 
 const callsFor = (m: string) => mockRpc.call.mock.calls.filter(([x]) => x === m)
@@ -184,16 +305,16 @@ describe('SkillsPage', () => {
     vi.useRealTimers()
   })
 
-  it('calls skills.list after waitForConnection and renders installed cards grouped by layer', async () => {
+  it('calls skills.list after waitForConnection and groups installed cards by provenance', async () => {
     wireRpc()
     renderPage()
     await waitFor(() => expect(mockRpc.call).toHaveBeenCalledWith('skills.list', {}))
     expect(mockRpc.waitForConnection).toHaveBeenCalled()
     await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
     expect(screen.getByLabelText('Skill weather')).toBeInTheDocument()
-    // Layer groups (bundled before managed)
-    expect(screen.getByText('Bundled')).toBeInTheDocument()
-    expect(screen.getByText('Managed')).toBeInTheDocument()
+    // Provenance groups: shipped before hub (SKILL_GROUP_ORDER), not layers.
+    expect(screen.getByText('Shipped with AgentOS')).toBeInTheDocument()
+    expect(screen.getByText('Installed from a hub')).toBeInTheDocument()
   })
 
   it('renders the status metric pills from the payload', async () => {
@@ -316,6 +437,16 @@ describe('SkillsPage', () => {
 
     expect(logo).toHaveAttribute('src', CATALOG_ITEM.logo)
     expect(logo).toHaveAttribute('referrerpolicy', 'no-referrer')
+  })
+
+  it('uses the official Bankr icon when a Bankr catalog item has no logo metadata', async () => {
+    wireRpc({ searchResults: [BANKR_CATALOG_ITEM] })
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: 'Bankr' }))
+
+    const card = await screen.findByLabelText('Catalog skill bankr-token-scam-analysis')
+    expect(within(card).getByRole('presentation')).toHaveAttribute('src', bankrSymbolUrl)
   })
 
   // ── Install (per-item busy, correct RPC + params + invalidation) ─────────
@@ -455,7 +586,9 @@ describe('SkillsPage', () => {
     expect(readyCard.closest('.sk-grid')).toHaveClass('sk-grid--registry')
     expect(within(readyCard).getByRole('presentation')).toHaveAttribute('src', robinhoodSymbolUrl)
     expect(within(readyCard).getByText('Robinhood')).toBeInTheDocument()
-    expect(within(readyCard).getByText('bundled')).toBeInTheDocument()
+    // The source label is the row's real acquisition now, not a hardcoded
+    // 'bundled' — a partner hub install lands in this same tab.
+    expect(within(readyCard).getByText('shipped')).toBeInTheDocument()
     expect(within(readyCard).getByText('Ready')).toBeInTheDocument()
     expect(within(tradingCard).getByText('No manifest')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Install$/i })).not.toBeInTheDocument()
@@ -617,6 +750,173 @@ describe('SkillsPage', () => {
     // Title + language render as their own labelled spans in the heading.
     expect(within(dialog).getByText('Quote a swap')).toBeInTheDocument()
     expect(within(dialog).getByText('python')).toBeInTheDocument()
+  })
+
+  // ── #130: the Installed tab groups on provenance, not on the layer ───────
+  it('groups the Installed tab into Partners / Shipped / Hub / Local', async () => {
+    wireRpc({
+      skills: [READY_MANAGED, NEEDS_BUNDLED, LOCAL_IN_MANAGED, BANKR_HUB_SKILL, ROBINHOOD_READY],
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+
+    expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual(
+      expect.arrayContaining([
+        'Partners',
+        'Shipped with AgentOS',
+        'Installed from a hub',
+        'Your local skills',
+      ]),
+    )
+    // The issue's stated criterion: Bankr and Robinhood under ONE heading,
+    // even though one is a hub install and the other ships with AgentOS.
+    const partners = groupNamed('Partners')
+    expect(within(partners).getByLabelText('Skill bankr-swaps')).toBeInTheDocument()
+    expect(within(partners).getByLabelText('Skill robinhood-rwa-addresses')).toBeInTheDocument()
+
+    expect(
+      within(groupNamed('Installed from a hub')).getByLabelText('Skill trader'),
+    ).toBeInTheDocument()
+    expect(
+      within(groupNamed('Shipped with AgentOS')).getByLabelText('Skill weather'),
+    ).toBeInTheDocument()
+    // layer 'managed' with no lockfile entry is a local skill, not a hub one.
+    expect(
+      within(groupNamed('Your local skills')).getByLabelText('Skill handrolled'),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps the layer visible as a per-card detail chip', async () => {
+    wireRpc({ skills: [READY_MANAGED] })
+    renderPage()
+    const card = await screen.findByLabelText('Skill trader')
+    expect(within(card).getByText('Managed')).toBeInTheDocument()
+  })
+
+  // ── #130: Update/Remove come off the payload, not off the layer ──────────
+  it('a managed-layer skill with no lockfile entry offers neither Update nor Remove', async () => {
+    wireRpc({ skills: [LOCAL_IN_MANAGED] })
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill handrolled')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('Skill handrolled'))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).queryByRole('button', { name: /^Update$/i })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /^Remove$/i })).not.toBeInTheDocument()
+  })
+
+  it('a hub skill AgentOS cannot delete explains itself instead of offering a dead Remove', async () => {
+    wireRpc({ skills: [STRANDED_HUB] })
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill stranded')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('Skill stranded'))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('button', { name: /^Update$/i })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /^Remove$/i })).not.toBeInTheDocument()
+    expect(within(dialog).getByText(/cannot remove this skill/i)).toBeInTheDocument()
+  })
+
+  // ── #130 core: installed, ready, and still not reaching the agent ────────
+  it('a skill the agent is never offered says so on the card and why in the dialog', async () => {
+    wireRpc({ skills: [WITHHELD_SKILL, READY_MANAGED] })
+    renderPage()
+    const card = await screen.findByLabelText('Skill quiet')
+    // The status is untouched — this is a third state, not a failed one.
+    expect(within(card).getByText('Ready')).toBeInTheDocument()
+    expect(within(card).getByText('Not offered — agent cannot invoke')).toBeInTheDocument()
+    // A skill that IS offered carries no such chip.
+    expect(
+      within(screen.getByLabelText('Skill trader')).queryByText(/Not offered/),
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(card)
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Agent availability')).toBeInTheDocument()
+    expect(within(dialog).getByText(WITHHELD_SKILL.availability.detail)).toBeInTheDocument()
+  })
+
+  // ── #130 symptom 2: the Community list stops swapping ────────────────────
+  it('a row installed while searching survives the search being cleared', async () => {
+    wireRpc({
+      search: (query) => (query ? [SEARCH_ONLY_ITEM] : [CATALOG_ITEM]),
+      installResponse: { success: true, name: 'ledger-watch' },
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: /^Community$/i }))
+    const input = await screen.findByLabelText('Search community skills')
+
+    fireEvent.change(input, { target: { value: 'ledger' } })
+    const card = await screen.findByLabelText('Catalog skill Ledger Watch')
+    fireEvent.click(within(card).getByRole('button', { name: /^Install$/i }))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+
+    fireEvent.change(input, { target: { value: '' } })
+    // The browse list is back…
+    await screen.findByLabelText('Catalog skill Uniswap')
+    // …and the row the browse itself never returned is still on it, installed.
+    const stillThere = screen.getByLabelText('Catalog skill Ledger Watch')
+    expect(within(stillThere).getByText('Installed')).toBeInTheDocument()
+  })
+
+  it('clearing the search does not unmount an open catalog dialog', async () => {
+    wireRpc({ search: (query) => (query ? [SEARCH_ONLY_ITEM] : [CATALOG_ITEM]) })
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: /^Community$/i }))
+    const input = await screen.findByLabelText('Search community skills')
+
+    fireEvent.change(input, { target: { value: 'ledger' } })
+    const card = await screen.findByLabelText('Catalog skill Ledger Watch')
+    fireEvent.click(within(card).getByRole('button', { name: 'View details for Ledger Watch' }))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+
+    fireEvent.change(input, { target: { value: '' } })
+    await screen.findByLabelText('Catalog skill Uniswap')
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('Ledger Watch')).toBeInTheDocument()
+  })
+
+  it('uninstalling refreshes the catalog so the Installed chip is not stale', async () => {
+    let removed = false
+    wireRpc({
+      skills: [READY_MANAGED],
+      search: () => [{ ...CATALOG_ITEM, installed: !removed }],
+    })
+    const client = makeClient()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    renderPage(client)
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Community$/i }))
+    const before = await screen.findByLabelText('Catalog skill Uniswap')
+    expect(within(before).getByText('Installed')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Installed' }))
+    fireEvent.click(await screen.findByLabelText('Skill trader'))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remove$/i }))
+    // The gateway has dropped the lockfile entry the chip is derived from.
+    removed = true
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['skills.search'] }))
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Community$/i }))
+    const after = await screen.findByLabelText('Catalog skill Uniswap')
+    await waitFor(() =>
+      expect(within(after).getByRole('button', { name: /^Install$/i })).toBeInTheDocument(),
+    )
+  })
+
+  it('a failed live search shows the error instead of an empty catalog', async () => {
+    wireRpc({
+      search: (query) => (query ? Promise.reject(new Error('search down')) : [CATALOG_ITEM]),
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: /^Community$/i }))
+    const input = await screen.findByLabelText('Search community skills')
+
+    fireEvent.change(input, { target: { value: 'zzz' } })
+    expect(await screen.findByText(/Failed to load: Error: search down/)).toBeInTheDocument()
+    expect(screen.queryByText('No skills match zzz.')).not.toBeInTheDocument()
   })
 
   it('sets the document title', async () => {

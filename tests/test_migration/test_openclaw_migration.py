@@ -5,6 +5,7 @@ import tomllib
 from pathlib import Path
 
 from agentos.engine.context import load_context_files
+from agentos.env import parse_env_file
 from agentos.migration.openclaw import MigrationOptions, OpenClawMigrator
 from agentos.provider.selector import build_provider
 from agentos.skills.loader import SkillLoader
@@ -112,8 +113,12 @@ def test_apply_migrates_workspace_skills_config_and_allowlist(
     assert str(home / "skills" / "openclaw-imports") in config["skills"]["extra_dirs"]
     assert config["agent_runtime_timeout_seconds"] == 500
 
-    env_text = (home / ".env").read_text(encoding="utf-8")
-    assert "AGENTOS_SAFE_BIN_ALLOW=^git status$,^pytest " in env_text
+    # Assert the value as it parses back, not as it is serialized: the trailing
+    # space is part of the "^pytest " prefix pattern, so it has to survive the
+    # write/read round-trip. The writer quotes the value to protect it from the
+    # reader's strip() — writing it bare silently narrowed the allowlist.
+    env_values = parse_env_file(home / ".env")
+    assert env_values["AGENTOS_SAFE_BIN_ALLOW"] == "^git status$,^pytest "
     assert (Path(report["output_dir"]) / "report.json").is_file()
     assert (Path(report["output_dir"]) / "summary.md").is_file()
 
@@ -811,7 +816,7 @@ def test_agent_search_and_channel_semantics_are_mapped(
     assert persisted["context_overflow_policy"] == "hard_truncate"
     assert persisted["search_provider"] == "brave"
     assert persisted["search_api_key_env"] == "BRAVE_API_KEY"
-    assert persisted["channel_admin_senders"] == {"slack": ["slack-admin"]}
+    assert "channel_admin_senders" not in persisted
     assert "BRAVE_API_KEY=brave-secret" in (home / ".env").read_text(encoding="utf-8")
     notes = Path(report["output_dir"]) / "MIGRATION_NOTES.md"
     assert notes.is_file()
@@ -821,6 +826,8 @@ def test_agent_search_and_channel_semantics_are_mapped(
     assert "legacy-compact-model" in notes_text
     assert "allowFrom" in notes_text
     assert "allowedUsers" in notes_text
+    assert "adminUsers" in notes_text
+    assert "re-pair" in notes_text.lower()
 
 
 def test_dry_run_report_includes_semantic_notes(

@@ -13,8 +13,8 @@ from typing import Any, Literal
 
 import yaml
 
+from agentos.env_store import write_env_file_values
 from agentos.gateway.config import ChannelsConfig, GatewayConfig, MCPServerEntry
-from agentos.migration.env_file import merge_env_lines
 from agentos.onboarding.config_store import load_config, persist_config
 from agentos.paths import default_agentos_home
 
@@ -138,8 +138,7 @@ def _as_path(value: Path | str | None) -> Path | None:
 
 def _is_valid_hermes_home(path: Path) -> bool:
     return any(
-        (path / name).exists()
-        for name in ("config.yaml", ".env", "SOUL.md", "memories", "skills")
+        (path / name).exists() for name in ("config.yaml", ".env", "SOUL.md", "memories", "skills")
     )
 
 
@@ -178,7 +177,7 @@ def _load_env_file(path: Path) -> dict[str, str]:
         # Strip the leading `export ` keyword so the key matches the known
         # SECRET_ENV_KEYS set instead of being lost as "export FOO".
         if stripped.startswith("export "):
-            stripped = stripped[len("export "):].lstrip()
+            stripped = stripped[len("export ") :].lstrip()
         key, value = stripped.split("=", 1)
         values[key.strip()] = value.strip().strip('"').strip("'")
     return values
@@ -306,9 +305,8 @@ class HermesMigrator:
         return root
 
     def migrate(self) -> dict[str, Any]:
-        if (
-            self.options.profile is not None
-            and not _HERMES_PROFILE_NAME_RE.match(self.options.profile)
+        if self.options.profile is not None and not _HERMES_PROFILE_NAME_RE.match(
+            self.options.profile
         ):
             # Reject up front so we never construct a source path that
             # escapes the hermes home via ``..`` segments or hidden chars.
@@ -408,9 +406,7 @@ class HermesMigrator:
             # An empty skills/ directory used to produce no record at all,
             # leaving users unable to distinguish "checked but empty" from
             # "skipped/never checked".
-            self._record(
-                "skills", skills_dir, destination_root, "skipped", "no skills to migrate"
-            )
+            self._record("skills", skills_dir, destination_root, "skipped", "no skills to migrate")
             return
         for skill_dir in skill_subdirs:
             target = destination_root / skill_dir.name
@@ -532,9 +528,7 @@ class HermesMigrator:
         # branch is needed here.
         if not source.is_file():
             return
-        destination = (
-            self.output_dir / "archive" / "files" / "workspace-original" / filename
-        )
+        destination = self.output_dir / "archive" / "files" / "workspace-original" / filename
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
         self._record(f"workspace-original/{filename}", source, destination, "archived")
@@ -720,14 +714,11 @@ class HermesMigrator:
             # the write — silently overwriting llm.provider here used to
             # make persist_config raise pydantic ValidationError and abort
             # the entire migration.
-            existing_profile = getattr(
-                getattr(cfg, "agentos_router", None), "tier_profile", None
-            )
+            existing_profile = getattr(getattr(cfg, "agentos_router", None), "tier_profile", None)
             normalized_profile = (existing_profile or "").strip().lower()
             normalized_new_provider = (target_provider or "").strip().lower()
             tier_profile_conflicts = bool(
-                existing_profile
-                and normalized_profile != normalized_new_provider
+                existing_profile and normalized_profile != normalized_new_provider
             )
             if env_key is not None and not tier_profile_conflicts:
                 # Recognized AgentOS provider, no router-profile clash —
@@ -869,8 +860,10 @@ class HermesMigrator:
                     continue
                 servers[name] = {k: v for k, v in entry.items() if k not in ("name", "id")}
         if not servers:
-            reason = "no MCP servers found" if not dropped else (
-                f"all {len(dropped)} server entries were malformed"
+            reason = (
+                "no MCP servers found"
+                if not dropped
+                else (f"all {len(dropped)} server entries were malformed")
             )
             self._record(
                 "mcp-servers",
@@ -1043,17 +1036,10 @@ class HermesMigrator:
     def _write_env(self) -> None:
         if not self.options.apply or not self._env_additions:
             return
-        env_path = self.home / ".env"
-        env_path.parent.mkdir(parents=True, exist_ok=True)
-        existing_lines = (
-            env_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            if env_path.exists()
-            else []
-        )
-        env_path.write_text(
-            "\n".join(merge_env_lines(existing_lines, self._env_additions)) + "\n",
-            encoding="utf-8",
-        )
+        # Shared writer: this path previously left the migrated file at the
+        # default umask, so imported credentials were world-readable on a
+        # typical box. It now gets 0600 like every other .env AgentOS creates.
+        write_env_file_values(self.home / ".env", self._env_additions, enforce_denylist=False)
 
     def _write_config(self) -> None:
         if self.options.apply and self._config_changed and self._config_obj is not None:

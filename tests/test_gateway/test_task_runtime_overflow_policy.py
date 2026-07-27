@@ -13,6 +13,7 @@ Tests use ``max_concurrency=1`` plus a gating event so the running
 task stays running while the queue fills, isolating overflow behaviour
 from execution scheduling.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -73,9 +74,7 @@ def _make_runtime(
     *,
     turn_handler: Callable[..., Awaitable[Any]],
     max_pending_per_session: int = 2,
-    pending_overflow_policy: PendingOverflowPolicy | str = (
-        PendingOverflowPolicy.REJECT_NEWEST
-    ),
+    pending_overflow_policy: PendingOverflowPolicy | str = (PendingOverflowPolicy.REJECT_NEWEST),
 ) -> TaskRuntime:
     return TaskRuntime(
         storage=_make_storage(),
@@ -270,9 +269,7 @@ async def test_apply_overflow_policy_public_entry_point() -> None:
 
     # Public entry point with drop_oldest evicts "second"; the queue is now
     # empty so a follow-up enqueue under reject_newest succeeds.
-    await rt.apply_overflow_policy(
-        env.session_key, policy=PendingOverflowPolicy.DROP_OLDEST
-    )
+    await rt.apply_overflow_policy(env.session_key, policy=PendingOverflowPolicy.DROP_OLDEST)
     third = await rt.enqueue(env, "third")
 
     release.set()

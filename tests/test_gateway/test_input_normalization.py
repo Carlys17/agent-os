@@ -59,8 +59,7 @@ def test_page_dump_is_guarded_below_large_paste_threshold() -> None:
         "Chat session agent:main:webchat:gp85g1kj\n"
         "Running\n"
         "Still waiting for agent response...\n"
-        "AI MODEL ROUTER\n"
-        + ("x" * PAGE_DUMP_CHARS)
+        "AI MODEL ROUTER\n" + ("x" * PAGE_DUMP_CHARS)
     )
 
     normalized = normalize_incoming_text(
@@ -146,8 +145,7 @@ def test_infers_page_dump_normalization_from_placeholder_attachment() -> None:
         "Chat session agent:main:webchat:gp85g1kj\n"
         "Running\n"
         "Still waiting for agent response...\n"
-        "AI MODEL ROUTER\n"
-        + ("界" * PAGE_DUMP_CHARS)
+        "AI MODEL ROUTER\n" + ("界" * PAGE_DUMP_CHARS)
     )
     attachment = {
         "type": "text/plain",
@@ -178,7 +176,4 @@ def test_regular_text_attachment_does_not_infer_normalization() -> None:
         "data": base64.b64encode(b"hello").decode("ascii"),
     }
 
-    assert (
-        infer_normalized_input_from_attachments(LARGE_PASTE_PLACEHOLDER, [attachment])
-        is None
-    )
+    assert infer_normalized_input_from_attachments(LARGE_PASTE_PLACEHOLDER, [attachment]) is None

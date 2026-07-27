@@ -313,6 +313,49 @@ async def test_fetch_and_inspect_delegate_to_github(monkeypatch) -> None:
     assert calls == {"fetch": ident, "inspect": ident}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        # A different repository entirely — the laundering case.
+        "https://github.com/attacker/skills/tree/main/bankr",
+        # The right repo, but a slug that is not published by Bankr.
+        "https://github.com/BankrBot/skills/tree/main/not-a-bankr-skill",
+        # The repo root, with no skill directory at all.
+        "https://github.com/BankrBot/skills",
+        # Not a GitHub reference in the first place.
+        "not-an-identifier",
+    ],
+)
+async def test_install_path_refuses_identifiers_outside_the_allowlist(
+    monkeypatch, identifier: str
+) -> None:
+    """A non-Bankr identifier must not be installable *through* the Bankr source.
+
+    A hub install records its publisher from the source it came through, so an
+    ungated delegate would let an arbitrary GitHub skill be installed with
+    ``source="bankr"`` and then render under Bankr's name and link in the
+    Partners group.
+    """
+    calls: list[str] = []
+
+    async def _fake_fetch(self: Any, ident: str) -> str:
+        calls.append(ident)
+        return "bundle"
+
+    from agentos.skills.hub.github import GitHubSource
+
+    monkeypatch.setattr(GitHubSource, "fetch", _fake_fetch)
+    monkeypatch.setattr(GitHubSource, "inspect", _fake_fetch)
+
+    src = BankrSource()
+
+    assert await src.fetch(identifier) is None
+    assert await src.inspect(identifier) is None
+    # The delegate is never reached — nothing is downloaded.
+    assert calls == []
+
+
 def test_default_router_exposes_bankr_source(monkeypatch) -> None:
     from agentos.skills.hub import defaults
 

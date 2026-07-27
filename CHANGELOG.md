@@ -6,6 +6,312 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.7.27] - 2026-07-27
+
+### Added
+
+- A variable reported as missing is now checked against the places a
+  credential may already live. If `gh auth login` has been run, `GITHUB_TOKEN`
+  is reported as available from the GitHub CLI and can be imported with
+  `agentos env import GITHUB_TOKEN` or a button on the Environment screen.
+  Checking runs `gh auth status`, never `gh auth token`, so nothing reads a
+  secret to decide whether one exists; importing only happens when asked for.
+- When a skill's requirements are unmet, `skill_view` appends a setup note
+  saying what is missing and what to do about it — and what to do depends on
+  who is listening. A chat channel is told a secret must not be collected
+  there because it would be stored in the conversation; an unattended run is
+  told to continue and state what does not work; an interactive session gets
+  the actual command. The skill still loads either way.
+- Environment variables can be managed from AgentOS instead of by hand-editing
+  `~/.agentos/.env` and restarting. Every surface that could already *detect* a
+  missing variable can now *fix* it: a new **Environment** screen in the Web UI
+  (`/env`), an `agentos env list|get|set|unset` command, `env.*` gateway RPC,
+  and a **Set &lt;VAR&gt;** action in the Skills dialog next to the existing
+  install action. Setting a variable applies it to the running gateway, so a
+  skill that was ineligible for want of one becomes eligible without a restart.
+- Skill manifests can describe the variables they need — a description, where
+  to obtain the value, and whether it is a secret — instead of only naming
+  them. Existing manifests using the plain `requires.env: [NAME]` list keep
+  working unchanged.
+- Skills can also declare non-secret settings under `metadata.agentos.config`,
+  stored in the TOML config under `[skills.config]` rather than in `.env`.
+  Their current values are appended to what `skill_view` returns, so the agent
+  starts from what is configured instead of asking.
+- The agent has `env_list` (names and set/unset state, never values) and, gated
+  behind the approval queue and hidden by default, `env_set`. There is no
+  reveal tool: a model that can read back stored credentials is one prompt
+  injection away from exfiltrating them.
+- "Is the agent actually being offered this skill?" is now a question with an
+  answer. Every skill row from the gateway, and every line the agent's own
+  skill listing prints, carries whether the skill is offered and — when it is
+  not — which of six reasons applies: model invocation is disabled in its
+  manifest, a requirement is missing, a tool it needs is not enabled in this
+  session, a native tool supersedes it as a fallback, relevance filtering
+  skipped it for this message, or the injected skills block was full. The
+  explanation is one sentence naming what to do, and it never contains a
+  filesystem path. Ready and offered were previously the same green dot, which
+  is why a perfectly installed skill could sit there being silently withheld.
+  Five of the six answer from the installed set alone, so the Skills page shows
+  them before you send anything; only the relevance-filtering one needs a
+  message to rank against and stays in the decision log.
+- With `[tools] enabled = false`, skills that require a tool are now reported as
+  withheld rather than available. The Skills page previously answered against
+  everything the install could offer while chat answered against a turn with no
+  tools at all — the same skill, two answers.
+- How a skill was acquired — `shipped` with AgentOS, installed from a `hub`, or
+  a `local` directory you added — is now a fact AgentOS records and reports,
+  alongside the source, identifier, version, and install time for hub installs.
+  It is derived from the install record rather than guessed from which
+  directory the files sit in, so moving a skill does not change the story of
+  where it came from.
+- The same record answers whether Update and Remove will actually work. A
+  hub-installed skill whose files no longer sit where the lockfile recorded
+  them keeps Update — an update re-fetches by identifier — and loses Remove,
+  because AgentOS will not delete files it cannot prove it owns. The Web UI
+  says so instead of offering a button that fails.
+- Skills can name a publisher, so a partner's skills carry that partner's
+  identity whether they shipped with AgentOS or you installed them from that
+  partner's hub. Publishers are allowlisted **inside AgentOS**: a `SKILL.md` or
+  a hub catalog can only *select* a recognized publisher by id, never describe
+  one. A third-party skill that writes a partner's name, URL, and logo into its
+  own frontmatter renders as an ordinary unbranded skill. Selecting an id is
+  restricted too: only a skill shipping inside the release may name its own
+  publisher, and an installed one is branded by the hub catalog row it came
+  from, so a directory dropped into a skills path can never appear as a
+  partner. Publisher is independent of provenance — one says whose name is on a
+  skill, the other where the text came from and under what licence.
+- `agentos skills list --json` gained `publisher` and `acquisition`, built by
+  the same code the gateway and the Web UI use. It deliberately has no
+  `availability` key: that depends on a chat session's tool surface, which a
+  CLI process does not have, and an absent key means "not computed" rather than
+  "not offered".
+
+### Changed
+
+- The Skills screen's Installed tab now groups cards by where a skill came
+  from — **Partners**, **Shipped with AgentOS**, **Installed from a hub**,
+  **Your local skills** — instead of by which directory holds the files. The
+  storage layer is still shown, as a chip on each card, because it decides
+  which skill wins a name collision; it no longer decides the heading. If you
+  navigated by the old `Bundled` / `Managed` headings, the cards under them are
+  now under `Shipped with AgentOS` and `Installed from a hub`.
+- `skills.max_skills_prompt_chars` now defaults to **24000**, up from 8000. The
+  bundled skill set renders to about 16k characters with descriptions, so the
+  old default silently forced every default install past the budget and into
+  name-only mode — the model had never seen a skill description on a stock
+  install. Raise it further if you install many skills; lower it if you run a
+  model with a small context window, where the whole-request ceiling can be
+  smaller than this budget. See
+  [configuration.md](docs/configuration.md#skill-prompt-budget).
+
+### Security
+
+- Environment writes are refused for names that steer subprocess execution
+  (`PATH`, `LD_PRELOAD`, `PYTHONPATH`, `EDITOR`, …) or AgentOS runtime posture
+  (`AGENTOS_AGENT_PERMISSIONS`, `AGENTOS_GATEWAY_TOKEN`, `AGENTOS_STATE_DIR`,
+  …). Every tool AgentOS spawns inherits `os.environ` and several guards are
+  read from it, so a writable surface without this gate could widen what the
+  agent is allowed to do. The gate applies on write only — values set in your
+  shell or by editing the file directly keep working, and the `AGENTOS_` prefix
+  is not blanket-blocked.
+- Listings never carry a value. `env.reveal` is a separate method, rate limited
+  to five per thirty seconds and written to the audit log.
+- The Hermes migration wrote the migrated `.env` at the default umask, leaving
+  imported credentials world-readable on a typical box. It now writes `0600`,
+  like every other `.env` AgentOS creates.
+
+### Upgrade notes
+
+- Two `.env` lines that AgentOS previously ignored now take effect: a
+  bash-style `export KEY=value`, and the first entry in a file saved with a
+  byte-order mark. Both were parsed into unusable keys before (literally
+  `export KEY`, and `\ufeffKEY`), so the variable was not set. If your `.env`
+  has either, expect that variable to start being applied — which is what the
+  line was written to do. Values exported in your shell still win over the
+  file, so nothing that was already working changes.
+- CLI logs now go to stderr instead of stdout. Anything capturing a command's
+  stdout to collect log output needs `2>` instead; in exchange, `--json`
+  output is parseable on an install that has a populated `.env`.
+- The skill snapshot cache is invalidated once on first run, so the first
+  command after upgrading rescans skills from disk.
+
+### Removed
+
+- The session-flush subsystem is gone. It wrote a "flush receipt" before
+  destructive compaction and never earned its keep: roughly 8,000 lines for a
+  memory path that underperformed. Compaction still records a durable
+  checkpoint first, so the pre-image it recovers from is unchanged.
+- The `memory.flush_*` and `memory.repair_*` configuration keys are no longer
+  read. An existing `agentos.toml` keeps working — the keys are dropped on load
+  with one warning naming them, and the file is rewritten on the next config
+  save. They will be rejected outright in 0.2.0.
+
+  Removing `memory.flush_enabled`, `memory.flush_compaction_safety_mode`, and
+  `memory.flush_compaction_requires_safe_receipt` matters most. With no flush
+  service left, no receipt can ever be written, so `flush_enabled = true`
+  combined with `block` (or the legacy `requires_safe_receipt`) would have made
+  compaction demand a receipt nothing could produce: refused on every turn,
+  context window filling until the provider errors, with a single warning line
+  as the only clue.
+- `sessions.reset` and `sessions.contextCompact` no longer return a
+  `flush_receipt` field, and `agentos reset` no longer prints a "Flush mode"
+  line. Both described work that no longer happens.
+
+### Fixed
+
+- `env_key` is not always a variable name: providers that authenticate by
+  OAuth carry the literal string `"OAuth"`, which put a variable called
+  `OAuth` on the Environment screen that nobody could set.
+- `skill_list` no longer tells the model to call `env_set`, which is hidden by
+  default and so usually not callable — the same dead-end this feature exists
+  to remove.
+- A `.env` value with significant leading or trailing whitespace was written
+  unquoted and then silently trimmed when read back. The OpenClaw migration
+  carries a command allowlist across, and its entries are prefix patterns:
+  `"^pytest "` with the trailing space matches that command, while `"^pytest"`
+  without it matches anything starting with those six characters. Migrating an
+  allowlist and quietly widening it is the wrong direction.
+- `.env` parsing now recognises the bash-compatible `export KEY=value` form.
+  A hand-written `export GITHUB_TOKEN=…` was previously invisible to AgentOS,
+  and a save would have appended a second, competing definition.
+- `/reset` in the standalone chat TUI works again on sessions with a non-empty
+  transcript. It had been gated on a flush service that is never constructed,
+  so it aborted every time; `/compact` printed a matching false warning.
+- The skills block no longer writes an absolute filesystem path for every
+  skill into the system prompt. Nothing read it — skills are looked up by name,
+  and the skill-reading tool explicitly tells the model not to go looking on
+  disk — while it accounted for roughly two thirds of the block and put the
+  user's home directory in front of the model on every turn. Removing it, with
+  the raised budget above, is what lets a stock install list every skill with
+  its description.
+- Upgrading lifts an existing `skills.max_skills_prompt_chars = 8000` to the new
+  default. The key is materialised into every saved `config.toml`, so raising the
+  default alone would have reached new installs only, and 8000 is exactly the
+  value that cannot fit the shipped skills' descriptions. The rewrite runs with
+  the config migrations on the next gateway start, takes the usual timestamped
+  backup, and touches only that exact old default — a budget someone chose is
+  left alone.
+- A skill that appears in a skills directory while the gateway is running is
+  now picked up on the next turn instead of at the next restart. The cache was
+  only cleared through AgentOS's own install paths, but the directories are
+  shared: `agentos skills install` runs in a separate process, and
+  `~/.agents/skills` is written to by other agents on the same machine. A skill
+  from either was on disk, absent from `skills.list`, absent from the prompt,
+  and unmentioned in any log. The cache is now validated against the same
+  file manifest the on-disk snapshot already used, which costs one stat sweep —
+  measured at 0.6 ms for 65 skills — on each load.
+- `~/.agents/skills` and `<project>/.agents/skills` are honoured when they are
+  created after startup. Both resolved once at boot and a missing one collapsed
+  to "no such layer", so the first cross-agent install on a machine stayed
+  invisible until a restart. The managed directory was already exempt for this
+  exact reason; these two now match it.
+- The guidance above the skills list no longer argues against using it. It
+  opened with "Skills are optional task playbooks" and told the model to load
+  one "only when a listed entry clearly matches" — while the same block, in the
+  compact mode a stock install always fell into, listed nothing but names. A
+  bare name matches nothing clearly, so the instruction could not be followed
+  and the honest reading was "skip it". The two failure modes are not
+  symmetric: loading a skill that turned out to be unnecessary costs a little
+  context, and skipping one that carried the right endpoints, commands, or
+  conventions produces a confidently wrong answer. The block now says so, asks
+  the model to load on partial relevance, and — when only names are listed —
+  states plainly that a name is not enough to rule a skill out.
+- When the skills block does overflow its budget, the skills it drops are no
+  longer chosen by load order, which always landed the cut on the skills an
+  operator had installed. The cut now follows layer precedence, so `extra` and
+  then `bundled` skills go before the ones in a writable skills path. The drop is
+  also reported instead of being silent: a `skills_filter.budget_truncated`
+  warning naming the dropped skills, and a `prompt_budget` reason on each
+  affected skill.
+- The skill count and skill-id list in turn metadata and the
+  `skills_filter.applied` log counted skills that the budget had already thrown
+  away, so the one place that could have revealed the problem asserted
+  everything was fine.
+- Setting an environment variable or installing a missing binary now takes
+  effect for the agent without a gateway restart, which is what the
+  Environment feature promised. The chat path built one eligibility cache at
+  import time and remembered a *negative* lookup for the life of the process,
+  while every other surface rebuilt its own per call — so the Skills screen
+  reported a skill as ready while the agent refused to be given it, forever.
+- Browsing or searching a skill hub now also shows skills you already installed
+  from that source, including ones its catalog does not list. A skill installed
+  from a GitHub URL used to vanish from the page it was installed on, because
+  an empty browse never returned a row for it.
+- The Installed marker in the community list no longer goes stale after a
+  removal, and no longer fires on a catalog entry whose *name* happens to match
+  an unrelated skill's install *identifier*. Names are matched against
+  installed names and identifiers against installed identifiers.
+- Installing a skill while a search is open no longer loses the row when the
+  search is cleared, and the skill dialog no longer unmounts itself when the
+  list underneath it changes.
+- A failed hub search reports the failure instead of rendering as "no skills
+  match your query", and results the hub matched on a tag are no longer
+  discarded by a second client-side filter that could not see the tag.
+
+## [2026.7.26] - 2026-07-26
+
+### Added
+
+- Curated memory now nudges itself. Every N user turns — default 10,
+  configured at `[memory.nudge]`, `interval = 0` disables it — a short
+  background review runs after the reply is already on the wire and saves
+  anything durable it found in the conversation. Machine traffic (cron,
+  heartbeat, subagent, recall), the review turn itself, and turns where the
+  agent already wrote to memory are excluded and do not advance the counter.
+- OpenCAP is supported as an LLM gateway provider.
+- Telegram shows a typing indicator while a turn is running.
+- `SECURITY.md` documents GitHub private vulnerability reporting as the
+  intake path for suspected vulnerabilities.
+
+### Changed
+
+- **Breaking:** channel authorization is now two connection surfaces —
+  Control and Channel — backed by explicit RPC audiences, replacing roles and
+  scopes. Telegram pairing is durable, group admission is explicit, and
+  grants are revalidated before turns and tools. Owner/admin elevation is
+  gone from tools, cron, the CLI, and the Control UI; sandbox and approval
+  policy are unchanged. Channel roles, scoped tokens, access modes, and
+  unauthenticated public Control are removed — existing configs using them
+  need to move to pairing surfaces.
+- Cron job management is scoped to the active profile, so jobs from one
+  profile are no longer listed or mutated from another.
+- Daily notes that the injection budget would discard are no longer read at
+  all, cutting per-turn memory I/O.
+
+### Fixed
+
+- `/new` and `/reset` are non-destructive when flush is unavailable: the
+  session is no longer discarded on a path that cannot produce a receipt,
+  and compaction only demands a flush receipt when flush can actually
+  produce one.
+- The `MEMORY.md` migration is non-destructive — an existing file is
+  preserved rather than overwritten.
+- Turn captures are written atomically, so an interrupted write can no
+  longer leave a truncated capture behind.
+- Curated memory writes are locked on Windows, the injection scan covers a
+  wider set of paths, and the hermes durability guards in the curated store
+  are restored.
+- `USER.md` counts as a memory source for write notifications.
+- Unreadable curated files are surfaced as errors instead of being silently
+  skipped, which previously left the agent blind to memory it could not
+  read.
+- The degraded-source list no longer grows one entry per failed metric.
+- Slack dispatches Socket Mode slash commands and classifies slash-command
+  conversations correctly.
+- Discord completes native interaction responses and tolerates command
+  registration failures instead of failing adapter startup.
+- Telegram handles native bot-command mentions, preserves forum command
+  reply targets, renders markdown replies, allows admitted DM slash
+  commands, and keeps pairing runtime state serializable.
+- Admitted senders are granted read access across channels.
+
+### Removed
+
+- Dream consolidation, the orphaned `flush_status`, the memory repair
+  service, and the `agentos memory flush-session` command are removed.
+
+## [2026.7.25] - 2026-07-25
+
 ### Added
 
 - Added one fail-closed Control UI build contract,
@@ -13,7 +319,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Docker, wheel/sdist publication, and wheelhouse releases. It requires
   Node.js 22 or newer, performs a clean locked npm install, enforces bundle
   budgets, generates an exact third-party license ledger, and verifies the
-  resulting React bundle before packaging.
+   resulting React bundle before packaging.
+- OpenRouter's `openai/gpt-5.6-luna` is now the default LLM model.
 
 ### Changed
 
@@ -60,6 +367,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Removed the retired Jinja Control UI template and its hand-maintained
   JavaScript, CSS, fonts, images, and vendored browser libraries. There is no
   legacy frontend fallback at runtime or in release artifacts.
+
+### Fixed
+
+- Control UI settings preserve the active configuration state, Bankr icons
+  render correctly, and resetting a session reliably clears its client state.
+- The collapsed Control UI sidebar toggle has improved interaction and layout.
+- CLI onboarding prompts wrap correctly instead of overflowing narrow terminals.
 
 ## [2026.7.23] - 2026-07-23
 

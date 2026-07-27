@@ -64,7 +64,8 @@ def test_session_stream_registry_preserves_meta_step_control_events() -> None:
     replay = registry.replay("agent:main:test", 0)
 
     tool_events = [
-        event for event in replay.events
+        event
+        for event in replay.events
         if event.payload.get("tool_name") == "meta-step:writing_plan"
     ]
     assert [event.event_name for event in tool_events] == [

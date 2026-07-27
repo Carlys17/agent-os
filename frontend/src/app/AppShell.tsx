@@ -14,13 +14,14 @@ import {
   BarChart3,
   Bot,
   CalendarClock,
+  ChevronLeft,
+  ChevronRight,
   LayoutDashboard,
   Menu,
   MessageSquare,
   Moon,
   Network,
-  PanelLeftClose,
-  PanelLeftOpen,
+  KeyRound,
   Puzzle,
   Radio,
   ScrollText,
@@ -71,6 +72,7 @@ const NAV_GROUPS: ReadonlyArray<{
     label: 'Settings',
     items: [
       { path: 'settings', title: 'Agent setup', icon: Settings2 },
+      { path: 'env', title: 'Environment', icon: KeyRound },
       { path: 'logs', title: 'Logs', icon: ScrollText },
       { path: 'approvals', title: 'Approvals', icon: ShieldCheck },
     ],
@@ -367,9 +369,9 @@ export function AppShell() {
             onClick={toggleSidebarCollapsed}
           >
             {compactSidebar ? (
-              <PanelLeftOpen className="size-4" />
+              <ChevronRight className="size-4" />
             ) : (
-              <PanelLeftClose className="size-4" />
+              <ChevronLeft className="size-4" />
             )}
           </Button>
         </div>

@@ -100,24 +100,10 @@ async def read_standalone_transcript(
     )
 
 
-async def flush_before_standalone_rewrite(
-    svc: Any,
-    session_key: str,
-    *,
-    operation: str,
-) -> bool:
-    return await _standalone_slash_adapter._flush_before_standalone_rewrite(
-        standalone_slash_services_from_runtime(svc),
-        session_key,
-        operation=operation,
-    )
-
-
 def standalone_slash_services_from_runtime(
     svc: Any,
 ) -> _standalone_slash_adapter.StandaloneSlashServices:
     session_manager = getattr(svc, "session_manager", None)
-    flush_service = getattr(svc, "flush_service", None)
 
     create_session = (
         getattr(session_manager, "get_or_create", None)
@@ -137,11 +123,6 @@ def standalone_slash_services_from_runtime(
     compact_with_result = (
         getattr(session_manager, "compact_with_result", None)
         if session_manager is not None
-        else None
-    )
-    flush_transcript = (
-        getattr(flush_service, "execute", None)
-        if flush_service is not None
         else None
     )
     create_session_callable = (
@@ -164,12 +145,6 @@ def standalone_slash_services_from_runtime(
         if callable(compact_with_result)
         else None
     )
-    flush_transcript_callable = (
-        cast(_standalone_slash_adapter.StandaloneFlushTranscript, flush_transcript)
-        if callable(flush_transcript)
-        else None
-    )
-
     async def _read_transcript(session_key: str) -> list[Any] | None:
         return await read_standalone_transcript(
             session_manager,
@@ -182,7 +157,6 @@ def standalone_slash_services_from_runtime(
         truncate_session=truncate_session_callable,
         compact_session=compact_session_callable,
         compact_with_result=compact_with_result_callable,
-        flush_transcript=flush_transcript_callable,
         config=getattr(svc, "config", None),
         provider_selector=getattr(svc, "provider_selector", None),
     )
@@ -225,7 +199,6 @@ async def run_standalone_chat(
         )
         return tool_context_from_envelope(
             route_envelope,
-            is_owner=True,
             workspace_dir=active_workspace,
             workspace_strict=effective_workspace_strict,
             default_elevated=configured_default_elevated(svc.config),

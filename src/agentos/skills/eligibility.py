@@ -7,7 +7,7 @@ import platform
 import shutil
 from dataclasses import dataclass, field
 
-from agentos.skills.types import SkillInstallSpec, SkillSpec
+from agentos.skills.types import SkillEnvVar, SkillInstallSpec, SkillSpec
 
 
 @dataclass
@@ -82,8 +82,8 @@ def check_eligibility(spec: SkillSpec, ctx: EligibilityContext) -> bool:
                 return False
 
         # 6. Required env vars
-        for e in meta.requires.env:
-            if not _has_env(e, ctx):
+        for name in meta.requires.env_names:
+            if not _has_env(name, ctx):
                 return False
 
     return True
@@ -111,6 +111,12 @@ class EligibilityReport:
     reasons: list[str] = field(default_factory=list)
     missing_bins: list[str] = field(default_factory=list)
     missing_env: list[str] = field(default_factory=list)
+    #: The same missing variables as :attr:`missing_env`, carrying whatever the
+    #: manifest declared about them. Surfaces use this to explain what a
+    #: variable is for and where to obtain it, instead of printing a bare name
+    #: the operator has to go research. ``missing_env`` stays a plain list of
+    #: names so existing callers keep working.
+    missing_env_detail: list[SkillEnvVar] = field(default_factory=list)
     install_hints: list[InstallHint] = field(default_factory=list)
     disabled: bool = False
     wrong_os: bool = False
@@ -167,6 +173,7 @@ def diagnose_eligibility(spec: SkillSpec, ctx: EligibilityContext) -> Eligibilit
     reasons: list[str] = []
     missing_bins: list[str] = []
     missing_env: list[str] = []
+    missing_env_detail: list[SkillEnvVar] = []
     disabled = False
     wrong_os = False
 
@@ -198,10 +205,11 @@ def diagnose_eligibility(spec: SkillSpec, ctx: EligibilityContext) -> Eligibilit
                             missing_bins.append(b)
                     reasons.append(f"Need one of: {', '.join(meta.requires.any_bins)}")
 
-            for e in meta.requires.env:
-                if not _has_env(e, ctx):
-                    missing_env.append(e)
-                    reasons.append(f"Missing env var: {e}")
+            for declared in meta.requires.env:
+                if not _has_env(declared.name, ctx):
+                    missing_env.append(declared.name)
+                    missing_env_detail.append(declared)
+                    reasons.append(f"Missing env var: {declared.name}")
 
     # Match missing bins against install specs to produce hints
     install_hints: list[InstallHint] = []
@@ -223,6 +231,7 @@ def diagnose_eligibility(spec: SkillSpec, ctx: EligibilityContext) -> Eligibilit
         reasons=reasons,
         missing_bins=missing_bins,
         missing_env=missing_env,
+        missing_env_detail=missing_env_detail,
         install_hints=install_hints,
         disabled=disabled,
         wrong_os=wrong_os,

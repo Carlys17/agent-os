@@ -8,7 +8,9 @@ import weakref
 from pathlib import Path
 from typing import Any
 
+from agentos.gateway.access import CONTROL_AND_CHANNEL, CONTROL_AND_NODE
 from agentos.gateway.rpc import RpcContext, get_dispatcher
+from agentos.skills.availability import SkillAvailability
 from agentos.skills.eligibility import (
     EligibilityContext,
     EligibilityReport,
@@ -21,7 +23,18 @@ from agentos.skills.hub.defaults import (
     installed_skill_names,
 )
 from agentos.skills.hub.deps import install_deps
+from agentos.skills.hub.lockfile import LockEntry, Lockfile, default_lockfile_path
+from agentos.skills.inventory import (
+    SkillRow,
+    acquisition_payload,
+    availability_payload,
+    build_skill_inventory,
+    publisher_payload,
+)
 from agentos.skills.loader import SkillLoader
+from agentos.skills.publishers import resolve_publisher
+from agentos.skills.types import SkillAcquisition, SkillPublisher
+from agentos.tools.registry import get_default_registry
 
 _d = get_dispatcher()
 
@@ -48,6 +61,39 @@ def _get_loader(ctx: RpcContext) -> SkillLoader | None:
 def _loader_managed_dir(ctx: RpcContext) -> Path | None:
     loader = _get_loader(ctx)
     return getattr(loader, "managed_dir", None) if loader is not None else None
+
+
+def _available_tool_names(ctx: RpcContext) -> set[str]:
+    """Return the tool surface availability is answered against.
+
+    Same resolution order as ``rpc_tools``: the connection's registry when it
+    has one, else the process-wide default the gateway registers builtins into.
+    A per-turn profile can still narrow this, so the answer is "what this
+    install can offer the agent", which is the question an Installed row asks —
+    not "what that one turn saw".
+
+    The exception is ``tools.enabled = false``, which narrows every turn to no
+    tools at all. Reporting the full registry there would show a
+    ``requires_tools`` skill as available on the Skills page while chat withholds
+    it — the disagreement this whole change exists to remove.
+    """
+    tools_cfg = getattr(getattr(ctx, "config", None), "tools", None)
+    if tools_cfg is not None and not getattr(tools_cfg, "enabled", True):
+        return set()
+    registry = getattr(ctx, "tool_registry", None) or get_default_registry()
+    return set(registry.list_names())
+
+
+def _inventory(ctx: RpcContext) -> list[SkillRow]:
+    """Build the one row set every skills RPC renders from."""
+    loader = _get_loader(ctx)
+    if loader is None:
+        return []
+    return build_skill_inventory(
+        loader,
+        config=getattr(ctx, "config", None),
+        available_tools=_available_tool_names(ctx),
+    )
 
 
 def _status_from_report(report: EligibilityReport) -> str:
@@ -153,6 +199,9 @@ def _skill_to_dict(
     *,
     skill_index: dict[str, Any] | None = None,
     eligibility_ctx: EligibilityContext | None = None,
+    acquisition: SkillAcquisition | None = None,
+    publisher: SkillPublisher | None = None,
+    availability: SkillAvailability | None = None,
 ) -> dict[str, Any]:
     """Convert a SkillSpec to a dict with eligibility diagnostics.
 
@@ -162,6 +211,13 @@ def _skill_to_dict(
     OS filter (skill-level ``metadata.os`` + per-install ``os``), and keeps the
     wire payload narrow (no ``os`` field per entry).
     Passing an empty ``os_name`` disables per-entry filtering (backward compat).
+
+    ``acquisition``/``publisher``/``availability`` come from
+    :func:`~agentos.skills.inventory.build_skill_inventory`. The first two have
+    empty defaults, so they are always on the wire. ``availability`` has no
+    honest default — it needs a tool surface — so the key is omitted when it was
+    not computed rather than carrying a made-up verdict. Every RPC handler here
+    passes one, so it is always present on a real row.
     """
     meta = getattr(spec, "metadata", None)
     install_entries: list[dict[str, Any]] = []
@@ -208,6 +264,10 @@ def _skill_to_dict(
         "upstream_url": provenance.upstream_url if provenance else "",
         "maintained_by": provenance.maintained_by if provenance else "AgentOS",
     }
+    d["publisher"] = publisher_payload(publisher)
+    d["acquisition"] = acquisition_payload(acquisition)
+    if availability is not None:
+        d["availability"] = availability_payload(availability)
     d["declared"] = report.declared
     d["status"] = _status_from_report(report)
     d["status_detail"] = _status_detail(spec, report)
@@ -215,57 +275,64 @@ def _skill_to_dict(
         d["reasons"] = report.reasons
         d["missing_bins"] = report.missing_bins
         d["missing_env"] = report.missing_env
+        # Names alone tell an operator that something is missing but not what
+        # it is or where to get it. The detail form carries whatever the
+        # manifest declared so a UI can offer a real fix next to the name,
+        # the way it already does for a missing binary.
+        d["missing_env_detail"] = [e.to_dict() for e in report.missing_env_detail]
     return d
 
 
-@_d.method("skills.status", scope="operator.read")
-async def _handle_skills_status(params: dict | None, ctx: RpcContext) -> list[dict[str, Any]]:
-    """Return all skills with their eligibility status."""
-    loader = _get_loader(ctx)
-    if loader is None:
-        return []
+def _row_to_dict(
+    row: SkillRow,
+    os_name: str,
+    skill_index: dict[str, Any],
+    eligibility_ctx: EligibilityContext | None,
+) -> dict[str, Any]:
+    """Render one inventory row as the wire payload."""
+    return _skill_to_dict(
+        row.spec,
+        row.eligibility,
+        os_name,
+        skill_index=skill_index,
+        eligibility_ctx=eligibility_ctx,
+        acquisition=row.acquisition,
+        publisher=row.publisher,
+        availability=row.availability,
+    )
 
+
+def _rows_payload(rows: list[SkillRow], *, index_from: list[SkillRow] | None = None) -> list[dict]:
+    """Render rows, resolving cross-skill lookups against ``index_from``.
+
+    ``skills.list`` hides non-user-invocable skills but must still index every
+    loaded skill, so the rendered set and the index are separate arguments.
+    """
     ctx_eligible = EligibilityContext.auto()
-    skills = loader.load_all()
-    skill_index = {skill.name: skill for skill in skills}
-    return [
-        _skill_to_dict(
-            skill,
-            diagnose_eligibility(skill, ctx_eligible),
-            ctx_eligible.os_name,
-            skill_index=skill_index,
-            eligibility_ctx=ctx_eligible,
-        )
-        for skill in skills
-    ]
+    skill_index = {row.spec.name: row.spec for row in (index_from if index_from else rows)}
+    return [_row_to_dict(row, ctx_eligible.os_name, skill_index, ctx_eligible) for row in rows]
 
 
-@_d.method("skills.list", scope="operator.read")
+@_d.method("skills.status")
+async def _handle_skills_status(params: dict | None, ctx: RpcContext) -> list[dict[str, Any]]:
+    """Return all skills with their eligibility status.
+
+    A published alias of ``skills.list`` with no known caller. It is kept
+    because removing a published method is a breaking change, but it shares the
+    one row builder so it can no longer drift into a second answer.
+    """
+    return _rows_payload(_inventory(ctx))
+
+
+@_d.method("skills.list", CONTROL_AND_CHANNEL)
 async def _handle_skills_list(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """List installed skills."""
-    loader = _get_loader(ctx)
-    if loader is None:
-        return {"skills": []}
-
-    ctx_eligible = EligibilityContext.auto()
-    all_skills = loader.load_all()
-    skill_index = {skill.name: skill for skill in all_skills}
-    skills = [skill for skill in all_skills if skill.user_invocable]
-    return {
-        "skills": [
-            _skill_to_dict(
-                skill,
-                diagnose_eligibility(skill, ctx_eligible),
-                ctx_eligible.os_name,
-                skill_index=skill_index,
-                eligibility_ctx=ctx_eligible,
-            )
-            for skill in skills
-        ]
-    }
+    all_rows = _inventory(ctx)
+    rows = [row for row in all_rows if row.spec.user_invocable]
+    return {"skills": _rows_payload(rows, index_from=all_rows)}
 
 
-@_d.method("skills.bins", scope="node")
+@_d.method("skills.bins", CONTROL_AND_NODE)
 async def _handle_skills_bins(params: dict | None, ctx: RpcContext) -> dict[str, bool]:
     """Return the availability status of required bins across all skills."""
     loader = _get_loader(ctx)
@@ -287,7 +354,7 @@ async def _handle_skills_bins(params: dict | None, ctx: RpcContext) -> dict[str,
     return bins_status
 
 
-@_d.method("skills.get", scope="operator.read")
+@_d.method("skills.get")
 async def _handle_skills_get(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Get a single skill by name, including its full content."""
     if not isinstance(params, dict) or "name" not in params:
@@ -297,23 +364,15 @@ async def _handle_skills_get(params: dict | None, ctx: RpcContext) -> dict[str, 
     if loader is None:
         raise KeyError("No skill loader available")
 
-    skills = loader.load_all()
-    skill_index = {item.name: item for item in skills}
-    skill = skill_index.get(params["name"])
-    if skill is None:
+    all_rows = _inventory(ctx)
+    row = next((item for item in all_rows if item.spec.name == params["name"]), None)
+    if row is None:
         raise KeyError(f"Skill not found: {params['name']}")
 
-    ctx_eligible = EligibilityContext.auto()
-    result = _skill_to_dict(
-        skill,
-        diagnose_eligibility(skill, ctx_eligible),
-        ctx_eligible.os_name,
-        skill_index=skill_index,
-        eligibility_ctx=ctx_eligible,
-    )
-    result["content"] = skill.content
-    result["file_path"] = skill.file_path
-    result["base_dir"] = skill.base_dir
+    result = _rows_payload([row], index_from=all_rows)[0]
+    result["content"] = row.spec.content
+    result["file_path"] = row.spec.file_path
+    result["base_dir"] = row.spec.base_dir
     return result
 
 
@@ -328,7 +387,80 @@ def _installed_names() -> set[str]:
     return installed_skill_names()
 
 
-@_d.method("skills.search", scope="operator.read")
+def _installed_lock_entries() -> dict[str, LockEntry]:
+    """Return the lockfile's installed entries, keyed by installed skill name."""
+    return Lockfile.load(default_lockfile_path()).installed
+
+
+def _synthesized_installed_rows(
+    results: list[Any],
+    *,
+    source_id: str | None,
+    query: str,
+    loader: SkillLoader | None,
+) -> list[dict[str, Any]]:
+    """Rows for lockfile installs the catalog did not return.
+
+    A browse (empty query) hits a source's catalog, and a catalog is free not to
+    list something the user already installed — a GitHub install by URL is never
+    in any catalog, and Bankr's browse omits rows it has retired. The Community
+    tab then shows no trace of a skill the user installed minutes ago, which
+    reads as the install having been lost. The lockfile already knows every
+    field a card needs, so this is a local join, not another network call.
+
+    Synthesized rows are appended: they carry no relevance score and no catalog
+    metadata, so putting them first would push richer rows off the top of the
+    grid, and they are the least urgent thing on the page — they are already
+    installed.
+    """
+    seen_identifiers = {r.identifier for r in results if getattr(r, "identifier", "")}
+    seen_names = {r.name for r in results if getattr(r, "name", "")}
+    needle = query.strip().lower()
+
+    rows: list[dict[str, Any]] = []
+    for name, entry in sorted(_installed_lock_entries().items()):
+        # Browsing one source must not surface another source's installs.
+        if source_id is not None and entry.source != source_id:
+            continue
+        if name in seen_names or (entry.identifier and entry.identifier in seen_identifiers):
+            continue
+
+        spec = loader.get_by_name(name) if loader is not None else None
+        description = getattr(spec, "description", "") if spec is not None else ""
+        if needle and needle not in name.lower() and needle not in description.lower():
+            continue
+
+        meta = getattr(spec, "metadata", None)
+        # The lockfile's ``publisher_name`` is the raw string a catalog claimed;
+        # only the allowlisted record is ever rendered as a brand.
+        publisher = resolve_publisher(entry.publisher_id)
+        rows.append(
+            {
+                "name": name,
+                "description": description,
+                "version": entry.version,
+                "author": "",
+                "source": entry.source,
+                "trust_level": entry.source_trust,
+                "identifier": entry.identifier,
+                "provider": publisher.name,
+                "logo": publisher.logo,
+                "emoji": meta.emoji if meta else "",
+                # No catalog metadata means no category. Left empty so the row
+                # joins the existing "other" bucket the browse UI already has,
+                # rather than inventing a chip that would appear on catalogs
+                # which currently show no chips at all.
+                "category": "",
+                "setup": [],
+                "demo": {},
+                "homepage": entry.upstream_url,
+                "installed": True,
+            }
+        )
+    return rows
+
+
+@_d.method("skills.search")
 async def _handle_skills_search(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Search for skills across Community sources."""
     if not isinstance(params, dict) or "query" not in params:
@@ -352,35 +484,47 @@ async def _handle_skills_search(params: dict | None, ctx: RpcContext) -> dict[st
     if source_id is not None and not isinstance(source_id, str):
         source_id = None
     results = await router.search(query, limit=limit, source_id=source_id)
-    # Match a browse result to a lockfile install by BOTH name and identifier.
-    # Lockfile keys are the installer's name (SKILL.md frontmatter), which may
-    # be neither the ``displayName`` a source returns as ``SkillMeta.name`` nor
-    # the catalog slug — e.g. Bankr's ``bankr-token-scam-analysis`` slug
-    # installs under the name ``token-scam-analysis``. The lockfile entry's
-    # identifier (the source URL) is the reliable join key across a reload.
-    installed = _installed_names() | installed_skill_identifiers()
-    return {
-        "results": [
-            {
-                "name": r.name,
-                "description": r.description,
-                "version": r.version,
-                "author": r.author,
-                "source": r.source_id,
-                "trust_level": r.trust_level,
-                "identifier": r.identifier,
-                "provider": r.provider,
-                "logo": r.logo,
-                "emoji": r.emoji,
-                "category": r.category,
-                "setup": r.setup,
-                "demo": r.demo,
-                "homepage": r.homepage,
-                "installed": r.identifier in installed or r.name in installed,
-            }
-            for r in results
-        ]
-    }
+    # Match a browse result to a lockfile install by name against names and by
+    # identifier against identifiers — never across the two. Lockfile keys are
+    # the installer's name (SKILL.md frontmatter), which may be neither the
+    # ``displayName`` a source returns as ``SkillMeta.name`` nor the catalog
+    # slug — e.g. Bankr's ``bankr-token-scam-analysis`` slug installs under the
+    # name ``token-scam-analysis``. The identifier (the source URL) is the
+    # reliable join key across a reload; comparing a name against the pooled
+    # union of both would flag a catalog row whose name happens to equal some
+    # other skill's identifier.
+    installed_names = _installed_names()
+    installed_identifiers = installed_skill_identifiers()
+    rows = [
+        {
+            "name": r.name,
+            "description": r.description,
+            "version": r.version,
+            "author": r.author,
+            "source": r.source_id,
+            "trust_level": r.trust_level,
+            "identifier": r.identifier,
+            "provider": r.provider,
+            "logo": r.logo,
+            "emoji": r.emoji,
+            "category": r.category,
+            "setup": r.setup,
+            "demo": r.demo,
+            "homepage": r.homepage,
+            "installed": (bool(r.identifier) and r.identifier in installed_identifiers)
+            or r.name in installed_names,
+        }
+        for r in results
+    ]
+    rows.extend(
+        _synthesized_installed_rows(
+            results,
+            source_id=source_id,
+            query=query if isinstance(query, str) else "",
+            loader=_get_loader(ctx),
+        )
+    )
+    return {"results": rows}
 
 
 def _invalidate_loader(ctx: RpcContext) -> None:
@@ -396,7 +540,7 @@ def _invalidate_loader(ctx: RpcContext) -> None:
         loader.invalidate_cache()
 
 
-@_d.method("skills.install", scope="operator.admin")
+@_d.method("skills.install")
 async def _handle_skills_install(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Install a skill from a Community source."""
     if not isinstance(params, dict) or "identifier" not in params:
@@ -428,7 +572,7 @@ async def _handle_skills_install(params: dict | None, ctx: RpcContext) -> dict[s
     return resp
 
 
-@_d.method("skills.update", scope="operator.admin")
+@_d.method("skills.update")
 async def _handle_skills_update(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Update installed skills from lockfile."""
     loader = _get_loader(ctx)
@@ -458,7 +602,7 @@ async def _handle_skills_update(params: dict | None, ctx: RpcContext) -> dict[st
     }
 
 
-@_d.method("skills.uninstall", scope="operator.admin")
+@_d.method("skills.uninstall")
 async def _handle_skills_uninstall(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Uninstall a managed skill."""
     if not isinstance(params, dict) or "name" not in params:
@@ -474,7 +618,7 @@ async def _handle_skills_uninstall(params: dict | None, ctx: RpcContext) -> dict
     return {"success": result.success, "name": result.name, "message": result.message}
 
 
-@_d.method("skills.deps.install", scope="operator.admin")
+@_d.method("skills.deps.install")
 async def _handle_skills_deps_install(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Install runtime dependencies for an already-loaded skill.
 

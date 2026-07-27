@@ -22,6 +22,7 @@ from agentos.session.models import AgentTaskRecord
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_envelope(
     agent_id: str = "agent-drain",
     session_key: str = "agent-drain::sess-1",
@@ -66,6 +67,7 @@ def _make_storage() -> Any:
 # ---------------------------------------------------------------------------
 # graceful_shutdown_drains_inflight
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_graceful_shutdown_drains_inflight() -> None:
@@ -114,6 +116,7 @@ async def test_graceful_shutdown_drains_inflight() -> None:
 # ---------------------------------------------------------------------------
 # graceful_timeout fallback
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_graceful_shutdown_timeout_fallback_is_clean() -> None:

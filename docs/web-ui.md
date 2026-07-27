@@ -71,13 +71,14 @@ non-root mounts such as `/console/` work without rebuilding. Root, `/api`, and
 | Chat | Run and resume chat sessions, inspect tool activity, publish artifacts, and use manual compact controls. |
 | Overview / Health | See readiness, provider state, memory state, sandbox posture, and recovery hints. |
 | Channels | Inspect configured channel adapter status and jump to Agent setup for configuration changes. |
-| Skills | Browse available skills. |
+| Skills | Browse installed skills grouped by where they came from, see whether the agent is actually being offered each one, and install more from a hub. |
 | Sessions | Inspect durable conversations and operational state. |
 | Agents | Manage durable agent entries. |
 | Usage | Inspect token and estimated-cost rollups. |
 | Cron | View and manage scheduled runs. |
 | MCP Servers | Add local or remote MCP servers, connect tools live, and complete OAuth authorization. |
 | Agent setup | Configure the agent through Guided capability setup or the complete Advanced Form/YAML editor. |
+| Environment | Set, replace, and remove the environment variables skills and providers read. |
 | Logs | Inspect runtime logs and diagnostics. |
 | Approvals | Respond to sensitive tool-call approval requests. |
 
@@ -230,6 +231,103 @@ It is configured as Streamable HTTP with OAuth. Saving the connection opens the
 provider authorization flow and loads its tools without requiring a gateway
 restart. Agentic trading involves significant risk. Review the server's access
 and action permissions before authorizing it.
+
+## Skills
+
+Open **Skills** to see what is installed and what the agent can actually reach:
+
+```text
+http://127.0.0.1:18791/control/skills
+```
+
+The **Installed** tab groups cards by where a skill came from, not by which
+directory holds it:
+
+| Group | Contains |
+| --- | --- |
+| Partners | Skills published by an AgentOS partner |
+| Shipped with AgentOS | Skills that ship with the release |
+| Installed from a hub | Skills you installed with `agentos skills install` or from this screen |
+| Your local skills | Skill directories you added yourself |
+
+Partners wins over the other three, so a partner's skills stay under one
+heading whether they shipped with AgentOS or you installed them from that
+partner's hub. Partner identity comes from an allowlist inside AgentOS: a skill
+manifest can only select a recognized publisher by id, so a third-party skill
+cannot borrow a partner's name, link, or logo by writing them into its own
+frontmatter. Only a skill that ships with the release may select an id at all —
+an installed one is branded by the hub catalog row it came from — so dropping a
+directory into a skills path cannot put a card in the Partners group.
+
+The storage layer (`bundled`, `managed`, `personal`, …) is still shown, as a
+chip on each card, because it decides which skill wins a name collision. It no
+longer decides what heading the card sits under.
+
+**Update** and **Remove** follow what the install record actually supports
+rather than the layer. A hub-installed skill whose files no longer sit where
+the lockfile recorded them keeps Update — an update re-fetches by identifier —
+but loses Remove, and the dialog says why instead of offering a button that
+would fail.
+
+### Ready is not the same as offered
+
+A card's status dot answers "is this skill set up". A second, separate label
+answers "is the agent being offered it right now", and a skill can be fully
+ready and still withheld. When it is, the card and its dialog say which of
+these applies: the manifest disables model invocation, a requirement is
+missing, a tool it needs is not enabled in this session, a native tool
+supersedes it, relevance filtering skipped it for that message, or the injected
+skills block hit its character budget. Nothing is shown when the skill is
+offered — the absence of a label is the normal case.
+
+### Community tab
+
+Browsing and searching a hub also surfaces skills you have already installed
+from that source, including ones the catalog does not list — a skill installed
+straight from a GitHub URL appears alongside catalog rows rather than vanishing
+from the page it was installed on. Installed rows are marked and appear after
+catalog results. Installing or removing a skill updates the Installed marker
+immediately, without a page reload.
+
+## Environment
+
+Open **Settings > Environment** to manage the variables in
+`~/.agentos/.env` without touching a shell:
+
+```text
+http://127.0.0.1:18791/control/env
+```
+
+Variables are grouped by what needs them — LLM provider, search, memory, each
+installed skill, and your own additions — with the description and, where the
+skill declared one, a link to where the credential is obtained. A skill listed
+as needing setup can be fixed from its own dialog on the Skills screen too: the
+Missing block offers **Set &lt;VAR&gt;** next to the existing install action.
+
+A variable that is not set but is already obtainable elsewhere shows a **Use
+&lt;source&gt;** button instead of asking you to go find a value — today that is
+the GitHub CLI for `GITHUB_TOKEN` and `GH_TOKEN`, when `gh auth login` has been
+run. Deciding whether to offer it never reads the credential, and importing
+only happens when you click. The imported value is a copy and will not follow
+that tool's own rotation.
+
+Values are masked. **Reveal** asks for confirmation, is rate limited, writes an
+audit line, and hides the value again after thirty seconds. Setting a variable
+applies it to the running gateway, so a skill that was ineligible becomes
+eligible immediately — on this screen, on the Skills screen, and for the agent
+itself on its next turn. Provider keys additionally need a restart, and the
+screen says so when that is the case.
+
+Two things the screen deliberately makes visible:
+
+- **Locked variables.** Names that steer subprocess execution or AgentOS
+  runtime posture (`PATH`, `LD_PRELOAD`, `AGENTOS_AGENT_PERMISSIONS`, …) show a
+  lock instead of an edit control. See
+  [configuration.md](configuration.md#what-cannot-be-written-through-agentos).
+- **Shadowed variables.** If the shell that started the gateway exported a
+  variable, that value wins over the file and editing here has no effect until
+  the export is removed. The screen warns rather than letting you save
+  repeatedly and conclude it is broken.
 
 ## Logs and Diagnostics
 

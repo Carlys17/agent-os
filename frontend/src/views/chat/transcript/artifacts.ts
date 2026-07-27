@@ -1,6 +1,6 @@
 // Chat transcript — artifact cards + publish rendering (imperative).
 //
-// This module is part of the OWNER-APPROVED imperative boundary of the
+// This module is part of the reviewed imperative boundary of the
 // chat-view migration (design §2.1): the artifact-card region is ported as
 // near-verbatim imperative DOM code (innerHTML string templates) from
 // static/js/views/chat.js, NOT reactified. Each function carries the cited

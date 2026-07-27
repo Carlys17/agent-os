@@ -8,9 +8,27 @@ const configCss = readFileSync('src/views/config/config.css', 'utf8')
 const cronCss = readFileSync('src/views/cron/cron.css', 'utf8')
 
 describe('Control surface CSS contract', () => {
-  it('keeps the collapsed desktop sidebar as a centered floating icon rail', () => {
+  it('keeps the rail logo centered and pins the toggle to the sidebar edge', () => {
     expect(controlCss).toMatch(
       /\.shell\[data-design='unified'\] \.shell-sidebar\[data-collapsed='true'\] \{\s*width: 5rem;/,
+    )
+    expect(controlCss).toMatch(
+      /\.shell\[data-design='unified'\] \.shell-sidebar\[data-collapsed='true'\] \.shell-sidebar__head \{[\s\S]*?justify-content: center;[\s\S]*?background: transparent;/,
+    )
+    expect(controlCss).toMatch(
+      /\.shell\[data-design='unified'\] \.shell-sidebar\[data-collapsed='true'\] \.shell-sidebar__brand \{[\s\S]*?max-width: none;[\s\S]*?gap: 0;[\s\S]*?opacity: 1;/,
+    )
+    expect(controlCss).toMatch(
+      /\.shell\[data-design='unified'\] \.shell-sidebar\[data-collapsed='true'\] \.shell-sidebar__collapse \{[\s\S]*?position: absolute;[\s\S]*?right: 0;[\s\S]*?translate: 50% -50%;/,
+    )
+    expect(controlCss).toMatch(
+      /\.shell\[data-design='unified'\] \.shell-sidebar__head \{[\s\S]*?background: color-mix\(in srgb, var\(--elevated\) 78%, var\(--sidebar\)\);/,
+    )
+    expect(controlCss).toMatch(
+      /\.shell\[data-design='unified'\] \.shell-sidebar\[data-collapsed='true'\] \.shell-sidebar__collapse \{[\s\S]*?border: 0;[\s\S]*?box-shadow: none;/,
+    )
+    expect(controlCss).toMatch(
+      /\.shell-sidebar\[data-collapsed='true'\][\s\S]*?\.shell-sidebar__collapse::after \{[\s\S]*?inset: 0 0 0 50%;[\s\S]*?border: 1px solid var\(--sidebar-border\);[\s\S]*?border-left: 0;/,
     )
     expect(controlCss).toMatch(
       /\.shell\[data-design='unified'\][\s\S]*?\.shell-sidebar\[data-collapsed='true'\][\s\S]*?\.shell-nav-link \{[\s\S]*?justify-content: center;[\s\S]*?padding-inline: 0;/,
@@ -118,6 +136,18 @@ describe('Control surface CSS contract', () => {
     )
     expect(configCss).toMatch(
       /\.control-surface \.cfg-stage--embedded \.cfg-stage__header--embedded \{[\s\S]*?min-height: 0;[\s\S]*?margin-bottom: 0\.75rem;/,
+    )
+    expect(configCss).toMatch(
+      /\.control-surface \.cfg-stage--embedded \.cfg-group \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);[\s\S]*?border: 0;[\s\S]*?background: transparent;[\s\S]*?box-shadow: none;/,
+    )
+    expect(configCss).toMatch(
+      /\.control-surface \.cfg-stage--embedded \.cfg-group__head \{[\s\S]*?border-right: 0;[\s\S]*?border-bottom: 1px solid var\(--hairline\);/,
+    )
+    expect(configCss).toMatch(
+      /\.control-surface \.cfg-stage \.cfg-yaml__area \{[\s\S]*?min-height: 60vh;/,
+    )
+    expect(configCss).toMatch(
+      /@media \(max-width: 840px\) \{[\s\S]*?\.control-surface \.cfg-stage--embedded \.cfg-group__fields \{[\s\S]*?grid-template-columns: 1fr;/,
     )
     expect(controlCss).toMatch(
       /\.control-surface \.setup-router-toolbar input\[type='number'\] \{[\s\S]*?box-sizing: border-box;[\s\S]*?padding: 0\.58rem 2\.65rem 0\.58rem 0\.75rem;/,

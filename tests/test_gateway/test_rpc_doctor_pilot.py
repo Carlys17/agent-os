@@ -12,12 +12,7 @@ from pathlib import Path
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext
 
-FIXTURE_DIR = (
-    Path(__file__).parent.parent
-    / "test_agentos_router"
-    / "data"
-    / "pilot_fixture"
-)
+FIXTURE_DIR = Path(__file__).parent.parent / "test_agentos_router" / "data" / "pilot_fixture"
 
 
 def test_doctor_reports_pilot_runtime_invalid_when_assets_missing_and_required(
@@ -110,9 +105,7 @@ def test_doctor_reports_pilot_runtime_valid_with_fixture_bundle() -> None:
     import agentos.gateway.rpc_doctor as rpc_doctor
     from agentos.memory.embedding import LocalEmbeddingProvider
 
-    if LocalEmbeddingProvider.resolve_onnx_dir(
-        "sentence-transformers/all-MiniLM-L6-v2"
-    ) is None:
+    if LocalEmbeddingProvider.resolve_onnx_dir("sentence-transformers/all-MiniLM-L6-v2") is None:
         import pytest
 
         pytest.skip("MiniLM embedder dir not present in this checkout")

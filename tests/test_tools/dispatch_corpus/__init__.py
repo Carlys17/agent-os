@@ -114,8 +114,6 @@ class CorpusCase:
 def _simple_registry(
     name: str,
     result: str | dict[str, Any] = "ok",
-    *,
-    owner_only: bool = False,
 ) -> ToolRegistry:
     """Registry with a single tool that returns a static string result."""
     reg = ToolRegistry()
@@ -124,10 +122,7 @@ def _simple_registry(
     async def _handler() -> str:
         return result_str
 
-    reg.register(
-        ToolSpec(name=name, description=name, parameters={}, owner_only=owner_only),
-        _handler,
-    )
+    reg.register(ToolSpec(name=name, description=name, parameters={}), _handler)
     return reg
 
 
@@ -241,9 +236,8 @@ def _huge_result_registry(name: str, char_count: int = 5000) -> ToolRegistry:
 # Context factories
 # ---------------------------------------------------------------------------
 
-def _owner_agent_ctx() -> ToolContext:
+def _agent_ctx() -> ToolContext:
     return ToolContext(
-        is_owner=True,
         caller_kind=CallerKind.AGENT,
         interaction_mode=InteractionMode.INTERACTIVE,
         agent_id="main",
@@ -251,29 +245,8 @@ def _owner_agent_ctx() -> ToolContext:
     )
 
 
-def _nonowner_agent_ctx() -> ToolContext:
+def _channel_ctx() -> ToolContext:
     return ToolContext(
-        is_owner=False,
-        caller_kind=CallerKind.AGENT,
-        interaction_mode=InteractionMode.INTERACTIVE,
-        agent_id="main",
-        session_key="agent:main:corpus",
-    )
-
-
-def _channel_owner_ctx() -> ToolContext:
-    return ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.CHANNEL,
-        interaction_mode=InteractionMode.UNATTENDED,
-        agent_id="main",
-        session_key="agent:main:corpus",
-    )
-
-
-def _channel_nonowner_ctx() -> ToolContext:
-    return ToolContext(
-        is_owner=False,
         caller_kind=CallerKind.CHANNEL,
         interaction_mode=InteractionMode.UNATTENDED,
         agent_id="main",
@@ -283,8 +256,7 @@ def _channel_nonowner_ctx() -> ToolContext:
 
 def _unattended_cron_ctx() -> ToolContext:
     return ToolContext(
-        is_owner=False,
-        caller_kind=CallerKind.CRON,
+                caller_kind=CallerKind.CRON,
         interaction_mode=InteractionMode.UNATTENDED,
         agent_id="cron",
         session_key="cron:corpus:run:1",
@@ -315,7 +287,7 @@ def _case_injection_refused_untrusted_origin() -> CorpusCase:
             arguments={},
             origin_trace=origin,
         ),
-        ctx_factory=_owner_agent_ctx,
+        ctx_factory=_agent_ctx,
         registry_factory=lambda: _simple_registry("safe_tool"),
         expected_is_error=True,
         expected_error_class="InjectionRefused",
@@ -338,7 +310,7 @@ def _case_tool_not_found_unknown_name() -> CorpusCase:
             tool_name="no_such_tool",
             arguments={},
         ),
-        ctx_factory=_owner_agent_ctx,
+        ctx_factory=_agent_ctx,
         registry_factory=lambda: _simple_registry("some_other_tool"),
         expected_is_error=True,
         expected_error_class="ToolNotFound",
@@ -360,7 +332,7 @@ def _case_skill_call_mismatch() -> CorpusCase:
             tool_name="my_skill",
             arguments={},
         ),
-        ctx_factory=_owner_agent_ctx,
+        ctx_factory=_agent_ctx,
         registry_factory=lambda: _simple_registry("some_other_tool"),
         known_skill_names=frozenset({"my_skill"}),
         expected_is_error=True,
@@ -382,54 +354,11 @@ def _case_unparsed_raw_arguments_rejected() -> CorpusCase:
             tool_name="simple_tool",
             arguments={"_raw": '{"value": "unescaped " quote"}'},
         ),
-        ctx_factory=_owner_agent_ctx,
+        ctx_factory=_agent_ctx,
         registry_factory=lambda: _simple_registry("simple_tool"),
         expected_is_error=True,
         expected_error_class="InvalidToolArgumentsError",
         expected_log_events={("dispatch.invalid_tool_arguments", "warning")},
-    )
-
-
-def _case_owner_only_block_non_owner() -> CorpusCase:
-    """
-    Owner-only defense — legacy lines 215–231, block branch.
-
-    registered.spec.owner_only=True and ctx.is_owner=False.
-    Must return OwnerOnly envelope and log dispatch.defense_in_depth_block.
-    """
-    return CorpusCase(
-        name="owner_only_block_non_owner",
-        tool_call=ToolCall(
-            tool_use_id="tc-owner-block",
-            tool_name="admin_tool",
-            arguments={},
-        ),
-        ctx_factory=_nonowner_agent_ctx,
-        registry_factory=lambda: _simple_registry("admin_tool", owner_only=True),
-        expected_is_error=True,
-        expected_error_class="OwnerOnly",
-        expected_status_reason="denied",
-        expected_log_events={("dispatch.defense_in_depth_block", "warning")},
-    )
-
-
-def _case_owner_only_pass_owner() -> CorpusCase:
-    """
-    Owner-only defense — legacy lines 215–231, pass branch.
-
-    registered.spec.owner_only=True and ctx.is_owner=True.
-    Must succeed and return non-error result.
-    """
-    return CorpusCase(
-        name="owner_only_pass_owner",
-        tool_call=ToolCall(
-            tool_use_id="tc-owner-pass",
-            tool_name="admin_tool",
-            arguments={},
-        ),
-        ctx_factory=_owner_agent_ctx,
-        registry_factory=lambda: _simple_registry("admin_tool", owner_only=True),
-        expected_is_error=False,
     )
 
 
@@ -441,8 +370,7 @@ def _case_denied_tools_block() -> CorpusCase:
     """
     def _ctx() -> ToolContext:
         return ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.AGENT,
+                        caller_kind=CallerKind.AGENT,
             interaction_mode=InteractionMode.INTERACTIVE,
             agent_id="main",
             session_key="agent:main:corpus",
@@ -474,8 +402,7 @@ def _case_private_memory_read_blocked() -> CorpusCase:
     """
     def _ctx() -> ToolContext:
         return ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.SUBAGENT,
+                        caller_kind=CallerKind.SUBAGENT,
             interaction_mode=InteractionMode.UNATTENDED,
             agent_id="sub1",
             session_key="subagent:sub1:corpus",
@@ -506,8 +433,7 @@ def _case_allowlist_present_tool_absent() -> CorpusCase:
     """
     def _ctx() -> ToolContext:
         return ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.AGENT,
+                        caller_kind=CallerKind.AGENT,
             interaction_mode=InteractionMode.INTERACTIVE,
             agent_id="main",
             session_key="agent:main:corpus",
@@ -539,8 +465,7 @@ def _case_allowlist_present_tool_present() -> CorpusCase:
     """
     def _ctx() -> ToolContext:
         return ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.AGENT,
+                        caller_kind=CallerKind.AGENT,
             interaction_mode=InteractionMode.INTERACTIVE,
             agent_id="main",
             session_key="agent:main:corpus",
@@ -560,107 +485,6 @@ def _case_allowlist_present_tool_present() -> CorpusCase:
     )
 
 
-def _case_profile_denies() -> CorpusCase:
-    """
-    Profile block — legacy lines 295–315.
-
-    CHANNEL caller, non-owner → profile resolves to CHANNEL_DEFAULT.
-    Tool 'exec_command' is in _CHANNEL_HARD_DENY_NON_OWNER so profile_allows_tool
-    returns False (and allowed_tools is None so the explicit-override branch doesn't apply).
-    Must return PolicyDenied and log dispatch.profile_block.
-    """
-    def _ctx() -> ToolContext:
-        # CHANNEL + non-owner → CHANNEL_DEFAULT profile
-        # allowed_tools=None means no explicit override → profile check fires
-        return ToolContext(
-            is_owner=False,
-            caller_kind=CallerKind.CHANNEL,
-            interaction_mode=InteractionMode.UNATTENDED,
-            agent_id="main",
-            session_key="agent:main:corpus",
-            allowed_tools=None,
-        )
-
-    return CorpusCase(
-        name="profile_denies",
-        tool_call=ToolCall(
-            tool_use_id="tc-profile-deny",
-            tool_name="exec_command",
-            arguments={},
-        ),
-        ctx_factory=_ctx,
-        registry_factory=lambda: _simple_registry("exec_command"),
-        expected_is_error=True,
-        expected_error_class="PolicyDenied",
-        expected_status_reason="denied",
-        expected_log_events={("dispatch.profile_block", "warning")},
-    )
-
-
-def _case_permission_matrix_channel_denies() -> CorpusCase:
-    """
-    Permission matrix — legacy lines 317–340, deny branch.
-
-    CHANNEL caller + non-owner + tool with ADMIN_ONLY tier (git_push is hardcoded
-    ADMIN_ONLY but NOT in _CHANNEL_HARD_DENY_NON_OWNER, so the profile check passes
-    when the tool is explicitly in allowed_tools). Non-owner role → not
-    operator_override → matrix denies with UnsupportedSurface.
-
-    We use git_push rather than exec_command because exec_command is in
-    _CHANNEL_HARD_DENY_NON_OWNER, which causes profile_allows_tool to return False
-    before the matrix check is reached. git_push is ADMIN_ONLY in the tier registry
-    but absent from the hard-deny list, so allowed_tools={"git_push"} is sufficient
-    to pass the profile gate and expose the matrix block at lines 317–340.
-    """
-    def _ctx() -> ToolContext:
-        return ToolContext(
-            is_owner=False,
-            caller_kind=CallerKind.CHANNEL,
-            interaction_mode=InteractionMode.UNATTENDED,
-            agent_id="main",
-            session_key="agent:main:corpus",
-            # Explicit allowlist bypasses profile block; matrix block fires next.
-            allowed_tools={"git_push"},
-        )
-
-    return CorpusCase(
-        name="permission_matrix_channel_denies",
-        tool_call=ToolCall(
-            tool_use_id="tc-matrix-deny",
-            tool_name="git_push",
-            arguments={},
-        ),
-        ctx_factory=_ctx,
-        registry_factory=lambda: _simple_registry("git_push"),
-        expected_is_error=True,
-        expected_error_class="UnsupportedSurface",
-        expected_status_reason="denied",
-        expected_log_events={("dispatch.permission_matrix_block", "warning")},
-    )
-
-
-def _case_permission_matrix_owner_skipped() -> CorpusCase:
-    """
-    Permission matrix — legacy lines 317–340, non-CHANNEL caller skips block.
-
-    CallerKind.AGENT → the entire matrix check is skipped (lines 317–340
-    guarded by `if effective_ctx.caller_kind is CallerKind.CHANNEL`).
-    We use git_push (hardcoded ADMIN_ONLY) to confirm the matrix is not
-    consulted at all for non-CHANNEL callers. Must succeed with non-error result.
-    """
-    return CorpusCase(
-        name="permission_matrix_owner_skipped",
-        tool_call=ToolCall(
-            tool_use_id="tc-matrix-skip",
-            tool_name="git_push",
-            arguments={},
-        ),
-        ctx_factory=_owner_agent_ctx,
-        registry_factory=lambda: _simple_registry("git_push"),
-        expected_is_error=False,
-    )
-
-
 def _case_happy_path_no_artifacts() -> CorpusCase:
     """
     Baseline success path — legacy lines 343–462.
@@ -675,7 +499,7 @@ def _case_happy_path_no_artifacts() -> CorpusCase:
             tool_name="simple_tool",
             arguments={},
         ),
-        ctx_factory=_owner_agent_ctx,
+        ctx_factory=_agent_ctx,
         registry_factory=lambda: _simple_registry("simple_tool", "hello world"),
         expected_is_error=False,
     )
@@ -695,7 +519,7 @@ def _case_happy_path_with_artifacts_budget_bypassed() -> CorpusCase:
             tool_name="publish_tool",
             arguments={},
         ),
-        ctx_factory=_owner_agent_ctx,
+        ctx_factory=_agent_ctx,
         registry_factory=lambda: _publishing_registry("publish_tool"),
         expected_is_error=False,
         expected_artifact_delta=1,
@@ -716,7 +540,7 @@ def _case_argument_clamping_truncates() -> CorpusCase:
             tool_name="web_fetch",
             arguments={"url": "https://example.com", "max_chars": 9_999_999},
         ),
-        ctx_factory=_owner_agent_ctx,
+        ctx_factory=_agent_ctx,
         registry_factory=_web_fetch_registry,
         expected_is_error=False,
     )
@@ -734,8 +558,7 @@ def _case_run_budget_exhausted_before_handler() -> CorpusCase:
         from agentos.result_budget import ToolRunBudgetPolicy
 
         return ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.AGENT,
+                        caller_kind=CallerKind.AGENT,
             interaction_mode=InteractionMode.INTERACTIVE,
             agent_id="main",
             session_key="agent:main:corpus",
@@ -774,8 +597,7 @@ def _case_run_budget_exhausted_after_handler() -> CorpusCase:
         from agentos.result_budget import ToolRunBudgetPolicy
 
         return ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.AGENT,
+                        caller_kind=CallerKind.AGENT,
             interaction_mode=InteractionMode.INTERACTIVE,
             agent_id="main",
             session_key="agent:main:corpus",
@@ -831,8 +653,7 @@ def _case_approval_pending_unsupported_surface() -> CorpusCase:
     """
     def _ctx() -> ToolContext:
         return ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.CRON,
+                        caller_kind=CallerKind.CRON,
             interaction_mode=InteractionMode.UNATTENDED,
             agent_id="cron",
             session_key="cron:corpus:run:1",
@@ -868,7 +689,7 @@ def _case_approval_denied_payload() -> CorpusCase:
             tool_name="approving_tool",
             arguments={},
         ),
-        ctx_factory=_owner_agent_ctx,
+        ctx_factory=_agent_ctx,
         registry_factory=lambda: _denial_registry("approving_tool", status="approval_denied"),
         expected_is_error=True,
         expected_status_status="error",
@@ -890,7 +711,7 @@ def _case_denial_payload_generic() -> CorpusCase:
             tool_name="sandbox_tool",
             arguments={},
         ),
-        ctx_factory=_owner_agent_ctx,
+        ctx_factory=_agent_ctx,
         registry_factory=lambda: _denial_registry("sandbox_tool", status="denied"),
         expected_is_error=True,
         expected_status_status="error",
@@ -913,7 +734,7 @@ def _case_handler_raises_runtime_error() -> CorpusCase:
             tool_name="exploding_tool",
             arguments={},
         ),
-        ctx_factory=_owner_agent_ctx,
+        ctx_factory=_agent_ctx,
         registry_factory=lambda: _raising_registry("exploding_tool", RuntimeError("boom")),
         expected_is_error=True,
         expected_status_reason="runtime_error",
@@ -933,8 +754,7 @@ def _case_result_truncated_marks_status() -> CorpusCase:
     def _ctx() -> ToolContext:
         from agentos.result_budget import ToolResultBudgetPolicy
         return ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.AGENT,
+                        caller_kind=CallerKind.AGENT,
             interaction_mode=InteractionMode.INTERACTIVE,
             agent_id="main",
             session_key="agent:main:corpus",
@@ -970,41 +790,6 @@ def _case_result_truncated_marks_status() -> CorpusCase:
     )
 
 
-def _case_multiple_policies_would_deny_first_wins() -> CorpusCase:
-    """
-    First denial wins — order contract.
-
-    Configure ctx so BOTH denied_tools (lines 233–251) AND owner_only (lines 215–231)
-    would deny the call. denied_tools comes AFTER owner_only in the waterfall,
-    but we configure owner_only=True + non-owner so that fires first (OwnerOnly).
-    Assert result carries OwnerOnly, not PolicyDenied.
-    """
-    def _ctx() -> ToolContext:
-        return ToolContext(
-            is_owner=False,
-            caller_kind=CallerKind.AGENT,
-            interaction_mode=InteractionMode.INTERACTIVE,
-            agent_id="main",
-            session_key="agent:main:corpus",
-            # denied_tools would also fire (second policy)
-            denied_tools={"double_deny_tool"},
-        )
-
-    return CorpusCase(
-        name="multiple_policies_would_deny_first_wins",
-        tool_call=ToolCall(
-            tool_use_id="tc-multideny",
-            tool_name="double_deny_tool",
-            arguments={},
-        ),
-        ctx_factory=_ctx,
-        registry_factory=lambda: _simple_registry("double_deny_tool", owner_only=True),
-        expected_is_error=True,
-        # owner_only check (lines 215-231) fires BEFORE denied_tools (lines 233-251)
-        expected_error_class="OwnerOnly",
-    )
-
-
 def _case_interactive_approval_pending_sets_status() -> CorpusCase:
     """
     INTERACTIVE caller + approval_required result — legacy lines 396–410.
@@ -1017,8 +802,7 @@ def _case_interactive_approval_pending_sets_status() -> CorpusCase:
     """
     def _ctx() -> ToolContext:
         return ToolContext(
-            is_owner=True,
-            caller_kind=CallerKind.AGENT,
+                        caller_kind=CallerKind.AGENT,
             interaction_mode=InteractionMode.INTERACTIVE,
             agent_id="main",
             session_key="agent:main:corpus",
@@ -1077,7 +861,7 @@ def _case_nested_tool_inherits_contextvar() -> CorpusCase:
             tool_name="ctx_reader",
             arguments={},
         ),
-        ctx_factory=_owner_agent_ctx,
+        ctx_factory=_agent_ctx,
         registry_factory=lambda: _contextvar_reading_registry("ctx_reader"),
         expected_is_error=False,
         contextvar_must_be_none_after=True,
@@ -1093,15 +877,10 @@ ALL_CASES: list[CorpusCase] = [
     _case_tool_not_found_unknown_name(),
     _case_skill_call_mismatch(),
     _case_unparsed_raw_arguments_rejected(),
-    _case_owner_only_block_non_owner(),
-    _case_owner_only_pass_owner(),
     _case_denied_tools_block(),
     _case_private_memory_read_blocked(),
     _case_allowlist_present_tool_absent(),
     _case_allowlist_present_tool_present(),
-    _case_profile_denies(),
-    _case_permission_matrix_channel_denies(),
-    _case_permission_matrix_owner_skipped(),
     _case_happy_path_no_artifacts(),
     _case_happy_path_with_artifacts_budget_bypassed(),
     _case_argument_clamping_truncates(),
@@ -1112,7 +891,6 @@ ALL_CASES: list[CorpusCase] = [
     _case_denial_payload_generic(),
     _case_handler_raises_runtime_error(),
     _case_result_truncated_marks_status(),
-    _case_multiple_policies_would_deny_first_wins(),
     _case_nested_tool_inherits_contextvar(),
     _case_interactive_approval_pending_sets_status(),
     _case_null_ctx_happy_path(),

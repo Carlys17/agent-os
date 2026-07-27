@@ -159,7 +159,7 @@ describe('historyFallbackMessageIdentity', () => {
     expect(historyFallbackMessageIdentity('assistant', '  hi  ')).toBe('assistant|hi')
   })
   it('strips the engine time prefix from user rows', () => {
-    const text = '[2026-07-22T00:12+07:00 Wed Asia/Ho_Chi_Minh]\nhello'
+    const text = '[2026-07-22T00:12+00:00 Wed UTC]\nhello'
     expect(stripTimePrefix(text)).toBe('hello')
     expect(historyFallbackMessageIdentity('user', text)).toBe('user|hello')
   })

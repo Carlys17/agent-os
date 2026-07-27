@@ -8,10 +8,8 @@ Three properties verified across the corpus:
 2. Artifact monotonicity:
    len(ctx.published_artifacts) after dispatch >= before for any case.
 
-3. First denial wins:
-   When two policies would each deny, only the first policy's error_class appears.
-   This is verified structurally against the multiple_policies_would_deny_first_wins
-   case (owner_only fires before denied_tools in the waterfall).
+3. Policy order is deterministic:
+   When two policy checks would each deny, only the first denial is emitted.
 
 hypothesis is not available in this environment; cases are hand-rolled
 parametrizations drawn from ALL_CASES plus targeted edge inputs.
@@ -19,7 +17,6 @@ parametrizations drawn from ALL_CASES plus targeted edge inputs.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -226,54 +223,8 @@ async def test_artifact_list_never_shrinks_after_dispatch(case: CorpusCase) -> N
 # ---------------------------------------------------------------------------
 #
 # When multiple policies would deny a request, the waterfall fires them in
-# document order. The corpus case `multiple_policies_would_deny_first_wins`
-# sets up owner_only=True (lines 215–231) + denied_tools (lines 233–251).
-# Owner-only fires first → OwnerOnly error_class, not PolicyDenied.
-
-
-@pytest.mark.asyncio
-async def test_first_denial_wins_owner_only_before_denied_tools() -> None:
-    """owner_only check (lines 215-231) fires before denied_tools check (233-251)."""
-    registry = ToolRegistry()
-
-    async def _handler() -> str:
-        return "should not reach"
-
-    registry.register(
-        ToolSpec(name="double_deny_tool", description="test", parameters={}, owner_only=True),
-        _handler,
-    )
-
-    ctx = ToolContext(
-        is_owner=False,
-        caller_kind=CallerKind.AGENT,
-        interaction_mode=InteractionMode.INTERACTIVE,
-        agent_id="main",
-        session_key="agent:main:corpus",
-        denied_tools={"double_deny_tool"},
-    )
-
-    handler = build_tool_handler(registry, ctx)
-    token = current_tool_context.set(None)
-    try:
-        result = await handler(
-            ToolCall(
-                tool_use_id="tc-first-wins",
-                tool_name="double_deny_tool",
-                arguments={},
-            )
-        )
-    finally:
-        current_tool_context.reset(token)
-
-    assert result.is_error is True
-    payload = json.loads(result.content)
-    # OwnerOnly is the FIRST check; denied_tools is second.
-    # If denied_tools fired first we'd see PolicyDenied.
-    assert payload["error_class"] == "OwnerOnly", (
-        f"Expected OwnerOnly (first denial wins), got {payload['error_class']!r}. "
-        "This indicates the waterfall order has changed — update the corpus."
-    )
+# document order. This exercises configured deny before the contextual private
+# memory rule without introducing a caller role.
 
 
 @pytest.mark.asyncio
@@ -298,8 +249,7 @@ async def test_first_denial_wins_denied_tools_before_private_memory() -> None:
     )
 
     ctx = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.SUBAGENT,
+                caller_kind=CallerKind.SUBAGENT,
         interaction_mode=InteractionMode.UNATTENDED,
         agent_id="sub1",
         session_key="subagent:sub1:corpus",
@@ -349,8 +299,7 @@ async def test_session_search_is_denied_by_private_memory_scope_for_subagents() 
         _handler,
     )
     ctx = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.SUBAGENT,
+                caller_kind=CallerKind.SUBAGENT,
         interaction_mode=InteractionMode.UNATTENDED,
         agent_id="sub1",
         session_key="subagent:agent:main:parent",
@@ -415,8 +364,7 @@ async def test_contextvar_is_effective_ctx_during_handler_call() -> None:
     )
 
     expected_ctx = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.AGENT,
+                caller_kind=CallerKind.AGENT,
         interaction_mode=InteractionMode.INTERACTIVE,
         agent_id="main",
         session_key="agent:main:ctxvar-test",

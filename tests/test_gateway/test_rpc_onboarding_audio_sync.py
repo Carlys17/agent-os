@@ -7,7 +7,6 @@ import platform
 import tomllib
 
 import agentos.gateway.rpc_onboarding  # noqa: F401  ensures registration
-from agentos.gateway.auth import Principal
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
 
@@ -20,24 +19,12 @@ def _env_hint(env_key: str) -> str:
 def _admin_ctx() -> RpcContext:
     return RpcContext(
         conn_id="t",
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.admin"}),
-            is_owner=True,
-            authenticated=True,
-        ),
     )
 
 
 def _read_ctx() -> RpcContext:
     return RpcContext(
         conn_id="t",
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.read"}),
-            is_owner=False,
-            authenticated=True,
-        ),
     )
 
 
@@ -54,9 +41,7 @@ def test_audio_onboarding_catalog_configure_and_status(tmp_path, monkeypatch) ->
             _read_ctx(),
         )
         assert catalog.error is None, catalog.error
-        audio_provider_ids = {
-            p["providerId"] for p in catalog.payload["audioProviders"]
-        }
+        audio_provider_ids = {p["providerId"] for p in catalog.payload["audioProviders"]}
         assert "elevenlabs" in audio_provider_ids
 
         res = await get_dispatcher().dispatch(

@@ -114,7 +114,12 @@ export function ProviderSection({
       required: Boolean(f.required),
       hidden: false,
     }))
-    onSave(selected, readScopedFields(scoped, 'provider'))
+    const params = readScopedFields(scoped, 'provider')
+    // A pasted key is the explicit credential source. Do not also submit the
+    // catalog's default env reference: provider configuration rejects the two
+    // mutually exclusive sources when both are present.
+    if (String(params.apiKey || '').trim()) delete params.apiKeyEnv
+    onSave(selected, params)
   }
 
   return (

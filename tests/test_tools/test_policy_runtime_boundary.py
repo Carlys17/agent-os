@@ -108,8 +108,7 @@ def test_internal_tool_modules_depend_on_policy_runtime_not_policy_facade() -> N
 
 def test_policy_runtime_preserves_runtime_capability_denylists() -> None:
     ctx = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.SUBAGENT,
+                caller_kind=CallerKind.SUBAGENT,
         interaction_mode=InteractionMode.UNATTENDED,
         allowed_tools={
             "agents_list",

@@ -48,6 +48,9 @@ class ChannelManager:
     # Per-channel in-flight reply task sets.
     # Keyed by channel name; populated in _safe_start and consumed in stop_channel.
     _in_flight_sets: dict[str, Any] = field(default_factory=dict)
+    # Per-channel "current session" pointer maps for channel /new (fresh-key)
+    # semantics. Keyed by channel name; populated in _safe_start.
+    _session_pointers: dict[str, Any] = field(default_factory=dict)
     # Dispatch state machine — see _dispatch_with_retry for the lifecycle.
     # Values: "running" | "exhausted" | "restarting" | "dead". Unset entries
     # are treated as "unknown" by health() so a channel that never started
@@ -60,7 +63,7 @@ class ChannelManager:
     _retry_backoff_initial: float = 1.0
     _retry_backoff_max: float = 60.0
     # Outer-loop restart policy. ``dead`` is operator-recoverable via the
-    # ``channels.restart`` admin RPC; the cap only bounds *automatic*
+    # ``channels.restart`` Control RPC; the cap only bounds *automatic*
     # restart attempts.
     _restart_delay_s: float = 30.0
     _max_restart_cycles: int = 3
@@ -186,7 +189,11 @@ class ChannelManager:
 
     async def _safe_start(self, name: str) -> None:
         """Start a single channel with 30 s timeout, then launch dispatch loop."""
-        from agentos.gateway.channel_dispatch import _ChannelInFlightSet, _compute_channel_cap
+        from agentos.gateway.channel_dispatch import (
+            ChannelSessionPointers,
+            _ChannelInFlightSet,
+            _compute_channel_cap,
+        )
 
         adapter = self._channels[name]
         startup_timeout = float(getattr(adapter, "startup_timeout_s", 30.0))
@@ -206,6 +213,10 @@ class ChannelManager:
         cap = _compute_channel_cap(self._config)
         in_flight = _ChannelInFlightSet(cap)
         self._in_flight_sets[name] = in_flight
+        # One pointer map per channel instance: backs channel /new "fresh session"
+        # semantics so a /new points the chat at a brand-new key (see
+        # ChannelSessionPointers). Recreated on (re)start; cleared on restart.
+        self._session_pointers[name] = ChannelSessionPointers()
         self._tasks[name] = asyncio.create_task(
             self._dispatch_with_retry(name, key_builder, in_flight=in_flight),
             name=f"channel:{name}",
@@ -242,6 +253,7 @@ class ChannelManager:
                     debounce_coordinator=self._debounce_coordinator,
                     debounce_window_s=getattr(self._channels[name], "debounce_window_s", 0.0),
                     _in_flight=in_flight,
+                    session_pointers=self._session_pointers.get(name),
                 )
             except asyncio.CancelledError:
                 raise  # intentional shutdown — never retry
@@ -358,7 +370,7 @@ class ChannelManager:
 
         Adapter-reported ``ChannelHealth.extra`` is augmented with the
         dispatch-loop state so operators can distinguish "channel dropped a
-        message" from "channel is permanently dead pending admin restart".
+        message" from "channel is permanently dead pending a Control restart".
         """
         out: dict[str, ChannelHealth] = {}
         for name, a in self._channels.items():

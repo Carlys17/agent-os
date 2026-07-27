@@ -57,11 +57,10 @@ def test_cron_route_tool_policy_can_only_narrow_or_extend_cron_baseline() -> Non
     assert "exec_command" in result.denied_tools
 
 
-def test_owner_cron_route_does_not_apply_non_owner_cron_allowlist() -> None:
+def test_cron_route_has_no_role_override() -> None:
     job = CronJob(
-        id="owner-policy",
-        name="Owner Policy",
-        creator_is_owner=True,
+        id="role-free-policy",
+        name="Role-free Policy",
         tool_policy={
             "profile": "minimal",
             "also_allow": ["memory_search", "exec_command"],
@@ -71,16 +70,15 @@ def test_owner_cron_route_does_not_apply_non_owner_cron_allowlist() -> None:
 
     envelope = build_cron_route_envelope(
         job,
-        session_key="cron:owner-policy:run:1",
+        session_key="cron:role-free-policy:run:1",
         agent_id="main",
     )
-    result = tool_context_from_envelope(envelope, is_owner=True)
+    result = tool_context_from_envelope(envelope)
 
     assert result.caller_kind is CallerKind.CRON
-    assert result.is_owner is True
-    assert result.allowed_tools is None
+    assert result.allowed_tools == {"session_status"}
     assert result.tool_policy == job.tool_policy
-    assert "exec_command" not in result.denied_tools
+    assert "exec_command" in result.denied_tools
 
 
 def test_policy_deny_lists_do_not_reference_removed_agent_wrapper_tools() -> None:
@@ -119,8 +117,7 @@ def test_channel_media_group_expands_safe_file_authoring_tools() -> None:
         }
     }
     ctx = ToolContext(
-        is_owner=False,
-        caller_kind=CallerKind.CHANNEL,
+                caller_kind=CallerKind.CHANNEL,
         channel_kind="feishu",
         channel_id="oc_demo",
         sender_id="ou_user",
@@ -161,8 +158,7 @@ def test_channel_perm_group_is_empty_until_explicit_tools_exist() -> None:
         }
     }
     ctx = ToolContext(
-        is_owner=False,
-        caller_kind=CallerKind.CHANNEL,
+                caller_kind=CallerKind.CHANNEL,
         channel_kind="feishu",
         channel_id="oc_demo",
         sender_id="ou_user",
@@ -198,8 +194,7 @@ def test_channel_sender_policy_can_enable_drive_for_one_sender() -> None:
 
     allowed = apply_tool_policy_from_config(
         ToolContext(
-            is_owner=False,
-            caller_kind=CallerKind.CHANNEL,
+                        caller_kind=CallerKind.CHANNEL,
             channel_kind="slack",
             channel_id="oc_demo",
             sender_id="ou_allowed",
@@ -209,8 +204,7 @@ def test_channel_sender_policy_can_enable_drive_for_one_sender() -> None:
     )
     other = apply_tool_policy_from_config(
         ToolContext(
-            is_owner=False,
-            caller_kind=CallerKind.CHANNEL,
+                        caller_kind=CallerKind.CHANNEL,
             channel_kind="slack",
             channel_id="oc_demo",
             sender_id="ou_other",

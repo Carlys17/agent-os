@@ -65,8 +65,7 @@ def test_spa_deep_link_serves_uncached_shell_with_runtime_base(dist_dir: Path) -
     assert response.headers["content-type"].startswith("text/html")
     assert "no-store" in response.headers["cache-control"]
     assert (
-        '<base data-agentos-control-base="/control" href="/control/static/dist/">'
-        in response.text
+        '<base data-agentos-control-base="/control" href="/control/static/dist/">' in response.text
     )
     assert response.text.count("data-agentos-control-base") == 1
 
@@ -80,10 +79,7 @@ def test_custom_base_path_serves_deep_link_and_assets(dist_dir: Path) -> None:
     asset = client.get("/console/static/dist/assets/app-a1b2c3.js")
 
     assert shell.status_code == 200
-    assert (
-        '<base data-agentos-control-base="/console" href="/console/static/dist/">'
-        in shell.text
-    )
+    assert '<base data-agentos-control-base="/console" href="/console/static/dist/">' in shell.text
     assert asset.status_code == 200
 
 

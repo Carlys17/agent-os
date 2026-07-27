@@ -2,19 +2,35 @@ from __future__ import annotations
 
 import pytest
 
-from agentos.channels.command_registry import DEFAULT_COMMAND_REGISTRY
+from agentos.channels.command_registry import (
+    DEFAULT_COMMAND_REGISTRY,
+    build_channel_rpc_context,
+)
 from agentos.channels.types import IncomingMessage
 from agentos.engine.commands import DEFAULT_REGISTRY, Surface
-from agentos.gateway.protocol import make_error_res, make_ok_res
+from agentos.gateway.access import CONTROL_AND_CHANNEL, CONTROL_ONLY, ConnectionSurface
+from agentos.gateway.protocol import ERROR_UNAUTHORIZED, make_error_res, make_ok_res
 from agentos.gateway.routing import build_channel_route_envelope
+from agentos.gateway.rpc import RpcDispatcher
 
 
-def _envelope():
-    msg = IncomingMessage(sender_id="u1", channel_id="c1", content="test")
+def _envelope(
+    *,
+    source_name: str = "telegram",
+    bot_username: str | None = None,
+    session_key: str = "agent:main:telegram:u1",
+):
+    metadata = {"bot_username": bot_username} if bot_username else {}
+    msg = IncomingMessage(
+        sender_id="u1",
+        channel_id="c1",
+        content="test",
+        metadata=metadata,
+    )
     return build_channel_route_envelope(
         msg,
-        session_key="agent:main:telegram:u1",
-        session_prefix="telegram",
+        session_key=session_key,
+        session_prefix=source_name,
         agent_id="main",
     )
 
@@ -32,6 +48,19 @@ async def _dispatch(command: str, payload):
     )
 
 
+def _surface_dispatcher() -> RpcDispatcher:
+    async def channel_handler(_params, _ctx):
+        return {"allowed": "channel"}
+
+    async def control_handler(_params, _ctx):
+        return {"allowed": "control"}
+
+    dispatcher = RpcDispatcher()
+    dispatcher.register("status", channel_handler, CONTROL_AND_CHANNEL)
+    dispatcher.register("config.get", control_handler, CONTROL_ONLY)
+    return dispatcher
+
+
 def test_channel_command_names_include_usage_and_registry_words() -> None:
     expected = {
         word.lstrip("/").lower()
@@ -41,6 +70,22 @@ def test_channel_command_names_include_usage_and_registry_words() -> None:
 
     assert "usage" in DEFAULT_COMMAND_REGISTRY.command_names
     assert expected <= DEFAULT_COMMAND_REGISTRY.command_names
+
+
+@pytest.mark.asyncio
+async def test_paired_channel_context_is_limited_by_protocol_surface() -> None:
+    context = build_channel_rpc_context(_envelope(), gateway_config=None)
+    dispatcher = _surface_dispatcher()
+
+    channel_response = await dispatcher.dispatch("channel", "status", {}, context)
+    control_response = await dispatcher.dispatch("control", "config.get", {}, context)
+
+    assert context.access.admitted is True
+    assert context.access.surface is ConnectionSurface.CHANNEL
+    assert channel_response.ok is True
+    assert control_response.ok is False
+    assert control_response.error is not None
+    assert control_response.error.code == ERROR_UNAUTHORIZED
 
 
 @pytest.mark.parametrize(
@@ -79,6 +124,42 @@ def test_all_native_channel_commands_map_to_real_rpc(command, method, params) ->
     _name, matched_method, params_factory = match
     assert matched_method == method
     assert params_factory(_envelope()) == params
+
+
+@pytest.mark.parametrize(
+    ("command", "bot_username", "expected_name"),
+    [
+        ("/status", None, "status"),
+        ("/status@AgentBot", "AgentBot", "status"),
+        ("/status@agentbot details", "AgentBot", "status"),
+    ],
+)
+def test_command_registry_normalizes_commands_addressed_to_current_bot(
+    command: str,
+    bot_username: str | None,
+    expected_name: str,
+) -> None:
+    match = DEFAULT_COMMAND_REGISTRY.match(
+        _envelope(bot_username=bot_username),
+        command,
+    )
+
+    assert match is not None
+    assert match[0] == expected_name
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/status@OtherBot",
+        "/status@AgentBotExtra",
+        "/status@AgentBot_2",
+        "/status@",
+        "/status@AgentBot@OtherBot",
+    ],
+)
+def test_command_registry_rejects_commands_addressed_to_another_bot(command: str) -> None:
+    assert DEFAULT_COMMAND_REGISTRY.match(_envelope(bot_username="AgentBot"), command) is None
 
 
 @pytest.mark.asyncio
@@ -142,8 +223,7 @@ async def test_channel_history_handles_empty_and_bounds_long_content() -> None:
         "/history",
         {
             "messages": [
-                {"role": "user", "text": f"message {index} " + "x" * 800}
-                for index in range(10)
+                {"role": "user", "text": f"message {index} " + "x" * 800} for index in range(10)
             ],
             "loaded_count": 10,
         },
@@ -237,17 +317,13 @@ async def test_channel_information_commands_render_payloads() -> None:
 async def test_channel_models_and_skills_are_bounded() -> None:
     models = await _dispatch(
         "/model",
-        [
-            {"provider": "ollama", "id": f"model-{index}-" + "x" * 200}
-            for index in range(30)
-        ],
+        [{"provider": "ollama", "id": f"model-{index}-" + "x" * 200} for index in range(30)],
     )
     skills = await _dispatch(
         "/skills",
         {
             "skills": [
-                {"name": f"skill-{index}-" + "x" * 200, "status": "ready"}
-                for index in range(30)
+                {"name": f"skill-{index}-" + "x" * 200, "status": "ready"} for index in range(30)
             ]
         },
     )

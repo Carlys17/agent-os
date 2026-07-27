@@ -226,8 +226,7 @@ def test_policy_helpers_apply_runtime_policy_through_config_boundary(
 
     default_ctx = apply_tool_policy_from_config(
         ToolContext(
-            is_owner=False,
-            caller_kind=CallerKind.CHANNEL,
+                        caller_kind=CallerKind.CHANNEL,
             channel_kind="slack",
             channel_id="oc_demo",
             sender_id="ou_other",
@@ -237,8 +236,7 @@ def test_policy_helpers_apply_runtime_policy_through_config_boundary(
     )
     sender_ctx = apply_tool_policy_from_config(
         ToolContext(
-            is_owner=False,
-            caller_kind=CallerKind.CHANNEL,
+                        caller_kind=CallerKind.CHANNEL,
             channel_kind="slack",
             channel_id="oc_demo",
             sender_id="ou_allowed",

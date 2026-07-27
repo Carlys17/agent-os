@@ -1,6 +1,6 @@
 // Chat transcript — compaction separators + controls (imperative).
 //
-// This module is part of the OWNER-APPROVED imperative boundary of the
+// This module is part of the reviewed imperative boundary of the
 // chat-view migration (design §2.1): the compaction context-separator region is
 // ported as near-verbatim imperative DOM + timers from static/js/views/chat.js
 // (the compaction range, chat.js:2916-3397 + the in-flight controls,

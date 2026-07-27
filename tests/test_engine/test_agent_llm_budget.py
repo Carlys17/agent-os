@@ -453,7 +453,6 @@ async def test_agent_tool_failure_loop_result_returns_to_model_instead_of_termin
         config=AgentConfig(
             tool_failure_loop_block_threshold=3,
             max_iterations=5,
-            flush_enabled=False,
         ),
         tool_handler=_failing_tool,
     )
@@ -559,7 +558,6 @@ async def test_agent_provider_request_proof_budget_is_separate_from_tool_result_
             context_window_tokens=200_000,
             max_tokens=8192,
             tool_result_provider_request_max_chars=96_000,
-            flush_enabled=False,
         ),
     )
 
@@ -579,7 +577,6 @@ async def test_agent_provider_request_proof_budget_accepts_explicit_override() -
         config=AgentConfig(
             provider_request_proof_max_chars=123_456,
             tool_result_provider_request_max_chars=96_000,
-            flush_enabled=False,
         ),
     )
 
@@ -604,50 +601,6 @@ def test_agent_child_config_inherits_tool_failure_loop_thresholds() -> None:
     assert child.config.tool_failure_loop_block_threshold == 7
 
 
-def test_agent_child_config_inherits_context_and_flush_budget_policy() -> None:
-    agent = Agent(
-        provider=_ContextOverflowProvider(success_after=1),
-        config=AgentConfig(
-            context_window_tokens=200_000,
-            max_tokens=8192,
-            provider_request_proof_max_chars=123_456,
-            tool_use_argument_provider_request_max_chars=12_345,
-            tool_result_provider_request_max_chars=54_321,
-            max_turn_llm_calls=9,
-            max_turn_input_tokens=700_000,
-            max_turn_output_tokens=70_000,
-            max_turn_billed_cost_usd=0.75,
-            max_turn_tool_errors=4,
-            flush_enabled=True,
-            flush_timeout_seconds=1.5,
-            flush_background_timeout_seconds=15.0,
-            flush_backoff_initial_seconds=3.0,
-            flush_backoff_max_seconds=30.0,
-            flush_archive_max_bytes=999_999,
-            flush_compaction_requires_safe_receipt=False,
-        ),
-    )
-
-    child = agent._make_child_agent(SubagentSpec(task="child task"), depth=1)
-
-    assert child.config.context_window_tokens == 200_000
-    assert child.config.provider_request_proof_max_chars == 123_456
-    assert child.config.tool_use_argument_provider_request_max_chars == 12_345
-    assert child.config.tool_result_provider_request_max_chars == 54_321
-    assert child.config.max_turn_llm_calls == 9
-    assert child.config.max_turn_input_tokens == 700_000
-    assert child.config.max_turn_output_tokens == 70_000
-    assert child.config.max_turn_billed_cost_usd == 0.75
-    assert child.config.max_turn_tool_errors == 4
-    assert child.config.flush_enabled is True
-    assert child.config.flush_timeout_seconds == 1.5
-    assert child.config.flush_background_timeout_seconds == 15.0
-    assert child.config.flush_backoff_initial_seconds == 3.0
-    assert child.config.flush_backoff_max_seconds == 30.0
-    assert child.config.flush_archive_max_bytes == 999_999
-    assert child.config.flush_compaction_requires_safe_receipt is False
-
-
 class _BudgetCheckingProvider:
     provider_name = "openrouter"
 
@@ -666,9 +619,7 @@ class _BudgetCheckingProvider:
         return self._stream(messages)
 
     async def _stream(self, messages: list[Message]) -> AsyncIterator[Any]:
-        payload = {
-            "messages": [message.model_dump(mode="json") for message in messages]
-        }
+        payload = {"messages": [message.model_dump(mode="json") for message in messages]}
         try:
             proof = prove_provider_payload(
                 payload,
@@ -773,14 +724,17 @@ async def test_provider_heartbeat_reaches_agent_stream() -> None:
 
     heartbeat_index = _event_index(
         events,
-        lambda event: isinstance(event, RunHeartbeatEvent)
-        and event.phase == "llm_fallback"
-        and event.message == "retrying",
+        lambda event: (
+            isinstance(event, RunHeartbeatEvent)
+            and event.phase == "llm_fallback"
+            and event.message == "retrying"
+        ),
     )
     text_index = _event_index(
         events,
-        lambda event: getattr(event, "kind", None) == "text_delta"
-        and getattr(event, "text", None) == "ok",
+        lambda event: (
+            getattr(event, "kind", None) == "text_delta" and getattr(event, "text", None) == "ok"
+        ),
     )
     assert heartbeat_index < text_index
 
@@ -804,8 +758,10 @@ async def test_iteration_timeout_interrupts_stalled_provider_stream() -> None:
     )
     state_index = _event_index(
         events,
-        lambda event: getattr(event, "kind", None) == "state_change"
-        and getattr(event, "to_state", None) == AgentState.ERROR,
+        lambda event: (
+            getattr(event, "kind", None) == "state_change"
+            and getattr(event, "to_state", None) == AgentState.ERROR
+        ),
     )
     assert state_index < error_index
     assert len(provider.calls) == 1
@@ -845,8 +801,7 @@ async def test_iteration_timeout_does_not_interrupt_active_tool_argument_stream(
     assert len(provider.calls) == 2
     assert any(isinstance(event, DoneEvent) for event in events)
     assert not any(
-        isinstance(event, ErrorEvent) and event.code == "iteration_timeout"
-        for event in events
+        isinstance(event, ErrorEvent) and event.code == "iteration_timeout" for event in events
     )
 
 
@@ -880,9 +835,11 @@ async def test_large_tool_argument_stream_emits_progress_heartbeat() -> None:
 
     heartbeat_index = _event_index(
         events,
-        lambda event: isinstance(event, RunHeartbeatEvent)
-        and event.phase == "llm_tool_arguments"
-        and "write_file" in (event.message or ""),
+        lambda event: (
+            isinstance(event, RunHeartbeatEvent)
+            and event.phase == "llm_tool_arguments"
+            and "write_file" in (event.message or "")
+        ),
     )
     done_index = _event_index(events, lambda event: isinstance(event, DoneEvent))
     assert heartbeat_index < done_index
@@ -919,8 +876,7 @@ async def test_iteration_timeout_caps_tool_execution() -> None:
     events = await asyncio.wait_for(_collect_events(agent.run_turn("hello")), timeout=0.25)
 
     assert any(
-        isinstance(event, ErrorEvent) and event.code == "iteration_timeout"
-        for event in events
+        isinstance(event, ErrorEvent) and event.code == "iteration_timeout" for event in events
     )
 
 
@@ -936,12 +892,10 @@ async def test_provider_timeout_error_is_not_reclassified_as_iteration_timeout()
 
     assert len(provider.calls) == 1
     assert any(
-        isinstance(event, ErrorEvent) and event.code == "agent_runtime_timeout"
-        for event in events
+        isinstance(event, ErrorEvent) and event.code == "agent_runtime_timeout" for event in events
     )
     assert not any(
-        isinstance(event, ErrorEvent) and event.code == "iteration_timeout"
-        for event in events
+        isinstance(event, ErrorEvent) and event.code == "iteration_timeout" for event in events
     )
 
 
@@ -964,7 +918,6 @@ async def test_context_overflow_noop_compaction_does_not_resend_unchanged_contex
         config=AgentConfig(
             max_provider_retries=0,
             max_overflow_retries=2,
-            flush_enabled=False,
         ),
     )
 
@@ -972,8 +925,7 @@ async def test_context_overflow_noop_compaction_does_not_resend_unchanged_contex
 
     assert len(provider.calls) == 1
     assert any(
-        isinstance(event, ErrorEvent) and event.code == "compaction_not_smaller"
-        for event in events
+        isinstance(event, ErrorEvent) and event.code == "compaction_not_smaller" for event in events
     )
     assert not any(getattr(event, "kind", None) == "compaction" for event in events)
 
@@ -997,7 +949,6 @@ async def test_context_overflow_summary_only_larger_payload_does_not_retry(
         config=AgentConfig(
             max_provider_retries=0,
             max_overflow_retries=2,
-            flush_enabled=False,
         ),
     )
 
@@ -1005,8 +956,7 @@ async def test_context_overflow_summary_only_larger_payload_does_not_retry(
 
     assert len(provider.calls) == 1
     assert any(
-        isinstance(event, ErrorEvent) and event.code == "compaction_not_smaller"
-        for event in events
+        isinstance(event, ErrorEvent) and event.code == "compaction_not_smaller" for event in events
     )
     assert not any(getattr(event, "kind", None) == "compaction" for event in events)
 
@@ -1030,7 +980,6 @@ async def test_context_overflow_effective_compaction_allows_single_retry(
         config=AgentConfig(
             max_provider_retries=0,
             max_overflow_retries=2,
-            flush_enabled=False,
         ),
     )
 
@@ -1085,13 +1034,10 @@ async def test_inline_overflow_uses_live_context_not_cumulative_provider_usage(
         config=AgentConfig(
             context_window_tokens=20_000,
             context_overflow_threshold=0.5,
-            flush_enabled=True,
-            flush_timeout_seconds=0.01,
             max_iterations=10,
         ),
         tool_handler=_tool,
     )
-    monkeypatch.setattr(agent, "_run_flush", _flush)
     monkeypatch.setattr(agent_module, "compact_context", _compact)
 
     events = [event async for event in agent.run_turn("read the files one by one")]
@@ -1116,21 +1062,7 @@ async def test_inline_overflow_still_triggers_for_large_live_provider_request(
         description="large live request surface " + ("z" * 6000),
         input_schema=ToolInputSchema(),
     )
-    flush_calls: list[int] = []
     compact_requests: list[Any] = []
-
-    async def _flush(_plan: Any, flush_messages: list[Message]) -> Any:
-        flush_calls.append(len(flush_messages))
-        return SimpleNamespace(
-            mode="llm",
-            indexed_chunk_count=1,
-            integrity_status="ok",
-            output_coverage_status="ok",
-            invalid_candidate_count=0,
-            candidate_missing_ids=[],
-            obligation_status="ok",
-            obligation_missing_ids=[],
-        )
 
     async def _compact(request: Any) -> CompactionResult:
         compact_requests.append(request)
@@ -1146,20 +1078,16 @@ async def test_inline_overflow_still_triggers_for_large_live_provider_request(
         config=AgentConfig(
             context_window_tokens=3000,
             context_overflow_threshold=0.5,
-            flush_enabled=True,
-            flush_timeout_seconds=0.01,
             system_prompt="live request system context " + ("s" * 2000),
         ),
         tool_definitions=[large_tool],
     )
-    monkeypatch.setattr(agent, "_run_flush", _flush)
     monkeypatch.setattr(agent_module, "compact_context", _compact)
 
     events = [event async for event in agent.run_turn("hello")]
 
     assert any(isinstance(event, DoneEvent) for event in events)
     assert len(provider.calls) == 1
-    assert flush_calls == [1]
     assert len(compact_requests) == 1
 
 
@@ -1188,15 +1116,12 @@ async def test_provider_request_budget_exhausted_compacts_warns_and_retries(
         config=AgentConfig(
             max_provider_retries=0,
             max_overflow_retries=2,
-            flush_enabled=False,
         ),
         session_key="agent:main:budget",
     )
 
     events = [event async for event in agent.run_turn("x" * 4000)]
-    warning_codes = [
-        event.code for event in events if isinstance(event, WarningEvent)
-    ]
+    warning_codes = [event.code for event in events if isinstance(event, WarningEvent)]
 
     assert len(provider.calls) == 2
     assert _provider_payload_is_smaller(provider.calls[0], provider.calls[1])
@@ -1206,8 +1131,7 @@ async def test_provider_request_budget_exhausted_compacts_warns_and_retries(
     ]
     assert any(event.kind == "done" and getattr(event, "text", "") == "ok" for event in events)
     assert not any(
-        isinstance(event, ErrorEvent)
-        and event.code == "provider_request_budget_exhausted"
+        isinstance(event, ErrorEvent) and event.code == "provider_request_budget_exhausted"
         for event in events
     )
     assert [(key, payload["status"]) for key, payload in compaction_events] == [
@@ -1257,7 +1181,6 @@ async def test_provider_request_budget_uses_provider_window_for_compaction(
             context_window_tokens=1_048_576,
             max_provider_retries=0,
             max_overflow_retries=2,
-            flush_enabled=False,
         ),
     )
 
@@ -1292,7 +1215,6 @@ async def test_provider_request_budget_retry_payload_is_rechecked_against_budget
             context_window_tokens=1_048_576,
             max_provider_retries=0,
             max_overflow_retries=2,
-            flush_enabled=False,
         ),
     )
 
@@ -1342,7 +1264,6 @@ async def test_provider_budget_retry_uses_effective_proof_budget(
             context_window_tokens=1_048_576,
             max_provider_retries=0,
             max_overflow_retries=2,
-            flush_enabled=False,
         ),
     )
 
@@ -1380,7 +1301,6 @@ async def test_provider_request_budget_recent_tail_reason_survives_noop_compacti
             context_window_tokens=1_048_576,
             max_provider_retries=0,
             max_overflow_retries=2,
-            flush_enabled=False,
         ),
     )
 
@@ -1391,8 +1311,7 @@ async def test_provider_request_budget_recent_tail_reason_survives_noop_compacti
     assert errors[-1].code == "provider_request_too_large"
     assert RAW_CURRENT_TURN_OVERFLOW_MESSAGE not in errors[-1].message
     assert not any(
-        isinstance(event, ErrorEvent) and event.code == "compaction_not_smaller"
-        for event in events
+        isinstance(event, ErrorEvent) and event.code == "compaction_not_smaller" for event in events
     )
 
 
@@ -1422,7 +1341,6 @@ async def test_provider_request_budget_recent_tail_exhaustion_is_reported_as_con
         config=AgentConfig(
             max_provider_retries=0,
             max_overflow_retries=1,
-            flush_enabled=False,
         ),
     )
 
@@ -1465,57 +1383,6 @@ async def test_context_overflow_degraded_flush_still_runs_live_compaction_by_def
 
     assert compact_called is True
     assert len(provider.calls) == 2
-    assert any(event.kind == "done" and getattr(event, "text", "") == "ok" for event in events)
-    assert not any(
-        isinstance(event, ErrorEvent)
-        and event.code in {"compaction_refused_memory_flush", "compaction_refused_flush_timeout"}
-        for event in events
-    )
-
-
-@pytest.mark.asyncio
-async def test_context_overflow_flush_timeout_records_backoff_and_retries(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def _compact_runs_after_flush_timeout(request: Any) -> CompactionResult:
-        return CompactionResult(
-            summary="short summary",
-            kept_entries=[],
-            removed_count=len(request.entries),
-            chunks_processed=1,
-        )
-
-    monkeypatch.setattr(
-        "agentos.engine.agent.compact_context",
-        _compact_runs_after_flush_timeout,
-    )
-    provider = _ContextOverflowProvider(success_after=1)
-    agent = Agent(
-        provider=provider,
-        config=AgentConfig(
-            max_provider_retries=0,
-            max_overflow_retries=2,
-            flush_enabled=True,
-            flush_timeout_seconds=0.01,
-            flush_backoff_initial_seconds=10.0,
-        ),
-    )
-
-    async def slow_flush(_plan: Any, _messages: Any) -> None:
-        await asyncio.sleep(1.0)
-
-    monkeypatch.setattr(agent, "_run_flush", slow_flush)
-    try:
-        events = [event async for event in agent.run_turn("x" * 4000)]
-    finally:
-        task = agent._active_flush_task
-        if task is not None and not task.done():
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-
-    assert len(provider.calls) == 2
-    assert agent._flush_backoff_seconds == 10.0
     assert any(event.kind == "done" and getattr(event, "text", "") == "ok" for event in events)
     assert not any(
         isinstance(event, ErrorEvent)

@@ -8,6 +8,7 @@ import {
   humanTime,
   isOkStatus,
   isUpcomingRun,
+  jobCreatedFrom,
   jobDotState,
   jobKindClass,
   jobKindLabel,
@@ -50,6 +51,14 @@ describe('jobTarget / jobSchedule', () => {
     expect(jobSchedule({ expression: '0 9 * * *' })).toBe('0 9 * * *')
     expect(jobSchedule({ schedule: '@daily' })).toBe('@daily')
     expect(jobSchedule({})).toBe('—')
+  })
+})
+
+describe('jobCreatedFrom', () => {
+  it('resolves display metadata across wire aliases', () => {
+    expect(jobCreatedFrom({ createdFrom: 'agent:main:telegram:1' })).toBe('agent:main:telegram:1')
+    expect(jobCreatedFrom({ creator_session_key: 'agent:main:slack:2' })).toBe('agent:main:slack:2')
+    expect(jobCreatedFrom({})).toBe('')
   })
 })
 
@@ -159,6 +168,7 @@ describe('filterJobs', () => {
       prompt: 'run health',
       payloadKind: 'agent_turn',
       sessionTarget: 'isolated',
+      createdFrom: 'agent:main:telegram:health',
     },
   ]
   it('returns a copy on empty query', () => {
@@ -166,11 +176,12 @@ describe('filterJobs', () => {
     expect(out).toHaveLength(2)
     expect(out).not.toBe(jobs)
   })
-  it('matches name / message / prompt / kind / target / expression (case-insensitive)', () => {
+  it('matches name / message / prompt / kind / target / creator / expression', () => {
     expect(filterJobs(jobs, 'STANDUP').map((j) => j.name)).toEqual(['Daily standup'])
     expect(filterJobs(jobs, 'run health').map((j) => j.name)).toEqual(['Health check'])
     expect(filterJobs(jobs, 'agent_turn').map((j) => j.name)).toEqual(['Health check'])
     expect(filterJobs(jobs, 'isolated').map((j) => j.name)).toEqual(['Health check'])
+    expect(filterJobs(jobs, 'telegram:health').map((j) => j.name)).toEqual(['Health check'])
     expect(filterJobs(jobs, '1-5').map((j) => j.name)).toEqual(['Daily standup'])
     expect(filterJobs(jobs, 'zzz')).toHaveLength(0)
   })

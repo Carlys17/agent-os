@@ -53,11 +53,11 @@ def _config_path_for(ctx: RpcContext, source: Any) -> str | None:
 
 def _onboarding_explicit_paths(new_cfg: Any) -> set[str]:
     """Every dotted path the onboarding write carries EXCEPT the fields the CLI
-    runtime-override map owns (host/port/debug/auth bind posture).
+    runtime-override map owns (host/port/debug).
 
     Onboarding mutations persist the whole config, like ``config.apply``. To
-    avoid freezing a one-off ``--listen``/``--debug`` (or break-glass
-    ``auth.mode=none``) that ``run_gateway`` injected into ``ctx.config``, we
+    avoid freezing a one-off ``--listen``/``--debug`` value that ``run_gateway``
+    injected into ``ctx.config``, we
     hand ``persist_config`` an explicit-paths set that includes everything the
     onboarding change touches but deliberately omits the runtime-override keys,
     so those restore to their on-disk originals.
@@ -153,12 +153,12 @@ def _status_payload(ctx: RpcContext, config: Any | None = None) -> dict[str, Any
     }
 
 
-@_d.method("onboarding.status", scope="operator.read")
+@_d.method("onboarding.status")
 async def _onboarding_status(params: Any, ctx: RpcContext) -> dict[str, Any]:
     return _status_payload(ctx)
 
 
-@_d.method("onboarding.catalog", scope="operator.read")
+@_d.method("onboarding.catalog")
 async def _onboarding_catalog(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.setup_engine import setup_catalog_payload
 
@@ -171,7 +171,7 @@ def _require(params: Any, key: str) -> Any:
     return params[key]
 
 
-@_d.method("onboarding.provider.configure", scope="operator.admin")
+@_d.method("onboarding.provider.configure")
 async def _provider_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_llm_provider
 
@@ -205,14 +205,14 @@ async def _provider_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     }
 
 
-@_d.method("onboarding.router.catalog", scope="operator.read")
+@_d.method("onboarding.router.catalog")
 async def _router_catalog(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.router_specs import router_catalog_payload
 
     return router_catalog_payload()
 
 
-@_d.method("onboarding.router.configure", scope="operator.admin")
+@_d.method("onboarding.router.configure")
 async def _router_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_router
 
@@ -283,7 +283,7 @@ async def _router_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     }
 
 
-@_d.method("onboarding.channel.probe", scope="operator.admin")
+@_d.method("onboarding.channel.probe")
 async def _channel_probe(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_channel
 
@@ -303,7 +303,7 @@ async def _channel_probe(params: Any, ctx: RpcContext) -> dict[str, Any]:
     }
 
 
-@_d.method("onboarding.search.configure", scope="operator.admin")
+@_d.method("onboarding.search.configure")
 async def _search_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_search_provider
 
@@ -349,7 +349,7 @@ async def _search_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     }
 
 
-@_d.method("onboarding.imageGeneration.configure", scope="operator.admin")
+@_d.method("onboarding.imageGeneration.configure")
 async def _image_generation_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_image_generation_provider
 
@@ -382,7 +382,7 @@ async def _image_generation_configure(params: Any, ctx: RpcContext) -> dict[str,
     }
 
 
-@_d.method("onboarding.memory_embedding.configure", scope="operator.admin")
+@_d.method("onboarding.memory_embedding.configure")
 async def _memory_embedding_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_memory_embedding
 
@@ -415,7 +415,7 @@ async def _memory_embedding_configure(params: Any, ctx: RpcContext) -> dict[str,
     }
 
 
-@_d.method("onboarding.audio.configure", scope="operator.admin")
+@_d.method("onboarding.audio.configure")
 async def _audio_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_audio_provider
 
@@ -450,7 +450,7 @@ async def _audio_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     }
 
 
-@_d.method("onboarding.channel.upsert", scope="operator.admin")
+@_d.method("onboarding.channel.upsert")
 async def _channel_upsert(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_channel
 
@@ -477,7 +477,7 @@ async def _channel_upsert(params: Any, ctx: RpcContext) -> dict[str, Any]:
     }
 
 
-@_d.method("onboarding.channel.remove", scope="operator.admin")
+@_d.method("onboarding.channel.remove")
 async def _channel_remove(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import remove_channel
 
@@ -525,11 +525,11 @@ async def _toggle(ctx: RpcContext, params: Any, enabled: bool) -> dict[str, Any]
     }
 
 
-@_d.method("onboarding.channel.enable", scope="operator.admin")
+@_d.method("onboarding.channel.enable")
 async def _channel_enable(params: Any, ctx: RpcContext) -> dict[str, Any]:
     return await _toggle(ctx, params, True)
 
 
-@_d.method("onboarding.channel.disable", scope="operator.admin")
+@_d.method("onboarding.channel.disable")
 async def _channel_disable(params: Any, ctx: RpcContext) -> dict[str, Any]:
     return await _toggle(ctx, params, False)

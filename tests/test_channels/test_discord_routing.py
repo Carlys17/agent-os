@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 from agentos.channels.contract import ChannelCapabilities
 from agentos.channels.discord import DiscordChannel, DiscordChannelConfig
 from agentos.channels.manager import ChannelManager
@@ -271,6 +273,7 @@ async def test_discord_thread_reaction_uses_cached_thread_session() -> None:
 
 async def test_discord_group_dm_interaction_uses_cached_group_session() -> None:
     channel = DiscordChannel(DiscordChannelConfig(token="token"))
+    channel._defer_interaction_response = AsyncMock(return_value=True)
 
     await channel._handle_dispatch(
         "CHANNEL_CREATE",
@@ -280,6 +283,8 @@ async def test_discord_group_dm_interaction_uses_cached_group_session() -> None:
         "INTERACTION_CREATE",
         {
             "id": "interaction-1",
+            "type": 2,
+            "token": "interaction-token",
             "channel_id": "group-dm-channel",
             "user": {"id": "user-1"},
             "data": {

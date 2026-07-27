@@ -18,8 +18,8 @@ http://127.0.0.1:18791
 ```
 
 **On the default loopback bind, no token is required.** The gateway ships with
-`auth.mode = "none"`, and a request from a loopback peer is treated as the local
-owner — so `curl http://127.0.0.1:18791/api/...` works with no credentials.
+`auth.mode = "none"`, and a loopback peer is admitted as a Control connection,
+so `curl http://127.0.0.1:18791/api/...` works with no credentials.
 
 A token is only enforced when `auth.mode = "token"`. That mode is required
 before the gateway will bind to a public address (`0.0.0.0` / LAN): the startup
@@ -73,7 +73,7 @@ These require no auth and are safe for load balancers and container probes.
 | `GET` | `/api/approvals` | Pending approvals + current mode/patterns. |
 | `POST` | `/api/approvals/settings` | Set mode (`prompt` / `auto-approve` / `auto-deny`). |
 | `POST` | `/api/approvals/resolve` | Approve or deny a pending item. |
-| `POST` | `/api/elevated-mode` | Set per-session elevated mode (owner only). |
+| `POST` | `/api/elevated-mode` | Set per-session elevated mode (admitted Control connection only). |
 
 ## Files and Media
 
@@ -96,6 +96,24 @@ The WebSocket carries the same JSON-RPC methods the HTTP endpoints dispatch to,
 plus server-pushed events. It is one route on the same app — the REST surface
 above sits alongside it. See [`mcp-server.md`](mcp-server.md) for a bridge that
 uses this transport.
+
+### Environment variables (`env.*`)
+
+Control-surface only. Values never appear in a listing.
+
+| Method | Purpose |
+| --- | --- |
+| `env.list` | Every known variable: name, set/unset, source, description, owner, and a **masked** value. |
+| `env.set` | Write one variable. Returns its new state without echoing the value. |
+| `env.unset` | Remove one variable from `~/.agentos/.env`. |
+| `env.reveal` | Return one real value. Rate limited to 5 per 30s and written to the audit log. |
+
+Writes are refused for names that steer subprocess execution or AgentOS runtime
+posture; see
+[configuration.md](configuration.md#what-cannot-be-written-through-agentos).
+`env.set` and `env.unset` report `restartRequired` per variable — provider
+clients are built at boot with the key they had then, while other variables are
+picked up by the next process AgentOS spawns.
 
 ## Example
 

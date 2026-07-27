@@ -8,15 +8,26 @@ from typing import Any, cast
 import structlog
 
 from agentos.engine.pipeline import TurnContext
-from agentos.skills.eligibility import EligibilityContext, check_eligibility
+from agentos.skills.availability import gate_skills, plan_injection, retrieval_availability
+from agentos.skills.eligibility import EligibilityContext
+from agentos.skills.injector import DEFAULT_MAX_SKILLS_PROMPT_CHARS
 from agentos.skills.retrieval import HybridRetriever, Strategy
-from agentos.skills.types import SkillSpec
 
 log = structlog.get_logger(__name__)
 
 _retriever: HybridRetriever | None = None
 _retriever_lock = threading.Lock()
-_elig_ctx = EligibilityContext.auto()
+
+
+def _eligibility_context() -> EligibilityContext:
+    """Build a fresh eligibility context for this turn.
+
+    A process-wide context cached negative `shutil.which()` and env lookups
+    forever: installing a missing binary or setting a credential never took
+    effect until restart, while every RPC surface builds its own context per
+    call and so reported the skill as ready. ~15 `which()` calls per turn is
+    cheap next to that divergence."""
+    return EligibilityContext.auto()
 
 
 def _get_retriever(skills_cfg: Any) -> HybridRetriever:
@@ -54,25 +65,6 @@ def _get_retriever(skills_cfg: Any) -> HybridRetriever:
         return _retriever
 
 
-def _deterministic_gate(
-    skills: list[SkillSpec],
-    available_tools: set[str],
-) -> list[SkillSpec]:
-    """Pure-Python gate: eligibility, requires_tools, fallback, visibility."""
-    gated: list[SkillSpec] = []
-    for s in skills:
-        if s.disable_model_invocation:
-            continue
-        if not check_eligibility(s, _elig_ctx):
-            continue
-        if s.requires_tools and not all(t in available_tools for t in s.requires_tools):
-            continue
-        if s.fallback_for_toolsets and any(t in available_tools for t in s.fallback_for_toolsets):
-            continue
-        gated.append(s)
-    return gated
-
-
 async def filter_skills(ctx: TurnContext) -> TurnContext:
     """Gate, optionally filter, and inject skills into the system prompt."""
     skill_loader = ctx.metadata.get("skill_loader")
@@ -84,6 +76,7 @@ async def filter_skills(ctx: TurnContext) -> TurnContext:
         ctx.metadata["filtered_skill_ids"] = []
         ctx.metadata["skill_count"] = 0
         ctx.metadata["skills_prompt_chars"] = 0
+        ctx.metadata["skill_availability"] = {}
         log.debug("skills_filter.skipped", reason="memory_only")
         return ctx
 
@@ -92,8 +85,11 @@ async def filter_skills(ctx: TurnContext) -> TurnContext:
         return ctx
 
     # ── deterministic gate (no LLM, pure Python) ──
+    # gate_skills / plan_injection are shared with the RPC surface that answers
+    # "why is this skill not offered?" — the engine must not compute the gate
+    # its own way, or the two answers drift.
     available_tools = {t.name for t in ctx.tool_defs} if ctx.tool_defs else set()
-    gated = _deterministic_gate(all_skills, available_tools)
+    gated, availability = gate_skills(all_skills, available_tools, _eligibility_context())
 
     # ── always skills bypass filter, guaranteed visibility ──
     pinned = [s for s in gated if s.always]
@@ -101,7 +97,7 @@ async def filter_skills(ctx: TurnContext) -> TurnContext:
 
     skills_cfg = getattr(ctx.config, "skills", None) if ctx.config else None
     filter_enabled = getattr(skills_cfg, "filter_enabled", False) if skills_cfg else False
-    max_chars = getattr(skills_cfg, "max_skills_prompt_chars", 8000)
+    max_chars = getattr(skills_cfg, "max_skills_prompt_chars", DEFAULT_MAX_SKILLS_PROMPT_CHARS)
     injection_mode = getattr(skills_cfg, "injection_mode", "system")
     semantic_message = getattr(ctx, "semantic_message", None)
     if semantic_message is None:
@@ -115,26 +111,15 @@ async def filter_skills(ctx: TurnContext) -> TurnContext:
         # HybridRetriever — see agentos.skills.retrieval.HybridRetriever.
         retriever = _get_retriever(skills_cfg)
         filtered = retriever.retrieve(filterable, semantic_message, top_k=top_k)
+        retrieved = {s.name for s in filtered}
+        availability.update(
+            retrieval_availability([s for s in filterable if s.name not in retrieved], top_k)
+        )
     else:
         filtered = filterable
 
     final = pinned + filtered
 
-    # Publish the post-filter skill-ID list so the pipeline wrapper can
-    # surface it in the decision log's PipelineStepRecord. Non-mutating
-    # additive read for callers that don't consume the metadata.
-    try:
-        ctx.metadata["filtered_skill_ids"] = [
-            getattr(s, "id", None) or getattr(s, "name", None)
-            for s in filtered
-            if getattr(s, "id", None) or getattr(s, "name", None)
-        ]
-    except Exception:  # pragma: no cover — metadata is best-effort
-        ctx.metadata["filtered_skill_ids"] = []
-
-    from agentos.skills.injector import SkillInjector
-
-    injector = SkillInjector()
     # tuple[1] is the uncached suffix slot: may already carry the
     # per-turn recalled-memory block produced upstream by
     # TurnRunner._assemble_prompt. Append instead of overwriting so that
@@ -144,15 +129,43 @@ async def filter_skills(ctx: TurnContext) -> TurnContext:
     else:
         base, suffix = ctx.system_prompt
 
-    if injection_mode == "user_message":
-        skills_prompt = injector.inject_compact("", final)
-    elif injection_mode == "user_context":
-        skills_prompt = injector.inject_skills("", final, max_chars=max_chars)
-    else:
-        skills_prompt = injector.inject_skills("", final, max_chars=max_chars)
-    ctx.metadata["skill_count"] = len(final)
+    plan = plan_injection(final, max_chars, injection_mode)
+    skills_prompt, dropped = plan.prompt, plan.dropped
+    availability.update(plan.availability)
+
+    # Everything below describes what actually reached the prompt, not the
+    # pre-truncation list: a metadata count that includes skills the budget
+    # threw away is how this stayed invisible.
+    dropped_names = set(dropped)
+    injected = plan.offered
+
+    # Publish the injected skill-ID list so the pipeline wrapper can
+    # surface it in the decision log's PipelineStepRecord. Non-mutating
+    # additive read for callers that don't consume the metadata.
+    try:
+        ctx.metadata["filtered_skill_ids"] = [
+            getattr(s, "id", None) or getattr(s, "name", None)
+            for s in filtered
+            if (getattr(s, "id", None) or getattr(s, "name", None)) and s.name not in dropped_names
+        ]
+    except Exception:  # pragma: no cover — metadata is best-effort
+        ctx.metadata["filtered_skill_ids"] = []
+
+    ctx.metadata["skill_count"] = len(injected)
     ctx.metadata["skills_prompt_chars"] = len(skills_prompt)
     ctx.metadata["skills_injection_mode"] = injection_mode
+    ctx.metadata["skills_dropped_for_budget"] = dropped
+    # One entry per loaded skill: offered, or the reason it is not. Same map the
+    # RPC surface builds from the same two functions.
+    ctx.metadata["skill_availability"] = availability
+
+    if dropped:
+        log.warning(
+            "skills_filter.budget_truncated",
+            dropped=dropped,
+            budget=max_chars,
+            kept=len(injected),
+        )
 
     # Surface the actual skill IDs the retriever picked. Without this,
     # operators can see a query passed through (total → filtered count)
@@ -170,7 +183,7 @@ async def filter_skills(ctx: TurnContext) -> TurnContext:
         total=len(all_skills),
         gated=len(gated),
         pinned=len(pinned),
-        filtered=len(final),
+        filtered=len(injected),
         mode=injection_mode,
         strategy=getattr(skills_cfg, "filter_strategy", "lexical") if filter_enabled else "off",
         query_preview=(

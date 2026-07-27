@@ -41,7 +41,6 @@ class _FakeScheduler:
             origin_session_key=kwargs.get("origin_session_key", ""),
             delivery=kwargs.get("delivery") or DeliveryConfig(),
             tz=kwargs.get("schedule_tz") or kwargs.get("tz", "") or "",
-            creator_is_owner=bool(kwargs.get("creator_is_owner", False)),
         )
         return self.job
 
@@ -81,7 +80,7 @@ async def test_rpc_create_with_structured_cron_returns_normalized_expression() -
     assert scheduler.added is not None
     assert scheduler.added["schedule_kind"] == ScheduleKind.CRON
     assert scheduler.added["schedule_value"] == "*/5 * * * *"
-    assert scheduler.added["creator_is_owner"] is True
+    assert "creator_is_owner" not in scheduler.added
     assert result["expression"] == "*/5 * * * *"
     assert result["scheduleRaw"] == "*/5 * * * *"
     assert result["scheduleKind"] == "cron"
@@ -277,3 +276,17 @@ def test_job_to_wire_exposes_status_for_cron_countdown_state() -> None:
     wire = _job_to_wire(job)
 
     assert wire["status"] == "running"
+
+
+def test_job_to_wire_exposes_creator_session_as_display_metadata() -> None:
+    job = CronJob(
+        id="creator-wire",
+        name="Creator metadata",
+        payload={"kind": "reminder", "text": "hello", "agent_id": "main"},
+        creator_session_key="agent:main:telegram:chat-1",
+    )
+
+    wire = _job_to_wire(job)
+
+    assert wire["creatorSessionKey"] == "agent:main:telegram:chat-1"
+    assert wire["createdFrom"] == "agent:main:telegram:chat-1"

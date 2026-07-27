@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import questionary
+import questionary as _questionary
 import tomli_w
 import typer
 
-from agentos.cli.ui import console
+from agentos.cli.ui import console, styled_questionary
 from agentos.onboarding import get_provider_setup_spec
 from agentos.paths import default_agentos_home
 
@@ -14,6 +14,8 @@ from agentos.paths import default_agentos_home
 def _default_model_for_provider(provider: str) -> str:
     normalized = provider.strip().lower()
     if normalized == "bankr":
+        return "minimax-m3"
+    if normalized == "opencap":
         return "minimax-m3"
     if normalized == "openrouter":
         return "minimax/minimax-m3"
@@ -47,9 +49,19 @@ def run_init() -> None:
     home.mkdir(parents=True, exist_ok=True)
     (home / "state").mkdir(parents=True, exist_ok=True)
 
+    questionary = styled_questionary(_questionary)
+
     provider = questionary.select(
         "Choose provider:",
-        choices=["openrouter", "bankr", "openai", "anthropic", "deepseek", "custom"],
+        choices=[
+            "openrouter",
+            "bankr",
+            "opencap",
+            "openai",
+            "anthropic",
+            "deepseek",
+            "custom",
+        ],
         default="openrouter",
     ).ask()
     if not provider:

@@ -16,9 +16,8 @@ from __future__ import annotations
 from agentos.tools.policy.chain import POLICY_CHAIN, run_chain, run_chain_with_emit
 from agentos.tools.policy.checks import (
     AllowListPolicy,
+    ChannelAdmissionPolicy,
     DenyListPolicy,
-    OwnerOnlyPolicy,
-    PermissionMatrixPolicy,
     PrivateMemoryScopePolicy,
     ProfilePolicy,
 )
@@ -28,11 +27,10 @@ from agentos.tools.policy.types import DispatchInput, PolicyCheck, PolicyDecisio
 # Chain primitives — public surface of the policy pipeline.
 __all__ = [
     "AllowListPolicy",
+    "ChannelAdmissionPolicy",
     "DenyListPolicy",
     "DispatchInput",
-    "OwnerOnlyPolicy",
     "POLICY_CHAIN",
-    "PermissionMatrixPolicy",
     "PolicyCheck",
     "PolicyDecision",
     "PrivateMemoryScopePolicy",

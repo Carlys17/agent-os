@@ -104,13 +104,14 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | --- | --- |
 | `gateway` | `run`, `start`, `status`, `stop`, `restart` (`--port`, `--bind`, `--listen`, `--config`, `--json`, `--debug`) |
 | `config` | `get [key]` (empty key = show all), `set <dot.key> <value>` |
+| `env` | `list [--missing] [--category]`, `get <NAME> [--reveal]`, `set <NAME> --stdin`, `import <NAME>`, `unset <NAME>` |
 | `providers` | `list`, `status`, `configure <id> [-m MODEL] [-k API_KEY] [--base-url] [--proxy]` |
 | `models` | `list` |
 | `skills` | `list`, `search`, `view`, `install`, `uninstall`, `update`, `publish`, `tap add/list/remove` |
 | `sessions` | `list`, `show`, `resume`, `abort`, `delete`, `export` |
 | `cron` | `list`, `status`, `add`, `update`, `remove`, `run`, `runs` |
 | `channels` | `list`, `status`, `types`, `describe`, `native-commands`, `add`, `remove`, `enable`, `disable`, `edit`, `restart`, `logout`, `pairing …` |
-| `memory` | `status`, `index`, `list`, `search`, `show`, `dream`, `embedding-download`, `repair …`, `raw-fallbacks …` |
+| `memory` | `status`, `index`, `list`, `search`, `show`, `embedding-download`, `raw-fallbacks …` |
 | `sandbox` | `status`, `on`, `bypass`, `full`, `reset` |
 | `search` | `list`, `status`, `query`, `configure` |
 | `cost` | usage and estimated cost report |
@@ -123,6 +124,12 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 Built-in channel types are `discord`, `slack`, and `telegram`; use `agentos
 channels types` as the authoritative catalog. Config migration backs up the
 file before removing entries for retired built-in channel types.
+
+Telegram direct messages always require pairing. Use `agentos channels pairing
+list <name>`, `approve <name> <code>`, `deny <name> <sender-id>`, or `revoke
+<name> <sender-id>`. Pairing is binary and has no admin/owner tier. Telegram
+groups are disabled by default; enable them only with explicit
+`group_chat_ids`, paired senders, and the desired mention requirement.
 
 ## Configuration
 
@@ -137,6 +144,17 @@ Most commands accept `--config <path>` to target a specific file. On load,
 AgentOS auto-migrates outdated config schemas and writes a backup next to
 the file before rewriting it.
 
+Environment variables live in `~/.agentos/.env` and are managed with `agentos
+env`, not `agentos config`. Use them for credentials skills and external
+binaries read. `agentos env list` shows every variable AgentOS knows about,
+whether it is set, and which skill or provider needs it — values are masked
+unless you ask for `agentos env get <NAME> --reveal`. Names that steer
+subprocess execution (`PATH`, `LD_PRELOAD`, `EDITOR`, …) or runtime posture
+(`AGENTOS_AGENT_PERMISSIONS`, `AGENTOS_GATEWAY_TOKEN`, …) cannot be written
+through AgentOS; edit the file by hand if one is genuinely needed. When
+`agentos env list` reports a variable's source as `process env`, the shell
+that started the gateway exported it and that value wins over the file.
+
 Main `agentos.toml` sections (full commented reference:
 `agentos.toml.example` in the repo):
 
@@ -145,12 +163,12 @@ Main `agentos.toml` sections (full commented reference:
 | top-level | `workspace_dir`, `state_dir`, logging, `search_provider`/`search_api_key`, timeouts |
 | `[llm]` | `provider`, `model`, `api_key`, `base_url`, `proxy`, `[llm.provider_routing]` |
 | `[agentos_router]` | router on/off, `strategy` (`pilot-v1`), tier settings under `[agentos_router.tiers.c0..c3]` |
-| `[skills]` | skill filtering/injection: `filter_strategy`, `filter_top_k`, `injection_mode` |
+| `[skills]` | skill filtering/injection: `filter_strategy`, `filter_top_k`, `injection_mode`, `max_skills_prompt_chars` (default 24000) |
 | `[tools]` | model-visible tools and policy; `enabled = false` runs providers in plain-text mode |
-| `[memory]` | memory source and embedding model, `[memory.dream]` |
+| `[memory]` | memory source and embedding model, `[memory.nudge]` (periodic memory review) |
 | `[sandbox]` | `sandbox`, `default_level` (DISABLED/STANDARD/STRICT/LOCKED), `backend`, network/mounts |
 | `[permissions]` | `default_mode` = `off` \| `on` \| `bypass` \| `full` (pair with `agentos sandbox …`) |
-| `[auth]` | gateway auth: `mode` (`none`/`token`/`password`), `token`, `allow_unauthenticated_public` |
+| `[auth]` | gateway admission: `mode` (`none` on loopback or `token`), `token` |
 | `[control_ui]` | `allowed_origins` for reverse-proxy setups |
 | `[updates]` | `notify` (default true) — the once-per-24h "new release available" notice |
 | `[channels]` | messaging channels (`[[channels.channels]]` entries) |
@@ -220,9 +238,9 @@ agentos config set auth.token "<long random secret>"
 agentos gateway restart
 ```
 
-Only set `auth.allow_unauthenticated_public = true` when an external layer
-(reverse-proxy auth, VPN, firewall) already gates access. Behind a reverse
-proxy on another origin, also set `control_ui.allowed_origins`.
+Unauthenticated non-loopback Control is unsupported. A reverse proxy, VPN, or
+firewall does not replace the AgentOS Control token. Behind a reverse proxy on
+another browser origin, also set `control_ui.allowed_origins`.
 
 **Skills:**
 
@@ -237,10 +255,69 @@ agentos skills update
 agentos skills uninstall <name>
 ```
 
-Skill layers (later overrides earlier): `extra` (config dirs) → `bundled`
-(shipped) → `managed` (`~/.agentos/skills`, where installs land) →
-`personal` (`~/.agents/skills`) → `project` (`<workspace>/.agents/skills`)
-→ `workspace` (`<workspace>/skills`).
+Three separate facts describe a skill; do not use one to answer another.
+
+**Layer — where the files are.** Name-collision precedence, later overrides
+earlier: `extra` (config dirs) → `bundled` (shipped) → `managed`
+(`~/.agentos/skills`, where installs land) → `personal` (`~/.agents/skills`)
+→ `project` (`<workspace>/.agents/skills`) → `workspace`
+(`<workspace>/skills`). Layer is also the tiebreak when the prompt budget
+forces a cut: shipped skills go first, an operator's own skills go last.
+
+The `.agents/skills` layers are shared with other agents (Codex, Cursor, and
+anything else using that convention). Skills they add or remove take effect on
+the next turn — the loader re-checks the directories rather than trusting a
+cache — so do not tell an operator to restart the gateway to pick one up, and
+do not assume `agentos skills install` is the only way a skill got there. A
+`.agents/skills` skill also outranks a bundled or hub-installed one of the
+same name.
+
+**Acquisition — how it got there.** `shipped` (ships with the wheel),
+`hub` (fetched by `agentos skills install`, has a lockfile entry), or `local`
+(a directory someone put there). `agentos skills list --json` reports it under
+`acquisition`, together with `source_id`, `identifier`, `version`,
+`installed_at`, and two booleans: `removable` and `updatable`. Trust those
+booleans rather than inferring from the layer — a hub install whose recorded
+path no longer matches the configured `skills.managed_dir` reports
+`removable: false` (AgentOS will not delete files it cannot prove it owns)
+while `updatable` stays true, because an update re-fetches by identifier.
+
+**Publisher — whose name is on it.** `agentos skills list --json` reports
+`publisher` as `{id, name, url, logo}`, empty strings when unbranded.
+The id is *allowlisted server-side*: a `SKILL.md` or a hub catalog can only
+select from the recognized set, never describe a publisher of its own. Only a
+`bundled` manifest may select an id for itself; an installed skill is branded
+by the hub catalog row it came from, so a directory added by hand is always
+unbranded. Treat a non-empty `publisher.id` as the only signal of a partner
+skill; never infer one from a name or a homepage URL.
+
+Provenance (`origin`, `license`, `upstream_url`) is a fourth, independent
+fact — where the text came from and under what licence. A skill can be
+AgentOS-original text published by a partner, or upstream text with no
+publisher at all.
+
+**Availability — whether the agent is being offered it right now.** This is
+not the same as installed or eligible. `skills.list` over the gateway, and the
+agent's own `skill_list` tool, report `availability: {offered, reason, detail}`
+with `reason` one of:
+
+| `reason` | Means |
+| --- | --- |
+| `""` | offered (`offered: true`) |
+| `model_invocation_disabled` | the manifest sets `disable-model-invocation`; only a person can run it |
+| `ineligible` | a required binary, env var, or OS is missing |
+| `tool_gate` | its `requires_tools` are not enabled in this session |
+| `fallback_superseded` | it is a fallback for a tool the session already has natively |
+| `not_retrieved` | `skills.filter_enabled` is on and this message did not match |
+| `prompt_budget` | it is ready, but the skills block hit `max_skills_prompt_chars` |
+
+All of these reach a `skills.list` row except `not_retrieved`, which ranks
+against one message's wording and so only exists inside a turn. Do not tell an
+operator to look for it on the Skills page — read it from the decision log.
+
+`agentos skills list --json` omits `availability` entirely: a CLI process has
+no chat session and no tool surface, so it cannot answer. An absent key means
+"not computed", never "not offered".
 
 **One-shot automation:**
 
@@ -295,9 +372,30 @@ Full reference: `docs/http-api.md` (https://useagentos.dev/docs/http-api).
   public-bind recipe above.
 - **Provider/model errors** → `agentos providers status`,
   `agentos models list`, then `agentos providers configure …`.
-- **Skill missing from prompt** → `agentos skills list` (check layer and
-  enablement), then `[skills]` filter settings (`filter_top_k`,
-  `filter_strategy`).
+- **Skill missing from prompt** → do not guess from the layer. Ask the
+  surface that knows: the `availability.reason` on a `skills.list` row, or the
+  `[not offered] …` line the agent's own `skill_list` prints. Then act on the
+  reason:
+  - `ineligible` → the detail names the missing binary or variable;
+    `agentos env set <NAME> --stdin` applies to the running gateway, no
+    restart, and the skill becomes eligible on the next turn.
+  - `prompt_budget` → the skills block is full. Raise
+    `agentos config set skills.max_skills_prompt_chars <n>` (default 24000)
+    and restart the gateway. The gateway also logs
+    `skills_filter.budget_truncated` with the dropped names. Truncation goes
+    lowest-precedence layer first (`extra`, then `bundled`), so this shows up
+    as shipped skills disappearing while `managed`/`personal`/`project`/
+    `workspace` ones survive.
+  - `not_retrieved` → only possible with `skills.filter_enabled = true`
+    (off by default); raise `filter_top_k` or reword the request.
+  - `tool_gate` / `fallback_superseded` → about the session's tool surface,
+    not the skill; check `[tools]`.
+  - `model_invocation_disabled` → working as declared; the skill is for a
+    person to run, not the agent.
+- **Skill shows "ready" in the Web UI but the agent will not use it** →
+  that is `availability`, not `eligible`. A skill can be perfectly installed
+  and still be withheld for any of the reasons above; the Skills screen labels
+  it on the card.
 - **Deep debugging** → `agentos diagnostics on`, reproduce, then
   `agentos replay` on the recorded turn.
 

@@ -11,9 +11,9 @@ synchronous where possible — it either:
 
 The three policies:
 
-* ``auto_summarize`` — run a best-effort pre-compaction flush when
-  configured, compact once, then proceed only if post-compaction token
-  evidence proves the next call fits.
+* ``auto_summarize`` — record a durable checkpoint, compact once, then
+  proceed only if post-compaction token evidence proves the next call
+  fits.
 * ``hard_truncate`` — drop oldest transcript entries from the in-memory
   history list until the estimated token count is under budget. The
   caller uses the shortened list.
@@ -23,7 +23,6 @@ The three policies:
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 from dataclasses import dataclass, field
 from typing import Any
@@ -45,18 +44,11 @@ from agentos.session.compaction_lifecycle import (
     CompactionLifecycleResult,
     compaction_effect_payload,
     compaction_lifecycle_payload,
-    compaction_memory_status,
     compaction_result_payload,
     durable_receipt_allows_destructive_compaction,
-    flush_receipt_is_successful_flush,
-    flush_receipt_status_for_compaction,
-    mark_compaction_flush_status_with_retry,
     new_compaction_id,
-    pre_compaction_flush_enabled,
-    pre_compaction_flush_requires_safe_receipt,
 )
 from agentos.session.context_view import build_compaction_context_records
-from agentos.session.keys import parse_agent_id
 from agentos.session.tokenizer import estimate_tokens
 
 log = structlog.get_logger(__name__)
@@ -99,7 +91,6 @@ class OverflowOutcome:
     kept_count: int = 0
     summary_len: int = 0
     summary_source: str = "unknown"
-    flush_receipt: Any = None
     lifecycle: CompactionLifecycleResult | None = None
     compacted_this_turn: bool = False
     # Possibly mutated history. HARD_TRUNCATE shortens this list in place.
@@ -147,221 +138,6 @@ def _build_refusal_envelope(
         "reason": reason,
         "error": error,
     }
-
-
-def _memory_timeout_seconds(config: GatewayConfig, name: str, default: float) -> float:
-    memory_cfg = getattr(config, "memory", None)
-    raw_timeout = getattr(memory_cfg, name, default)
-    try:
-        timeout = float(raw_timeout)
-    except (TypeError, ValueError):
-        return default
-    return max(timeout, 0.0)
-
-
-def _log_auto_summarize_flush_receipt(
-    *,
-    session_key: str,
-    receipt: Any,
-    background: bool,
-) -> None:
-    log_payload = {
-        "session_key": session_key,
-        "background": background,
-        "mode": getattr(receipt, "mode", "unknown"),
-        "result_status": getattr(receipt, "result_status", None),
-        "integrity_status": getattr(receipt, "integrity_status", None),
-        "indexed_chunk_count": getattr(receipt, "indexed_chunk_count", None),
-        "output_coverage_status": getattr(receipt, "output_coverage_status", None),
-        "invalid_candidate_count": getattr(receipt, "invalid_candidate_count", None),
-        "candidate_missing_ids": getattr(receipt, "candidate_missing_ids", None),
-        "obligation_status": getattr(receipt, "obligation_status", None),
-        "obligation_missing_ids": getattr(receipt, "obligation_missing_ids", None),
-    }
-    if flush_receipt_is_successful_flush(receipt):
-        log.info("context_overflow.auto_summarize_flush_done", **log_payload)
-        return
-    log.warning(
-        "context_overflow.auto_summarize_flush_degraded",
-        error=getattr(receipt, "error", None) or "degraded_flush_receipt",
-        **log_payload,
-    )
-
-
-def _schedule_auto_summarize_flush_status_update(
-    *,
-    session_manager: Any | None,
-    session_key: str,
-    compaction_id: str | None,
-    status: str,
-) -> None:
-    if session_manager is None or not compaction_id:
-        return
-    mark_status = getattr(session_manager, "mark_compaction_flush_receipt_status", None)
-    if not callable(mark_status):
-        return
-    asyncio.create_task(
-        mark_compaction_flush_status_with_retry(
-            mark_status,
-            session_key=session_key,
-            compaction_id=compaction_id,
-            status=status,
-            log=log,
-            failed_event="context_overflow.auto_summarize_flush_status_update_failed",
-            updated_event="context_overflow.auto_summarize_flush_status_updated",
-            skipped_event="context_overflow.auto_summarize_flush_status_update_skipped",
-        )
-    )
-
-
-def _consume_auto_summarize_flush_task(
-    session_key: str,
-    task: asyncio.Task,
-    *,
-    config: GatewayConfig | None = None,
-    session_manager: Any | None = None,
-    compaction_id: str | None = None,
-) -> None:
-    try:
-        receipt = task.result()
-    except asyncio.CancelledError:
-        log.debug(
-            "context_overflow.auto_summarize_flush_cancelled",
-            session_key=session_key,
-            background=True,
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "context_overflow.auto_summarize_flush_failed",
-            session_key=session_key,
-            background=True,
-            error=str(exc),
-        )
-        _schedule_auto_summarize_flush_status_update(
-            session_manager=session_manager,
-            session_key=session_key,
-            compaction_id=compaction_id,
-            status="failed_retryable",
-        )
-    else:
-        _log_auto_summarize_flush_receipt(
-            session_key=session_key,
-            receipt=receipt,
-            background=True,
-        )
-        if config is not None:
-            _schedule_auto_summarize_flush_status_update(
-                session_manager=session_manager,
-                session_key=session_key,
-                compaction_id=compaction_id,
-                status=flush_receipt_status_for_compaction(receipt, config),
-            )
-
-
-async def _await_auto_summarize_flush_grace(
-    *,
-    config: GatewayConfig,
-    transcript: list[Any],
-    session_key: str,
-    flush_service: Any | None,
-    session_manager: Any | None = None,
-    wait_for_receipt: bool = False,
-    turn_id: str | None = None,
-    checkpoint_exists: bool | None = None,
-) -> Any | None:
-    if not pre_compaction_flush_enabled(config) or not transcript:
-        return None
-
-    if flush_service is None:
-        log.warning(
-            "context_overflow.auto_summarize_flush_unavailable",
-            session_key=session_key,
-            error="flush_service_unavailable",
-        )
-        return None
-
-    background_timeout = _memory_timeout_seconds(
-        config,
-        "flush_background_timeout_seconds",
-        120.0,
-    )
-    task = asyncio.create_task(
-        flush_service.execute(
-            transcript,
-            session_key,
-            agent_id=parse_agent_id(session_key),
-            timeout=background_timeout,
-            message_window=0,
-            segment_mode="auto",
-            raw_capture_policy="required",
-            turn_id=turn_id,
-            checkpoint_exists=checkpoint_exists,
-        )
-    )
-
-    if not wait_for_receipt:
-        task.add_done_callback(
-            lambda completed: _consume_auto_summarize_flush_task(
-                session_key,
-                completed,
-                config=config,
-                session_manager=session_manager,
-                compaction_id=turn_id,
-            )
-        )
-        log.info(
-            "context_overflow.auto_summarize_flush_background_started",
-            session_key=session_key,
-            background_timeout_seconds=background_timeout,
-        )
-        return None
-
-    grace_timeout = _memory_timeout_seconds(config, "flush_timeout_seconds", 15.0)
-    try:
-        receipt = await asyncio.wait_for(asyncio.shield(task), timeout=grace_timeout)
-    except TimeoutError:
-        task.add_done_callback(
-            lambda completed: _consume_auto_summarize_flush_task(
-                session_key,
-                completed,
-                config=config,
-                session_manager=session_manager,
-                compaction_id=turn_id,
-            )
-        )
-        log.warning(
-            "context_overflow.auto_summarize_flush_timed_out",
-            session_key=session_key,
-            timeout_seconds=grace_timeout,
-            background_timeout_seconds=background_timeout,
-        )
-        return None
-    except asyncio.CancelledError:
-        task.add_done_callback(
-            lambda completed: _consume_auto_summarize_flush_task(
-                session_key,
-                completed,
-                config=config,
-                session_manager=session_manager,
-                compaction_id=turn_id,
-            )
-        )
-        raise
-    except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "context_overflow.auto_summarize_flush_failed",
-            session_key=session_key,
-            background=False,
-            error=str(exc),
-        )
-        return None
-
-    _log_auto_summarize_flush_receipt(
-        session_key=session_key,
-        receipt=receipt,
-        background=False,
-    )
-    return receipt
 
 
 async def _estimate_session_payload_tokens(
@@ -458,7 +234,6 @@ async def apply_context_overflow_policy(
     session_key: str,
     session_manager: Any | None = None,
     compaction_config: Any | None = None,
-    flush_service: Any | None = None,
     compaction_marker: Any | None = None,
     policy_override: ContextOverflowPolicy | None = None,
     budget_override: int | None = None,
@@ -545,7 +320,6 @@ async def apply_context_overflow_policy(
     if session_manager is not None:
         flush_status = "not_required"
         checkpoint_failed = False
-        checkpoint_saved = False
         try:
             marker_has = getattr(compaction_marker, "has_compacted_this_turn", None)
             if callable(marker_has) and marker_has(session_key):
@@ -581,7 +355,10 @@ async def apply_context_overflow_policy(
                 ),
             )
             try:
-                checkpoint_saved = await _record_checkpoint_before_compaction(
+                # Still recorded: the checkpoint writes the pre-image that
+                # compaction recovery reads back. Its result is no longer
+                # consulted here now that the flush receipt it gated is gone.
+                await _record_checkpoint_before_compaction(
                     session_manager,
                     session_key,
                     list(transcript or []),
@@ -591,78 +368,6 @@ async def apply_context_overflow_policy(
             except Exception:
                 checkpoint_failed = True
                 raise
-            requires_safe_receipt = pre_compaction_flush_requires_safe_receipt(config)
-            outcome.flush_receipt = await _await_auto_summarize_flush_grace(
-                config=config,
-                transcript=transcript,
-                session_key=session_key,
-                flush_service=flush_service,
-                session_manager=session_manager,
-                wait_for_receipt=requires_safe_receipt,
-                turn_id=compaction_id,
-                checkpoint_exists=checkpoint_saved,
-            )
-            if pre_compaction_flush_enabled(config):
-                flush_status = flush_receipt_status_for_compaction(
-                    outcome.flush_receipt,
-                    config,
-                )
-            memory_status = compaction_memory_status(
-                outcome.flush_receipt,
-                deterministic_receipt_safe=checkpoint_saved and not requires_safe_receipt,
-                required=pre_compaction_flush_enabled(config),
-            )
-            if (
-                pre_compaction_flush_enabled(config)
-                and requires_safe_receipt
-                and not memory_status.allows_destructive_compaction
-            ):
-                outcome.reason = "compaction_flush_failed"
-                outcome.tokens_after = estimated
-                outcome.remaining_budget_tokens = max(budget - estimated, 0)
-                outcome.refusal = _build_refusal_envelope(
-                    estimated,
-                    budget,
-                    outcome.reason,
-                    error_details={
-                        "memory_safety_status": memory_status.safety_status,
-                        "semantic_memory_status": memory_status.semantic_status,
-                    },
-                )
-                outcome.lifecycle = CompactionLifecycleResult(
-                    compacted=False,
-                    refused=True,
-                    reason=outcome.reason,
-                    tokens_before=estimated,
-                    tokens_after=estimated,
-                    remaining_budget_tokens=outcome.remaining_budget_tokens,
-                    flush_receipt=outcome.flush_receipt,
-                )
-                log.warning(
-                    "context_overflow.auto_summarize_refused",
-                    session_key=session_key,
-                    reason=outcome.reason,
-                )
-                notify_compaction(
-                    session_key,
-                    source="automatic",
-                    phase="gateway_auto_summarize",
-                    status="failed",
-                    reason=outcome.reason,
-                    tokens_before=estimated,
-                    tokens_after=estimated,
-                    remaining_budget_tokens=outcome.remaining_budget_tokens,
-                    context_window_tokens=budget,
-                    flush_receipt_status=flush_status,
-                    memory_safety_status=memory_status.safety_status,
-                    semantic_memory_status=memory_status.semantic_status,
-                    **compaction_effect_payload(status="failed", reason=outcome.reason),
-                    **compaction_lifecycle_payload(
-                        compaction_id,
-                        COMPACTION_TRIGGERED_EVENT,
-                    ),
-                )
-                return outcome
 
             compaction_result = None
             compact_with_result = getattr(session_manager, "compact_with_result", None)
@@ -746,7 +451,6 @@ async def apply_context_overflow_policy(
                     kept_count=outcome.kept_count,
                     summary_len=outcome.summary_len,
                     summary_source=outcome.summary_source,
-                    flush_receipt=outcome.flush_receipt,
                 )
                 log.warning(
                     "context_overflow.auto_summarize_refused",
@@ -808,7 +512,6 @@ async def apply_context_overflow_policy(
                 kept_count=outcome.kept_count,
                 summary_len=outcome.summary_len,
                 summary_source=outcome.summary_source,
-                flush_receipt=outcome.flush_receipt,
             )
             log.info(
                 "context_overflow.auto_summarize_ok",
@@ -869,7 +572,6 @@ async def apply_context_overflow_policy(
                     tokens_before=estimated,
                     tokens_after=post_estimate,
                     remaining_budget_tokens=outcome.remaining_budget_tokens,
-                    flush_receipt=outcome.flush_receipt,
                 )
             else:
                 outcome.reason = "compaction_failed"

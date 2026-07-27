@@ -637,7 +637,7 @@ def test_image_generation_capability_exposes_agent_tool_when_configured(monkeypa
     runner = object.__new__(TurnRunner)
     runner._tool_registry = get_default_registry()
 
-    ctx = ToolContext(is_owner=True, caller_kind=CallerKind.WEB, agent_id="main")
+    ctx = ToolContext(caller_kind=CallerKind.WEB, agent_id="main")
     ctx = TurnRunner._apply_runtime_capability_denies(runner, ctx)
     tool_defs = runner._tool_registry.to_tool_definitions(ctx)
     tool_defs = TurnRunner._filter_tool_defs_by_capability(runner, tool_defs)
@@ -665,7 +665,7 @@ def test_image_generation_capability_does_not_expose_agent_tool_when_disabled(
     runner = object.__new__(TurnRunner)
     runner._tool_registry = get_default_registry()
 
-    ctx = ToolContext(is_owner=True, caller_kind=CallerKind.WEB, agent_id="main")
+    ctx = ToolContext(caller_kind=CallerKind.WEB, agent_id="main")
     ctx = TurnRunner._apply_runtime_capability_denies(runner, ctx)
     tool_defs = runner._tool_registry.to_tool_definitions(ctx)
     tool_defs = TurnRunner._filter_tool_defs_by_capability(runner, tool_defs)

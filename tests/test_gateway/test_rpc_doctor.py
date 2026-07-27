@@ -4,9 +4,9 @@ from typing import Any
 
 import pytest
 
+from agentos.gateway.access import CONTROL_ONLY
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, get_dispatcher
-from agentos.gateway.scopes import METHOD_SCOPES, READ_SCOPE
 
 
 async def _ready_memory(params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
@@ -85,8 +85,10 @@ def _patch_ready_support_surfaces(monkeypatch: pytest.MonkeyPatch, rpc_doctor: A
 
 
 @pytest.mark.asyncio
-async def test_doctor_status_is_read_scoped() -> None:
-    assert METHOD_SCOPES["doctor.status"] == READ_SCOPE
+async def test_doctor_status_is_control_only() -> None:
+    entry = get_dispatcher().get_entry("doctor.status")
+    assert entry is not None
+    assert entry.audiences == CONTROL_ONLY
 
 
 @pytest.mark.asyncio
@@ -174,8 +176,7 @@ async def test_doctor_status_scopes_config_set_recovery_commands(monkeypatch) ->
     )
     commands = [step["command"] for step in finding["fixSteps"] if "command" in step]
     assert (
-        "agentos config set log_file_enabled true "
-        "--config /tmp/custom-agentos.toml"
+        "agentos config set log_file_enabled true --config /tmp/custom-agentos.toml"
     ) in commands
     assert "agentos gateway restart --config /tmp/custom-agentos.toml" in commands
 
@@ -356,16 +357,13 @@ async def test_doctor_status_reports_unknown_search_provider_as_reconfigurable(
 
     assert response.ok is True
     search_finding = next(
-        finding
-        for finding in response.payload["findings"]
-        if finding["surface"] == "search"
+        finding for finding in response.payload["findings"] if finding["surface"] == "search"
     )
     assert search_finding["id"] == "search.provider.unknown"
     commands = [step["command"] for step in search_finding["fixSteps"]]
     assert "agentos search list --json" in commands
     assert (
-        "agentos configure search --search-provider duckduckgo "
-        "--config /tmp/custom-agentos.toml"
+        "agentos configure search --search-provider duckduckgo --config /tmp/custom-agentos.toml"
     ) in commands
 
 
@@ -646,14 +644,8 @@ async def test_doctor_status_treats_dead_channel_as_surface_degradation(monkeypa
     assert channel_finding["severity"] == "error"
     assert channel_finding["readinessImpact"] == "degrades"
     commands = [step["command"] for step in channel_finding["fixSteps"] if "command" in step]
-    assert (
-        "agentos channels restart feishu --yes "
-        "--config /tmp/custom-agentos.toml"
-    ) in commands
-    assert (
-        "agentos channels status feishu --json "
-        "--config /tmp/custom-agentos.toml"
-    ) in commands
+    assert ("agentos channels restart feishu --yes --config /tmp/custom-agentos.toml") in commands
+    assert ("agentos channels status feishu --json --config /tmp/custom-agentos.toml") in commands
 
 
 @pytest.mark.asyncio
@@ -697,9 +689,7 @@ async def test_doctor_status_treats_no_channels_as_optional_setup(monkeypatch) -
     )
     assert channel_finding["severity"] == "info"
     assert channel_finding["readinessImpact"] == "optional"
-    assert channel_finding["fixSteps"][0]["command"] == (
-        "agentos configure --section channels"
-    )
+    assert channel_finding["fixSteps"][0]["command"] == ("agentos configure --section channels")
 
 
 def test_router_payload_reports_resolved_llm_judge() -> None:

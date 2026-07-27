@@ -17,6 +17,7 @@ import contextlib
 import inspect
 import json
 import re
+import uuid
 import weakref
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -61,12 +62,15 @@ from agentos.gateway.attachment_ingest import AttachmentIngestResult, ingest_att
 from agentos.gateway.session_events import build_sessions_changed_payload
 from agentos.paths import media_root_from_config
 from agentos.permissions import configured_default_elevated
+from agentos.session.keys import canonicalize_session_key as _canonicalize_session_key
 from agentos.session.terminal_reply import build_terminal_reply
 
 if TYPE_CHECKING:
     from agentos.gateway.event_bridge import EventBridge
 
 log = structlog.get_logger(__name__)
+
+_DEFAULT_TYPING_KEEPALIVE_INTERVAL_S = 8.0
 
 
 def _terminal_payload_from_exception(exc: BaseException) -> dict[str, str]:
@@ -204,9 +208,8 @@ def _compute_channel_cap(config: Any) -> int:
     formula_cap = max(2 * max_concurrency, 1)
     return min(raw_cap, formula_cap)
 
-_DIRECTIVE_TAG_RE = re.compile(
-    r"\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\]\s*"
-)
+
+_DIRECTIVE_TAG_RE = re.compile(r"\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\]\s*")
 _INTERNAL_COMPACTION_MARKER_RE = re.compile(
     r"(?m)^[ \t]*\["
     r"(?:agentos_compacted:[^\]\r\n]*|"
@@ -250,9 +253,7 @@ def _split_pending_internal_compaction_marker(content: str) -> tuple[str, str]:
 
 
 def _sanitize_outgoing_message(message: OutgoingMessage) -> OutgoingMessage:
-    cleaned = _strip_internal_compaction_markers(
-        _strip_inline_directive_tags(message.content)
-    )
+    cleaned = _strip_internal_compaction_markers(_strip_inline_directive_tags(message.content))
     if cleaned == message.content:
         return message
     return message.model_copy(update={"content": cleaned})
@@ -267,23 +268,15 @@ class _DirectiveTagStreamSanitizer:
     def clean(self, chunk: str) -> str:
         text = self._pending + chunk
         self._pending = ""
-        cleaned = _strip_internal_compaction_markers(
-            _strip_inline_directive_tags(text)
-        )
+        cleaned = _strip_internal_compaction_markers(_strip_inline_directive_tags(text))
         start = cleaned.rfind("[[")
         if start == -1:
-            cleaned, pending_marker = _split_pending_internal_compaction_marker(
-                cleaned
-            )
+            cleaned, pending_marker = _split_pending_internal_compaction_marker(cleaned)
             if pending_marker:
                 self._pending = pending_marker
             return cleaned
         suffix = cleaned[start:]
-        if (
-            "]]" not in suffix
-            and "\n" not in suffix
-            and len(suffix) <= _DIRECTIVE_TAG_BUFFER_LIMIT
-        ):
+        if "]]" not in suffix and "\n" not in suffix and len(suffix) <= _DIRECTIVE_TAG_BUFFER_LIMIT:
             self._pending = suffix
             return cleaned[:start]
         cleaned, pending_marker = _split_pending_internal_compaction_marker(cleaned)
@@ -322,6 +315,44 @@ async def _maybe_lock(lock: asyncio.Lock | None) -> AsyncIterator[None]:
         yield
 
 
+class ChannelSessionPointers:
+    """Per-chat "current session key" pointer for channel ``/new``.
+
+    Channel session keys are a pure function of ``(channel, chat_id)`` that is
+    recomputed on every inbound message, so a channel ``/new`` cannot simply
+    "switch to a fresh key" the way the WebUI "New Chat" button does — the next
+    message would recompute the old key and orphan the new session. This class
+    adds the missing indirection: an in-memory map from the *derived* (base)
+    session key to the *current* session key for that chat.
+
+    ``/new`` mints a fresh key, stores it here, and subsequent messages for the
+    same chat resolve to it via :meth:`resolve`. The old session is left
+    untouched (non-destructive), matching the WebUI "New Chat" semantics.
+
+    In-memory by design: a gateway restart clears the pointers, after which each
+    chat deterministically falls back to its derived base key. This is the same
+    best-effort semantics as the WebUI (whose pointer is ``localStorage``).
+    """
+
+    def __init__(self) -> None:
+        self._map: dict[str, str] = {}
+
+    @staticmethod
+    def _canon(key: str) -> str:
+        try:
+            return _canonicalize_session_key(key)
+        except Exception:  # noqa: BLE001 — canonicalization is best-effort
+            return key
+
+    def resolve(self, base_key: str) -> str:
+        """Return the current key for ``base_key`` (the pointer if set, else base)."""
+        return self._map.get(self._canon(base_key), base_key)
+
+    def set(self, base_key: str, new_key: str) -> None:
+        """Point ``base_key`` at ``new_key``."""
+        self._map[self._canon(base_key)] = new_key
+
+
 # ── Main dispatch loop (thin orchestrator) ───────────────────────────────
 
 
@@ -339,6 +370,7 @@ async def run_channel_dispatch(
     debounce_coordinator: Any = None,
     debounce_window_s: float = 0.0,
     _in_flight: _ChannelInFlightSet | None = None,
+    session_pointers: ChannelSessionPointers | None = None,
 ) -> None:
     """Receive-dispatch-respond loop for a channel adapter.
 
@@ -354,7 +386,14 @@ async def run_channel_dispatch(
         _in_flight = _ChannelInFlightSet(cap)
     while True:
         msg = await channel.receive()
-        session_key = session_key_builder(msg)
+        base_session_key = session_key_builder(msg)
+        # Resolve any per-chat "current session" pointer set by a prior /new.
+        # The derived base key stays the stable pointer-map handle.
+        session_key = (
+            session_pointers.resolve(base_session_key)
+            if session_pointers is not None
+            else base_session_key
+        )
         raw_content = msg.content
         from agentos.gateway.routing import build_channel_route_envelope
 
@@ -367,14 +406,14 @@ async def run_channel_dispatch(
         # Access/mention policy must run before slash-command interception and
         # debounce. Otherwise an unapproved account could still execute a
         # channel command even though normal chat turns were gated.
-        if _should_skip_unmentioned(channel, msg, session_key):
+        if _should_skip_unmentioned(channel, msg, session_key, route_envelope):
             await _notify_access_denial(channel, msg, session_key)
             continue
 
         # fmt: off
         if getattr(channel, "supports_slash_commands", False) and rpc_dispatcher is not None and channel_rpc_context_factory is not None:  # noqa: E501
             command_reply = await _dispatch_channel_slash_command(
-                route_envelope=route_envelope, msg=msg, session_manager=session_manager, session_key=session_key, session_prefix=session_prefix, rpc_dispatcher=rpc_dispatcher, context_factory=channel_rpc_context_factory  # noqa: E501
+                route_envelope=route_envelope, msg=msg, session_manager=session_manager, session_key=session_key, session_prefix=session_prefix, rpc_dispatcher=rpc_dispatcher, context_factory=channel_rpc_context_factory, session_pointers=session_pointers, base_session_key=base_session_key  # noqa: E501
             )
             if command_reply is not None:
                 emit = log.warning if command_reply.metadata.get("denied") else log.info
@@ -385,7 +424,9 @@ async def run_channel_dispatch(
                 else:
                     event = "channel.command_intercepted"
                 emit(event, command=command_reply.metadata.get("command"), method=command_reply.metadata.get("method"), session_key=session_key)  # noqa: E501
-                await channel.send(command_reply)
+                await channel.send(
+                    _build_command_reply_message(channel, command_reply, msg)
+                )
                 continue
         # fmt: on
 
@@ -477,17 +518,11 @@ async def run_channel_dispatch(
             # concurrent senders cannot interleave between the two steps.
             try:
                 async with _maybe_lock(session_lock):
-                    channel_overflow_policy = _resolve_channel_overflow_policy(
-                        channel, config
-                    )
+                    channel_overflow_policy = _resolve_channel_overflow_policy(channel, config)
                     if channel_overflow_policy is not None:
-                        apply_policy = getattr(
-                            task_runtime, "apply_overflow_policy", None
-                        )
+                        apply_policy = getattr(task_runtime, "apply_overflow_policy", None)
                         if callable(apply_policy):
-                            await apply_policy(
-                                session_key, policy=channel_overflow_policy
-                            )
+                            await apply_policy(session_key, policy=channel_overflow_policy)
                     handle = await start_turn_via_runtime(
                         task_runtime,
                         route_envelope,
@@ -638,6 +673,8 @@ async def _dispatch_channel_slash_command(
     session_prefix: str,
     rpc_dispatcher: Any,
     context_factory: Callable[[Any], Any],
+    session_pointers: ChannelSessionPointers | None = None,
+    base_session_key: str | None = None,
 ) -> OutgoingMessage | None:
     from agentos.channels.command_registry import DEFAULT_COMMAND_REGISTRY
 
@@ -662,6 +699,8 @@ async def _dispatch_channel_slash_command(
             session_prefix=session_prefix,
             rpc_dispatcher=rpc_dispatcher,
             context_factory=context_factory,
+            session_pointers=session_pointers,
+            base_session_key=base_session_key or session_key,
         )
 
     reply = await DEFAULT_COMMAND_REGISTRY.dispatch(
@@ -675,6 +714,17 @@ async def _dispatch_channel_slash_command(
     return _preserve_route_channel_metadata(reply, route_envelope)
 
 
+def _mint_fresh_channel_key(base_session_key: str) -> str:
+    """Derive a fresh, never-before-used session key for a channel ``/new``.
+
+    The base (derived) key ends with the chat's peer/thread id, so we append a
+    unique ``:new:<rand8>`` suffix. This guarantees a brand-new session key that
+    cannot collide with the existing session, mirroring the WebUI "New Chat"
+    button's client-side random key.
+    """
+    return f"{base_session_key}:new:{uuid.uuid4().hex[:8]}"
+
+
 async def _dispatch_channel_new_command(
     *,
     route_envelope: Any,
@@ -684,29 +734,51 @@ async def _dispatch_channel_new_command(
     session_prefix: str,
     rpc_dispatcher: Any,
     context_factory: Callable[[Any], Any],
+    session_pointers: ChannelSessionPointers | None = None,
+    base_session_key: str | None = None,
 ) -> OutgoingMessage:
     from agentos.channels.command_registry import DEFAULT_COMMAND_REGISTRY
-    from agentos.gateway.scopes import WRITE_SCOPE, authorize_call
+    from agentos.gateway.access import ConnectionSurface
 
     ctx = context_factory(route_envelope)
-    principal = getattr(ctx, "principal", None)
-    allowed, missing = authorize_call(
-        "sessions.reset",
-        WRITE_SCOPE,
-        getattr(principal, "role", ""),
-        getattr(principal, "scopes", frozenset()),
-    )
-    if not allowed:
-        detail = f": missing {missing}" if missing else ""
+    access = getattr(ctx, "access", None)
+    if (
+        access is None
+        or not access.admitted
+        or access.surface is not ConnectionSurface.CHANNEL
+    ):
         return _route_envelope_reply_message(
-            (
-                "/new denied: Insufficient scope for method: "
-                f"sessions.reset{detail}"
-            ),
+            "/new denied: paired channel connection required",
             route_envelope,
             metadata={"command": "new", "method": "sessions.reset", "denied": True},
         )
 
+    # True "New Chat" parity: mint a FRESH session key and point this chat at it,
+    # leaving the current session untouched (non-destructive — no flush gate, no
+    # transcript deletion). The new session is created lazily on the next send,
+    # exactly like the WebUI "New Chat" button.
+    if session_pointers is not None:
+        base = base_session_key or session_key
+        fresh_key = _mint_fresh_channel_key(base)
+        session_pointers.set(base, fresh_key)
+        log.info(
+            "channel.new_command.session_pointer_set",
+            base_session_key=base,
+            new_session_key=fresh_key,
+        )
+        return _route_envelope_reply_message(
+            "Started a new chat session.",
+            route_envelope,
+            metadata={
+                "command": "new",
+                "method": "sessions.new",
+                "denied": False,
+                "session_key": fresh_key,
+            },
+        )
+
+    # Fallback (no pointer map wired): retain the legacy destructive reset so the
+    # command still functions in tests/shims that bypass the pointer.
     await _record_delivery_context(
         session_manager,
         session_key,
@@ -740,7 +812,7 @@ async def _dispatch_combined_message_after_debounce(channel: Any, combined: Any,
     async with _maybe_lock(session_lock):
         await _record_delivery_context(session_manager, session_key, msg, session_prefix, route_envelope=route_envelope)  # noqa: E501
 
-        if _should_skip_unmentioned(channel, msg, session_key):
+        if _should_skip_unmentioned(channel, msg, session_key, route_envelope):
             return
 
     ingested = await _ingest_channel_message_attachments(channel=channel, msg=msg)
@@ -921,9 +993,20 @@ async def resolve_delivery_target(
 _MENTION_GATE_WARNED: dict[int, weakref.ReferenceType[Any] | None] = {}
 
 
-def _record_access_denial(channel: Any, msg: IncomingMessage, decision: Any) -> bool:
-    """Forward policy denials to adapters that expose an approval workflow."""
+def _record_access_decision(
+    channel: Any,
+    msg: IncomingMessage,
+    decision: Any,
+    route_envelope: Any | None = None,
+) -> bool:
+    """Record admission proof or forward a denial to the adapter."""
+
     if bool(getattr(decision, "admit", False)):
+        admission = getattr(decision, "admission", None)
+        validator = getattr(decision, "admission_validator", None)
+        if route_envelope is not None and admission is not None and callable(validator):
+            route_envelope.runtime_state.channel_admission = admission
+            route_envelope.runtime_state.channel_admission_validator = validator
         return False
     hook = getattr(channel, "record_access_denial", None)
     if callable(hook):
@@ -982,6 +1065,7 @@ def _should_skip_unmentioned(
     channel: Any,
     msg: IncomingMessage,
     session_key: str,
+    route_envelope: Any | None = None,
 ) -> bool:
     """Return True when channel policy says to skip this inbound message.
 
@@ -992,11 +1076,15 @@ def _should_skip_unmentioned(
     from agentos.session.keys import derive_chat_type
 
     is_group = derive_chat_type(session_key) == "group"
+    interaction_type = (msg.metadata or {}).get("interaction_type")
+    is_explicit_interaction = interaction_type == "slash_command"
     policy = getattr(channel, "policy", None)
     custom_evaluator = getattr(channel, "evaluate_access", None)
+    if route_envelope is not None:
+        route_envelope.runtime_state.clear_channel_admission()
     if callable(custom_evaluator):
-        mentioned = True
-        if is_group:
+        mentioned = not is_group or is_explicit_interaction
+        if is_group and not is_explicit_interaction:
             hook = getattr(channel, "is_group_mentioned", None)
             if not callable(hook):
                 _warn_missing_mention_hook(channel)
@@ -1007,7 +1095,7 @@ def _should_skip_unmentioned(
             is_group=is_group,
             mentioned=mentioned,
         )
-        return _record_access_denial(channel, msg, decision)
+        return _record_access_decision(channel, msg, decision, route_envelope)
 
     if isinstance(policy, ChannelAccessPolicy):
         if not is_group:
@@ -1017,7 +1105,7 @@ def _should_skip_unmentioned(
                 mentioned=False,
                 sender_id=msg.sender_id,
             )
-            return _record_access_denial(channel, msg, decision)
+            return _record_access_decision(channel, msg, decision, route_envelope)
         if not policy.group_allowed:
             decision = evaluate_policy(
                 policy,
@@ -1025,18 +1113,18 @@ def _should_skip_unmentioned(
                 mentioned=False,
                 sender_id=msg.sender_id,
             )
-            return _record_access_denial(channel, msg, decision)
-        if not policy.mention_required_in_group:
+            return _record_access_decision(channel, msg, decision, route_envelope)
+        if not policy.mention_required_in_group or is_explicit_interaction:
             decision = evaluate_policy(
                 policy,
                 is_group=True,
                 mentioned=True,
                 sender_id=msg.sender_id,
             )
-            return _record_access_denial(channel, msg, decision)
+            return _record_access_decision(channel, msg, decision, route_envelope)
 
-    if not is_group:
-        return False  # DMs always processed for legacy adapters.
+    if not is_group or is_explicit_interaction:
+        return False
 
     hook = getattr(channel, "is_group_mentioned", None)
     if not callable(hook):
@@ -1051,7 +1139,7 @@ def _should_skip_unmentioned(
             mentioned=mentioned,
             sender_id=msg.sender_id,
         )
-        return _record_access_denial(channel, msg, decision)
+        return _record_access_decision(channel, msg, decision, route_envelope)
     return not mentioned
 
 
@@ -1061,9 +1149,9 @@ def _should_skip_unmentioned(
 def _start_typing_keepalive(
     channel: Any,
     inbound: IncomingMessage | None = None,
-    interval: float = 8.0,
+    interval: float | None = None,
 ) -> asyncio.Task | None:
-    """Start a background task that re-sends typing every ``interval`` seconds.
+    """Start a background task that periodically refreshes the typing status.
 
     Uses ``asyncio.create_task`` so typing continues even during long tool calls
     where no events are yielded (a timestamp-in-loop approach would fail here).
@@ -1077,16 +1165,45 @@ def _start_typing_keepalive(
     if not callable(send_typing):
         return None
 
+    raw_interval = (
+        interval
+        if interval is not None
+        else getattr(
+            channel,
+            "typing_keepalive_interval_s",
+            _DEFAULT_TYPING_KEEPALIVE_INTERVAL_S,
+        )
+    )
+    try:
+        keepalive_interval = float(raw_interval)
+    except (TypeError, ValueError):
+        keepalive_interval = _DEFAULT_TYPING_KEEPALIVE_INTERVAL_S
+    if keepalive_interval <= 0:
+        keepalive_interval = _DEFAULT_TYPING_KEEPALIVE_INTERVAL_S
+
+    typing_kwargs: dict[str, Any] = {}
+    if inbound is not None:
+        if _accepts_keyword_arg(send_typing, "channel_id"):
+            typing_kwargs["channel_id"] = inbound.channel_id
+        if _accepts_keyword_arg(send_typing, "thread_id"):
+            thread_id = next(
+                (
+                    inbound.metadata[key]
+                    for key in ("native_thread_id", "thread_id", "message_thread_id")
+                    if inbound.metadata.get(key) not in (None, "")
+                ),
+                None,
+            )
+            if thread_id is not None:
+                typing_kwargs["thread_id"] = str(thread_id)
+
     async def _keepalive() -> None:
         while True:
             try:
-                if inbound is not None and _accepts_keyword_arg(send_typing, "channel_id"):
-                    await send_typing(channel_id=inbound.channel_id)
-                else:
-                    await send_typing()
+                await send_typing(**typing_kwargs)
             except Exception:
                 pass  # typing is best-effort, never crash the loop
-            await asyncio.sleep(interval)
+            await asyncio.sleep(keepalive_interval)
 
     return asyncio.create_task(_keepalive())
 
@@ -1142,26 +1259,6 @@ async def _emit_run_heartbeat(
     )
 
 
-def _is_channel_admin_sender(config: Any, envelope: Any) -> bool:
-    admin_senders = getattr(config, "channel_admin_senders", None)
-    if not isinstance(admin_senders, dict):
-        return False
-
-    source_name = getattr(envelope, "source_name", None)
-    sender_id = getattr(envelope, "sender_id", None)
-    if not isinstance(source_name, str) or not source_name:
-        return False
-    if not isinstance(sender_id, str) or not sender_id:
-        return False
-
-    configured = admin_senders.get(source_name)
-    if isinstance(configured, str):
-        return sender_id == configured
-    if not isinstance(configured, list | tuple | set | frozenset):
-        return False
-    return sender_id in {str(item) for item in configured}
-
-
 async def _run_turn_with_streaming(
     channel: Any,
     turn_runner: Any,
@@ -1200,7 +1297,6 @@ async def _run_turn_with_streaming(
     )
     tool_ctx = tool_context_from_envelope(
         envelope,
-        is_owner=_is_channel_admin_sender(config, envelope),
         workspace_dir=str(workspace_dir),
         workspace_strict=workspace_strict,
         default_elevated=configured_default_elevated(config),
@@ -1240,6 +1336,29 @@ def _build_reply_message(channel: Any, content: str, msg: IncomingMessage) -> Ou
         if isinstance(reply, OutgoingMessage):
             return _sanitize_outgoing_message(reply)
     return _sanitize_outgoing_message(OutgoingMessage(content=content))
+
+
+def _build_command_reply_message(
+    channel: Any,
+    reply: OutgoingMessage,
+    inbound: IncomingMessage,
+) -> OutgoingMessage:
+    """Preserve command metadata while applying adapter-specific reply routing."""
+    builder = getattr(channel, "build_reply_message", None)
+    if not callable(builder):
+        return _sanitize_outgoing_message(reply)
+    routed = builder(reply.content, inbound)
+    if not isinstance(routed, OutgoingMessage):
+        return _sanitize_outgoing_message(reply)
+    metadata = {**routed.metadata, **reply.metadata}
+    return _sanitize_outgoing_message(
+        reply.model_copy(
+            update={
+                "metadata": metadata,
+                "reply_to": routed.reply_to,
+            }
+        )
+    )
 
 
 def _route_envelope_reply_message(
@@ -1412,11 +1531,7 @@ class _RuntimeChannelStreamRelay:
         while True:
             if self._coalesce_chars and size >= self._coalesce_chars:
                 return "".join(buffer), None
-            remaining = (
-                deadline - asyncio.get_event_loop().time()
-                if deadline is not None
-                else None
-            )
+            remaining = deadline - asyncio.get_event_loop().time() if deadline is not None else None
             if remaining is not None and remaining <= 0:
                 return "".join(buffer), None
             try:
@@ -1521,9 +1636,7 @@ class _RuntimeChannelStreamRelay:
                     continue
                 if isinstance(item, str):
                     queued_remainder.append(item)
-            undelivered_yielded = "".join(
-                self._yielded_chunks[self._undelivered_index :]
-            )
+            undelivered_yielded = "".join(self._yielded_chunks[self._undelivered_index :])
             fallback_text = undelivered_yielded + "".join(queued_remainder)
             if fallback_text:
                 try:
@@ -2225,9 +2338,7 @@ async def _run_turn_streaming_path(
         tail = stream_sanitizer.flush()
         if tail:
             queued_remainder.append(tail)
-        undelivered_yielded = "".join(
-            yielded_stream_chunks[stream_delivered_index:]
-        )
+        undelivered_yielded = "".join(yielded_stream_chunks[stream_delivered_index:])
         fallback_text = undelivered_yielded + "".join(queued_remainder)
         if fallback_text:
             try:

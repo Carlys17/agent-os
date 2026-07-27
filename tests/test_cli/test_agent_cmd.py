@@ -433,7 +433,6 @@ async def test_run_agent_once_wires_memory_services_into_turnrunner(
     assert captured["memory_sync_managers"] is services.memory_sync_managers
     assert captured["memory_retrievers"] is services.memory_retrievers
     assert captured["turn_capture_services"] is services.turn_capture_services
-    assert captured["session_flush_service"] is services.flush_service
     assert captured["model_catalog"] is services.model_catalog
 
 
@@ -523,12 +522,12 @@ async def test_run_agent_once_defaults_to_unattended_interaction_contract(
     ctx = captured["tool_context"]
     assert ctx.caller_kind is CallerKind.CLI
     assert ctx.interaction_mode is InteractionMode.UNATTENDED
-    assert ctx.elevated == "bypass"
+    assert ctx.elevated is None
     assert captured["bootstrap_context_mode"] == "unattended"
 
 
 @pytest.mark.asyncio
-async def test_run_agent_once_passes_bypass_permissions_to_tool_context(
+async def test_run_agent_once_does_not_elevate_unattended_explicit_permissions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -556,11 +555,11 @@ async def test_run_agent_once_passes_bypass_permissions_to_tool_context(
 
     ctx = captured["tool_context"]
     assert ctx.interaction_mode is InteractionMode.UNATTENDED
-    assert ctx.elevated == "bypass"
+    assert ctx.elevated is None
 
 
 @pytest.mark.asyncio
-async def test_run_agent_once_uses_permissions_environment_default(
+async def test_run_agent_once_does_not_elevate_unattended_environment_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -582,11 +581,11 @@ async def test_run_agent_once_uses_permissions_environment_default(
 
     await run_agent_once(message="hello", agent_id="main", config=GatewayConfig())
 
-    assert captured["tool_context"].elevated == "full"
+    assert captured["tool_context"].elevated is None
 
 
 @pytest.mark.asyncio
-async def test_run_agent_once_uses_configured_permissions_default(
+async def test_run_agent_once_does_not_elevate_unattended_config_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -612,7 +611,7 @@ async def test_run_agent_once_uses_configured_permissions_default(
         config=GatewayConfig(permissions=PermissionsConfig(default_mode="bypass")),
     )
 
-    assert captured["tool_context"].elevated == "bypass"
+    assert captured["tool_context"].elevated is None
 
 
 @pytest.mark.asyncio

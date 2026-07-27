@@ -18,6 +18,7 @@ import tomli_w
 
 from agentos.paths import default_agentos_home
 from agentos.router_strategies import PILOT_STRATEGY_ID, V4_STRATEGY_ID
+from agentos.skills.injector import DEFAULT_MAX_SKILLS_PROMPT_CHARS
 
 DEPRECATED_MEMORY_FIELDS: frozenset[str] = frozenset(
     {
@@ -42,13 +43,36 @@ DEPRECATED_MEMORY_FIELDS: frozenset[str] = frozenset(
         "memory.eviction_policy",
         "memory.summary_model",
         "memory.summary_max_tokens",
+        # Dream consolidation was removed; MemoryConfig forbids extras, so an
+        # existing agentos.toml carrying [memory.dream] would fail validation
+        # at boot without this. The whole sub-table is dropped and warned about.
+        "memory.dream",
+        # Session flush was removed; MemoryConfig forbids extras, so an
+        # existing agentos.toml carrying these would fail validation at boot.
+        #
+        # The safety-gate keys go too, and dropping them is load-bearing rather
+        # than cosmetic. No flush service is constructed any more, so no receipt
+        # can ever be produced. Left in place, `flush_enabled = true` with
+        # `block` (or the legacy `requires_safe_receipt`) makes compaction demand
+        # a receipt that nothing can write: it refuses on every turn, the context
+        # window fills, and the only clue is one warning line. Removing the key
+        # forces `pre_compaction_flush_enabled()` false for good.
+        "memory.flush_enabled",
+        "memory.flush_compaction_requires_safe_receipt",
+        "memory.flush_compaction_safety_mode",
+        "memory.flush_timeout_seconds",
+        "memory.flush_background_timeout_seconds",
+        "memory.flush_backoff_initial_seconds",
+        "memory.flush_backoff_max_seconds",
+        "memory.flush_archive_max_bytes",
+        "memory.repair_enabled",
+        "memory.repair_interval_seconds",
+        "memory.repair_max_items_per_tick",
     }
 )
 
 DEPRECATED_COST_LEAVES: frozenset[str] = frozenset(
-    k.removeprefix("memory.cost.")
-    for k in DEPRECATED_MEMORY_FIELDS
-    if k.startswith("memory.cost.")
+    k.removeprefix("memory.cost.") for k in DEPRECATED_MEMORY_FIELDS if k.startswith("memory.cost.")
 )
 DEPRECATED_MEMORY_LEAVES: frozenset[str] = frozenset(
     k.removeprefix("memory.")
@@ -78,14 +102,17 @@ LEGACY_OPENROUTER_MODEL_IDS: dict[str, str] = {
     "moonshotai/kimi-k2.6": "minimax/minimax-m3",
 }
 
+#: The skills-block budget every config written before 2026-07 carries. Only
+#: this exact value is refreshed to the current default — see the migration at
+#: the end of :func:`migrate_config_payload`.
+LEGACY_MAX_SKILLS_PROMPT_CHARS = 8000
+
 OPENROUTER_PROVIDER_ID = "openrouter"
 
 GATEWAY_PROVIDER_ID = "bankr"
-# The retired ``opencap`` gateway provider (and its own predecessors,
-# "capgateway" / "opencap-gateway") is intentionally NOT migrated forward: on-disk
-# configs pinning any of these now fail validation with UnknownProviderError so
-# the operator re-selects a supported provider. Only the router section rename is
-# still applied for old configs.
+# Historical aliases ("capgateway" / "opencap-gateway") are intentionally not
+# rewritten. Canonical ``opencap`` is a supported provider again, so existing
+# configurations using that id remain valid without migration.
 LEGACY_GATEWAY_PROVIDER_IDS: tuple[str, ...] = ()
 LEGACY_ROUTER_SECTION = "cap_router"
 
@@ -115,8 +142,7 @@ DEPRECATED_AGENT_TOKEN_SAVING_FIELDS: frozenset[str] = frozenset(
     }
 )
 DEPRECATED_AGENT_TOKEN_SAVING_LEAVES: frozenset[str] = frozenset(
-    k.removeprefix("agent_token_saving.")
-    for k in DEPRECATED_AGENT_TOKEN_SAVING_FIELDS
+    k.removeprefix("agent_token_saving.") for k in DEPRECATED_AGENT_TOKEN_SAVING_FIELDS
 )
 
 _LEGACY_MEMORY_FIELDS_WARN_LOCK = threading.Lock()
@@ -297,9 +323,40 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
             builder.removed_fields.append(LEGACY_ROUTER_SECTION)
         else:
             builder.payload["agentos_router"] = legacy_router
-            builder.changes.append(
-                f"{LEGACY_ROUTER_SECTION} -> agentos_router"
+            builder.changes.append(f"{LEGACY_ROUTER_SECTION} -> agentos_router")
+
+    auth_section = builder.payload.get("auth")
+    if isinstance(auth_section, dict):
+        legacy_scopes = auth_section.pop("token_scopes", None)
+        if legacy_scopes is not None:
+            normalized = {
+                str(item).strip()
+                for item in (legacy_scopes if isinstance(legacy_scopes, list) else [])
+                if str(item).strip()
+            }
+            if normalized and "operator.admin" not in normalized:
+                raise ValueError(
+                    "Legacy auth.token_scopes configured a limited token. "
+                    "AgentOS now uses binary Control access and will not silently "
+                    "widen that token. Remove token_scopes only after confirming "
+                    "the token may control the full gateway."
+                )
+            builder.removed_fields.append("auth.token_scopes")
+        for field_name in ("allowed_roles",):
+            if field_name in auth_section:
+                auth_section.pop(field_name)
+                builder.removed_fields.append(f"auth.{field_name}")
+        if auth_section.pop("allow_unauthenticated_public", False):
+            raise ValueError(
+                "auth.allow_unauthenticated_public is no longer supported. "
+                "Configure token authentication before using a non-loopback bind."
             )
+        if "allow_unauthenticated_public" in data.get("auth", {}):
+            builder.removed_fields.append("auth.allow_unauthenticated_public")
+
+    if "channel_admin_senders" in builder.payload:
+        builder.payload.pop("channel_admin_senders")
+        builder.removed_fields.append("channel_admin_senders")
 
     channels_section = builder.payload.get("channels")
     if isinstance(channels_section, dict) and isinstance(
@@ -312,6 +369,24 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
             normalized_type = raw_type.strip().lower() if isinstance(raw_type, str) else ""
             retired_type = RETIRED_CHANNEL_TYPE_ALIASES.get(normalized_type)
             if retired_type is None:
+                if isinstance(entry, dict) and normalized_type == "telegram":
+                    had_access_mode = "access_mode" in entry
+                    access_mode = str(entry.pop("access_mode", "pairing") or "pairing")
+                    if access_mode == "disabled":
+                        entry["enabled"] = False
+                    for field_name in (
+                        "approved_sender_ids",
+                        "group_access_mode",
+                        "group_allowed_sender_ids",
+                    ):
+                        if field_name in entry:
+                            entry.pop(field_name)
+                            builder.removed_fields.append(f"channels.channels[].{field_name}")
+                    if had_access_mode:
+                        # Per-entry reporting below is intentionally generic so
+                        # channel names and sender ids never enter migration logs.
+                        builder.removed_fields.append("channels.channels[].access_mode")
+                    entry.setdefault("groups_enabled", False)
                 retained_channels.append(entry)
                 continue
             retired_type_counts[retired_type] = retired_type_counts.get(retired_type, 0) + 1
@@ -332,9 +407,7 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
     _rename_gateway_provider(builder.payload.get("llm"), "provider", "llm.provider")
     router_section = builder.payload.get("agentos_router")
     if isinstance(router_section, dict):
-        _rename_gateway_provider(
-            router_section, "tier_profile", "agentos_router.tier_profile"
-        )
+        _rename_gateway_provider(router_section, "tier_profile", "agentos_router.tier_profile")
 
     llm = builder.payload.get("llm")
     if isinstance(llm, dict) and _is_gateway_provider(llm.get("provider")):
@@ -410,9 +483,7 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
                 continue
             if not _is_gateway_provider(tier.get("provider")):
                 continue
-            _rename_gateway_provider(
-                tier, "provider", f"agentos_router.tiers.{tier_name}.provider"
-            )
+            _rename_gateway_provider(tier, "provider", f"agentos_router.tiers.{tier_name}.provider")
             old_model = str(tier.get("model") or "").strip()
             new_model = LEGACY_GATEWAY_MODEL_IDS.get(old_model)
             if new_model:
@@ -476,19 +547,31 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
                 "config_migration",
             )
             if (
-                deprecated_token_saving.get(
-                    "agent_token_saving.tool_result_compression_enabled"
-                )
+                deprecated_token_saving.get("agent_token_saving.tool_result_compression_enabled")
                 is False
-                or deprecated_token_saving.get(
-                    "agent_token_saving.tool_result_compression_mode"
-                )
+                or deprecated_token_saving.get("agent_token_saving.tool_result_compression_mode")
                 == "off"
             ):
                 builder.warnings.append(
                     "agent_token_saving.tool_result_compression_* was removed; "
                     "tokenjuice projection is now the built-in tool-result path"
                 )
+
+    # 2026-07: the skills-block budget default rose from 8000 to 24000 once the
+    # block stopped emitting a filesystem path per skill. 8000 could not fit the
+    # descriptions for the shipped set, so every install that saved a config was
+    # pinned to a name-only skill list — the raised default alone would never
+    # have reached them. Refresh only the exact old default, the same rule the
+    # legacy model ids use: a value someone chose deliberately is left alone.
+    skills_section = builder.payload.get("skills")
+    if isinstance(skills_section, dict):
+        current_budget = skills_section.get("max_skills_prompt_chars")
+        if current_budget == LEGACY_MAX_SKILLS_PROMPT_CHARS:
+            skills_section["max_skills_prompt_chars"] = DEFAULT_MAX_SKILLS_PROMPT_CHARS
+            builder.changes.append(
+                f"skills.max_skills_prompt_chars: {LEGACY_MAX_SKILLS_PROMPT_CHARS} -> "
+                f"{DEFAULT_MAX_SKILLS_PROMPT_CHARS}"
+            )
 
     return builder.result()
 

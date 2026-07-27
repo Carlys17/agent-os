@@ -95,11 +95,27 @@ def _emit_skill_mutation_result(
 
 
 def _load_skill_rows() -> list[dict[str, Any]]:
+    """Build the offline ``skills list`` rows from the shared inventory.
+
+    This runs without a gateway, so it re-derives the layer directories, but the
+    facts it reports — eligibility, acquisition, publisher — come from
+    :func:`~agentos.skills.inventory.build_skill_inventory`, the same builder the
+    RPC surfaces use. That is the point: the CLI and the Web UI used to answer
+    "where did this skill come from" differently for the same skill.
+
+    ``availability`` is the one block this surface omits. It is a question about
+    a chat session's tool surface, and a CLI process has none; a fabricated
+    verdict here would be worse than an absent key.
+    """
     import os
     from pathlib import Path
 
     from agentos.gateway.config import GatewayConfig
-    from agentos.skills.eligibility import EligibilityContext, check_eligibility
+    from agentos.skills.inventory import (
+        acquisition_payload,
+        build_skill_inventory,
+        publisher_payload,
+    )
     from agentos.skills.loader import SkillLoader
     from agentos.skills.paths import resolve_skill_layer_dirs
 
@@ -121,15 +137,18 @@ def _load_skill_rows() -> list[dict[str, Any]]:
         project_agents_dir=layer_dirs.project_agents_dir,
         extra_dirs=layer_dirs.extra_dirs,
     )
-    ctx = EligibilityContext.auto()
+    inventory = build_skill_inventory(loader, config=config)
     rows: list[dict[str, Any]] = []
-    for skill in sorted(loader.get_user_invocable(), key=lambda x: x.name):
+    for row in sorted(inventory, key=lambda r: r.spec.name):
+        skill = row.spec
+        if not skill.user_invocable:
+            continue
         provenance = getattr(skill, "provenance", None)
         rows.append(
             {
                 "name": skill.name,
                 "layer": skill.layer.value,
-                "eligible": check_eligibility(skill, ctx),
+                "eligible": row.eligibility.eligible,
                 "description": skill.description,
                 "always": skill.always,
                 "triggers": list(skill.triggers),
@@ -145,6 +164,12 @@ def _load_skill_rows() -> list[dict[str, Any]]:
                     "upstreamUrl": provenance.upstream_url if provenance else "",
                     "maintainedBy": provenance.maintained_by if provenance else "AgentOS",
                 },
+                # Emitted verbatim from the shared serializers, snake_case keys
+                # and all, so a CLI row and an RPC row can be diffed field for
+                # field. The camelCase keys above predate this and keep their
+                # names — the payload is strictly additive.
+                "publisher": publisher_payload(row.publisher),
+                "acquisition": acquisition_payload(row.acquisition),
             }
         )
     return rows

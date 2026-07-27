@@ -435,7 +435,7 @@ def _run_gateway_case_batch(
     env["AGENTOS_GATEWAY_CONFIG_PATH"] = str(config_path)
     env["AGENTOS_STATE_DIR"] = str(tmp_path / "state")
     env["AGENTOS_MEMORY_DREAM_DISABLED"] = "1"
-    env["AGENTOS_TOOL_PROFILE"] = "channel_default"
+    env["AGENTOS_TOOL_PROFILE"] = "configured"
     env["AGENTOS_TURN_CALL_LOG"] = "1"
     env["AGENTOS_TURN_CALL_LOG_DIR"] = str(turn_log_dir)
     env["AGENTOS_LLM_PROVIDER"] = provider

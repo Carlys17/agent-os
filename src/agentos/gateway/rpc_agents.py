@@ -172,7 +172,7 @@ def _write_workspace_agent_file(root: Path, name: str, content: Any) -> dict[str
     return {"name": safe_name, "path": safe_name, "size": len(data)}
 
 
-@_d.method("agents.list", scope="operator.read")
+@_d.method("agents.list")
 async def _handle_agents_list(params: dict | None, ctx: RpcContext) -> dict:
     include_builtin = (params or {}).get("includeBuiltin", True)
 
@@ -196,7 +196,7 @@ _UPDATE_FIELD_MAP: tuple[tuple[str, ...], ...] = (
 )
 
 
-@_d.method("agents.create", scope="operator.admin")
+@_d.method("agents.create")
 async def _handle_agents_create(params: dict | None, ctx: RpcContext) -> dict:
     if not isinstance(params, dict):
         raise ValueError("params.id or params.name is required")
@@ -234,7 +234,7 @@ async def _handle_agents_create(params: dict | None, ctx: RpcContext) -> dict:
     return cast(dict, result)
 
 
-@_d.method("agents.update", scope="operator.admin")
+@_d.method("agents.update")
 async def _handle_agents_update(params: dict | None, ctx: RpcContext) -> dict:
     if not isinstance(params, dict) or "id" not in params:
         raise ValueError("params.id is required")
@@ -267,7 +267,7 @@ async def _handle_agents_update(params: dict | None, ctx: RpcContext) -> dict:
     return cast(dict, result)
 
 
-@_d.method("agents.delete", scope="operator.admin")
+@_d.method("agents.delete")
 async def _handle_agents_delete(params: dict | None, ctx: RpcContext) -> None:
     if not isinstance(params, dict) or "id" not in params:
         raise ValueError("params.id is required")
@@ -294,7 +294,7 @@ async def _handle_agents_delete(params: dict | None, ctx: RpcContext) -> None:
     return None
 
 
-@_d.method("agents.files.list", scope="operator.read")
+@_d.method("agents.files.list")
 async def _handle_agents_files_list(params: dict | None, ctx: RpcContext) -> dict:
     if not isinstance(params, dict) or "agentId" not in params:
         raise ValueError("params.agentId is required")
@@ -311,7 +311,7 @@ async def _handle_agents_files_list(params: dict | None, ctx: RpcContext) -> dic
     return {"files": files}
 
 
-@_d.method("agents.files.get", scope="operator.read")
+@_d.method("agents.files.get")
 async def _handle_agents_files_get(params: dict | None, ctx: RpcContext) -> dict:
     if not isinstance(params, dict):
         raise ValueError("params required: agentId, name")
@@ -334,7 +334,7 @@ async def _handle_agents_files_get(params: dict | None, ctx: RpcContext) -> dict
     return cast(dict, content)
 
 
-@_d.method("agents.files.set", scope="operator.admin")
+@_d.method("agents.files.set")
 async def _handle_agents_files_set(params: dict | None, ctx: RpcContext) -> dict:
     if not isinstance(params, dict):
         raise ValueError("params required: agentId, name, content")
@@ -370,7 +370,7 @@ async def _handle_agents_files_set(params: dict | None, ctx: RpcContext) -> dict
     return cast(dict, result)
 
 
-@_d.method("agent.identity.get", scope="operator.read")
+@_d.method("agent.identity.get")
 async def _handle_agent_identity_get(params: dict | None, ctx: RpcContext) -> dict:
     agent_id = normalize_agent_id((params or {}).get("agentId", "main"))
 

@@ -5,6 +5,7 @@ Covers per-channel in-flight cap, cap-formula scaling with
 cancellation, relay-close in finally, typing-keepalive lifecycle, and
 deadlock-free stress under 10K requests / 100 sessions.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -101,8 +102,8 @@ def test_inflight_set_cap_enforced() -> None:
 @pytest.mark.parametrize(
     "max_concurrency,channel_inflight_cap,expected_cap",
     [
-        (1, 8, 2),   # min(8, max(2×1,1)) = min(8,2) = 2
-        (4, 8, 8),   # min(8, max(2×4,1)) = min(8,8) = 8
+        (1, 8, 2),  # min(8, max(2×1,1)) = min(8,2) = 2
+        (4, 8, 8),  # min(8, max(2×4,1)) = min(8,8) = 8
         (16, 8, 8),  # min(8, max(2×16,1)) = min(8,32) = 8
     ],
 )
@@ -328,9 +329,7 @@ async def test_keepalive_lifecycle() -> None:
 
     # keepalive should finish quickly after reply is cancelled
     done = await asyncio.wait_for(keepalive_done.wait(), timeout=1.0)
-    assert done or keepalive_done.is_set(), (
-        "keepalive must be done within 1 s of reply cancel"
-    )
+    assert done or keepalive_done.is_set(), "keepalive must be done within 1 s of reply cancel"
 
     # cleanup
     with pytest.raises(asyncio.CancelledError):
@@ -383,9 +382,7 @@ async def test_no_deadlock_stress() -> None:
     await asyncio.wait_for(_run_all(), timeout=60.0)
 
     total_processed = len(completed) + len(dropped)
-    assert total_processed == total_requests, (
-        f"processed {total_processed} != {total_requests}"
-    )
+    assert total_processed == total_requests, f"processed {total_processed} != {total_requests}"
     # All non-dropped requests must have completed
     assert len(completed) > 0, "at least some requests must complete"
 
@@ -650,28 +647,41 @@ async def test_debounce_reservation_enforced() -> None:
 
         await asyncio.gather(
             _dispatch_combined_message_after_debounce(
-                channel, _make_combined(), turn_runner, MagicMock(), "s:test", "test",
-                task_runtime, None, None, ifs,
+                channel,
+                _make_combined(),
+                turn_runner,
+                MagicMock(),
+                "s:test",
+                "test",
+                task_runtime,
+                None,
+                None,
+                ifs,
             ),
             _dispatch_combined_message_after_debounce(
-                channel, _make_combined(), turn_runner, MagicMock(), "s:test", "test",
-                task_runtime, None, None, ifs,
+                channel,
+                _make_combined(),
+                turn_runner,
+                MagicMock(),
+                "s:test",
+                "test",
+                task_runtime,
+                None,
+                None,
+                ifs,
             ),
         )
 
     # Exactly one enqueue — the second dispatch was rejected by the cap.
-    assert enqueue_call_count == 1, (
-        f"enqueue must be called exactly once, got {enqueue_call_count}"
-    )
+    assert enqueue_call_count == 1, f"enqueue must be called exactly once, got {enqueue_call_count}"
 
     # At least one 'Server busy' reply sent to channel.
     busy_replies = [
-        call for call in channel.send.call_args_list
+        call
+        for call in channel.send.call_args_list
         if "busy" in call[0][0].content.lower() or "retry" in call[0][0].content.lower()
     ]
-    assert len(busy_replies) == 1, (
-        f"expected 1 busy reply, got {len(busy_replies)}"
-    )
+    assert len(busy_replies) == 1, f"expected 1 busy reply, got {len(busy_replies)}"
 
 
 # ── Per-channel overflow policy resolution ──────────────────────────────────
@@ -702,10 +712,7 @@ def test_resolve_channel_overflow_policy_returns_none_when_channel_unmapped() ->
 def test_resolve_channel_overflow_policy_returns_mapped_value() -> None:
     cfg = MagicMock()
     cfg.task_runtime.pending_overflow_policy_per_channel = {"feishu": "drop_oldest"}
-    assert (
-        _resolve_channel_overflow_policy(_make_channel_with_id("feishu"), cfg)
-        == "drop_oldest"
-    )
+    assert _resolve_channel_overflow_policy(_make_channel_with_id("feishu"), cfg) == "drop_oldest"
 
 
 def test_resolve_channel_overflow_policy_handles_missing_channel_id() -> None:

@@ -1,10 +1,10 @@
-"""persist_config distinguishes transient CLI/break-glass overrides from
+"""persist_config distinguishes transient CLI runtime overrides from
 explicit user changes by *provenance*, not by field name.
 
 At boot, ``run_gateway`` records the ON-DISK original values of the fields it
-overrides (``host``/``port``/``debug``; break-glass ``auth.mode`` /
-``allow_unauthenticated_public``) in a process-global override map via
-``set_runtime_overrides``. Every live writer goes through ``persist_config``,
+overrides (for example ``host``/``port``/``debug`` or a transient ``auth.mode``)
+in a process-global override map via ``set_runtime_overrides``. Every live
+writer goes through ``persist_config``,
 which restores each recorded field to its original on-disk value (or drops it
 when the original was absent, so the load-time default applies) — UNLESS that
 exact dotted path is in ``explicit_paths``, meaning the user explicitly changed
@@ -99,28 +99,22 @@ def test_explicit_change_without_overrides_persists_verbatim(tmp_path):
     assert _read(cfg_path)["debug"] is True
 
 
-def test_break_glass_mode_and_opt_in_are_restorable_overrides(tmp_path):
+def test_local_auth_mode_override_is_restorable(tmp_path):
     cfg_path = tmp_path / "config.toml"
     with open(cfg_path, "wb") as f:
         tomli_w.dump({"auth": {"mode": "password"}}, f)
 
-    # break-glass forced mode=none + opt-in for this run only; boot recorded the
-    # on-disk auth values so a later writer cannot freeze the break-glass posture.
-    set_runtime_overrides(
-        {
-            "auth.mode": "password",
-            "auth.allow_unauthenticated_public": False,
-        }
-    )
+    # A local run forced mode=none; boot recorded the on-disk auth value so a
+    # later writer cannot freeze the transient posture.
+    set_runtime_overrides({"auth.mode": "password"})
     runtime = GatewayConfig(
-        auth=AuthConfig(mode="none", allow_unauthenticated_public=True),
+        auth=AuthConfig(mode="none"),
         config_path=str(cfg_path),
     )
     persist_config(runtime)
 
     saved = _read(cfg_path)
-    assert saved["auth"]["mode"] == "password"  # break-glass mode not frozen
-    assert saved["auth"].get("allow_unauthenticated_public") in (False, None)
+    assert saved["auth"]["mode"] == "password"
 
 
 def test_missing_original_drops_the_field_so_defaults_apply(tmp_path):

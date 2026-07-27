@@ -92,9 +92,7 @@ def resolve_skill_layer_dirs(
         extra_dirs: Low-precedence EXTRA dirs (config.skills.extra_dirs).
     """
     bundled_candidate = default_bundled_skills_dir()
-    bundled_dir = (
-        bundled_candidate if allow_bundled and bundled_candidate.is_dir() else None
-    )
+    bundled_dir = bundled_candidate if allow_bundled and bundled_candidate.is_dir() else None
 
     # Explicit override wins and is preserved as-is — a user-configured
     # path may not exist yet (skill_create mkdirs it on demand). The
@@ -110,12 +108,17 @@ def resolve_skill_layer_dirs(
 
     managed_dir = resolve_managed_skills_dir(managed_override)
 
-    personal_agents = Path.home() / ".agents" / "skills"
-    personal_agents_dir = personal_agents if personal_agents.is_dir() else None
+    # Returned whether or not they exist yet, for the same reason the managed
+    # directory is: these resolve once at boot, and collapsing a missing one to
+    # None removed the whole layer until the next restart. `.agents/skills` is a
+    # cross-agent directory — other tools create and populate it while AgentOS is
+    # already running — so "absent at boot" is a normal state, not a permanent
+    # one. `load_all()` and `_build_manifest()` both skip a path that is not
+    # there, so naming a directory that does not exist yet costs nothing.
+    personal_agents_dir = Path.home() / ".agents" / "skills"
 
     project_root = workspace_root if workspace_root is not None else Path.cwd()
-    project_agents = project_root / ".agents" / "skills"
-    project_agents_dir = project_agents if project_agents.is_dir() else None
+    project_agents_dir = project_root / ".agents" / "skills"
 
     return SkillLayerDirs(
         bundled_dir=bundled_dir,

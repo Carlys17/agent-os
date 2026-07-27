@@ -87,7 +87,7 @@ async def test_sync_force_overrides_search_clean_fast_path(tmp_path):
     manager._do_file_sync = fake_do_file_sync  # type: ignore[method-assign]
     await manager.sync(reason="search")
     await manager.sync(reason="search:tool")
-    await manager.sync(reason="search:admin")
+    await manager.sync(reason="search:control")
     search_count = len(store.indexed)
     await manager.sync(reason="search:tool", force=True)
 

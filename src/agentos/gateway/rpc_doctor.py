@@ -499,7 +499,7 @@ async def _evaluate_collection(
         return [_collection_error(surface, exc)]
 
 
-@_d.method("doctor.status", scope="operator.read")
+@_d.method("doctor.status")
 async def _handle_doctor_status(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if params is not None and not isinstance(params, dict):
         raise ValueError("params must be an object")

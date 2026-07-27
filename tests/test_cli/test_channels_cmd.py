@@ -82,9 +82,9 @@ def test_channels_pairing_cli_list_approve_and_revoke(tmp_path, monkeypatch):
     assert listed.exit_code == 0, listed.stdout
     assert request.code in listed.stdout
     assert approved.exit_code == 0, approved.stdout
-    assert "Approved 42" in approved.stdout
+    assert "Paired 42 with Telegram channel tg" in approved.stdout
     assert revoked.exit_code == 0, revoked.stdout
-    assert "Revoked 42" in revoked.stdout
+    assert "Disconnected 42 from Telegram channel tg" in revoked.stdout
     assert ChannelPairingStore().is_approved("tg", "42") is False
 
 
@@ -100,6 +100,21 @@ def test_channels_pairing_cli_clear_pending(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.stdout
     assert "Cleared 1" in result.stdout
+
+
+def test_channels_pairing_cli_denies_pending_request(tmp_path, monkeypatch):
+    _setenv(monkeypatch, tmp_path)
+    runner.invoke(
+        app,
+        ["channels", "add", "telegram", "--name", "tg", "--token", "abc"],
+    )
+    ChannelPairingStore().request("tg", "42")
+
+    result = runner.invoke(app, ["channels", "pairing", "deny", "tg", "42"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Denied pending Telegram connection 42 on tg" in result.stdout
+    assert ChannelPairingStore().snapshot("tg")["pending"] == []
 
 
 def test_channels_add_slack_missing_token_fails(tmp_path, monkeypatch):

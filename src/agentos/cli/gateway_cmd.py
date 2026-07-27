@@ -73,8 +73,8 @@ def run_gateway(
     resolved_port = port if port is not None else config.port
     # Record the RAW on-disk values BEFORE overriding them in memory, in the
     # process-global runtime-override map that every config writer consults. A
-    # one-off --listen/--port/--debug (or a later break-glass mode=none) must
-    # never be frozen into config.toml by ANY config write; each key maps to its
+    # one-off --listen/--port/--debug values must never be frozen into
+    # config.toml by ANY config write; each key maps to its
     # pre-override on-disk value so persist restores it unless a writer marks
     # that exact field explicitly changed.
     #
@@ -89,7 +89,7 @@ def run_gateway(
 
     # Public-bind auth provisioning: the helper owns all public-bind warning
     # messaging and, on an interactive TTY, prompts to secure an unprotected
-    # public bind (generate+persist a token / break-glass / cancel). Non-TTY
+    # public bind (generate+persist a token or cancel). Non-TTY
     # runs never prompt — enforce_public_bind_auth_guard still refuses the
     # unsafe combination downstream, exactly as before.
     outcome, config = provision_public_bind_auth(

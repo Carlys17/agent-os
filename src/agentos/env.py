@@ -49,14 +49,29 @@ def warn_if_proxy_ignored() -> None:
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
-    """Parse a .env file into a dict. Skips comments and blank lines."""
+    """Parse a .env file into a dict. Skips comments and blank lines.
+
+    Both ``KEY=value`` and the bash-compatible ``export KEY=value`` are
+    recognized. Supporting ``export`` is not cosmetic: an operator who wrote
+    ``export GITHUB_TOKEN=...`` by hand must see that variable as *set*
+    everywhere AgentOS reports on it, and the writer in
+    :mod:`agentos.env_store` must be able to find and replace that same line
+    rather than appending a second, competing definition.
+
+    Values are read literally — one pair of surrounding quotes is removed and
+    nothing is unescaped. :func:`agentos.env_store.set_env_var` quotes what it
+    writes to match, so a written value parses back unchanged; hand-written
+    files keep whatever meaning they already had.
+    """
     if not path.is_file():
         return {}
     entries: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    for raw_line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
         if "=" not in line:
             continue
         key, _, value = line.partition("=")
@@ -68,6 +83,15 @@ def _parse_env_file(path: Path) -> dict[str, str]:
         if key:
             entries[key] = value
     return entries
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    """Public wrapper over :func:`_parse_env_file` for out-of-module readers.
+
+    Anything that needs to know what a ``.env`` file *would* inject on the next
+    start should go through here, so the reader stays a single implementation.
+    """
+    return _parse_env_file(path)
 
 
 def load_env(cwd: str | Path | None = None) -> int:

@@ -110,8 +110,7 @@ class ConnectParams(BaseModel):
     commands: list[str] | None = None
     permissions: dict[str, bool] | None = None
     path_env: str | None = None
-    role: str = "operator"
-    scopes: list[str] | None = None
+    client_kind: Literal["control", "node"] = "control"
     auth: dict[str, Any] | None = None
     locale: str | None = None
     user_agent: str | None = None

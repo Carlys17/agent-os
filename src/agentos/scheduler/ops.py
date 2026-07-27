@@ -144,7 +144,6 @@ class SchedulerOps:
         jitter_seconds: float | None = None,
         creator_session_key: str = "",
         creator_sender_id: str = "",
-        creator_is_owner: bool = False,
     ) -> CronJob:
         """Validate the structured schedule, compute jitter, persist a new CronJob.
 
@@ -219,7 +218,6 @@ class SchedulerOps:
             tool_policy=dict(tool_policy or {}),
             creator_session_key=creator_session_key or "",
             creator_sender_id=creator_sender_id or "",
-            creator_is_owner=bool(creator_is_owner),
         )
 
         if kind == ScheduleKind.AT:

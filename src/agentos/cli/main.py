@@ -8,6 +8,51 @@ import typer
 
 from agentos.env import load_env, warn_if_proxy_ignored
 
+
+class _CurrentStderr:
+    """A file-like that resolves ``sys.stderr`` on every write.
+
+    Handing structlog ``sys.stderr`` directly would freeze whichever object is
+    installed at import time. Anything that replaces the stream afterwards —
+    pytest's capture, a TUI taking over the terminal, a caller redirecting for
+    one command — would then be writing past the replacement, and the logs
+    would surface somewhere nobody is looking.
+    """
+
+    def write(self, message: str) -> int:
+        import sys
+
+        return sys.stderr.write(message)
+
+    def flush(self) -> None:
+        import sys
+
+        sys.stderr.flush()
+
+
+def _route_logs_to_stderr() -> None:
+    """Send structlog output to stderr before anything can log.
+
+    structlog's unconfigured default prints to stdout, and the first thing the
+    CLI does is load .env files — which log. That put log lines in front of
+    every ``--json`` payload the moment a user had a populated .env, so
+    ``agentos <anything> --json | jq`` failed on a real install while working
+    in a clean one. Logs are diagnostics; stdout belongs to the command's
+    output.
+    """
+    from typing import TextIO, cast
+
+    import structlog
+
+    # PrintLogger only ever calls write() and flush() on this, which is the
+    # whole contract _CurrentStderr implements — the annotation asks for a full
+    # TextIO that structlog does not actually use.
+    stream = cast("TextIO", _CurrentStderr())
+    structlog.configure(logger_factory=structlog.PrintLoggerFactory(file=stream))
+
+
+_route_logs_to_stderr()
+
 # Populate os.environ from .env files before any submodule import reads keys.
 # Precedence: os.environ > $CWD/.env > $CWD/.env.test > ~/.agentos/.env.
 load_env()
@@ -22,9 +67,9 @@ from agentos.cli.cron_cmd import cron_app  # noqa: E402
 from agentos.cli.diagnostics_cmd import diagnostics_app  # noqa: E402
 from agentos.cli.dist_cmd import app as dist_app  # noqa: E402
 from agentos.cli.doctor_cmd import doctor_command  # noqa: E402
+from agentos.cli.env_cmd import env_app  # noqa: E402
 from agentos.cli.init_cmd import init_command  # noqa: E402
 from agentos.cli.mcp_server_cmd import app as mcp_server_app  # noqa: E402
-from agentos.cli.memory_flush_cmd import memory_flush_session_cmd  # noqa: E402
 from agentos.cli.migrate_cmd import migrate_app  # noqa: E402
 from agentos.cli.models_cmd import app as models_app  # noqa: E402
 from agentos.cli.onboard_cmd import configure_command, onboard_app  # noqa: E402
@@ -50,6 +95,7 @@ app.add_typer(agents_app, name="agents")
 app.add_typer(config_app, name="config")
 app.add_typer(cost_app, name="cost")
 app.add_typer(diagnostics_app, name="diagnostics")
+app.add_typer(env_app, name="env")
 app.add_typer(cron_app, name="cron")
 app.add_typer(dist_app, name="dist")
 app.add_typer(mcp_server_app, name="mcp-server")
@@ -74,35 +120,6 @@ memory_app = typer.Typer(help="Memory subsystem commands.")
 app.add_typer(memory_app, name="memory")
 raw_fallbacks_app = typer.Typer(help="Raw fallback receipt commands.")
 memory_app.add_typer(raw_fallbacks_app, name="raw-fallbacks")
-repair_app = typer.Typer(help="Compaction memory repair commands.")
-memory_app.add_typer(repair_app, name="repair")
-
-
-def _build_cli_dream(agent: str, *, force: bool = False, need_provider: bool = True):
-    """Assemble a Dream instance for CLI runs.
-
-    Uses the same configured agent workspace resolver as gateway Dream runs.
-    Unit tests monkeypatch this function to inject a mock Dream without
-    touching provider wiring. When ``need_provider`` is False (e.g. ``--status``
-    / ``--reset-cursor``), skip provider construction so the command works
-    offline.
-    """
-    import os
-
-    from agentos.gateway.config import GatewayConfig
-    from agentos.memory.dream_factory import build_dream_factory
-
-    gw = GatewayConfig.load(os.environ.get("AGENTOS_GATEWAY_CONFIG_PATH"))
-
-    dream = build_dream_factory(
-        config=gw,
-        turn_runner=None,
-        need_provider=need_provider,
-    )
-    dream_obj = dream(agent)
-    if force:
-        dream_obj.cursor.reset()
-    return dream_obj
 
 
 @memory_app.command("status")
@@ -192,8 +209,7 @@ def memory_index_cmd(
         print_json(payload)
         return
     console.print(
-        f"memory index agent={payload.get('agentId', agent_id)} "
-        f"force={bool(payload.get('force'))}"
+        f"memory index agent={payload.get('agentId', agent_id)} force={bool(payload.get('force'))}"
     )
 
 
@@ -350,8 +366,7 @@ def memory_embedding_download_cmd(
             console.print(f"  {name}: {done} bytes")
 
     console.print(
-        f"Downloading {model} (~{manifest.approx_total_mb} MB) to "
-        f"{manifest.target_dirname}/"
+        f"Downloading {model} (~{manifest.approx_total_mb} MB) to {manifest.target_dirname}/"
     )
 
     async def _run() -> Path:
@@ -435,176 +450,6 @@ def memory_raw_fallbacks_show_cmd(
     console.print(str(payload.get("content") or ""))
     if payload.get("truncated"):
         console.print("[dim]... truncated[/dim]")
-
-
-@repair_app.command("list")
-def memory_repair_list_cmd(
-    agent_id: str = typer.Option("main", "--agent", help="Agent id (default: main)"),
-    limit: int = typer.Option(50, "--limit", min=1, help="Maximum pending repairs"),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
-    config_path: Path | None = typer.Option(None, "--config", help="Override config path."),
-) -> None:
-    """List degraded compaction records pending repair."""
-
-    from rich.table import Table
-
-    from agentos.cli.gateway_rpc import run_gateway_sync
-    from agentos.cli.output import print_json
-    from agentos.cli.ui import console
-
-    async def _run(client):
-        return await client.call(
-            "memory.repair.list",
-            {"agentId": agent_id, "limit": limit},
-        )
-
-    payload = run_gateway_sync(_run, json_output=json_output, config_path=config_path)
-    if json_output:
-        print_json(payload)
-        return
-
-    table = Table(title=f"Memory repair queue - agent={agent_id}", show_header=True)
-    table.add_column("Summary")
-    table.add_column("Session")
-    table.add_column("Compaction")
-    table.add_column("Status")
-    table.add_column("Removed", justify="right")
-    for row in payload.get("items", []):
-        table.add_row(
-            str(row.get("summaryId") or ""),
-            str(row.get("sessionKey") or ""),
-            str(row.get("compactionId") or ""),
-            str(row.get("flushReceiptStatus") or ""),
-            "" if row.get("removedCount") is None else str(row.get("removedCount")),
-        )
-    console.print(table)
-
-
-@repair_app.command("show")
-def memory_repair_show_cmd(
-    summary_id: int | None = typer.Option(None, "--summary-id", help="Repair summary id"),
-    session_key: str = typer.Option("", "--session-key", help="Session key to inspect"),
-    compaction_id: str = typer.Option("", "--compaction-id", help="Compaction id to inspect"),
-    agent_id: str = typer.Option("main", "--agent", help="Agent id (default: main)"),
-    entry_limit: int = typer.Option(
-        20,
-        "--entry-limit",
-        min=1,
-        help="Maximum preimage entries",
-    ),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
-) -> None:
-    """Show archived preimage entries for one degraded compaction."""
-
-    from agentos.cli.gateway_rpc import run_gateway_sync
-    from agentos.cli.output import print_json
-    from agentos.cli.ui import console
-
-    async def _run(client):
-        params: dict[str, object] = {"agentId": agent_id}
-        if summary_id is not None:
-            params["summaryId"] = summary_id
-        if session_key:
-            params["sessionKey"] = session_key
-        if compaction_id:
-            params["compactionId"] = compaction_id
-        if entry_limit != 20:
-            params["entryLimit"] = entry_limit
-        return await client.call("memory.repair.show", params)
-
-    payload = run_gateway_sync(_run, json_output=json_output)
-    if json_output:
-        print_json(payload)
-        return
-    for row in payload.get("entries", []):
-        console.print(f"[{row.get('role', '')}] {row.get('content', '')}")
-
-
-@repair_app.command("run")
-def memory_repair_run_cmd(
-    summary_id: int | None = typer.Option(None, "--summary-id", help="Repair summary id"),
-    session_key: str = typer.Option("", "--session-key", help="Session key to repair"),
-    compaction_id: str = typer.Option("", "--compaction-id", help="Compaction id to repair"),
-    agent_id: str = typer.Option("main", "--agent", help="Agent id (default: main)"),
-    limit: int = typer.Option(50, "--limit", min=1, help="Maximum repairs to run"),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
-    config_path: Path | None = typer.Option(None, "--config", help="Override config path."),
-) -> None:
-    """Retry extraction from archived compaction preimages."""
-
-    from rich.table import Table
-
-    from agentos.cli.gateway_rpc import run_gateway_sync
-    from agentos.cli.output import print_json
-    from agentos.cli.ui import console
-
-    async def _run(client):
-        params: dict[str, object] = {"agentId": agent_id, "limit": limit}
-        if summary_id is not None:
-            params["summaryId"] = summary_id
-        if session_key:
-            params["sessionKey"] = session_key
-        if compaction_id:
-            params["compactionId"] = compaction_id
-        return await client.call("memory.repair.run", params)
-
-    payload = run_gateway_sync(_run, json_output=json_output, config_path=config_path)
-    if json_output:
-        print_json(payload)
-        return
-
-    table = Table(title=f"Memory repair run - agent={agent_id}", show_header=True)
-    table.add_column("Session")
-    table.add_column("Compaction")
-    table.add_column("Status")
-    table.add_column("Reason")
-    for row in payload.get("results", []):
-        table.add_row(
-            str(row.get("sessionKey") or ""),
-            str(row.get("compactionId") or ""),
-            str(row.get("status") or ""),
-            str(row.get("reason") or ""),
-        )
-    console.print(table)
-
-
-@memory_app.command("dream")
-def memory_dream_cmd(
-    agent: str = typer.Option("main", "--agent", "-a", help="Agent ID"),
-    force: bool = typer.Option(False, "--force", help="Reset cursor and process all files"),
-    status: bool = typer.Option(False, "--status", help="Show cursor + pending file count, no run"),
-    reset_cursor: bool = typer.Option(False, "--reset-cursor", help="Clear cursor file, no run"),
-) -> None:
-    """Run Dream consolidation for an agent."""
-    import asyncio
-
-    need_provider = not (status or reset_cursor)
-    dream = _build_cli_dream(agent, force=force, need_provider=need_provider)
-    if reset_cursor:
-        dream.cursor.reset()
-        typer.echo(f"reset cursor for agent={agent}")
-        return
-    if status:
-        cursor = dream.cursor.load()
-        pending = dream.pending_candidate_count()
-        typer.echo(
-            f"agent={agent} cursor={cursor} pending={pending} "
-            f"memory_md_exists={dream.memory_md.exists()}"
-        )
-        return
-    result = asyncio.run(dream.run())
-    typer.echo(
-        f"dream agent={agent} "
-        f"processed={result.files_processed} "
-        f"evidence={result.evidence_status} "
-        f"apply={result.apply_status}"
-    )
-    if result.error:
-        typer.echo(f"error: {result.error}", err=True)
-        raise typer.Exit(code=1)
-
-
-memory_app.command("flush-session")(memory_flush_session_cmd)
 
 
 # ── gateway sub-app ───────────────────────────────────────────────────────────
@@ -982,10 +827,10 @@ def reset_cmd(
         "http://localhost:18791", "--gateway", envvar="AGENTOS_GATEWAY_URL"
     ),
 ) -> None:
-    """Reset a session, flushing its memory synchronously.
+    """Reset a session, rotating it to a fresh transcript.
 
-    Exit codes: 0 on success (including raw-dump fallback),
-    1 when flush + raw-dump both fail (session preserved).
+    Exit codes: 0 on success, 1 when the gateway refuses the reset
+    (session preserved).
     """
     import asyncio
 
@@ -1004,36 +849,19 @@ def reset_cmd(
         result = asyncio.run(_go())
     except GatewayRPCError as exc:
         data = exc.data or {}
-        receipt = data.get("flush_receipt", {}) or {}
         typer.secho(f"\u2717 Reset aborted: {exc.message}", fg=typer.colors.RED)
         typer.echo(f"  Session preserved: {data.get('session_id', '?')}")
-        if receipt.get("error"):
-            typer.echo(f"  Cause: {receipt['error']}")
         raise typer.Exit(1)
 
     payload = result
-    receipt = payload.get("flush_receipt") or {}
-    mode = receipt.get("mode", "?")
     typer.secho(
         f"\u2713 Session reset ({payload.get('previous_session_id', '?')} \u2192 "
         f"{payload.get('session_id', '?')}).",
         fg=typer.colors.GREEN,
     )
-    if mode == "llm":
-        dur = receipt.get("duration_ms", 0) / 1000
-        typer.echo(f"  Flush mode: llm ({dur:.1f}s)")
-        for p in receipt.get("flushed_paths") or []:
-            typer.echo(f"  Saved to: {p}")
-    elif mode == "raw":
-        reason = receipt.get("raw_reason", "unknown")
-        dur = receipt.get("duration_ms", 0) / 1000
-        typer.echo(f"  Flush mode: raw (reason: {reason}, after {dur:.1f}s)")
-        for p in receipt.get("flushed_paths") or []:
-            typer.echo(f"  Saved to: {p} (raw transcript dump)")
-    elif mode == "skipped":
-        typer.echo("  Flush mode: skipped (empty transcript)")
-    else:
-        typer.echo(f"  Flush mode: {mode}")
+    if payload.get("reset_mode") == "archive_only":
+        typer.echo(f"  Archived {payload.get('message_count', 0)} message(s) before rotating.")
+
 
 if __name__ == "__main__":
     app()

@@ -88,18 +88,6 @@ def approval_surface_for_tui_output(
     return _turn_bridge.approval_surface_for_tui_output(tui_output, default)
 
 
-async def flush_before_standalone_rewrite(
-    svc: Any,
-    session_key: str,
-    *,
-    operation: str,
-) -> bool:
-    return await _slash_bridge.flush_before_standalone_rewrite(
-        _runtime_bridge.standalone_slash_services_from_runtime(svc),
-        session_key,
-        operation=operation,
-    )
-
 
 def default_turn_stream_dependencies() -> TurnStreamDependencies:
     return _turn_bridge.default_turn_stream_dependencies(

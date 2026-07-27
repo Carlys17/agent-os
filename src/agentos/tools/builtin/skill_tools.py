@@ -17,6 +17,7 @@ import structlog
 from agentos.skills.hub.defaults import (
     build_default_skill_installer,
     get_default_skill_router,
+    installed_skill_identifiers,
     installed_skill_names,
 )
 from agentos.skills.types import SkillInstallSpec, SkillLayer
@@ -144,9 +145,17 @@ def _find_install_spec(skill_name: str, install_id: str) -> SkillInstallSpec:
     raise ToolError(f"Install spec not found for skill '{skill_name}': {install_id}")
 
 
-def _community_result_to_dict(row: Any, installed: set[str]) -> dict[str, Any]:
+def _community_result_to_dict(
+    row: Any,
+    installed: set[str],
+    installed_identifiers: set[str] | None = None,
+) -> dict[str, Any]:
+    # Names are matched against installed names and identifiers against
+    # installed identifiers — never across the two, which would flag a catalog
+    # row whose name happens to equal a different skill's identifier.
     identifier = getattr(row, "identifier", "") or getattr(row, "name", "")
     name = getattr(row, "name", "")
+    identifiers = installed_identifiers if installed_identifiers is not None else installed
     return {
         "name": name,
         "description": getattr(row, "description", ""),
@@ -158,7 +167,7 @@ def _community_result_to_dict(row: Any, installed: set[str]) -> dict[str, Any]:
         "provider": getattr(row, "provider", ""),
         "category": getattr(row, "category", ""),
         "homepage": getattr(row, "homepage", ""),
-        "installed": identifier in installed or name in installed,
+        "installed": identifier in identifiers or name in installed,
     }
 
 
@@ -185,6 +194,115 @@ async def _run_install_argv(argv: list[str]) -> tuple[int, str, str, bool]:
     return proc.returncode or 0, _cap_output(stdout), _cap_output(stderr), False
 
 
+def _setup_surface() -> str:
+    """Return where this call is coming from: ``channel``, ``unattended``, or ``interactive``.
+
+    A missing credential is answerable in very different ways depending on who
+    is on the other end, and the tool is the only place that knows.
+    """
+    from agentos.tools.types import CallerKind, InteractionMode, current_tool_context
+
+    ctx = current_tool_context.get()
+    if ctx is None:
+        return "interactive"
+    if ctx.caller_kind is CallerKind.CHANNEL:
+        return "channel"
+    if ctx.interaction_mode is InteractionMode.UNATTENDED:
+        return "unattended"
+    return "interactive"
+
+
+def _import_offer(name: str) -> str:
+    """Return an import suggestion when the credential already exists elsewhere."""
+    try:
+        from agentos import credential_sources
+
+        source = credential_sources.available_for(name)
+    except Exception:  # pragma: no cover - discovery must never break a skill load
+        return ""
+    if source is None:
+        return ""
+    return f"{name} is already available from {source.label} — `agentos env import {name}`."
+
+
+def _skill_setup_note(skill: Any) -> str:
+    """Return a ``[Skill setup note: ...]`` block when a requirement is unmet.
+
+    The skill still loads. An agent that knows what is missing can do the parts
+    that work and say plainly which parts cannot — more useful than refusing to
+    open the skill at all.
+
+    What the note tells it to do depends on who is listening. A secret cannot
+    be collected over Telegram without landing in a chat log, and an unattended
+    cron run has nobody to collect it from; in both cases promising an action
+    would be a lie.
+    """
+    from agentos.skills.eligibility import EligibilityContext, diagnose_eligibility
+
+    report = diagnose_eligibility(skill, EligibilityContext.auto())
+    if report.eligible:
+        return ""
+
+    lines: list[str] = []
+    for declared in report.missing_env_detail:
+        detail = f" — {declared.description}" if declared.description else ""
+        where = f" Obtain one at {declared.url}." if declared.url else ""
+        lines.append(f"{declared.name} is not set{detail}.{where}")
+        offer = _import_offer(declared.name)
+        if offer:
+            lines.append(offer)
+    for binary in report.missing_bins:
+        lines.append(f"{binary} is not installed.")
+    if not lines:
+        # Ineligible for a reason the operator cannot act on here (wrong OS,
+        # explicitly disabled). Saying nothing beats inventing an instruction.
+        return ""
+
+    surface = _setup_surface()
+    if surface == "channel":
+        lines.append(
+            "This is a chat channel, so a secret cannot be entered here — it would "
+            "be stored in the conversation. Ask the operator to set it from the "
+            "AgentOS Environment screen or with `agentos env set <NAME>`."
+        )
+    elif surface == "unattended":
+        lines.append(
+            "This run is unattended, so nothing can be entered now. Continue with "
+            "what works and state clearly which parts do not."
+        )
+    else:
+        lines.append(
+            "Ask the user to set it from the AgentOS Environment screen or with "
+            "`agentos env set <NAME>`, then retry. Continue meanwhile with "
+            "whatever does not depend on it, and say what will not work."
+        )
+    body = " ".join(lines)
+    return f"\n\n[Skill setup note: {body}]"
+
+
+def _skill_config_block(skill: Any) -> str:
+    """Return the skill's configured settings as a trailing block, or ``""``.
+
+    Reads the gateway config the control tools already hold rather than
+    loading it again. Any failure yields an empty string: a missing config
+    block is a smaller problem than a skill that will not open.
+    """
+    try:
+        from agentos.skills.config_vars import render_skill_config_block
+        from agentos.tools.builtin.control import _gateway_config
+
+        if _gateway_config is None:
+            return ""
+        return render_skill_config_block(
+            skill,
+            _gateway_config,
+            config_path=str(getattr(_gateway_config, "config_path", "") or ""),
+        )
+    except Exception:  # pragma: no cover - never block reading a skill
+        logger.debug("skill_view.config_block_failed", exc_info=True)
+        return ""
+
+
 def create_skill_tools(loader: SkillLoader) -> None:
     """Register skill tools (list, view, create, edit, delete) with the global registry."""
     global _loader
@@ -197,17 +315,36 @@ def create_skill_tools(loader: SkillLoader) -> None:
     async def skill_list() -> str:
         if _loader is None:
             return "No skill loader available."
-        skills = _loader.load_all()
-        if not skills:
+
+        from agentos.skills.availability import REASON_INELIGIBLE
+        from agentos.skills.inventory import build_skill_inventory
+        from agentos.tools.registry import get_default_registry
+
+        # Same builder the gateway and the CLI render from, so the agent can no
+        # longer believe something about a skill that the Skills page denies.
+        rows = build_skill_inventory(
+            _loader,
+            available_tools=set(get_default_registry().list_names()),
+        )
+        if not rows:
             return "No skills installed."
 
-        from agentos.skills.eligibility import EligibilityContext, diagnose_eligibility
-
-        ctx = EligibilityContext.auto()
-        lines = [f"Available skills ({len(skills)}):"]
-        for s in sorted(skills, key=lambda x: x.name):
-            report = diagnose_eligibility(s, ctx)
+        lines = [f"Available skills ({len(rows)}):"]
+        for row in sorted(rows, key=lambda r: r.spec.name):
+            s = row.spec
+            report = row.eligibility
             lines.append(f"  - {s.name}: {s.description}")
+            availability = row.availability
+            if (
+                availability is not None
+                and not availability.offered
+                # Ineligibility already has a richer rendering below; the
+                # reasons worth adding are the ones nothing else reports —
+                # model invocation switched off, a missing tool, a native
+                # tool superseding a fallback skill.
+                and availability.reason != REASON_INELIGIBLE
+            ):
+                lines.append(f"      [not offered] {availability.detail}")
             if not report.eligible:
                 missing = []
                 for b in report.missing_bins:
@@ -222,8 +359,14 @@ def create_skill_tools(loader: SkillLoader) -> None:
                     lines.append(f"      [unavailable] Missing: {', '.join(missing)}")
                 for hint in report.install_hints:
                     lines.append(f"      Install: {hint.command}")
-                for e in report.missing_env:
-                    lines.append(f"      Hint: Set environment variable {e}")
+                for declared in report.missing_env_detail:
+                    # What the variable is for and where a value comes from.
+                    # How to set it belongs in skill_view, where the agent is
+                    # actually trying to use the skill — a listing of fifty
+                    # skills does not need fifty sets of instructions.
+                    detail = f" — {declared.description}" if declared.description else ""
+                    source = f" (get one at {declared.url})" if declared.url else ""
+                    lines.append(f"      Needs {declared.name}{detail}{source}")
         return "\n".join(lines)
 
     @tool(
@@ -269,7 +412,13 @@ def create_skill_tools(loader: SkillLoader) -> None:
                 return f"File not found in skill '{name}': {file_path}"
             return content
 
-        return skill.content or f"(Skill '{name}' has no body content)"
+        body = skill.content or f"(Skill '{name}' has no body content)"
+        body += _skill_setup_note(skill)
+        # Append whatever the operator configured for this skill, so the agent
+        # starts from the values in effect rather than asking the user or
+        # going to read the config file itself. Skills that declare no
+        # settings pay nothing for this.
+        return body + _skill_config_block(skill)
 
     @tool(
         name="skill_search_community",
@@ -316,12 +465,15 @@ def create_skill_tools(loader: SkillLoader) -> None:
         router = get_default_skill_router()
         results = await router.search(clean_query, limit=result_limit, source_id=source_id)
         installed = installed_skill_names()
+        identifiers = installed_skill_identifiers()
         return json.dumps(
             {
                 "status": "ok",
                 "query": clean_query,
                 "source": source_id or "all",
-                "results": [_community_result_to_dict(row, installed) for row in results],
+                "results": [
+                    _community_result_to_dict(row, installed, identifiers) for row in results
+                ],
             }
         )
 
@@ -354,7 +506,7 @@ def create_skill_tools(loader: SkillLoader) -> None:
             },
         },
         required=["identifier"],
-        owner_only=True,
+        exposed_by_default=False,
     )
     async def skill_install_community(
         identifier: str,
@@ -411,7 +563,7 @@ def create_skill_tools(loader: SkillLoader) -> None:
             },
         },
         required=["skill_name", "install_id"],
-        owner_only=True,
+        exposed_by_default=False,
     )
     async def install_skill_deps(
         skill_name: str,

@@ -8,7 +8,6 @@ import tomllib
 import pytest
 
 import agentos.gateway.rpc_onboarding  # noqa: F401  ensures registration
-from agentos.gateway.auth import Principal
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
 
@@ -21,24 +20,12 @@ def _env_hint(env_key: str) -> str:
 def _admin_ctx() -> RpcContext:
     return RpcContext(
         conn_id="t",
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.admin"}),
-            is_owner=True,
-            authenticated=True,
-        ),
     )
 
 
 def _read_ctx() -> RpcContext:
     return RpcContext(
         conn_id="t",
-        principal=Principal(
-            role="operator",
-            scopes=frozenset({"operator.read"}),
-            is_owner=False,
-            authenticated=True,
-        ),
     )
 
 
@@ -277,9 +264,7 @@ async def test_router_configure_empty_judge_model_stays_auto(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_router_configure_omitted_judge_model_preserves_local_endpoint(
-    tmp_path, monkeypatch
-):
+async def test_router_configure_omitted_judge_model_preserves_local_endpoint(tmp_path, monkeypatch):
     """WebUI round-trip: an untouched judge dropdown sends judgeModel=null (not
     ''), which must PRESERVE a CLI-configured local judge (base_url/api_key)
     rather than clearing it to AUTO. Clearing it would leave an explicit cloud
@@ -315,9 +300,7 @@ async def test_router_configure_omitted_judge_model_preserves_local_endpoint(
 
 
 @pytest.mark.asyncio
-async def test_router_configure_runs_local_endpoint_verify_off_event_loop(
-    tmp_path, monkeypatch
-):
+async def test_router_configure_runs_local_endpoint_verify_off_event_loop(tmp_path, monkeypatch):
     """Findings #1/#3: when a local judge endpoint is supplied, upsert_router runs
     the blocking connectivity probe. The RPC handler must dispatch it off the
     gateway event loop (via asyncio.to_thread) so a slow/unreachable endpoint
@@ -371,9 +354,7 @@ async def test_router_configure_runs_local_endpoint_verify_off_event_loop(
 
 
 @pytest.mark.asyncio
-async def test_router_configure_without_local_endpoint_stays_on_loop(
-    tmp_path, monkeypatch
-):
+async def test_router_configure_without_local_endpoint_stays_on_loop(tmp_path, monkeypatch):
     """Without a local endpoint there is no blocking probe, so the non-verify
     path stays inline on the event loop (no needless thread hop)."""
     import threading
@@ -805,10 +786,7 @@ async def test_image_generation_configure_redacts_api_key(tmp_path, monkeypatch)
 
     data = tomllib.loads(target.read_text())
     assert data["image_generation"]["enabled"] is True
-    assert (
-        data["image_generation"]["primary"]
-        == "openrouter/google/gemini-3.1-flash-image-preview"
-    )
+    assert data["image_generation"]["primary"] == "openrouter/google/gemini-3.1-flash-image-preview"
     assert data["image_generation"]["providers"]["openrouter"]["api_key"] == "sk-or"
 
 
@@ -1138,9 +1116,7 @@ async def test_memory_embedding_configure_updates_ctx_config(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_memory_embedding_configure_auto_can_store_remote_fallback(
-    tmp_path, monkeypatch
-):
+async def test_memory_embedding_configure_auto_can_store_remote_fallback(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(tmp_path / "c.toml"))
     from agentos.gateway.config import GatewayConfig
 
@@ -1168,7 +1144,7 @@ async def test_memory_embedding_configure_auto_can_store_remote_fallback(
 
 
 @pytest.mark.asyncio
-async def test_admin_required_for_mutations(tmp_path, monkeypatch):
+async def test_connected_control_can_run_onboarding_mutations(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(tmp_path / "c.toml"))
     res = await get_dispatcher().dispatch(
         "r1",
@@ -1176,8 +1152,8 @@ async def test_admin_required_for_mutations(tmp_path, monkeypatch):
         {"providerId": "openrouter", "model": "x", "apiKey": "k"},
         _read_ctx(),
     )
-    assert res.error is not None
-    assert res.error.code == "UNAUTHORIZED"
+    assert res.error is None, res.error
+    assert res.payload["entry"]["api_key"] == "***"
 
 
 @pytest.mark.asyncio
@@ -1391,15 +1367,11 @@ def _script_local_probe_provider(monkeypatch, events_scripts):
 
     import agentos.agentos_router.llm_judge as llm_judge_module
 
-    monkeypatch.setattr(
-        llm_judge_module, "build_provider", lambda **_kwargs: _ScriptedProvider()
-    )
+    monkeypatch.setattr(llm_judge_module, "build_provider", lambda **_kwargs: _ScriptedProvider())
 
 
 @pytest.mark.asyncio
-async def test_router_configure_local_endpoint_persists_when_reachable(
-    tmp_path, monkeypatch
-):
+async def test_router_configure_local_endpoint_persists_when_reachable(tmp_path, monkeypatch):
     """Findings #1-#5 (blocker): configuring a reachable local judge endpoint via
     onboarding.router.configure (judgeBaseUrl set -> verify_local_endpoint=True)
     used to ALWAYS fail — probe_local_judge called asyncio.run() inside the
@@ -1445,9 +1417,7 @@ async def test_router_configure_local_endpoint_rejects_unusable_with_invalid_req
     from agentos.gateway.config import GatewayConfig
 
     # Garbage text + garbage repair -> judge_unavailable -> "not usable".
-    _script_local_probe_provider(
-        monkeypatch, [("text", "not json"), ("text", "still not json")]
-    )
+    _script_local_probe_provider(monkeypatch, [("text", "not json"), ("text", "still not json")])
 
     ctx = _admin_ctx()
     ctx.config = GatewayConfig(llm={"provider": "deepseek", "model": "deepseek-chat"})

@@ -306,8 +306,7 @@ async def _make_memory_tool(tmp_path, provider_manager):
         provider_managers={"main": provider_manager} if provider_manager else None,
     )
     ctx = ToolContext(
-        is_owner=True,
-        caller_kind=CallerKind.AGENT,
+                caller_kind=CallerKind.AGENT,
         agent_id="main",
         workspace_dir=str(tmp_path / "agents" / "main" / "workspace"),
     )

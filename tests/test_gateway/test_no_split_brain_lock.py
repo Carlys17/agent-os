@@ -21,6 +21,7 @@ from agentos.session.models import AgentTaskRecord
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_envelope(session_key: str = "agent-1::sess-1") -> RouteEnvelope:
     return RouteEnvelope(
         source_kind=SourceKind.WEB,
@@ -63,9 +64,11 @@ def _make_storage() -> Any:
 # AC-C3-1: _session_locks never popped in _mark_terminal
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_session_locks_never_popped_at_terminal() -> None:
     """After a task reaches terminal state, _session_locks still contains the key."""
+
     async def _instant(_run: Any) -> None:
         pass
 
@@ -87,6 +90,7 @@ async def test_session_locks_never_popped_at_terminal() -> None:
 # ---------------------------------------------------------------------------
 # AC-C3-2: no split-brain under rapid enqueue -> terminal -> re-enqueue
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_rapid_enqueue_after_terminal_no_split_brain() -> None:

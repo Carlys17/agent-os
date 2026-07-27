@@ -192,9 +192,13 @@
 .sk-group:not([open]) .sk-group__caret {
   transform: rotate(-90deg);
 }
+/* A real <h2>: the provenance groups are the Installed tab's document
+   structure, so a screen reader can jump between them. */
 .sk-group__label {
+  margin: 0;
   font-family: var(--font-mono);
   font-size: 0.75rem;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--foreground);
@@ -271,6 +275,14 @@
      read as muted glyphs, not stickers. */
   filter: grayscale(1) brightness(1.1) contrast(0.9);
   opacity: 0.75;
+}
+/* Per-card provenance detail: the loading layer, plus the withheld-from-agent
+   state when there is one. */
+.sk-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 .sk-card__desc {
   font-size: 0.75rem;
@@ -478,6 +490,31 @@
 .sk-chip--unverified {
   color: var(--dim);
 }
+.sk-chip--layer {
+  text-transform: none;
+  letter-spacing: 0.04em;
+}
+/* Installed, possibly even ready, but the agent is not being offered it. A
+   distinct tone from "needs setup" because the fix is a different one — and
+   the chip always carries the reason as text, never colour alone. */
+.sk-chip--withheld {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  --tone: var(--primary);
+  color: var(--tone);
+  border-color: color-mix(in srgb, var(--tone) 40%, var(--border));
+  background: color-mix(in srgb, var(--tone) 8%, transparent);
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+.sk-chip__dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
 
 /* ── Modal / dialog ─────────────────────────────────────────────────────── */
 .sk-modal__overlay {
@@ -654,6 +691,17 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Replaces the path in the footer when an affordance is withheld: why there is
+   no Remove button, instead of a button that half-succeeds. */
+.sk-dialog__note {
+  flex: 1;
+  font-size: 0.6875rem;
+  line-height: 1.45;
+}
+.sk-dialog__withheld {
+  border-left: 2px solid color-mix(in srgb, var(--primary) 45%, var(--border));
+  padding-left: 10px;
 }
 
 /* ── Skills library UX refresh ────────────────────────────────────────────

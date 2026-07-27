@@ -1,6 +1,7 @@
 """Tests for the AGENTOS_TASK_MAX_CONCURRENCY and
 AGENTOS_CHANNEL_INFLIGHT_CAP env overrides.
 """
+
 from __future__ import annotations
 
 import pytest

@@ -39,7 +39,7 @@ def resolve_trusted_hosts(config: GatewayConfig) -> list[str]:
     """Return the ``LoopbackHostMiddleware`` allowlist for the current bind.
 
     On a loopback bind the middleware itself admits every literal loopback
-    ``Host`` via the shared ``scopes.is_loopback_address`` predicate — the
+    ``Host`` via the shared ``access.is_loopback_address`` predicate — the
     same one the startup guard and the WS-origin guard use, so any bind the
     gateway blesses as loopback (all of ``127.0.0.0/8``, ``::1``,
     ``localhost``, IPv4-mapped forms) is reachable at its own address. This
@@ -49,11 +49,11 @@ def resolve_trusted_hosts(config: GatewayConfig) -> list[str]:
     (CVE-2026-53869 class).
 
     On a non-loopback bind the gateway only starts past
-    ``enforce_public_bind_auth_guard`` — auth is enabled or the operator
-    explicitly opted in — and the operator deliberately serves other names,
+    ``enforce_public_bind_auth_guard`` — authentication is enabled — and the
+    deployment deliberately serves other names,
     so we do not constrain ``Host`` (``["*"]``).
     """
-    from agentos.gateway.scopes import is_loopback_bind
+    from agentos.gateway.access import is_loopback_bind
 
     if not is_loopback_bind(config.host):
         return ["*"]
@@ -91,7 +91,6 @@ def create_gateway_app(
     cron_scheduler: Any = None,
     turn_runner: Any = None,
     task_runtime: Any = None,
-    flush_service: Any = None,
     heartbeat_service: Any = None,
     heartbeat_loop: Any = None,
     agent_registry: Any = None,
@@ -221,33 +220,29 @@ def create_gateway_app(
             return token_header
         return request.query_params.get("token")
 
-    def _make_ctx(request: Request | None = None, role_claim: str = "operator") -> RpcContext:
-        from agentos.gateway.auth import Principal, resolve_auth
+    def _make_ctx(request: Request | None = None) -> RpcContext:
+        from agentos.gateway.auth import denied_access, resolve_auth
 
         auth_params: dict[str, str] = {}
         token = _extract_http_token(request)
         if token:
             auth_params["token"] = token
         peer_ip = request.client.host if request is not None and request.client else None
-        principal = resolve_auth(
+        access = resolve_auth(
             config,
             auth_params=auth_params,
-            role_claim=role_claim,
+            client_kind="control",
             peer_ip=peer_ip,
         )
-        if principal is None:
-            principal = Principal(
-                role=role_claim,
-                scopes=frozenset(),
-                is_owner=False,
-                authenticated=False,
-            )
+        if access is None:
+            access = denied_access()
         return RpcContext(
             conn_id="http",
-            principal=principal,
+            access=access,
             session_manager=session_manager,
             config=config,
             provider_selector=provider_selector,
+            model_catalog=getattr(turn_runner, "_model_catalog", None),
             tool_registry=tool_registry,
             subscription_manager=subscription_manager,
             channel_manager=channel_manager,
@@ -256,7 +251,6 @@ def create_gateway_app(
             cron_scheduler=cron_scheduler,
             turn_runner=turn_runner,
             task_runtime=task_runtime,
-            flush_service=flush_service,
             heartbeat_service=heartbeat_service,
             heartbeat_loop=heartbeat_loop,
             agent_registry=agent_registry,
@@ -410,8 +404,8 @@ def create_gateway_app(
         except Exception:
             return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
         ctx = _make_ctx(request)
-        if not ctx.principal.is_owner:
-            return JSONResponse({"error": "owner privileges required"}, status_code=403)
+        if not ctx.access.admitted:
+            return JSONResponse({"error": "control connection required"}, status_code=403)
         session_key = str(body.get("sessionKey") or body.get("session_key") or "").strip()
         if not session_key:
             return JSONResponse({"error": "sessionKey is required"}, status_code=400)
@@ -484,7 +478,7 @@ def create_gateway_app(
     # Capture the bind posture once, at app-build time. config.apply mutates
     # config.host in place without rebinding the live socket, so the guards
     # must not re-read it per request (P2).
-    from agentos.gateway.scopes import is_loopback_bind
+    from agentos.gateway.access import is_loopback_bind
 
     bind_is_loopback = is_loopback_bind(config.host)
 
@@ -503,7 +497,6 @@ def create_gateway_app(
             cron_scheduler=cron_scheduler,
             turn_runner=turn_runner,
             task_runtime=task_runtime,
-            flush_service=flush_service,
             heartbeat_service=heartbeat_service,
             heartbeat_loop=heartbeat_loop,
             agent_registry=agent_registry,

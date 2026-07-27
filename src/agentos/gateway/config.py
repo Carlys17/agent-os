@@ -35,6 +35,7 @@ from agentos.router_tiers import (
     normalize_tier_mapping,
 )
 from agentos.sandbox.config import SandboxSettings
+from agentos.skills.injector import DEFAULT_MAX_SKILLS_PROMPT_CHARS
 
 
 class ContextOverflowPolicy(StrEnum):
@@ -59,17 +60,6 @@ class AuthConfig(BaseSettings):
     password: str | None = None
     mode: str = "none"  # none | token | password | trusted-proxy
     trusted_proxy: str | None = None
-    token_scopes: list[str] = Field(default_factory=lambda: ["operator.admin"])
-    allowed_roles: list[str] = Field(default_factory=lambda: ["operator", "node"])
-    allow_unauthenticated_public: bool = False
-    """Break-glass opt-in: serve with ``mode="none"`` on a non-loopback bind.
-
-    Off by default — ``enforce_public_bind_auth_guard`` refuses that
-    combination at startup because it hands the chat/sessions/config
-    surfaces (and the operator's provider credentials) to anyone who can
-    reach the port. Only set this behind an external auth layer or a
-    network boundary you trust (reverse proxy auth, VPN, firewall).
-    """
 
 
 class CorsConfig(BaseSettings):
@@ -127,9 +117,7 @@ class ControlUiConfig(BaseSettings):
             or re.fullmatch(r"[A-Za-z0-9._~-]+", segment) is None
             for segment in segments
         ):
-            raise ValueError(
-                "control_ui.base_path must contain only safe URL path segments"
-            )
+            raise ValueError("control_ui.base_path must contain only safe URL path segments")
         if base_path in {"/api", "/ws"} or base_path.startswith(("/api/", "/ws/")):
             raise ValueError("control_ui.base_path cannot overlap gateway API or WebSocket routes")
         return base_path
@@ -142,7 +130,10 @@ class SkillsConfig(BaseSettings):
     managed_dir: str | None = None
     allow_bundled: bool = True
     extra_dirs: list[str] = Field(default_factory=list)
-    max_skills_prompt_chars: int = 8000
+    # The bundled set renders ~16k with descriptions; 8000 silently forced
+    # every default install into name-only mode, then truncation. Keep enough
+    # headroom that installed skills also fit before either fallback kicks in.
+    max_skills_prompt_chars: int = DEFAULT_MAX_SKILLS_PROMPT_CHARS
     filter_enabled: bool = False
     filter_top_k: int = 5
     # "system" = full system prompt (default)
@@ -156,6 +147,13 @@ class SkillsConfig(BaseSettings):
     filter_semantic_top_n: int = 20
     filter_rrf_k: int = 60
     filter_embedding_model: str = "BAAI/bge-small-zh-v1.5"
+
+    # Settings that individual skills declare (metadata.agentos.config) and read
+    # by key. Free-form because the keys belong to the skills, not to AgentOS —
+    # validating them here would mean this file had to know about every skill
+    # anyone might install. Credentials do NOT go here: they belong in
+    # ~/.agentos/.env, where they can be masked, gated, and audited.
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolsConfig(BaseModel):
@@ -178,7 +176,7 @@ class ToolsConfig(BaseModel):
 
 
 class PermissionsConfig(BaseModel):
-    """Default owner permission posture for local/operator turns."""
+    """Default elevated-execution posture for interactive Control turns."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -229,9 +227,7 @@ class TaskRuntimeConfig(BaseModel):
             PendingOverflowPolicy(value)
         except ValueError as exc:
             valid = ", ".join(member.value for member in PendingOverflowPolicy)
-            raise ValueError(
-                f"pending_overflow_policy must be one of {{{valid}}}"
-            ) from exc
+            raise ValueError(f"pending_overflow_policy must be one of {{{valid}}}") from exc
         return value
 
     @field_validator("pending_overflow_policy_per_channel")
@@ -245,8 +241,7 @@ class TaskRuntimeConfig(BaseModel):
                 PendingOverflowPolicy(policy)
             except ValueError as exc:
                 raise ValueError(
-                    f"pending_overflow_policy_per_channel[{channel!r}] "
-                    f"must be one of {{{valid}}}"
+                    f"pending_overflow_policy_per_channel[{channel!r}] must be one of {{{valid}}}"
                 ) from exc
         return value
 
@@ -391,29 +386,41 @@ class PromptCacheConfig(BaseSettings):
         return self.mode
 
 
-class DreamConfig(BaseModel):
-    """Per-agent Dream consolidation cron configuration."""
+class MemoryNudgeConfig(BaseModel):
+    """Periodic memory-review nudge.
+
+    Curated memory only fills up when something asks the agent to write to it.
+    Left alone, an agent will happily run for hundreds of turns with an empty
+    MEMORY.md, because saving is never the most urgent thing in any single
+    turn. The nudge closes that gap: every N user turns, once the reply is
+    already on the wire, a short background turn re-reads the conversation and
+    saves anything durable it finds.
+
+    It runs after the response so it never competes with the user's task for
+    model attention, and it is skipped entirely when the model already wrote
+    to memory on its own -- an agent that curates unprompted needs no nudge.
+
+    Adapted from hermes-agent's memory nudge (MIT, © 2025 Nous Research).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
-    interval_h: int = Field(default=24, ge=1)
-    cron: str | None = None  # e.g. "0 3 * * *"; overrides interval_h when set
-    max_batch_size: int = Field(default=20, ge=1)
-    max_iterations: int = Field(default=15, ge=1)
-    min_batch_size: int = Field(default=1, ge=1)
-    preview_mode: bool = True
-    auto_schedule: bool = False
-    input_slimming: Literal["off", "shadow", "on"] = "off"
-    memory_max_chars: int = Field(default=12_000, ge=0)
-    candidate_file_max_chars: int = Field(default=4_000, ge=0)
-    candidate_total_max_chars: int = Field(default=24_000, ge=0)
-    fallback_total_max_chars: int = Field(default=80_000, ge=0)
-    evidence_min_score: float = Field(default=0.55, ge=0.0, le=1.0)
-    evidence_min_seen_count: int = Field(default=1, ge=1)
-    evidence_negative_recurrence_threshold: int = Field(default=2, ge=1)
-    evidence_curated_writes_enabled: bool = True
-    evidence_quarantine_enabled: bool = True
+    enabled: bool = True
+    # User turns between reviews. 0 disables the nudge entirely.
+    interval: int = Field(default=10, ge=0)
+    # Ceiling on the review turn's own tool loop. The review has one job --
+    # read the transcript, decide, maybe call `memory` -- so it should never
+    # need a long loop; a low cap bounds the cost of a confused review.
+    max_iterations: int = Field(default=6, ge=1)
+    # Give up on a review that outlives its usefulness rather than letting it
+    # trail the session.
+    timeout_seconds: float = Field(default=90.0, gt=0)
+    # Turn kinds that must never trigger a review. Cron/heartbeat/subagent
+    # turns are machine traffic: their transcripts say nothing durable about
+    # the user, and reviewing them would write the harness into memory.
+    excluded_run_kinds: list[str] = Field(
+        default_factory=lambda: ["memory_nudge", "cron", "heartbeat", "subagent", "recall"]
+    )
 
 
 class SafetyConfig(BaseModel):
@@ -569,19 +576,6 @@ class MemoryConfig(BaseSettings):
     # when entry_ttl_days = 0.
     ttl_sweep_interval_minutes: float = Field(default=60.0, ge=0.0)
 
-    # Flush (pre-compaction memory save)
-    flush_enabled: bool = False
-    flush_timeout_seconds: float = 15.0
-    flush_background_timeout_seconds: float = 120.0
-    flush_backoff_initial_seconds: float = 30.0
-    flush_backoff_max_seconds: float = 300.0
-    flush_archive_max_bytes: int = 800_000
-    flush_compaction_requires_safe_receipt: bool = False
-    flush_compaction_safety_mode: Literal["protect", "best_effort", "block", "off"] = "protect"
-    repair_enabled: bool = True
-    repair_interval_seconds: float = Field(default=60.0, ge=0.0)
-    repair_max_items_per_tick: int = Field(default=5, ge=1)
-
     # Per-turn auto capture / recall
     auto_capture_enabled: bool = True
     capture_mode: Literal["turn_pair", "off"] = "turn_pair"
@@ -606,8 +600,8 @@ class MemoryConfig(BaseSettings):
     vector_weight: float = 0.7
     text_weight: float = 0.3
 
-    # Dream consolidation
-    dream: DreamConfig = Field(default_factory=DreamConfig)
+    # Periodic memory-review nudge
+    nudge: MemoryNudgeConfig = Field(default_factory=MemoryNudgeConfig)
 
     # Curated memory (hermes-style bounded entry stores). Char budgets for the
     # always-injected MEMORY.md / USER.md files. Chars, not tokens — char
@@ -694,6 +688,18 @@ def _bankr_tiers() -> dict:
     }
 
 
+def _opencap_tiers() -> dict:
+    """OpenCAP routing config using neutral bare model ids served by its gateway.
+
+    Safety-sensitive models such as ``oc-uncensored-1.0`` remain available as
+    explicit user overrides, but are never selected by the recommended profile.
+    """
+    tiers = _bankr_tiers()
+    for tier in tiers.values():
+        tier["provider"] = "opencap"
+    return tiers
+
+
 def _openrouter_tiers() -> dict:
     """Legacy OpenRouter routing config, kept as an explicit tier profile."""
     return {
@@ -754,6 +760,7 @@ def _openrouter_tiers() -> dict:
 ROUTER_TIER_PROFILE_IDS = frozenset(
     {
         "bankr",
+        "opencap",
         "openrouter",
         "dashscope",
         "deepseek",
@@ -791,6 +798,8 @@ def _router_tier_profile_defaults(profile: str | None) -> dict:
         )
     if normalized == "bankr":
         return _bankr_tiers()
+    if normalized == "opencap":
+        return _opencap_tiers()
     if normalized == "openrouter":
         return _openrouter_tiers()
     profiles = {
@@ -834,8 +843,7 @@ def _router_tier_profile_defaults(profile: str | None) -> dict:
                 "provider": "dashscope",
                 "model": "qwen3.6-flash",
                 "description": (
-                    "DashScope fast route: Qwen3.6 Flash for simple text tasks; "
-                    "pending live smoke."
+                    "DashScope fast route: Qwen3.6 Flash for simple text tasks; pending live smoke."
                 ),
                 "supports_image": False,
             },
@@ -988,8 +996,7 @@ def _router_tier_profile_defaults(profile: str | None) -> dict:
                 "provider": "moonshot",
                 "model": "kimi-k2.5",
                 "description": (
-                    "Moonshot balanced route: Kimi K2.5 for normal multimodal "
-                    "agent work."
+                    "Moonshot balanced route: Kimi K2.5 for normal multimodal agent work."
                 ),
                 "supports_image": True,
                 "thinking_level": "medium",
@@ -1008,8 +1015,7 @@ def _router_tier_profile_defaults(profile: str | None) -> dict:
                 "provider": "moonshot",
                 "model": "kimi-k2.6",
                 "description": (
-                    "Moonshot highest route: Kimi K2.6 for the hardest long-horizon "
-                    "agent work."
+                    "Moonshot highest route: Kimi K2.6 for the hardest long-horizon agent work."
                 ),
                 "supports_image": True,
                 "thinking_level": "high",
@@ -1157,9 +1163,7 @@ class AgentOSRouterConfig(BaseSettings):
         normalized = LEGACY_STRATEGY_ALIASES.get(normalized, normalized)
         if not is_known_strategy(normalized):
             allowed = ", ".join(repr(s) for s in sorted(known_strategy_ids()))
-            raise ValueError(
-                f"agentos_router.strategy must be one of {allowed}; got {value!r}"
-            )
+            raise ValueError(f"agentos_router.strategy must be one of {allowed}; got {value!r}")
         return normalized
 
     @model_validator(mode="before")
@@ -1172,9 +1176,7 @@ class AgentOSRouterConfig(BaseSettings):
             "upgrade_to_c3_compaction_enabled" not in values
             and "upgrade_to_t3_compaction_enabled" in values
         ):
-            values["upgrade_to_c3_compaction_enabled"] = values[
-                "upgrade_to_t3_compaction_enabled"
-            ]
+            values["upgrade_to_c3_compaction_enabled"] = values["upgrade_to_t3_compaction_enabled"]
         if "default_tier" in values:
             values["default_tier"] = normalize_text_tier(values.get("default_tier")) or values.get(
                 "default_tier"
@@ -1342,9 +1344,7 @@ class AudioElevenLabsProviderConfig(BaseModel):
 
 
 class AudioProvidersConfig(BaseModel):
-    elevenlabs: AudioElevenLabsProviderConfig = Field(
-        default_factory=AudioElevenLabsProviderConfig
-    )
+    elevenlabs: AudioElevenLabsProviderConfig = Field(default_factory=AudioElevenLabsProviderConfig)
 
 
 class AudioTTSConfig(BaseModel):
@@ -1456,32 +1456,26 @@ class TelegramChannelEntry(ConfiguredChannelEntry):
     poll_timeout_s: int = 30
     poll_limit: int = 100
     poll_idle_sleep_s: float = 0.1
-    access_mode: Literal["pairing", "allowlist", "open", "disabled"] = "pairing"
-    approved_sender_ids: list[str] = Field(default_factory=list)
-    group_access_mode: Literal["allowlist", "open", "disabled"] = "allowlist"
-    group_allowed_sender_ids: list[str] = Field(default_factory=list)
+    groups_enabled: bool = False
+    group_chat_ids: list[str] = Field(default_factory=list)
+    group_mention_required: bool = True
 
-    @field_validator("access_mode", mode="before")
+    @field_validator("group_chat_ids", mode="before")
     @classmethod
-    def _normalize_legacy_access_mode(cls, value: Any) -> Any:
-        return "pairing" if value == "approval" else value
-
-    @field_validator("approved_sender_ids", "group_allowed_sender_ids", mode="before")
-    @classmethod
-    def _normalize_sender_ids(cls, value: Any) -> list[str]:
+    def _normalize_group_chat_ids(cls, value: Any) -> list[str]:
         values = value.split(",") if isinstance(value, str) else (value or [])
         normalized = (str(item).strip() for item in values)
         return list(dict.fromkeys(item for item in normalized if item))
 
     @model_validator(mode="after")
     def _validate_webhook_auth(self) -> TelegramChannelEntry:
+        if self.groups_enabled and not self.group_chat_ids:
+            raise ValueError("telegram groups_enabled requires at least one group_chat_id")
         if self.transport_name == "webhook":
             if not self.webhook_url:
                 raise ValueError("webhook_url is required for telegram webhook mode")
             if not self.webhook_secret_token:
-                raise ValueError(
-                    "webhook_secret_token is required for telegram webhook mode"
-                )
+                raise ValueError("webhook_secret_token is required for telegram webhook mode")
         return self
 
 
@@ -1681,7 +1675,6 @@ class GatewayConfig(BaseSettings):
     # Component enable flags
     control_ui: ControlUiConfig = Field(default_factory=ControlUiConfig)
     diagnostics_enabled: bool = False
-    channel_admin_senders: dict[str, list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _default_agentos_router_profile_for_direct_provider(self) -> GatewayConfig:
@@ -1702,6 +1695,7 @@ class GatewayConfig(BaseSettings):
         has_custom_tiers = "tiers" in fields_set and router_tiers not in (
             _openrouter_tiers(),
             _bankr_tiers(),
+            _opencap_tiers(),
         )
         if "tier_profile" in fields_set or has_custom_tiers:
             return self
@@ -1756,8 +1750,7 @@ class GatewayConfig(BaseSettings):
         import logging
 
         logging.getLogger(__name__).warning(
-            "agentos_router.judge_provider_cross_provider_reset "
-            "judge_provider=%s llm_provider=%s",
+            "agentos_router.judge_provider_cross_provider_reset judge_provider=%s llm_provider=%s",
             judge_provider,
             provider,
         )
@@ -1941,9 +1934,6 @@ class GatewayConfig(BaseSettings):
             "mode": "stable",
             "prompt_cache_mode": self.prompt_cache.effective_mode,
             "query_embedding_cache": self.memory.cost.query_embedding_cache,
-            "dream_input_slimming": self.memory.dream.input_slimming,
-            "dream_preview_mode": str(self.memory.dream.preview_mode).lower(),
-            "dream_auto_schedule": str(self.memory.dream.auto_schedule).lower(),
             "daily_note_max_chars": str(self.memory.daily_note_max_chars),
             "daily_notes_total_max_chars": str(self.memory.daily_notes_total_max_chars),
             "auto_capture_enabled": str(self.memory.auto_capture_enabled).lower(),
@@ -1956,8 +1946,8 @@ class GatewayConfig(BaseSettings):
                 self.memory.capture_excluded_provenance_kinds
             ),
             "capture_roll_max_chars": str(self.memory.capture_roll_max_chars),
-            "dream_enabled": str(self.memory.dream.enabled).lower(),
         }
+
     _runtime_secret_paths: set[str] = PrivateAttr(default_factory=set)
 
     def to_toml_dict(self) -> dict[str, Any]:
@@ -1965,6 +1955,13 @@ class GatewayConfig(BaseSettings):
         data: dict[str, Any] = self.model_dump(exclude_none=True, exclude_defaults=False)
         if not data.get("agents"):
             data.pop("agents", None)
+        skills = data.get("skills")
+        if isinstance(skills, dict) and not skills.get("config"):
+            # Only skills declare keys here, so an install that uses none should
+            # write a [skills] section identical to the one it had before this
+            # field existed — an empty table would otherwise be rejected by any
+            # older AgentOS the operator rolls back to.
+            skills.pop("config", None)
         llm = data.get("llm")
         if isinstance(llm, dict):
             if not llm.get("api_key_env"):
@@ -2105,41 +2102,13 @@ def _mode_protects_public_bind(auth: AuthConfig) -> bool:
 
 
 def enforce_public_bind_auth_guard(config: GatewayConfig) -> None:
-    """Refuse to serve when ``auth.mode="none"`` on a non-loopback bind.
+    """Refuse every unauthenticated non-loopback listener."""
 
-    "No auth by default" is only safe while the gateway stays on loopback,
-    where ownership checks already require a loopback peer. On a wildcard
-    or LAN bind it hands the chat/sessions/config surfaces to anyone who
-    can reach the port, so startup fails closed unless the operator sets
-    ``auth.allow_unauthenticated_public = true`` (issue #18, V3).
-
-    Uses the same loopback predicate as the ownership check
-    (``scopes.is_loopback_bind``) so the set of binds the guard allows is
-    exactly the set ownership treats as local. Raises ``ValueError`` — the
-    CLI boundary surfaces that as a startup error with recovery guidance.
-
-    A mode "protects" a public bind only when it is actually enforced
-    end-to-end (HTTP + WS). Today that is ``token`` (auto-generated at
-    startup) and ``trusted-proxy`` *with a proxy configured*. Any other
-    value — ``password`` (not yet implemented on the HTTP surface),
-    ``trusted-proxy`` without a proxy, or a typo — is treated as *not*
-    authenticated, so it cannot silently open a public port.
-    """
-    from agentos.gateway.scopes import is_loopback_bind
+    from agentos.gateway.access import is_loopback_bind
 
     if _mode_protects_public_bind(config.auth):
         return
     if is_loopback_bind(config.host):
-        return
-    if config.auth.allow_unauthenticated_public:
-        import structlog
-
-        structlog.get_logger(__name__).warning(
-            "gateway.unauthenticated_public_bind_opt_in",
-            host=config.host,
-            hint="auth.allow_unauthenticated_public=true — every peer that "
-            "can reach this port has full operator access",
-        )
         return
     raise ValueError(
         f"Refusing to serve: auth.mode={config.auth.mode!r} does not enforce "
@@ -2148,10 +2117,7 @@ def enforce_public_bind_auth_guard(config: GatewayConfig) -> None:
         "and config with your provider credentials. Fix one of these: "
         '(1) enable enforced auth — set auth.mode="token" in agentos.toml '
         "(a token is auto-generated at startup when unset); "
-        '(2) bind loopback — remove the --listen/--bind flag or set host = "127.0.0.1"; '
-        "(3) explicit break-glass opt-in — set auth.allow_unauthenticated_public = true "
-        "(or AGENTOS_AUTH_ALLOW_UNAUTHENTICATED_PUBLIC=true) only if an external "
-        "layer (reverse proxy auth, VPN, firewall) already protects this port."
+        '(2) bind loopback — remove the --listen/--bind flag or set host = "127.0.0.1".'
     )
 
 

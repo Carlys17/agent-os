@@ -218,6 +218,29 @@ async def test_socket_frame_acks_and_dispatches_events_api_payload() -> None:
     assert ch._queue.qsize() == 1
 
 
+async def test_socket_frame_acks_and_dispatches_slash_command_payload() -> None:
+    ch = _mk()
+    ws = _FakeSocket()
+    await ch._handle_socket_frame(
+        ws,
+        (
+            '{"envelope_id":"env-command","type":"slash_commands","payload":'
+            '{"team_id":"T1","channel_id":"C123","channel_name":"general",'
+            '"user_id":"UUSER","command":"/status","text":""}}'
+        ),
+    )
+
+    assert ws.sent == ['{"envelope_id": "env-command"}']
+    assert ch._queue.qsize() == 1
+    msg = ch._queue.get_nowait()
+    assert msg.sender_id == "UUSER"
+    assert msg.channel_id == "C123"
+    assert msg.content == "/status"
+    assert msg.metadata["is_group"] is True
+    assert msg.metadata["team"] == "T1"
+    assert msg.metadata["interaction_type"] == "slash_command"
+
+
 async def test_socket_frame_disconnect_closes_socket_after_ack() -> None:
     ch = _mk()
     ws = _FakeSocket()

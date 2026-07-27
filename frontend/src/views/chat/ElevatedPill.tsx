@@ -4,7 +4,7 @@ import { effectiveElevatedMode } from './logic'
 // (chat.js:2314-2343). Kept as constants so the presentational component and any
 // future readout share one copy of the operator-facing wording.
 const TITLE_UNAVAILABLE =
-  'Bypass requires a local owner session. The gateway is bound to a non-loopback address, so this client cannot toggle elevated mode.'
+  'Bypass requires an admitted Control connection. Reconnect with the configured Control token.'
 const TITLE_SESSION =
   'Session permission override is active. Approval prompts are bypassed for this browser chat session. Click to clear the override.'
 const TITLE_GLOBAL =
@@ -17,7 +17,7 @@ export interface ElevatedPillProps {
   sessionMode: string
   // The GLOBAL permissions.default_mode (from config.get).
   globalMode: string
-  // Latched true after a 403 from POST /api/elevated-mode (non-owner session).
+  // Latched true after a 403 from POST /api/elevated-mode (connection not admitted).
   unavailable: boolean
   onToggle: () => void
 }
@@ -39,7 +39,7 @@ export function ElevatedPill({
   onToggle,
 }: ElevatedPillProps) {
   if (unavailable) {
-    // chat.js:2316-2322 — the latched non-owner state: disabled, distinct label.
+    // chat.js:2316-2322 — the latched unavailable state: disabled, distinct label.
     return (
       <button
         type="button"

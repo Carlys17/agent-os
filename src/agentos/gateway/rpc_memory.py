@@ -2,21 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from agentos.gateway.memory_repair_service import (
-    import_legacy_raw_fallback_receipts,
-    list_repair_queue,
-    parse_raw_fallback_entries,
-    repair_receipt_to_wire,
-    run_memory_repair_once,
-)
-from agentos.gateway.memory_repair_service import (
-    raw_fallback_rows as repair_raw_fallback_rows,
-)
 from agentos.gateway.rpc import RpcContext, RpcUnavailableError, get_dispatcher
 from agentos.gateway.session_services import get_session_storage
 from agentos.memory.types import (
@@ -40,6 +29,10 @@ _MAX_REPAIR_SHOW_ENTRIES = 100
 _MAX_REPAIR_LIST_LIMIT = 200
 _REPAIR_SCAN_LIMIT = 1000
 _HEALTH_SCAN_LIMIT = 1000
+# Durable-receipt statuses meaning "this session's memory never landed". The
+# health surface counts them as a backlog; with the repair service gone nothing
+# retries them, so the count is a signal to a human rather than a work queue.
+_REPAIR_PENDING_STATUSES = ("repair_pending", "distill_failed", "flush_failed")
 _SAFETY_ERROR_STATUSES = {"checkpoint_failed", "receipt_orphaned"}
 _HASH_MISMATCH_MARKERS = ("hash_mismatch", "hash mismatch")
 _SEMANTIC_WARNING_AGE_MS = 24 * 60 * 60 * 1000
@@ -128,6 +121,50 @@ async def _recent_durable_receipts(storage: Any, *, agent_id: str) -> list[Any]:
     return list(receipt_rows[:_HEALTH_SCAN_LIMIT])
 
 
+async def _pending_repair_receipts(storage: Any, *, agent_id: str) -> list[Any]:
+    """Durable receipts still awaiting repair, for the health surface.
+
+    Queries the durable-receipt ledger directly. That ledger is written on the
+    compaction path, so this stays meaningful without the repair service --
+    which is why the health check does not die with it.
+    """
+    agent_prefix = _agent_session_key_prefix(agent_id)
+    conn = getattr(storage, "conn", None)
+    if conn is not None:
+        placeholders = ", ".join("?" for _ in _REPAIR_PENDING_STATUSES)
+        params: list[Any] = [*_REPAIR_PENDING_STATUSES]
+        agent_clause = ""
+        if agent_prefix is not None:
+            agent_clause = "AND substr(session_key, 1, ?) = ?"
+            params.extend((len(agent_prefix), agent_prefix))
+        params.append(_HEALTH_SCAN_LIMIT)
+        async with conn.execute(
+            f"""
+            SELECT * FROM memory_durable_receipts
+            WHERE status IN ({placeholders})
+            {agent_clause}
+            ORDER BY created_at ASC, rowid ASC
+            LIMIT ?
+            """,
+            params,
+        ) as cur:
+            return list(await cur.fetchall())
+
+    list_receipts = getattr(storage, "list_memory_durable_receipts", None)
+    if not callable(list_receipts):
+        return []
+    rows: list[Any] = []
+    for status in _REPAIR_PENDING_STATUSES:
+        rows.extend(await list_receipts(status=status, limit=_HEALTH_SCAN_LIMIT))
+    if agent_prefix is not None:
+        rows = [
+            row
+            for row in rows
+            if str(_row_value(row, "session_key", "") or "").startswith(agent_prefix)
+        ]
+    return rows[:_HEALTH_SCAN_LIMIT]
+
+
 def _semantic_repair_status(backlog_count: int, oldest_pending_ms: int | None) -> str:
     if backlog_count <= 0:
         return "healthy"
@@ -153,12 +190,7 @@ async def memory_health_from_durable_ledger(
 
     recent_rows = await _recent_durable_receipts(storage, agent_id=agent_id)
     safety_status = "error" if any(_is_safety_error_receipt(row) for row in recent_rows) else "ok"
-    pending_rows = await list_repair_queue(
-        storage,
-        limit=_HEALTH_SCAN_LIMIT,
-        agent_id=agent_id,
-        due_only=False,
-    )
+    pending_rows = await _pending_repair_receipts(storage, agent_id=agent_id)
     backlog_count = len(pending_rows)
     oldest_pending_ms = min(
         (
@@ -222,93 +254,9 @@ def _result_to_wire(result: Any) -> dict[str, Any]:
     }
 
 
-def _summary_to_repair_wire(summary: Any) -> dict[str, Any]:
-    return {
-        "sourceType": "compaction_preimage",
-        "summaryId": getattr(summary, "id", None),
-        "sessionKey": getattr(summary, "session_key", ""),
-        "compactionId": getattr(summary, "compaction_id", None),
-        "triggerReason": getattr(summary, "trigger_reason", None),
-        "flushReceiptStatus": getattr(summary, "flush_receipt_status", "unknown"),
-        "removedCount": int(getattr(summary, "removed_count", 0) or 0),
-        "coveredThroughId": getattr(summary, "covered_through_id", None),
-        "createdAt": getattr(summary, "created_at", None),
-    }
 
 
-def _entry_to_repair_wire(entry: Any) -> dict[str, Any]:
-    content = str(getattr(entry, "content", "") or "")
-    truncated = len(content) > _MAX_REPAIR_ENTRY_CHARS
-    return {
-        "id": getattr(entry, "id", None),
-        "messageId": getattr(entry, "message_id", None),
-        "role": getattr(entry, "role", ""),
-        "content": content[:_MAX_REPAIR_ENTRY_CHARS],
-        "truncated": truncated,
-        "tokenCount": getattr(entry, "token_count", None),
-        "createdAt": getattr(entry, "created_at", None),
-    }
 
-
-def _preimage_metadata(entries: list[Any]) -> dict[str, Any]:
-    digest = hashlib.sha256()
-    ids: list[int] = []
-    for entry in entries:
-        entry_id = getattr(entry, "id", None)
-        try:
-            if entry_id is not None:
-                ids.append(int(entry_id))
-        except (TypeError, ValueError):
-            pass
-        material = "\n".join(
-            (
-                str(entry_id or ""),
-                str(getattr(entry, "message_id", "") or ""),
-                str(getattr(entry, "role", "") or ""),
-                str(getattr(entry, "content", "") or ""),
-            )
-        )
-        digest.update(material.encode("utf-8", errors="replace"))
-        digest.update(b"\n---\n")
-    return {
-        "preimageHash": digest.hexdigest() if entries else None,
-        "entryIdRange": [min(ids), max(ids)] if ids else None,
-        "rangePolicy": "archived_full_removed_entries",
-    }
-
-
-def _summary_matches(summary: Any, params: dict[str, Any]) -> bool:
-    summary_id = params.get("summaryId")
-    if summary_id is not None:
-        try:
-            return int(summary_id) == int(getattr(summary, "id", -1) or -1)
-        except (TypeError, ValueError):
-            raise ValueError("params.summaryId must be an integer") from None
-    session_key = str(params.get("sessionKey") or "").strip()
-    compaction_id = str(params.get("compactionId") or "").strip()
-    if session_key and session_key != str(getattr(summary, "session_key", "")):
-        return False
-    if compaction_id and compaction_id != str(getattr(summary, "compaction_id", "")):
-        return False
-    return bool(session_key or compaction_id)
-
-
-async def _repair_summaries(
-    manager: Any,
-    *,
-    agent_id: str,
-    params: dict[str, Any],
-    limit: int,
-) -> list[Any]:
-    list_degraded = getattr(manager, "list_degraded_compactions", None)
-    if not callable(list_degraded):
-        raise RpcUnavailableError("Compaction repair listing is not available")
-    has_selector = any(k in params for k in ("summaryId", "sessionKey", "compactionId"))
-    scan_limit = _REPAIR_SCAN_LIMIT if has_selector else limit
-    rows = await list_degraded(agent_id=agent_id, limit=scan_limit)
-    if has_selector:
-        rows = [row for row in rows if _summary_matches(row, params)]
-    return list(rows)[:limit]
 
 
 def _memory_source_rows(root: Path) -> list[dict[str, Any]]:
@@ -360,7 +308,7 @@ async def _manager_status_wire(manager: Any) -> dict[str, Any]:
     }
 
 
-@_d.method("memory.list", scope="operator.read")
+@_d.method("memory.list")
 async def _handle_memory_list(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if params is not None and not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -370,7 +318,7 @@ async def _handle_memory_list(params: dict | None, ctx: RpcContext) -> dict[str,
     return {"agentId": agent_id, "count": len(rows), "files": rows}
 
 
-@_d.method("memory.search", scope="operator.read")
+@_d.method("memory.search")
 async def _handle_memory_search(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -392,7 +340,7 @@ async def _handle_memory_search(params: dict | None, ctx: RpcContext) -> dict[st
 
     agent_id, manager = _require_memory_manager(ctx, params.get("agentId"))
     opts = MemorySearchOpts(max_results=limit, min_score=min_score, source=source)
-    results = await manager.search(query, opts, intent=SearchIntent.ADMIN)
+    results = await manager.search(query, opts, intent=SearchIntent.CONTROL)
     rows = [_result_to_wire(result) for result in results]
     return {"agentId": agent_id, "query": query, "count": len(rows), "results": rows}
 
@@ -413,7 +361,7 @@ def _repair_memory_roots(ctx: RpcContext) -> dict[str, Path]:
     return roots
 
 
-@_d.method("memory.index", scope="operator.admin")
+@_d.method("memory.index")
 async def _handle_memory_index(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if params is not None and not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -539,7 +487,7 @@ def _read_memory_content(
     return "".join(parts), selected_line_count, truncated
 
 
-@_d.method("memory.show", scope="operator.read")
+@_d.method("memory.show")
 async def _handle_memory_show(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -587,7 +535,7 @@ async def _handle_memory_show(params: dict | None, ctx: RpcContext) -> dict[str,
     }
 
 
-@_d.method("memory.raw_fallbacks.list", scope="operator.admin")
+@_d.method("memory.raw_fallbacks.list")
 async def _handle_raw_fallbacks_list(
     params: dict | None,
     ctx: RpcContext,
@@ -599,7 +547,7 @@ async def _handle_raw_fallbacks_list(
     return {"agentId": agent_id, "count": len(rows), "files": rows}
 
 
-@_d.method("memory.raw_fallbacks.show", scope="operator.admin")
+@_d.method("memory.raw_fallbacks.show")
 async def _handle_raw_fallbacks_show(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     if not isinstance(params, dict):
         raise ValueError("params must be an object")
@@ -645,129 +593,5 @@ async def _handle_raw_fallbacks_show(params: dict | None, ctx: RpcContext) -> di
     }
 
 
-@_d.method("memory.repair.list", scope="operator.admin")
-async def _handle_memory_repair_list(
-    params: dict | None,
-    ctx: RpcContext,
-) -> dict[str, Any]:
-    if params is not None and not isinstance(params, dict):
-        raise ValueError("params must be an object")
-    params = params or {}
-    agent_id = normalize_agent_id(str(params.get("agentId") or "main"))
-    limit = _int_param(params, "limit", 50, minimum=1, maximum=_MAX_REPAIR_LIST_LIMIT)
-    manager = _require_session_manager(ctx)
-    storage = get_session_storage(manager)
-    items: list[dict[str, Any]] = []
-    has_compaction_selector = any(k in params for k in ("summaryId", "sessionKey", "compactionId"))
-    memory_manager = (getattr(ctx, "memory_managers", None) or {}).get(agent_id)
-    if memory_manager is not None:
-        root = _memory_root(memory_manager).resolve()
-        await import_legacy_raw_fallback_receipts(storage, root, agent_id=agent_id)
-    if storage is not None and not has_compaction_selector:
-        selected = (
-            _raw_fallback_rel_path(str(params.get("path") or ""))
-            if "path" in params
-            else None
-        )
-        rows = await list_repair_queue(
-            storage,
-            limit=limit,
-            path=selected,
-            agent_id=agent_id,
-        )
-        items = [repair_receipt_to_wire(row) for row in rows[:limit]]
-    else:
-        rows = await _repair_summaries(manager, agent_id=agent_id, params=params, limit=limit)
-        items = [_summary_to_repair_wire(row) for row in rows]
-    if storage is None and (not has_compaction_selector or "path" in params):
-        memory_manager = (getattr(ctx, "memory_managers", None) or {}).get(agent_id)
-        if memory_manager is not None:
-            raw_rows = repair_raw_fallback_rows(_memory_root(memory_manager).resolve())
-            if "path" in params:
-                selected = _raw_fallback_rel_path(str(params.get("path") or ""))
-                raw_rows = [row for row in raw_rows if row.get("path") == selected]
-            items.extend(raw_rows[: max(0, limit - len(items))])
-    return {"agentId": agent_id, "count": len(items), "items": items}
 
 
-@_d.method("memory.repair.show", scope="operator.admin")
-async def _handle_memory_repair_show(
-    params: dict | None,
-    ctx: RpcContext,
-) -> dict[str, Any]:
-    if not isinstance(params, dict):
-        raise ValueError("params must be an object")
-    agent_id = normalize_agent_id(str(params.get("agentId") or "main"))
-    entry_limit = _int_param(
-        params,
-        "entryLimit",
-        20,
-        minimum=1,
-        maximum=_MAX_REPAIR_SHOW_ENTRIES,
-    )
-    if "path" in params:
-        _, memory_manager = _require_memory_manager(ctx, agent_id)
-        root = _memory_root(memory_manager).resolve()
-        rel_raw = _raw_fallback_rel_path(str(params.get("path") or ""))
-        rel_path = Path(rel_raw)
-        file_path = (root / rel_path).resolve()
-        raw_root = (root / "memory" / ".raw_fallbacks").resolve()
-        if raw_root not in file_path.parents or not file_path.is_file():
-            raise KeyError("Repair record not found")
-        rows = repair_raw_fallback_rows(root, include_repaired=True)
-        selected = rel_raw
-        row = next((item for item in rows if item.get("path") == selected), None)
-        if row is None:
-            raise KeyError("Repair record not found")
-        content = file_path.read_text(encoding="utf-8", errors="replace")
-        entries = parse_raw_fallback_entries(content)
-        return {
-            "agentId": agent_id,
-            **row,
-            "entryCount": len(entries),
-            "entries": [_entry_to_repair_wire(entry) for entry in entries[:entry_limit]],
-        }
-    manager = _require_session_manager(ctx)
-    rows = await _repair_summaries(manager, agent_id=agent_id, params=params, limit=1)
-    if not rows:
-        raise KeyError("Repair record not found")
-    summary = rows[0]
-    get_preimage = getattr(manager, "get_compaction_preimage", None)
-    if not callable(get_preimage):
-        raise RpcUnavailableError("Compaction preimage lookup is not available")
-    entries = await get_preimage(summary)
-    entry_rows = [_entry_to_repair_wire(entry) for entry in list(entries)[:entry_limit]]
-    return {
-        "agentId": agent_id,
-        **_summary_to_repair_wire(summary),
-        **_preimage_metadata(list(entries)),
-        "entryCount": len(entries),
-        "entries": entry_rows,
-    }
-
-
-@_d.method("memory.repair.run", scope="operator.admin")
-async def _handle_memory_repair_run(
-    params: dict | None,
-    ctx: RpcContext,
-) -> dict[str, Any]:
-    if params is not None and not isinstance(params, dict):
-        raise ValueError("params must be an object")
-    params = params or {}
-    agent_id = normalize_agent_id(str(params.get("agentId") or "main"))
-    limit = _int_param(params, "limit", 50, minimum=1, maximum=_MAX_REPAIR_LIST_LIMIT)
-    manager = _require_session_manager(ctx)
-    flush_service = getattr(ctx, "flush_service", None)
-    execute = getattr(flush_service, "execute", None)
-    if not callable(execute):
-        raise RpcUnavailableError("Session flush service is not configured")
-    results = await run_memory_repair_once(
-        session_manager=manager,
-        flush_service=flush_service,
-        memory_roots=_repair_memory_roots(ctx),
-        agent_id=agent_id,
-        limit=limit,
-        params=params,
-        scan_limit=_REPAIR_SCAN_LIMIT,
-    )
-    return {"agentId": agent_id, "count": len(results), "results": results}
