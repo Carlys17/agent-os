@@ -36,4 +36,12 @@ describe('Skills directory CSS contract', () => {
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.control-surface \.sk-card:hover,[\s\S]*?transform: none;/,
     )
   })
+
+  it('prevents skill cards from overflowing grid tracks when skill names are long', () => {
+    expect(css).toMatch(/\.sk-card \{[\s\S]*?min-width:\s*0;/)
+    expect(css).toMatch(/\.sk-card__head \{[\s\S]*?min-width:\s*0;/)
+    expect(css).toMatch(
+      /\.sk-card__name \{[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;[\s\S]*?white-space:\s*nowrap;/,
+    )
+  })
 })
