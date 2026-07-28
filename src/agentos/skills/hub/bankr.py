@@ -16,6 +16,14 @@ their ``catalog.json`` + ``SKILL.md`` directly and never calls the git-tree API.
 Only skills whose ``catalog.json`` declares ``install.type == "bankr"`` (i.e.
 they live in the repo and install directly) are listed. ``external`` skills —
 whose install runs a third-party command — are skipped.
+
+Bankr also hosts skills that never land in that repository: anyone can publish
+one from bankr.bot, where it lives under the author's wallet address and is
+served as JSON by ``api.bankr.bot/public/skills/<wallet>/<slug>`` — body and all.
+Those are carried by a second allowlist, ``_ALLOWED_USER_SKILLS``, and take a
+separate load/fetch path: there is no repository to clone and no
+``catalog.json``, so the SKILL.md is synthesized from the API payload instead of
+being downloaded through :class:`GitHubSource`.
 """
 
 from __future__ import annotations
@@ -25,6 +33,8 @@ import json
 import re
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
+from urllib.parse import unquote, urlparse
 
 import structlog
 
@@ -40,6 +50,24 @@ _DEFAULT_REF = "main"
 # and every skill's catalog.json + SKILL.md (~100 skills) trips GitHub's rate
 # limit (429); since the slugs are fixed we fetch just these directly.
 _ALLOWED_SLUGS: tuple[str, ...] = ("bankr", "bankr-token-scam-analysis")
+# Bankr-hosted skills published from bankr.bot rather than into the repository,
+# as ``<wallet>/<slug>``. Same reasoning as the repo allowlist — the registry has
+# no public index, so the entries are named here rather than crawled.
+_ALLOWED_USER_SKILLS: tuple[str, ...] = (
+    "0xd4fd8d6f0f64f3d0ba015b645ca8f8c13355c24a/stock-premium-lp-manager",
+)
+_USER_API_BASE = "https://api.bankr.bot/public/skills"
+_USER_PAGE_BASE = "https://bankr.bot/skills"
+_USER_HOSTS = {"bankr.bot", "www.bankr.bot"}
+_WALLET_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+# Mirrors the installer's safe-name rule, so an allowlisted slug can always be
+# used as the installed directory name.
+_USER_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# The registry body is community-controlled; cap what we will turn into a
+# SKILL.md so a hostile payload cannot blow up a browse response or an install.
+_MAX_USER_CONTENT_CHARS = 256 * 1024
+_MAX_USER_DESCRIPTION_CHARS = 2000
+_MAX_USER_TAGS = 20
 # Brand avatar for Bankr cards. The catalogs ship ``logo: null`` and store their
 # emoji in SKILL.md frontmatter (in formats the browse layer can't reliably
 # parse), so browse cards fall back to this shared brand mark instead of a bare
@@ -84,13 +112,93 @@ _CATEGORY_KEYWORDS: list[tuple[str, frozenset[str]]] = [
 ]
 
 
-def _infer_category(slug: str, provider: str) -> str:
-    """Return a coarse category for browse filters, or "other" when unknown."""
-    tokens = set(_TOKEN_RE.findall(f"{slug} {provider}".lower()))
+def _infer_category(slug: str, provider: str, tags: Sequence[str] = ()) -> str:
+    """Return a coarse category for browse filters, or "other" when unknown.
+
+    ``tags`` is only carried by user-published skills — the repo catalogs have
+    none — and is folded into the same token set, so a skill whose slug says
+    nothing useful ("stock-premium-lp-manager") still lands in a real bucket.
+    """
+    haystack = " ".join([slug, provider, *tags]).lower()
+    tokens = set(_TOKEN_RE.findall(haystack))
     for category, keywords in _CATEGORY_KEYWORDS:
         if tokens & keywords:
             return category
     return "other"
+
+
+@dataclass(frozen=True)
+class _UserSkillRef:
+    """A skill published on bankr.bot, addressed by author wallet + slug."""
+
+    wallet: str
+    slug: str
+
+    @property
+    def key(self) -> str:
+        return f"{self.wallet.lower()}/{self.slug.lower()}"
+
+    @property
+    def api_url(self) -> str:
+        return f"{_USER_API_BASE}/{self.wallet}/{self.slug}"
+
+    @property
+    def page_url(self) -> str:
+        return f"{_USER_PAGE_BASE}/{self.wallet}/{self.slug}"
+
+
+def _parse_user_identifier(identifier: str) -> _UserSkillRef | None:
+    """Parse a bankr.bot skill URL (or a bare ``<wallet>/<slug>``).
+
+    Returns ``None`` for anything that is not shaped like a Bankr user skill,
+    including a wallet that is not a 40-hex address or a slug that could not be
+    used as a directory name — those are rejected here rather than at install
+    time, so a malformed identifier never reaches the network.
+    """
+    raw = identifier.strip()
+    if raw.startswith("bankr.bot/") or raw.startswith("www.bankr.bot/"):
+        raw = "https://" + raw
+
+    if raw.startswith(("http://", "https://")):
+        parsed = urlparse(raw)
+        if parsed.netloc.lower() not in _USER_HOSTS:
+            return None
+        parts = [unquote(part) for part in parsed.path.split("/") if part]
+        if len(parts) != 3 or parts[0] != "skills":
+            return None
+        wallet, slug = parts[1], parts[2]
+    else:
+        parts = raw.split("/")
+        if len(parts) != 2:
+            return None
+        wallet, slug = parts
+
+    if not _WALLET_RE.match(wallet) or not _USER_SLUG_RE.match(slug):
+        return None
+    return _UserSkillRef(wallet=wallet, slug=slug)
+
+
+def _user_skill_markdown(name: str, description: str, tags: Sequence[str], content: str) -> str:
+    """Return SKILL.md text for a registry payload that ships only a body.
+
+    The public API keeps name/description/tags beside the markdown, but every
+    consumer downstream (installer, loader, scanner) expects one file with
+    frontmatter — so synthesize it. A body that already carries its own block is
+    returned unchanged rather than nested inside a second one.
+    """
+    import yaml
+
+    body = content.lstrip("\n")
+    if body.startswith("---") and body.find("\n---", 3) != -1:
+        return body
+
+    front = yaml.safe_dump(
+        {"name": name, "description": description, "tags": list(tags)},
+        sort_keys=False,
+        allow_unicode=True,
+        width=4096,
+    )
+    return f"---\n{front}---\n\n{body}"
 
 
 def _matches(meta: SkillMeta, query: str) -> bool:
@@ -113,11 +221,19 @@ class BankrSource(SkillSource):
         repo: str = _DEFAULT_REPO,
         ref: str = _DEFAULT_REF,
         allowlist: Sequence[str] = _ALLOWED_SLUGS,
+        user_allowlist: Sequence[str] = _ALLOWED_USER_SKILLS,
     ) -> None:
         self._github = GitHubSource(token=token)
         self._repo = repo
         self._ref = ref
         self._allowlist = tuple(allowlist)
+        # Malformed entries are dropped at construction rather than surviving as
+        # strings that can never match — an allowlist that silently accepts a
+        # typo is worse than one that is short.
+        self._user_refs = tuple(
+            ref_ for ref_ in (_parse_user_identifier(entry) for entry in user_allowlist) if ref_
+        )
+        self._user_keys = frozenset(ref_.key for ref_ in self._user_refs)
         self._raw_base = f"https://raw.githubusercontent.com/{repo}/{ref}"
         self._cache_metas: list[SkillMeta] | None = None
         self._cache_at = 0.0
@@ -160,13 +276,37 @@ class BankrSource(SkillSource):
             return False
         return ref.skill_dir.strip("/") in self._allowlist
 
+    def _allowlisted_user_ref(self, identifier: str) -> _UserSkillRef | None:
+        """Return the user-skill this identifier names, when it is allowlisted.
+
+        Same boundary as :meth:`_is_allowlisted`, for the registry half of the
+        source: bankr.bot serves every published skill from one host, so without
+        this gate ``skills.install(source="bankr")`` could pull any author's
+        skill and record it as having come through Bankr's hub.
+        """
+        ref = _parse_user_identifier(identifier)
+        if ref is None or ref.key not in self._user_keys:
+            return None
+        return ref
+
     async def inspect(self, identifier: str) -> SkillMeta | None:
+        user_ref = self._allowlisted_user_ref(identifier)
+        if user_ref is not None:
+            loaded = await self._load_user_skill(user_ref)
+            return loaded[0] if loaded else None
         if not self._is_allowlisted(identifier):
             log.warning("bankr.identifier_rejected", op="inspect")
             return None
         return await self._github.inspect(identifier)
 
     async def fetch(self, identifier: str) -> SkillBundle | None:
+        user_ref = self._allowlisted_user_ref(identifier)
+        if user_ref is not None:
+            loaded = await self._load_user_skill(user_ref)
+            if loaded is None:
+                return None
+            meta, skill_md = loaded
+            return SkillBundle(name=user_ref.slug, files={"SKILL.md": skill_md}, meta=meta)
         if not self._is_allowlisted(identifier):
             log.warning("bankr.identifier_rejected", op="fetch")
             return None
@@ -202,7 +342,7 @@ class BankrSource(SkillSource):
         """
         import httpx
 
-        if not self._allowlist:
+        if not self._allowlist and not self._user_refs:
             return []
 
         try:
@@ -213,7 +353,15 @@ class BankrSource(SkillSource):
                     async with sem:
                         return await self._load_catalog_entry(client, slug)
 
-                loaded = await asyncio.gather(*(_load_one(s) for s in self._allowlist))
+                async def _load_user(ref: _UserSkillRef) -> SkillMeta | None:
+                    async with sem:
+                        loaded = await self._load_user_entry(client, ref)
+                        return loaded[0] if loaded else None
+
+                loaded = await asyncio.gather(
+                    *(_load_one(s) for s in self._allowlist),
+                    *(_load_user(r) for r in self._user_refs),
+                )
         except Exception as exc:
             log.warning("bankr.fetch_failed", error=str(exc))
             return None
@@ -256,6 +404,81 @@ class BankrSource(SkillSource):
         skill_md_url = f"{self._raw_base}/{slug}/SKILL.md"
         meta.description = await self._load_description(client, slug, skill_md_url, headers)
         return meta
+
+    async def _load_user_skill(self, ref: _UserSkillRef) -> tuple[SkillMeta, str] | None:
+        """Load one bankr.bot skill on its own client (inspect/fetch entry point)."""
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=15, trust_env=_trust_env()) as client:
+                return await self._load_user_entry(client, ref)
+        except Exception as exc:
+            log.warning("bankr.user_fetch_failed", slug=ref.slug, error=str(exc))
+            return None
+
+    async def _load_user_entry(self, client, ref: _UserSkillRef) -> tuple[SkillMeta, str] | None:
+        """Fetch one registry payload and return its (meta, SKILL.md) pair.
+
+        Deliberately unauthenticated: the public endpoint needs no credentials,
+        and the GitHub token this source carries for the repo half has no
+        business being sent to a different host.
+        """
+        try:
+            resp = await client.get(ref.api_url)
+            resp.raise_for_status()
+            payload = json.loads(resp.content)
+        except Exception as exc:
+            log.warning("bankr.user_skill_failed", slug=ref.slug, error=str(exc))
+            return None
+        return self._user_document(ref, payload)
+
+    def _user_document(self, ref: _UserSkillRef, payload: object) -> tuple[SkillMeta, str] | None:
+        """Build (meta, SKILL.md) from a registry payload, or ``None`` if unusable."""
+        if not isinstance(payload, dict) or payload.get("success") is False:
+            return None
+        skill = payload.get("skill")
+        if not isinstance(skill, dict):
+            return None
+
+        content = skill.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return None
+        if len(content) > _MAX_USER_CONTENT_CHARS:
+            log.warning("bankr.user_skill_oversized", slug=ref.slug, chars=len(content))
+            return None
+
+        description = str(skill.get("description") or "")[:_MAX_USER_DESCRIPTION_CHARS]
+        raw_tags = skill.get("tags")
+        tags = (
+            [str(tag)[:64] for tag in raw_tags[:_MAX_USER_TAGS]]
+            if isinstance(raw_tags, list)
+            else []
+        )
+        raw_author = skill.get("author")
+        author = raw_author if isinstance(raw_author, dict) else {}
+        # The author, not Bankr: a wallet-published skill is community work that
+        # happens to be distributed through Bankr's registry, so it lists its
+        # author and resolves to no recognized publisher (see
+        # ``agentos.skills.publishers``) rather than inheriting Bankr's brand.
+        provider = str(author.get("handle") or author.get("displayName") or "")
+
+        meta = SkillMeta(
+            name=ref.slug,
+            description=description,
+            source_id=self.source_id,
+            trust_level=self.trust_level,
+            identifier=ref.page_url,
+            homepage=ref.page_url,
+            provider=provider,
+            # Author avatars are served from a third-party CDN the console's CSP
+            # does not allow (``img-src 'self' … raw.githubusercontent.com``), so
+            # cards use the Bankr brand mark instead of a broken image.
+            logo="",
+            emoji=_BANKR_EMOJI,
+            category=_infer_category(ref.slug, provider, tags),
+            tags=tags,
+        )
+        return meta, _user_skill_markdown(ref.slug, description, tags, content)
 
     async def _load_description(self, client, slug: str, url: str, headers: dict) -> str:
         """Fetch SKILL.md and read its frontmatter description. Empty on error."""

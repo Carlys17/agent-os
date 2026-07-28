@@ -415,6 +415,7 @@ agentos skills list --json
 agentos skills search pdf
 agentos skills view pdf-toolkit
 agentos skills install <skill-name>
+agentos skills install <skill-url> --source bankr
 agentos skills update --all
 agentos skills uninstall <skill-name>
 ```

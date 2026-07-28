@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Bankr skills published from bankr.bot — the ones that live under an author's
+  wallet address instead of in the `BankrBot/skills` repository — can now be
+  browsed and installed like any other hub skill, starting with
+  `stock-premium-lp-manager`. They arrive as JSON with the body inline, so the
+  `SKILL.md` is synthesized from the payload rather than downloaded from a
+  repository, and the skill is credited to its author rather than inheriting
+  Bankr's brand. As with the repository half, only allowlisted skills can be
+  installed through the Bankr source, so it cannot be used to pull an arbitrary
+  author's skill and record it as having come from Bankr's hub.
+
 ## [2026.7.28] - 2026-07-28
 
 ### Added
