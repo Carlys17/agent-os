@@ -87,7 +87,58 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
+
+      # The bundled ONNX weights are ~45 MB and every CI run needs them in
+      # three jobs. Fetching them from Git LFS each time burns the account's
+      # LFS bandwidth quota; the Actions cache is free and not billed as LFS
+      # bandwidth, so the network fetch only happens when the weights change.
+      - name: Compute Git LFS cache key
+        id: lfs-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          git lfs install --local
+          oids=$(git lfs ls-files -l | awk '{print $1}' | sort | sha256sum | cut -d' ' -f1)
+          printf 'oids=%s\n' "${oids}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Git LFS objects cache
+        id: lfs-cache
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs/objects
+          key: git-lfs-${{ runner.os }}-${{ steps.lfs-key.outputs.oids }}
+
+      - name: Hydrate Git LFS objects
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.lfs-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          if [ "${CACHE_HIT}" = "true" ]; then
+            # Objects are already in .git/lfs/objects — materialize the working
+            # tree from them without touching the network.
+            git lfs checkout
+          else
+            git lfs pull
+          fi
+
+      # A cache that restored the wrong or an empty object store would leave
+      # pointer files in place. Those are ~130 bytes and still satisfy the
+      # `.is_file()` guards in the pilot encoder tests, so the suite would not
+      # skip — it would fail much later with an opaque ONNX parse error.
+      - name: Verify Git LFS hydration
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          for path in $(git lfs ls-files -n); do
+            if head -c 42 "${path}" | grep -q "git-lfs.github.com/spec/v1"; then
+              echo "ERROR: ${path} is still a Git LFS pointer, not the real object"
+              status=1
+            fi
+          done
+          exit "${status}"
 
       - name: Configure runtime directories
         shell: bash
@@ -175,7 +226,58 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
+
+      # The bundled ONNX weights are ~45 MB and every CI run needs them in
+      # three jobs. Fetching them from Git LFS each time burns the account's
+      # LFS bandwidth quota; the Actions cache is free and not billed as LFS
+      # bandwidth, so the network fetch only happens when the weights change.
+      - name: Compute Git LFS cache key
+        id: lfs-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          git lfs install --local
+          oids=$(git lfs ls-files -l | awk '{print $1}' | sort | sha256sum | cut -d' ' -f1)
+          printf 'oids=%s\n' "${oids}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Git LFS objects cache
+        id: lfs-cache
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs/objects
+          key: git-lfs-${{ runner.os }}-${{ steps.lfs-key.outputs.oids }}
+
+      - name: Hydrate Git LFS objects
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.lfs-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          if [ "${CACHE_HIT}" = "true" ]; then
+            # Objects are already in .git/lfs/objects — materialize the working
+            # tree from them without touching the network.
+            git lfs checkout
+          else
+            git lfs pull
+          fi
+
+      # A cache that restored the wrong or an empty object store would leave
+      # pointer files in place. Those are ~130 bytes and still satisfy the
+      # `.is_file()` guards in the pilot encoder tests, so the suite would not
+      # skip — it would fail much later with an opaque ONNX parse error.
+      - name: Verify Git LFS hydration
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          for path in $(git lfs ls-files -n); do
+            if head -c 42 "${path}" | grep -q "git-lfs.github.com/spec/v1"; then
+              echo "ERROR: ${path} is still a Git LFS pointer, not the real object"
+              status=1
+            fi
+          done
+          exit "${status}"
 
       - name: Configure runtime directories
         shell: bash
@@ -228,7 +330,58 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
+
+      # The bundled ONNX weights are ~45 MB and every CI run needs them in
+      # three jobs. Fetching them from Git LFS each time burns the account's
+      # LFS bandwidth quota; the Actions cache is free and not billed as LFS
+      # bandwidth, so the network fetch only happens when the weights change.
+      - name: Compute Git LFS cache key
+        id: lfs-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          git lfs install --local
+          oids=$(git lfs ls-files -l | awk '{print $1}' | sort | sha256sum | cut -d' ' -f1)
+          printf 'oids=%s\n' "${oids}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Git LFS objects cache
+        id: lfs-cache
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs/objects
+          key: git-lfs-${{ runner.os }}-${{ steps.lfs-key.outputs.oids }}
+
+      - name: Hydrate Git LFS objects
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.lfs-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          if [ "${CACHE_HIT}" = "true" ]; then
+            # Objects are already in .git/lfs/objects — materialize the working
+            # tree from them without touching the network.
+            git lfs checkout
+          else
+            git lfs pull
+          fi
+
+      # A cache that restored the wrong or an empty object store would leave
+      # pointer files in place. Those are ~130 bytes and still satisfy the
+      # `.is_file()` guards in the pilot encoder tests, so the suite would not
+      # skip — it would fail much later with an opaque ONNX parse error.
+      - name: Verify Git LFS hydration
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          for path in $(git lfs ls-files -n); do
+            if head -c 42 "${path}" | grep -q "git-lfs.github.com/spec/v1"; then
+              echo "ERROR: ${path} is still a Git LFS pointer, not the real object"
+              status=1
+            fi
+          done
+          exit "${status}"
 
       - name: Set up Python
         uses: actions/setup-python@v5
