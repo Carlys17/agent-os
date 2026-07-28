@@ -280,7 +280,9 @@ describe('app shell chrome', () => {
     expect(nav).not.toContainElement(action)
     expect(document.querySelector('.chat-composer')).not.toContainElement(action)
     expect(screen.getAllByRole('button', { name: 'New chat' })).toHaveLength(1)
-    expect(action).toHaveAttribute('title', 'New chat')
+    // The tooltip carries a platform-dependent shortcut hint (⌘⇧O vs
+    // Ctrl+Shift+O), so match the stable prefix instead of the literal string.
+    expect(action.getAttribute('title')).toMatch(/^New chat/)
     expect(action.querySelector('svg')).not.toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Collapse navigation' }))
@@ -464,24 +466,24 @@ describe('app shell chrome', () => {
       'Agents',
       'Usage',
       'Cron',
-      'Agent setup',
+      'Agent Setup',
       'Environment',
       'Logs',
       'Approvals',
     ])
   })
 
-  it('keeps legacy setup and config deep links on the single Agent setup nav item', () => {
+  it('keeps legacy setup and config deep links on the single Agent Setup nav item', () => {
     stubMatchMedia(false)
     const setup = renderShellAt('/setup')
-    expect(screen.getByRole('link', { name: 'Agent setup' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Agent Setup' })).toHaveAttribute(
       'aria-current',
       'page',
     )
     setup.unmount()
 
     renderShellAt('/config')
-    expect(screen.getByRole('link', { name: 'Agent setup' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Agent Setup' })).toHaveAttribute(
       'aria-current',
       'page',
     )

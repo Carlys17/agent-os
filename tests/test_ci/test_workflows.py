@@ -394,6 +394,78 @@ def test_live_release_e2e_workflow_is_manual_and_separates_private_inputs() -> N
     assert "tests/private" not in text
 
 
+LFS_CACHE_JOBS = ("ubuntu-quality", "windows-compat", "release-packaging")
+
+
+def _steps(workflow: str, job: str) -> list[dict]:
+    steps = _workflow(workflow)["jobs"][job]["steps"]
+    return [step for step in steps if isinstance(step, dict)]
+
+
+def test_ci_restores_git_lfs_objects_from_cache_instead_of_refetching() -> None:
+    """The three jobs that need the ONNX weights must not re-download them.
+
+    The bundle is ~45 MB (bge + MiniLM + pilot) and every CI run checked it
+    out three times, which is what exhausted the account's Git LFS bandwidth.
+    Each job now checks out WITHOUT LFS, restores ``.git/lfs/objects`` from
+    the Actions cache (free, and not billed as LFS bandwidth), and only falls
+    back to a network ``git lfs pull`` on a cache miss.
+    """
+    text = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
+
+    for job in LFS_CACHE_JOBS:
+        steps = _steps("ci.yml", job)
+        names = [step.get("name") for step in steps]
+
+        checkout = next(
+            step for step in steps if str(step.get("uses", "")).startswith("actions/checkout")
+        )
+        assert checkout.get("with", {}).get("lfs") is not True, (
+            f"{job} must not hydrate LFS at checkout; it restores the cache instead"
+        )
+
+        assert "Compute Git LFS cache key" in names, f"{job} must key the cache on the LFS oids"
+        assert "Restore Git LFS objects cache" in names, f"{job} must restore the LFS cache"
+        assert "Hydrate Git LFS objects" in names, f"{job} must materialize the weights"
+
+        assert (
+            names.index("Compute Git LFS cache key")
+            < names.index("Restore Git LFS objects cache")
+            < names.index("Hydrate Git LFS objects")
+        ), f"{job} must compute the key, restore the cache, then hydrate, in that order"
+
+        # Hydration has to happen before anything imports the models.
+        assert names.index("Hydrate Git LFS objects") < names.index("Install dependencies"), (
+            f"{job} must hydrate the weights before installing dependencies"
+        )
+
+    assert "actions/cache@v4" in text
+    assert "path: .git/lfs/objects" in text
+    # Cache hit must take the offline path; only a miss touches the network.
+    assert "git lfs checkout" in text
+    assert "git lfs pull" in text
+
+
+def test_ci_lfs_hydration_is_verified_not_assumed() -> None:
+    """A cache restore that silently yields pointer files would turn the real
+    ONNX tests into confusing parse errors deep in the suite. Each job asserts
+    the weights are hydrated right after the hydrate step instead."""
+    text = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
+
+    assert text.count("Verify Git LFS hydration") == len(LFS_CACHE_JOBS)
+    assert "git-lfs.github.com/spec/v1" in text
+
+
+def test_release_workflows_still_hydrate_lfs_at_checkout() -> None:
+    """The CI cache is a bandwidth optimization for the test jobs only. The
+    published-artifact workflows keep the direct ``lfs: true`` + ``git lfs
+    pull`` path, because their hydration asserts are the last line of defense
+    against shipping a 130-byte pointer inside a wheel."""
+    for name in ("wheelhouse-release.yml", "pypi-publish.yml"):
+        text = (WORKFLOW_DIR / name).read_text(encoding="utf-8")
+        assert "lfs: true" in text, f"{name} must hydrate LFS directly at checkout"
+
+
 def test_default_ci_stays_offline_and_does_not_run_live_gates() -> None:
     text = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
 
