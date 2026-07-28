@@ -43,6 +43,12 @@ RECOGNIZED_PUBLISHERS: dict[str, SkillPublisher] = {
         url="https://github.com/BankrBot/skills",
         logo="",
     ),
+    "capminal": SkillPublisher(
+        id="capminal",
+        name="Capminal",
+        url="https://github.com/Capminal/agent-skills",
+        logo="",
+    ),
 }
 
 

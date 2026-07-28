@@ -1,10 +1,9 @@
 """Capminal skill source — browses and installs skills from Capminal.
 
-The Capminal repository (https://github.com/capminal-skills/skills) publishes each skill
+The Capminal repository (https://github.com/Capminal/agent-skills) publishes each skill
 as a directory containing ``SKILL.md`` + ``_meta.json``. This source reads the
 metadata live from GitHub so users can browse and install. Downloading and installation
-are delegated to :class:`GitHubSource` via the parsed ``installSource.githubUrl``
-identifier URL.
+are delegated to :class:`GitHubSource` via the parsed identifier URL.
 """
 
 from __future__ import annotations
@@ -18,15 +17,15 @@ from collections.abc import Sequence
 import structlog
 
 from agentos.env import trust_env as _trust_env
-from agentos.skills.hub.github import GitHubSource, _frontmatter_field
+from agentos.skills.hub.github import GitHubSource, _frontmatter_field, _parse_identifier
 from agentos.skills.hub.source import SkillBundle, SkillMeta, SkillSource
 
 log = structlog.get_logger(__name__)
 
-_DEFAULT_REPO = "capminal-skills/skills"
+_DEFAULT_REPO = "Capminal/agent-skills"
 _DEFAULT_REF = "main"
-# Only these skills are loaded from capminal-skills/skills.
-_ALLOWED_SLUGS: tuple[str, ...] = ("capminal", "contract-interaction", "neuron-branch-stats")
+# Only these skills are loaded from Capminal/agent-skills.
+_ALLOWED_SLUGS: tuple[str, ...] = ("capminal", "contract-interaction", "morse-launch-b20")
 _CAPMINAL_EMOJI = "🤖"
 _CATALOG_TTL_SECONDS = 15 * 60
 _FAILURE_RETRY_SECONDS = 60
@@ -46,7 +45,7 @@ def _matches(meta: SkillMeta, query: str) -> bool:
 
 
 class CapminalSource(SkillSource):
-    """Skill source backed by the capminal-skills/skills GitHub catalog."""
+    """Skill source backed by the Capminal/agent-skills GitHub catalog."""
 
     def __init__(
         self,
@@ -74,16 +73,34 @@ class CapminalSource(SkillSource):
     def trust_level(self) -> str:
         return "community"
 
+    def _skill_url(self, slug: str) -> str:
+        return f"https://github.com/{self._repo}/tree/{self._ref}/{slug}"
+
     async def search(self, query: str, limit: int = 200) -> list[SkillMeta]:
         """List Capminal skills (all when query is empty; filtered otherwise)."""
         metas = await self._load_catalog()
         results = [m for m in metas if _matches(m, query)]
         return results[:limit]
 
+    def _is_allowlisted(self, identifier: str) -> bool:
+        """Return True when ``identifier`` names an allowlisted skill in this repo."""
+        ref = _parse_identifier(identifier)
+        if ref is None:
+            return False
+        if ref.repo_full.lower() != self._repo.lower():
+            return False
+        return ref.skill_dir.strip("/") in self._allowlist
+
     async def inspect(self, identifier: str) -> SkillMeta | None:
+        if not self._is_allowlisted(identifier):
+            log.warning("capminal.identifier_rejected", op="inspect")
+            return None
         return await self._github.inspect(identifier)
 
     async def fetch(self, identifier: str) -> SkillBundle | None:
+        if not self._is_allowlisted(identifier):
+            log.warning("capminal.identifier_rejected", op="fetch")
+            return None
         return await self._github.fetch(identifier)
 
     async def _load_catalog(self) -> list[SkillMeta]:
@@ -166,25 +183,25 @@ class CapminalSource(SkillSource):
         self, slug: str, catalog: dict, skill_md_content: str
     ) -> SkillMeta | None:
         """Build a browse-time SkillMeta from parsed _meta.json and SKILL.md content."""
-        install_source = catalog.get("installSource")
-        if not isinstance(install_source, dict):
-            return None
-        github_url = install_source.get("githubUrl")
-        if not github_url or not isinstance(github_url, str):
-            return None
-
-        name = _frontmatter_field(skill_md_content, "name") or slug
+        identifier = self._skill_url(slug)
+        display_name = str(catalog.get("displayName") or slug)
+        name = _frontmatter_field(skill_md_content, "name") or display_name
         description = (
             _frontmatter_field(skill_md_content, "description")
-            or catalog.get("description")
-            or ""
+            or str(catalog.get("description") or "")
         )
-        version = (
-            install_source.get("version")
-            or _frontmatter_field(skill_md_content, "version")
-            or ""
+        latest_release = catalog.get("latestRelease")
+        version = ""
+        if isinstance(latest_release, dict):
+            version = str(latest_release.get("version") or "")
+        if not version:
+            version = _frontmatter_field(skill_md_content, "version") or ""
+
+        author = (
+            str(catalog.get("owner") or "")
+            or _frontmatter_field(skill_md_content, "author")
+            or "capminal"
         )
-        author = _frontmatter_field(skill_md_content, "author") or "capminal"
 
         tags_raw = _frontmatter_field(skill_md_content, "tags")
         tags = []
@@ -201,11 +218,12 @@ class CapminalSource(SkillSource):
             author=author,
             source_id="capminal",
             trust_level="community",
-            identifier=github_url,
-            homepage=github_url,
+            identifier=identifier,
+            homepage=identifier,
             tags=tags,
             provider="Capminal",
             logo="",
             emoji=_CAPMINAL_EMOJI,
             category="crypto",
         )
+

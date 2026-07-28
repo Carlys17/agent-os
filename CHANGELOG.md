@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Native support for Capminal Skills (`Capminal/agent-skills`) in the Skills hub: browse, inspect, and install allowlisted Capminal skills with publisher branding.
+
 ## [2026.7.27] - 2026-07-27
 
 ### Added
