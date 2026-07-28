@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.7.28] - 2026-07-28
+
+### Added
+
+- A new chat can be started from anywhere in the console with
+  `Cmd/Ctrl+Shift+O`, using the same flow as the New Chat button. The button
+  tooltip shows the platform-appropriate hint (#131, closes #120).
+
+### Fixed
+
+- The settings screen called itself three different things depending on where
+  you looked. The route title, sidebar item, page heading, browser tab title,
+  and the docs now all say **Agent Setup** (#125, closes #123).
+
 ## [2026.7.27] - 2026-07-27
 
 ### Added
