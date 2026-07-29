@@ -5,12 +5,19 @@ from typing import Any
 
 import pytest
 
-from agentos.skills.hub.bankr import _ALLOWED_SLUGS, BankrSource
+from agentos.skills.hub.bankr import _ALLOWED_SLUGS, _ALLOWED_USER_SKILLS, BankrSource
 
 # The fake catalog exercises the filtering paths (installable / external /
 # malformed). We hand BankrSource this slug set via ``allowlist=`` so the source
 # fetches exactly these directly — no repo tree crawl.
 _FIXTURE_SLUGS = ("alchemy", "bankr", "extern", "broken")
+
+# A skill published on bankr.bot rather than into BankrBot/skills: addressed by
+# author wallet, served as JSON with the body inline.
+_USER_WALLET = "0x" + "ab" * 20
+_USER_SLUG = "range-lp-manager"
+_USER_IDENT = f"https://bankr.bot/skills/{_USER_WALLET}/{_USER_SLUG}"
+_USER_API_PREFIX = f"https://api.bankr.bot/public/skills/{_USER_WALLET}/"
 
 
 def _catalog(slug: str, *, install_type: str = "bankr", logo: str | None = None) -> bytes:
@@ -26,6 +33,27 @@ def _catalog(slug: str, *, install_type: str = "bankr", logo: str | None = None)
             "install": {"type": install_type, "repoPath": slug},
         }
     ).encode("utf-8")
+
+
+def _user_payload(
+    *,
+    content: str = "# Range LP\n\nPlace and rebalance concentrated liquidity.\n",
+    **overrides: Any,
+) -> bytes:
+    skill: dict[str, Any] = {
+        "slug": _USER_SLUG,
+        "name": _USER_SLUG,
+        "description": "Manage range liquidity — premium aware.",
+        "tags": ["defi", "liquidity"],
+        "content": content,
+        "author": {
+            "walletAddress": _USER_WALLET,
+            "displayName": "Jane Doe",
+            "handle": "@janedoe",
+        },
+    }
+    skill.update(overrides)
+    return json.dumps({"success": True, "skill": skill}).encode("utf-8")
 
 
 class _Response:
@@ -102,7 +130,8 @@ def _reset_client_counters() -> None:
 
 
 def _source() -> BankrSource:
-    return BankrSource(allowlist=_FIXTURE_SLUGS)
+    """Repo-half source: the registry allowlist is exercised separately below."""
+    return BankrSource(allowlist=_FIXTURE_SLUGS, user_allowlist=())
 
 
 @pytest.mark.asyncio
@@ -258,7 +287,7 @@ async def test_all_entries_failing_returns_empty_without_raising(monkeypatch) ->
 
 
 class _DefaultAllowlistClient(_AsyncClient):
-    """Serves only the two real default slugs."""
+    """Serves the real default slugs plus the default registry skill."""
 
     catalogs = {
         "bankr": _catalog("bankr", logo=None),
@@ -271,20 +300,34 @@ class _DefaultAllowlistClient(_AsyncClient):
         ),
     }
 
+    async def get(self, url: str, **kwargs: Any) -> _Response:
+        if url.startswith("https://api.bankr.bot/public/skills/"):
+            slug = url.rsplit("/", 1)[-1]
+            return _Response(content=_user_payload(slug=slug, name=slug))
+        return await super().get(url, **kwargs)
+
 
 @pytest.mark.asyncio
-async def test_default_allowlist_loads_only_two_skills(monkeypatch) -> None:
+async def test_default_allowlist_loads_the_shipped_repo_and_registry_skills(monkeypatch) -> None:
     import httpx
 
     monkeypatch.setattr(httpx, "AsyncClient", _DefaultAllowlistClient)
 
-    # Default (no allowlist arg) → exactly the two Bankr slugs, nothing else.
+    # Defaults (no allowlist args) → exactly these, nothing else.
     assert _ALLOWED_SLUGS == ("bankr", "bankr-token-scam-analysis")
+    assert _ALLOWED_USER_SKILLS == (
+        "0xd4fd8d6f0f64f3d0ba015b645ca8f8c13355c24a/stock-premium-lp-manager",
+    )
 
     results = await BankrSource().search("")
 
-    assert {r.name for r in results} == {"bankr", "bankr-token-scam-analysis"}
-    # Two skills → two catalog.json + two SKILL.md fetches, and no tree crawl.
+    assert {r.name for r in results} == {
+        "bankr",
+        "bankr-token-scam-analysis",
+        "stock-premium-lp-manager",
+    }
+    # Two repo skills → two catalog.json + two SKILL.md fetches, no tree crawl.
+    # The registry skill needs neither: its payload carries the body inline.
     assert _DefaultAllowlistClient.catalog_calls == 2
     assert _DefaultAllowlistClient.skill_md_calls == 2
 
@@ -354,6 +397,227 @@ async def test_install_path_refuses_identifiers_outside_the_allowlist(
     assert await src.inspect(identifier) is None
     # The delegate is never reached — nothing is downloaded.
     assert calls == []
+
+
+# ── Registry half: skills published on bankr.bot, not into BankrBot/skills ───
+
+
+class _UserSkillClient(_AsyncClient):
+    """Serves the public registry endpoint; repo URLs fall through to the base."""
+
+    payload = _user_payload()
+    user_calls = 0
+    last_kwargs: dict[str, Any] = {}
+
+    async def get(self, url: str, **kwargs: Any) -> _Response:
+        if url.startswith("https://api.bankr.bot/public/skills/"):
+            type(self).user_calls += 1
+            type(self).last_kwargs = kwargs
+            if url != _USER_API_PREFIX + _USER_SLUG:
+                return _Response(status_code=404)
+            return _Response(content=self.payload)
+        return await super().get(url, **kwargs)
+
+
+@pytest.fixture(autouse=True)
+def _reset_user_counters() -> None:
+    _UserSkillClient.user_calls = 0
+    _UserSkillClient.last_kwargs = {}
+    _UserSkillClient.payload = _user_payload()
+
+
+def _user_source() -> BankrSource:
+    return BankrSource(
+        token="github-token",
+        allowlist=(),
+        user_allowlist=(f"{_USER_WALLET}/{_USER_SLUG}",),
+    )
+
+
+@pytest.mark.asyncio
+async def test_registry_skill_is_listed_with_author_tags_and_page_identifier(monkeypatch) -> None:
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _UserSkillClient)
+
+    results = await _user_source().search("")
+
+    assert len(results) == 1
+    meta = results[0]
+    assert meta.name == _USER_SLUG
+    assert meta.source_id == "bankr"
+    assert meta.trust_level == "community"
+    assert meta.description == "Manage range liquidity — premium aware."
+    assert meta.tags == ["defi", "liquidity"]
+    # The author is credited, not Bankr — a wallet-published skill must not
+    # resolve to the Bankr publisher record.
+    assert meta.provider == "@janedoe"
+    # No catalog.json to declare a category, so the tags supply one.
+    assert meta.category == "defi"
+    assert meta.identifier == _USER_IDENT
+    assert meta.homepage == _USER_IDENT
+    # No avatar URL: the console's CSP would block the author's CDN image.
+    assert meta.logo == ""
+    assert meta.emoji == "📺"
+
+
+@pytest.mark.asyncio
+async def test_registry_skill_is_searchable_by_tag_and_author(monkeypatch) -> None:
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _UserSkillClient)
+
+    src = _user_source()
+
+    assert [r.name for r in await src.search("liquidity")] == [_USER_SLUG]
+    assert [r.name for r in await src.search("janedoe")] == [_USER_SLUG]
+    assert await src.search("nothing-matches-this") == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_registry_skill_synthesizes_skill_md_frontmatter(monkeypatch) -> None:
+    import httpx
+    import yaml
+
+    monkeypatch.setattr(httpx, "AsyncClient", _UserSkillClient)
+
+    async def _unreachable(self: Any, identifier: str) -> Any:
+        raise AssertionError("registry skills must not be fetched through GitHub")
+
+    from agentos.skills.hub.github import GitHubSource
+
+    monkeypatch.setattr(GitHubSource, "fetch", _unreachable)
+
+    bundle = await _user_source().fetch(_USER_IDENT)
+
+    assert bundle is not None
+    assert bundle.name == _USER_SLUG
+    assert set(bundle.files) == {"SKILL.md"}
+    md = bundle.skill_md
+    assert md is not None and md.startswith("---\n")
+
+    front_text, _, body = md[4:].partition("\n---\n")
+    front = yaml.safe_load(front_text)
+    assert front["name"] == _USER_SLUG
+    assert front["description"] == "Manage range liquidity — premium aware."
+    assert front["tags"] == ["defi", "liquidity"]
+    # The body the registry served is preserved verbatim underneath.
+    assert body.strip().startswith("# Range LP")
+    assert "concentrated liquidity" in body
+    assert bundle.meta is not None and bundle.meta.identifier == _USER_IDENT
+
+
+@pytest.mark.asyncio
+async def test_registry_fetch_does_not_send_the_github_token(monkeypatch) -> None:
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _UserSkillClient)
+
+    await _user_source().fetch(_USER_IDENT)
+
+    # api.bankr.bot is a different host than the repo half authenticates
+    # against — the GitHub token has no business being sent there.
+    assert _UserSkillClient.user_calls == 1
+    assert not _UserSkillClient.last_kwargs.get("headers")
+
+
+@pytest.mark.asyncio
+async def test_inspect_registry_skill_returns_meta_without_github(monkeypatch) -> None:
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _UserSkillClient)
+
+    async def _unreachable(self: Any, identifier: str) -> Any:
+        raise AssertionError("registry skills must not be inspected through GitHub")
+
+    from agentos.skills.hub.github import GitHubSource
+
+    monkeypatch.setattr(GitHubSource, "inspect", _unreachable)
+
+    meta = await _user_source().inspect(_USER_IDENT)
+
+    assert meta is not None
+    assert meta.name == _USER_SLUG
+    assert meta.identifier == _USER_IDENT
+
+
+@pytest.mark.asyncio
+async def test_body_that_already_has_frontmatter_is_not_nested(monkeypatch) -> None:
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _UserSkillClient)
+    authored = "---\nname: authored\ndescription: Written by hand\n---\n\n# Authored\n"
+    _UserSkillClient.payload = _user_payload(content=authored)
+
+    bundle = await _user_source().fetch(_USER_IDENT)
+
+    assert bundle is not None
+    assert bundle.skill_md == authored
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(b"{ not json", id="malformed-json"),
+        pytest.param(json.dumps({"success": False}).encode(), id="unsuccessful"),
+        pytest.param(json.dumps({"success": True}).encode(), id="no-skill-object"),
+        pytest.param(_user_payload(content=""), id="empty-body"),
+        pytest.param(_user_payload(content="x" * (256 * 1024 + 1)), id="oversized-body"),
+    ],
+)
+async def test_unusable_registry_payloads_are_dropped(monkeypatch, payload: bytes) -> None:
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _UserSkillClient)
+    _UserSkillClient.payload = payload
+
+    src = _user_source()
+
+    assert await src.search("") == []
+    assert await src.fetch(_USER_IDENT) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        # Another author's skill on the same host — the laundering case.
+        f"https://bankr.bot/skills/{'0x' + 'cd' * 20}/{_USER_SLUG}",
+        # The allowlisted author, but a skill they did not get listed for.
+        f"https://bankr.bot/skills/{_USER_WALLET}/some-other-skill",
+        # A look-alike host.
+        f"https://bankr.bot.evil.example/skills/{_USER_WALLET}/{_USER_SLUG}",
+        # Path traversal in the slug, and a wallet that is not an address.
+        f"https://bankr.bot/skills/{_USER_WALLET}/../../etc/passwd",
+        f"https://bankr.bot/skills/not-a-wallet/{_USER_SLUG}",
+    ],
+)
+async def test_registry_install_path_refuses_identifiers_outside_the_allowlist(
+    monkeypatch, identifier: str
+) -> None:
+    """bankr.bot serves every published skill from one host, so the source must
+    gate on the exact wallet/slug pair — otherwise any author's skill could be
+    installed with ``source="bankr"`` and inherit the hub's provenance."""
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _UserSkillClient)
+
+    src = _user_source()
+
+    assert await src.fetch(identifier) is None
+    assert await src.inspect(identifier) is None
+    # Rejected before the network, not after.
+    assert _UserSkillClient.user_calls == 0
+
+
+def test_malformed_user_allowlist_entries_are_dropped_at_construction() -> None:
+    src = BankrSource(
+        allowlist=(),
+        user_allowlist=("not-a-wallet/slug", "0xzz/bad", f"{_USER_WALLET}/{_USER_SLUG}"),
+    )
+
+    assert [ref.key for ref in src._user_refs] == [f"{_USER_WALLET}/{_USER_SLUG}"]
 
 
 def test_default_router_exposes_bankr_source(monkeypatch) -> None:
