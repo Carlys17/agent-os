@@ -249,6 +249,7 @@ agentos skills list                    # installed, per layer
 agentos skills search <query>
 agentos skills install <name>                    # from ClawHub (default source)
 agentos skills install owner/repo:path -s github # from a GitHub repo/URL
+agentos skills install <bankr-skill-url> -s bankr # from Bankr (repo or bankr.bot URL)
 agentos skills tap add owner/repo      # register a GitHub repo as a skill source
 agentos skills tap list
 agentos skills update

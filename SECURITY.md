@@ -27,6 +27,20 @@ Helpful reports include:
 - Reproduction steps using placeholders instead of real credentials.
 - Expected impact and any known mitigations.
 
+## Audit Reports and Scanner Output
+
+Do not submit audit reports, scanner output, or security review documents as pull
+requests. A report pinned to a commit goes stale in the tree within weeks with
+nothing to keep it honest, and a document committed to this repository reads as
+maintainer-endorsed regardless of who wrote it.
+
+Route those findings through the private advisory link above. We triage every
+finding against `main` and reply with a per-finding verdict.
+
+There is no bug bounty or paid reward program for AgentOS, and none is planned.
+Researchers whose reports lead to a fix are credited in the release notes for that
+fix, under whichever name they prefer.
+
 ## Handling
 
 Maintainers will acknowledge valid reports, triage severity, prepare a fix on a

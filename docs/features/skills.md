@@ -46,6 +46,27 @@ Some skills may be ineligible when optional dependencies are missing or when the
 skill is intentionally demo-only. `skills list` is the source of truth for your
 current install.
 
+### Where Search Results Come From
+
+`skills search` fans out to every configured source and merges the results. The
+Bankr source covers both places Bankr publishes: skills in the
+[BankrBot/skills](https://github.com/BankrBot/skills) repository, and skills
+published from bankr.bot, which live under their author's wallet address
+(`https://bankr.bot/skills/<wallet>/<slug>`) and are served with their body
+inline rather than as a repository directory. Both install the same way:
+
+```sh
+agentos skills install https://bankr.bot/skills/<wallet>/<slug> --source bankr
+```
+
+Each half carries a fixed allowlist, because neither has an index that can be
+crawled without tripping a rate limit — and because the source a skill arrives
+through is recorded as its provenance, so it must not be able to pull an
+arbitrary repository or another author's skill under Bankr's name. A skill
+published from a wallet is credited to its author, not to Bankr: it lists the
+author's handle and resolves to no recognized publisher, so it renders unbranded
+rather than sitting in the Partners group.
+
 ## How a Skill Is Described
 
 Four separate facts describe an installed skill. They are easy to confuse, and
