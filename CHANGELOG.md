@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.7.29] - 2026-07-29
+
 ### Added
 
 - Bankr skills published from bankr.bot — the ones that live under an author's
@@ -17,6 +19,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Bankr's brand. As with the repository half, only allowlisted skills can be
   installed through the Bankr source, so it cannot be used to pull an arbitrary
   author's skill and record it as having come from Bankr's hub.
+
+### Security
+
+- `SECURITY.md` now answers what happens to an audit report: findings go
+  through the private advisory form rather than a pull request adding an audit
+  document to the repository, there is no bug bounty program, and a researcher
+  whose report leads to a fix is credited in that fix's release notes (#154).
 
 ## [2026.7.28] - 2026-07-28
 
