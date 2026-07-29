@@ -31,7 +31,7 @@ def scan_cron_prompt(task: str) -> tuple[bool, str]:
     """Return whether a scheduled prompt should be rejected."""
     for char in task:
         cat = unicodedata.category(char)
-        if cat in ("Cf", "Mn", "Cc") and char not in ("\n", "\r", "\t"):
+        if cat in ("Cf", "Cc") and char not in ("\n", "\r", "\t"):
             log.warning("cron_prompt_blocked", pattern="invisible_unicode", char=repr(char))
             return True, f"Blocked: invisible unicode character detected ({repr(char)})"
 
