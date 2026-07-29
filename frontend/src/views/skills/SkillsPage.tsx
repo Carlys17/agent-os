@@ -191,6 +191,9 @@ function LogoBadge({ item, cls }: { item: RegistryItem; cls: string }) {
     if (item.source?.toLowerCase() === 'bankr') {
       return <PartnerLogo brand="bankr" className={cls} decorative />
     }
+    if (item.source?.toLowerCase() === 'capminal') {
+      return <PartnerLogo brand="capminal" className={cls} decorative />
+    }
     return <span className={`${cls} ${cls}--initials`}>{initials(item.provider || item.name)}</span>
   }
   return (

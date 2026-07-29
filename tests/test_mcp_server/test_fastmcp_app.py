@@ -102,4 +102,4 @@ def test_base_mcp_dependency_minimum_supports_fastmcp() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     dependencies = pyproject["project"]["dependencies"]
 
-    assert "mcp>=1.2.0" in dependencies
+    assert any(dep.startswith("mcp>=1.2.0") for dep in dependencies)

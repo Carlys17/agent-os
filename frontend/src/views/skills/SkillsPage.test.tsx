@@ -141,6 +141,13 @@ const BANKR_CATALOG_ITEM = {
   source: 'bankr',
   description: 'Analyze token risk.',
 }
+const CAPMINAL_CATALOG_ITEM = {
+  name: 'morse-launch-b20',
+  identifier: 'https://github.com/Capminal/agent-skills/tree/main/morse-launch-b20',
+  provider: 'Capminal',
+  source: 'capminal',
+  description: 'Morse launch B20 skill.',
+}
 // A needs_setup skill carrying both a Requirements manifest and Missing bins/env
 // (skills.js:743-777,792-803). requirements.items exercises the ready /
 // needs_setup / missing_skill status branches plus the missing + requires detail.
@@ -447,6 +454,16 @@ describe('SkillsPage', () => {
 
     const card = await screen.findByLabelText('Catalog skill bankr-token-scam-analysis')
     expect(within(card).getByRole('presentation')).toHaveAttribute('src', bankrSymbolUrl)
+  })
+
+  it('uses the official Capminal icon when a Capminal catalog item has no logo metadata', async () => {
+    wireRpc({ searchResults: [CAPMINAL_CATALOG_ITEM] })
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: 'Capminal' }))
+
+    const card = await screen.findByLabelText('Catalog skill morse-launch-b20')
+    expect(within(card).getByRole('presentation')).toHaveAttribute('src', capminalSymbolUrl)
   })
 
   // ── Install (per-item busy, correct RPC + params + invalidation) ─────────
