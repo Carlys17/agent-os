@@ -486,6 +486,16 @@ describe('SkillsPage', () => {
     await waitFor(() => expect(callsFor('skills.list').length).toBeGreaterThanOrEqual(2))
   })
 
+  it('renders an installed catalog chip in the same card-action slot as Install', async () => {
+    wireRpc({ searchResults: [{ ...CATALOG_ITEM, installed: true }] })
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Community$/i }))
+    const card = await screen.findByLabelText('Catalog skill Uniswap')
+    expect(within(card).getByText('Installed')).toHaveClass('sk-chip--card-action')
+  })
+
   it('a dangerous scan verdict arms a force install instead of erroring', async () => {
     wireRpc({
       installResponse: {

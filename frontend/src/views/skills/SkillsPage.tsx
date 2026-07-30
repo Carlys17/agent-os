@@ -366,7 +366,7 @@ function InstallButton({
 }) {
   if (action === 'installed')
     return (
-      <span className={`sk-chip sk-chip--ok${large ? ' sk-chip--lg' : ''}`}>
+      <span className={`sk-chip sk-chip--ok${large ? ' sk-chip--lg' : ' sk-chip--card-action'}`}>
         <CheckIcon aria-hidden="true" />
         Installed
       </span>

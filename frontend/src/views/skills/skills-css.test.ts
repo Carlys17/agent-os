@@ -38,6 +38,7 @@ describe('Skills directory CSS contract', () => {
   })
 
   it('prevents skill cards from overflowing grid tracks when skill names are long', () => {
+    expect(css).toMatch(/\.sk-grid > \* \{[\s\S]*?min-width:\s*0;/)
     expect(css).toMatch(/\.sk-card \{[\s\S]*?min-width:\s*0;/)
     expect(css).toMatch(/\.sk-card__head \{[\s\S]*?min-width:\s*0;/)
     expect(css).toMatch(
@@ -54,5 +55,14 @@ describe('Skills directory CSS contract', () => {
       /\.sk-chip--lg \{[\s\S]*?font-size: 0\.6875rem;[\s\S]*?min-height: 2\.25rem;/,
     )
     expect(css).not.toMatch(/\.control-surface \.sk-chip \{/)
+  })
+
+  it('keeps the installed chip the same height as the card install action', () => {
+    expect(css).toMatch(
+      /\.control-surface \.sk-rcard__foot \[data-slot='button'\] \{[\s\S]*?min-height:\s*2\.25rem;/,
+    )
+    expect(css).toMatch(
+      /\.control-surface \.sk-rcard__foot \.sk-chip--card-action \{[\s\S]*?display:\s*inline-flex;[\s\S]*?min-height:\s*2\.25rem;/,
+    )
   })
 })
