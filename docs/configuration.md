@@ -165,6 +165,29 @@ With `filter_enabled = false` the list is identical on every turn, so it is
 injected as part of the cacheable system prompt. With filtering on it is re-picked
 per message and is kept out of the cached prefix instead.
 
+## Skill Read Ceiling
+
+`[skills].max_skill_view_chars` caps one `skill_view` result:
+
+```toml
+[skills]
+max_skill_view_chars = 10000
+```
+
+This is a different budget from the one above, because a tool result is not
+cached the way the system prompt is: a large skill costs its tokens again on
+every re-read. The shipped skills are small (median 2 400 characters, largest
+21 600), so the ceiling only engages for skills installed from a hub or written
+for another agent — 56 000 characters for one, 87 000 for another, which is
+14 000 to 22 000 tokens in a single tool result.
+
+Over the ceiling, `skill_view` returns the skill's opening sections plus an
+index of the rest, and the agent reads on with
+`skill_view(name, section="<title>")` or `skill_view(name, file_path="...")`.
+Two cases are deliberately left whole: a body with no headings, because there
+would be no way to ask for the rest, and a body only slightly over the ceiling,
+where the index would cost more than it saves. Set `0` to switch it off.
+
 ```sh
 agentos config get skills.max_skills_prompt_chars
 agentos config set skills.max_skills_prompt_chars 32000

@@ -369,9 +369,174 @@ def create_skill_tools(loader: SkillLoader) -> None:
                     lines.append(f"      Needs {declared.name}{detail}{source}")
         return "\n".join(lines)
 
+    def _view_budget() -> int:
+        """The character ceiling for one ``skill_view`` body, 0 when disabled.
+
+        Read off the gateway config the control tools already hold, the same way
+        the config block is. A missing config means the default rather than an
+        unbounded read: the ceiling exists to stop a 87k-character skill from
+        landing in one tool result, and a boot ordering detail should not be
+        what turns that off.
+        """
+        from agentos.skills.outline import DEFAULT_MAX_SKILL_VIEW_CHARS
+
+        try:
+            from agentos.tools.builtin.control import _gateway_config
+
+            configured = getattr(
+                getattr(_gateway_config, "skills", None),
+                "max_skill_view_chars",
+                None,
+            )
+            if isinstance(configured, int) and configured >= 0:
+                return configured
+        except Exception:  # pragma: no cover — never block reading a skill
+            logger.debug("skill_view.budget_lookup_failed", exc_info=True)
+        return DEFAULT_MAX_SKILL_VIEW_CHARS
+
+    def _linked_files(skill: Any) -> list[str]:
+        """Supporting files, relative to the skill directory."""
+        try:
+            base = Path(skill.base_dir)
+            from agentos.skills.resources import SkillResources
+
+            resources = SkillResources(base)
+            found = [
+                *resources.list_references(),
+                *resources.list_scripts(),
+                *resources.list_assets(),
+            ]
+            return [str(path.relative_to(base)) for path in found]
+        except Exception:  # pragma: no cover — a listing is never worth failing on
+            logger.debug("skill_view.linked_files_failed", exc_info=True)
+            return []
+
+    def _skill_body_within_budget(skill: Any, raw: str) -> str:
+        """Return the body whole, or its opening plus an index of the rest."""
+        from agentos.skills.outline import (
+            head_sections,
+            parse_sections,
+            render_linked_files,
+            render_outline,
+        )
+
+        budget = _view_budget()
+        if budget <= 0 or len(raw) <= budget:
+            return raw
+
+        sections = parse_sections(raw)
+        if not sections:
+            # Nothing to index means nothing to ask for afterwards, and a body
+            # cut off with no way back is worse than an expensive one. Hand it
+            # over whole and say so in the log.
+            logger.info(
+                "skill_view.oversized_without_headings",
+                skill=skill.name,
+                chars=len(raw),
+                budget=budget,
+            )
+            return raw
+
+        head, shown_through = head_sections(raw, sections, budget)
+        outline = render_outline(sections, shown_through=shown_through, skill_name=skill.name)
+        linked = render_linked_files(_linked_files(skill), skill.name)
+        parts = [
+            head,
+            "---",
+            (
+                f"`{skill.name}` is {len(raw):,} characters; the {shown_through:,} above are "
+                "its opening sections. The rest is indexed below — read only what the task "
+                "needs rather than the whole skill."
+            ),
+            outline,
+        ]
+        if linked:
+            parts.append(linked)
+        outlined = "\n\n".join(part for part in parts if part)
+
+        # A body only a little over the ceiling costs more to index than to
+        # send: the head is nearly the whole thing and the index is pure
+        # addition. Never hand back more than the skill.
+        if len(outlined) >= len(raw):
+            return raw
+
+        logger.debug(
+            "skill_view.outlined",
+            skill=skill.name,
+            chars=len(raw),
+            returned=len(outlined),
+            budget=budget,
+        )
+        return outlined
+
+    def _skill_section(skill: Any, raw: str, wanted: str) -> str:
+        """Return one section of a skill body, addressed by heading title."""
+        from agentos.skills.outline import (
+            Section,
+            find_section,
+            indexable,
+            parse_sections,
+            render_outline,
+        )
+
+        sections = parse_sections(raw)
+        if not sections:
+            return (
+                f"Skill '{skill.name}' has no sections to address. "
+                "Call skill_view without section to read it."
+            )
+
+        match = find_section(sections, wanted)
+        if match is None:
+            listed = ", ".join(f'"{s.path}"' for s in indexable(sections))
+            return f"No section '{wanted}' in skill '{skill.name}'. Sections: {listed}"
+        if isinstance(match, list):
+            listed = ", ".join(f'"{s.path}"' for s in match)
+            return (
+                f"'{wanted}' matches more than one section in skill '{skill.name}'. "
+                f"Ask for one by its full path: {listed}"
+            )
+
+        text = raw[match.start : match.end].rstrip()
+        budget = _view_budget()
+        if budget <= 0 or len(text) <= budget:
+            return text
+
+        # The section is itself over budget. Index its children the same way the
+        # whole body is indexed, so there is always a next step to take.
+        from agentos.skills.outline import head_sections
+
+        children = [
+            Section(
+                level=child.level,
+                title=child.title,
+                start=child.start - match.start,
+                end=child.end - match.start,
+                ancestors=child.ancestors,
+            )
+            for child in sections
+            if match.start < child.start < match.end
+        ]
+        if not children:
+            # A leaf section with no subheadings: there is nothing finer to
+            # offer, so return it whole rather than cutting it into a dead end.
+            return text
+
+        head, shown_through = head_sections(text, children, budget)
+        outline = render_outline(children, shown_through=shown_through, skill_name=skill.name)
+        note = (
+            f"Section '{match.title}' of `{skill.name}` is {len(text):,} characters; "
+            f"the {shown_through:,} above are its opening."
+        )
+        return "\n\n".join(part for part in (head, "---", note, outline) if part)
+
     @tool(
         name="skill_view",
-        description=("Read a skill's SKILL.md content by name. Optionally read a supporting file."),
+        description=(
+            "Read a skill's SKILL.md content by name. A large skill comes back as its "
+            "opening sections plus an index of the rest — pass section to read one of "
+            "those, or file_path to read a supporting file."
+        ),
         params={
             "name": {
                 "type": "string",
@@ -381,10 +546,21 @@ def create_skill_tools(loader: SkillLoader) -> None:
                 "type": "string",
                 "description": "Optional sub-file path (references/, scripts/)",
             },
+            "section": {
+                "type": "string",
+                "description": (
+                    "Optional section title, quoted from the index a large skill "
+                    'returns. Accepts "Parent > Child" when a title repeats.'
+                ),
+            },
         },
         required=["name"],
     )
-    async def skill_view(name: str, file_path: str | None = None) -> str:
+    async def skill_view(
+        name: str,
+        file_path: str | None = None,
+        section: str | None = None,
+    ) -> str:
         if _loader is None:
             return "No skill loader available."
         skill = _loader.get_by_name(name)
@@ -412,7 +588,13 @@ def create_skill_tools(loader: SkillLoader) -> None:
                 return f"File not found in skill '{name}': {file_path}"
             return content
 
-        body = skill.content or f"(Skill '{name}' has no body content)"
+        raw = skill.content or ""
+        if section:
+            return _skill_section(skill, raw, section)
+
+        body = raw or f"(Skill '{name}' has no body content)"
+        if raw:
+            body = _skill_body_within_budget(skill, raw)
         body += _skill_setup_note(skill)
         # Append whatever the operator configured for this skill, so the agent
         # starts from the values in effect rather than asking the user or

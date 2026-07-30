@@ -39,6 +39,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     `skill_list`, so following it was impossible. Both tools — read-only — are
     now on the cron allowlist.
 
+- Reading a large skill cost the whole skill. `skill_view` returned every byte
+  of a SKILL.md, and unlike the system prompt a tool result is not cached, so a
+  56 000-character hub skill spent ~14 000 tokens per read and again on every
+  re-read — the shape behind reports of skill loading being slow and expensive.
+  Over `[skills].max_skill_view_chars` (new, default 10 000) it now returns the
+  skill's opening sections plus an index of the rest, read on with
+  `skill_view(name, section="<title>")`. Across the skills on a real install
+  that is 43% fewer characters, and 80–87% on the largest. Shipped skills are
+  unaffected: the largest is 21 600 characters and the median 2 400. A body with
+  no headings, or one only slightly over the ceiling where the index would cost
+  more than it saves, is still returned whole.
+
 - A skills block that quietly lost its descriptions was indistinguishable from
   an operator uninstalling skills: nothing was reported as dropped and the
   character count simply fell. Each turn now records `skills_render_mode` and
