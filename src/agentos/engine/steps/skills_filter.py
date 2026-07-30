@@ -10,7 +10,7 @@ import structlog
 from agentos.engine.pipeline import TurnContext
 from agentos.skills.availability import gate_skills, plan_injection, retrieval_availability
 from agentos.skills.eligibility import EligibilityContext
-from agentos.skills.injector import DEFAULT_MAX_SKILLS_PROMPT_CHARS
+from agentos.skills.injector import DEFAULT_MAX_SKILLS_PROMPT_CHARS, RENDER_MODE_FULL
 from agentos.skills.retrieval import HybridRetriever, Strategy
 
 log = structlog.get_logger(__name__)
@@ -129,7 +129,15 @@ async def filter_skills(ctx: TurnContext) -> TurnContext:
     else:
         base, suffix = ctx.system_prompt
 
-    plan = plan_injection(final, max_chars, injection_mode)
+    plan = plan_injection(
+        final,
+        max_chars,
+        injection_mode,
+        # Which route back to the descriptions the block advertises has to match
+        # the live tool surface: cron agents run under an allowlist, so pointing
+        # them at a tool they do not have is worse than saying nothing.
+        skill_list_tool="skill_list" in available_tools,
+    )
     skills_prompt, dropped = plan.prompt, plan.dropped
     availability.update(plan.availability)
 
@@ -155,6 +163,12 @@ async def filter_skills(ctx: TurnContext) -> TurnContext:
     ctx.metadata["skills_prompt_chars"] = len(skills_prompt)
     ctx.metadata["skills_injection_mode"] = injection_mode
     ctx.metadata["skills_dropped_for_budget"] = dropped
+    # How the block was rendered, not just how big it came out. A budget that
+    # silently threw away every description reported an empty `dropped` list and
+    # a smaller char count — indistinguishable from the operator uninstalling
+    # skills, which is how it went unnoticed across every turn of an install.
+    ctx.metadata["skills_render_mode"] = plan.mode
+    ctx.metadata["skills_description_max_chars"] = plan.description_max_chars
     # One entry per loaded skill: offered, or the reason it is not. Same map the
     # RPC surface builds from the same two functions.
     ctx.metadata["skill_availability"] = availability
@@ -165,6 +179,18 @@ async def filter_skills(ctx: TurnContext) -> TurnContext:
             dropped=dropped,
             budget=max_chars,
             kept=len(injected),
+        )
+    elif plan.mode != RENDER_MODE_FULL and injection_mode != "user_message":
+        # "user_message" renders compact by configuration, not under budget
+        # pressure, so the same warning there would be noise on every turn and
+        # its advice — raise the budget — would not change anything.
+        log.warning(
+            "skills_filter.budget_degraded",
+            mode=plan.mode,
+            description_max_chars=plan.description_max_chars,
+            budget=max_chars,
+            skills=len(injected),
+            hint="raise skills.max_skills_prompt_chars or enable skills.filter_enabled",
         )
 
     # Surface the actual skill IDs the retriever picked. Without this,
@@ -197,7 +223,25 @@ async def filter_skills(ctx: TurnContext) -> TurnContext:
 
     if skills_prompt and injection_mode == "user_context":
         ctx.metadata["skills_context_prompt"] = skills_prompt
+    elif skills_prompt and not filter_enabled:
+        # The block belongs in the cacheable base, not the dynamic suffix.
+        # Downstream, an enabled prompt cache splits a (base, dynamic) prompt by
+        # sending base as the system message and the dynamic half as a *user*
+        # message headed "not a user request ... use it only when it is
+        # relevant" — which is the weakest position in the request and directly
+        # contradicts the block's own "read this before answering". Skills are
+        # instructions, so they have to stay system-role.
+        #
+        # Putting them in the cached half is also the cheaper choice: with
+        # relevance filtering off the list is the same on every turn, so paying
+        # to re-send it uncached bought nothing. It only busts the cached prefix
+        # when the offered set genuinely changes — an install, a removal, or a
+        # skill becoming eligible.
+        ctx.system_prompt = (f"{base}{skills_prompt}", suffix) if suffix else base + skills_prompt
     elif skills_prompt:
+        # Relevance filtering re-picks the list from the message, so it varies
+        # per turn and would bust the cached prefix every time. Keep it in the
+        # dynamic slot.
         combined_suffix = f"{suffix}\n\n{skills_prompt}" if suffix else skills_prompt
         ctx.system_prompt = (base, combined_suffix)
     # else: leave ctx.system_prompt unchanged — preserves any upstream tuple

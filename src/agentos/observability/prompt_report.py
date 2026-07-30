@@ -36,6 +36,13 @@ class PromptReport:
     tools_schema_chars: int = 0
     skill_count: int = 0
     skills_prompt_chars: int = 0
+    #: How the skills block was rendered — see injector.RENDER_MODE_*. Anything
+    #: other than "full" means the budget cost the model description text.
+    skills_render_mode: str | None = None
+    #: The cap descriptions were shortened to, when they were. The mode alone
+    #: cannot tell a healthy trim (451 chars — still a sentence) from a severe
+    #: one (120), and those call for different responses.
+    skills_description_max_chars: int | None = None
     memory_md_present: bool = False
     daily_notes_omitted: bool = False
     daily_notes_count_before_omit: int = 0
@@ -151,6 +158,16 @@ def build_prompt_report(
         tools_schema_chars=sum(entry.schema_chars for entry in tool_entries),
         skill_count=int(metadata.get("skill_count") or 0),
         skills_prompt_chars=int(metadata.get("skills_prompt_chars") or 0),
+        skills_render_mode=(
+            str(metadata["skills_render_mode"])
+            if metadata.get("skills_render_mode") is not None
+            else None
+        ),
+        skills_description_max_chars=(
+            int(metadata["skills_description_max_chars"])
+            if metadata.get("skills_description_max_chars") is not None
+            else None
+        ),
         memory_md_present=bool(metadata.get("memory_md_present", False)),
         daily_notes_omitted=bool(metadata.get("daily_notes_omitted", False)),
         daily_notes_count_before_omit=int(metadata.get("daily_notes_count_before_omit") or 0),

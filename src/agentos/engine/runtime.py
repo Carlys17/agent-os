@@ -4702,6 +4702,10 @@ class TurnRunner:
                 tools_schema_chars=prompt_report.tools_schema_chars if prompt_report else 0,
                 skill_count=prompt_report.skill_count if prompt_report else 0,
                 skills_prompt_chars=prompt_report.skills_prompt_chars if prompt_report else 0,
+                skills_render_mode=(prompt_report.skills_render_mode if prompt_report else None),
+                skills_description_max_chars=(
+                    prompt_report.skills_description_max_chars if prompt_report else None
+                ),
                 memory_md_present=prompt_report.memory_md_present if prompt_report else False,
                 daily_notes_omitted=(prompt_report.daily_notes_omitted if prompt_report else False),
                 daily_notes_count_before_omit=(

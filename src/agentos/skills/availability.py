@@ -21,7 +21,11 @@ from agentos.skills.eligibility import (
     check_eligibility,
     diagnose_eligibility,
 )
-from agentos.skills.injector import SkillInjector
+from agentos.skills.injector import (
+    RENDER_MODE_COMPACT,
+    RENDER_MODE_FULL,
+    SkillInjector,
+)
 from agentos.skills.types import SkillSpec
 
 #: Reason codes. "" is reserved for an offered skill.
@@ -62,6 +66,10 @@ class InjectionPlan(NamedTuple):
     prompt: str
     #: Names the budget cut, in the order the injector sacrificed them.
     dropped: list[str]
+    #: One of the ``injector.RENDER_MODE_*`` values.
+    mode: str = RENDER_MODE_FULL
+    #: Cap applied to each description, or None when they are untrimmed.
+    description_max_chars: int | None = None
 
 
 _OFFERED = SkillAvailability(offered=True)
@@ -188,20 +196,32 @@ def plan_injection(
     gated: list[SkillSpec],
     max_chars: int,
     injection_mode: str = "system",
+    *,
+    skill_list_tool: bool = False,
 ) -> InjectionPlan:
     """Render the skills block and report which skills the budget cut.
 
-    ``injection_mode="user_message"`` renders compact unconditionally and so has
-    no budget to exceed; "system" and "user_context" both budget-select between
-    full and compact and may truncate.
+    ``injection_mode="user_message"`` renders names-only unconditionally and so
+    has no budget to exceed; "system" and "user_context" both spend the budget
+    on as much description text as fits and may truncate.
+
+    ``skill_list_tool`` says whether the session actually exposes ``skill_list``.
+    It decides which route back to the descriptions the block advertises, so it
+    must reflect the live tool surface rather than being assumed.
     """
     injector = SkillInjector()
     dropped: list[str]
+    mode: str
+    description_max_chars: int | None = None
 
     if injection_mode == "user_message":
-        prompt, dropped = injector.inject_compact("", gated), []
+        prompt = injector.inject_compact("", gated, skill_list_tool=skill_list_tool)
+        dropped = []
+        mode = RENDER_MODE_COMPACT if gated else RENDER_MODE_FULL
     else:
-        prompt, dropped = injector.inject_skills("", gated, max_chars=max_chars)
+        block = injector.render("", gated, max_chars, skill_list_tool=skill_list_tool)
+        prompt, dropped = block.text, block.dropped
+        mode, description_max_chars = block.mode, block.description_max_chars
 
     dropped_names = set(dropped)
     offered = [s for s in gated if not s.disable_model_invocation and s.name not in dropped_names]
@@ -227,6 +247,8 @@ def plan_injection(
         availability=availability,
         prompt=prompt,
         dropped=dropped,
+        mode=mode,
+        description_max_chars=description_max_chars,
     )
 
 

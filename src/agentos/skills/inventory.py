@@ -107,6 +107,11 @@ def build_skill_inventory(
             gated,
             getattr(skills_cfg, "max_skills_prompt_chars", DEFAULT_MAX_SKILLS_PROMPT_CHARS),
             getattr(skills_cfg, "injection_mode", "system"),
+            # Derived from the same tool set the gate just used. Guessing it
+            # would change the block's header length, which moves the point a
+            # tight budget truncates at — and then a row here and the prompt the
+            # engine builds would disagree about which skills are offered.
+            skill_list_tool="skill_list" in available_tools,
         )
         availability = {**availability, **plan.availability}
 

@@ -135,6 +135,10 @@ class DecisionEntry:
     tools_schema_chars: int = 0
     skill_count: int = 0
     skills_prompt_chars: int = 0
+    #: How the skills block was rendered — see injector.RENDER_MODE_*.
+    skills_render_mode: str | None = None
+    #: The cap descriptions were shortened to, when they were.
+    skills_description_max_chars: int | None = None
     memory_md_present: bool = False
     daily_notes_omitted: bool = False
     daily_notes_count_before_omit: int = 0

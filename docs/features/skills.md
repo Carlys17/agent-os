@@ -271,18 +271,34 @@ it. Guessing from the layer or from "it says ready" is what makes this hard.
    shipped skills quietly disappearing while what you installed into
    `managed`, `personal`, `project`, or `workspace` survives.
 
-5. **`not_retrieved`.** Only reachable when `skills.filter_enabled = true`,
+5. **The agent ignores skills, but nothing reports `prompt_budget`.** The block
+   fits, so no skill was dropped — but the budget was tight enough that the
+   descriptions were shortened, or replaced by names alone. A name is rarely
+   enough for the model to tell that a skill applies, so the symptom is an agent
+   that answers from general knowledge with every skill still listed as offered.
+   Check the render mode:
+
+   ```sh
+   grep skills_render_mode ~/.agentos/logs/decisions-*.jsonl | tail -1
+   ```
+
+   Anything other than `full` means the budget cost the model description text,
+   and the gateway logged `skills_filter.budget_degraded` when it happened.
+   Raise `skills.max_skills_prompt_chars`, or turn on `skills.filter_enabled` so
+   only the skills relevant to each message are injected.
+
+6. **`not_retrieved`.** Only reachable when `skills.filter_enabled = true`,
    which is off by default. Raise `skills.filter_top_k` or reword the request;
    the answer depends on the wording of that one message.
 
-6. **`tool_gate` or `fallback_superseded`.** These are about the session's
+7. **`tool_gate` or `fallback_superseded`.** These are about the session's
    tools, not the skill. The first means a tool the skill needs is not enabled;
    the second means AgentOS already has a native tool that does the job better.
 
-7. **`model_invocation_disabled`.** Working as declared. The skill opted out of
+8. **`model_invocation_disabled`.** Working as declared. The skill opted out of
    model invocation and is for you to run, not the agent.
 
-8. If none of the above applies, ask for the outcome in normal language. Skill
+9. If none of the above applies, ask for the outcome in normal language. Skill
    names can help, but user intent should still be clear.
 
 ---

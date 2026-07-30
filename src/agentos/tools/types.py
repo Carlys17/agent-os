@@ -120,6 +120,12 @@ CRON_AGENT_ALLOW: frozenset[str] = frozenset(
         "session_status",
         "sessions_history",
         "sessions_list",
+        # A cron turn gets the same skills block as any other, telling it to call
+        # skill_view. Leaving both tools off this allowlist made that block an
+        # instruction the agent could not carry out: it could see the names and
+        # never open one. Both are read-only.
+        "skill_list",
+        "skill_view",
         "web_fetch",
         "web_search",
     }
