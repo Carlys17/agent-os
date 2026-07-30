@@ -224,6 +224,11 @@ filter_top_k = 5
 # first). The bundled set renders ~16k with descriptions, so the default
 # leaves room for installed skills before either fallback kicks in.
 max_skills_prompt_chars = 24000
+# Ceiling on one skill_view result. Unlike the block above, a tool result is
+# not cached, so a large skill costs its tokens again on every re-read. Over
+# this, the opening sections come back with an index of the rest, which the
+# agent reads one section at a time. 0 restores whole-body reads.
+max_skill_view_chars = 10000
 # injection_mode = "system"  # "system", "user_context", or "user_message"
 
 # The default lexical strategy is dependency-free. "semantic" and "hybrid"

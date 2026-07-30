@@ -36,6 +36,7 @@ from agentos.router_tiers import (
 )
 from agentos.sandbox.config import SandboxSettings
 from agentos.skills.injector import DEFAULT_MAX_SKILLS_PROMPT_CHARS
+from agentos.skills.outline import DEFAULT_MAX_SKILL_VIEW_CHARS
 
 
 class ContextOverflowPolicy(StrEnum):
@@ -134,6 +135,11 @@ class SkillsConfig(BaseSettings):
     # every default install into name-only mode, then truncation. Keep enough
     # headroom that installed skills also fit before either fallback kicks in.
     max_skills_prompt_chars: int = DEFAULT_MAX_SKILLS_PROMPT_CHARS
+    # Ceiling on one skill_view body. Unlike the prompt block above, a tool
+    # result is not cached, so a 56k-character hub skill costs its ~14k tokens
+    # again on every re-read. Over this, the opening sections come back with an
+    # index of the rest. 0 disables it and restores whole-body reads.
+    max_skill_view_chars: int = DEFAULT_MAX_SKILL_VIEW_CHARS
     filter_enabled: bool = False
     filter_top_k: int = 5
     # "system" = full system prompt (default)
