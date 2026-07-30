@@ -328,12 +328,18 @@ describe('partnerEmptyMessage', () => {
 const item = (o: Partial<RegistryItem>): RegistryItem => o
 
 describe('communityFilter', () => {
-  const rows = [item({ source: 'bankr', name: 'b' }), item({ source: 'clawhub', name: 'c' })]
-  it('drops bankr rows when the Bankr tab is shown', () => {
-    expect(communityFilter(rows, true).map((r) => r.name)).toEqual(['c'])
+  const rows = [
+    item({ source: 'bankr', name: 'b' }),
+    item({ source: 'capminal', name: 'cap' }),
+    item({ source: 'clawhub', name: 'c' }),
+  ]
+  it('drops bankr and capminal rows when their tabs are shown', () => {
+    expect(communityFilter(rows, true, true).map((r) => r.name)).toEqual(['c'])
+    expect(communityFilter(rows, true, false).map((r) => r.name)).toEqual(['cap', 'c'])
+    expect(communityFilter(rows, false, true).map((r) => r.name)).toEqual(['b', 'c'])
   })
-  it('keeps bankr rows when the Bankr tab is hidden', () => {
-    expect(communityFilter(rows, false).map((r) => r.name)).toEqual(['b', 'c'])
+  it('keeps bankr and capminal rows when their tabs are hidden', () => {
+    expect(communityFilter(rows, false, false).map((r) => r.name)).toEqual(['b', 'cap', 'c'])
   })
 })
 
@@ -439,6 +445,7 @@ describe('registryEmptyMessage / registryKey', () => {
   it('query message takes precedence', () => {
     expect(registryEmptyMessage('bankr', 'foo')).toContain('foo')
     expect(registryEmptyMessage('bankr', '')).toContain('Bankr')
+    expect(registryEmptyMessage('capminal', '')).toContain('Capminal')
     expect(registryEmptyMessage('community', '')).toContain('community')
   })
   it('registryKey prefers identifier then name', () => {
