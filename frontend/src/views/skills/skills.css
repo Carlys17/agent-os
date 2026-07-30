@@ -224,6 +224,11 @@
   gap: 10px;
   padding: 0 12px 14px;
 }
+/* MotionListItem is the grid child, not the card itself. Let the wrapper
+   shrink so a long skill title cannot widen its track at browser zoom. */
+.sk-grid > * {
+  min-width: 0;
+}
 .sk-grid--registry {
   padding: 0;
 }
@@ -1331,6 +1336,14 @@
   min-height: 2.25rem;
 }
 
+/* The installed state is a non-interactive chip, but it occupies the same
+   card-footer action slot as an Install button. Match that button's height. */
+.control-surface .sk-rcard__foot .sk-chip--card-action {
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  padding-inline: 0.75rem;
+}
 .control-surface .sk-github-install {
   display: grid;
   grid-template-columns: minmax(15rem, 0.8fr) minmax(20rem, 1.2fr);
