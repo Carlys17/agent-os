@@ -44,4 +44,15 @@ describe('Skills directory CSS contract', () => {
       /\.sk-card__name \{[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;[\s\S]*?white-space:\s*nowrap;/,
     )
   })
+
+  it('makes .sk-chip self-sufficient outside .control-surface with inline-flex, icon sizing, and large variant', () => {
+    expect(css).toMatch(
+      /\.sk-chip \{[\s\S]*?display: inline-flex;[\s\S]*?align-items: center;[\s\S]*?gap:/,
+    )
+    expect(css).toMatch(/\.sk-chip svg \{[\s\S]*?width: 0\.75rem;[\s\S]*?height: 0\.75rem;/)
+    expect(css).toMatch(
+      /\.sk-chip--lg \{[\s\S]*?font-size: 0\.6875rem;[\s\S]*?min-height: 2\.25rem;/,
+    )
+    expect(css).not.toMatch(/\.control-surface \.sk-chip \{/)
+  })
 })

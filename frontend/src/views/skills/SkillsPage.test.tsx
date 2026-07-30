@@ -922,6 +922,20 @@ describe('SkillsPage', () => {
     )
   })
 
+  it('renders large installed chip in the detail dialog footer for an installed skill', async () => {
+    wireRpc({
+      search: () => [{ ...CATALOG_ITEM, installed: true }],
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: /^Community$/i }))
+    const card = await screen.findByLabelText('Catalog skill Uniswap')
+    fireEvent.click(within(card).getByRole('button', { name: 'View details for Uniswap' }))
+    const dialog = await screen.findByRole('dialog')
+    const installedChip = within(dialog).getByText('Installed')
+    expect(installedChip).toHaveClass('sk-chip', 'sk-chip--ok', 'sk-chip--lg')
+  })
+
   it('a failed live search shows the error instead of an empty catalog', async () => {
     wireRpc({
       search: (query) => (query ? Promise.reject(new Error('search down')) : [CATALOG_ITEM]),

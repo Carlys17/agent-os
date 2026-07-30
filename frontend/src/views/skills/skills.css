@@ -475,6 +475,9 @@
 
 /* ── Chips ──────────────────────────────────────────────────────────────── */
 .sk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   font-family: var(--font-mono);
   font-size: 0.625rem;
   text-transform: uppercase;
@@ -483,6 +486,22 @@
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   color: var(--dim);
+  white-space: nowrap;
+}
+.sk-chip svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  flex-shrink: 0;
+}
+.sk-chip--lg {
+  font-size: 0.6875rem;
+  padding: 4px 12px;
+  /* Match the default Button used by the other detail-footer states (h-9). */
+  min-height: 2.25rem;
+}
+.sk-chip--lg svg {
+  width: 0.875rem;
+  height: 0.875rem;
 }
 .sk-chip--ok {
   --tone: var(--ok, #4caf50);
@@ -1310,17 +1329,6 @@
 
 .control-surface .sk-rcard__foot [data-slot='button'] {
   min-height: 2.25rem;
-}
-
-.control-surface .sk-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.control-surface .sk-chip svg {
-  width: 0.75rem;
-  height: 0.75rem;
 }
 
 .control-surface .sk-github-install {
