@@ -128,19 +128,42 @@ prompt. `[skills].max_skills_prompt_chars` caps how large that block may get:
 max_skills_prompt_chars = 24000
 ```
 
-The budget is spent in three stages. Under it, each skill is listed with its
-description. Over it, the block falls back to names only. Over it even then,
-skills are dropped, lowest-precedence layer first — `extra` (the directories
-you listed in `skills.extra_dirs`), then `bundled`, and only then `managed`,
-`personal`, `project`, `workspace`. A drop is logged as
+The budget degrades one step at a time, so overrunning it by one skill costs a
+little description text rather than every description in the block:
+
+| Step | `skills_render_mode` | What the agent sees |
+| --- | --- | --- |
+| Fits | `full` | Every skill, full description |
+| Over | `full_truncated` | Every skill, descriptions shortened to the longest length that fits (floor 120 chars) |
+| Over even at 120 | `compact` | Names only, plus a pointer to `skill_list` |
+| Still over | `compact_truncated` | Fewer names |
+
+The shortened length is the widest one that fits, not a fixed step, so the block
+spends the budget you gave it rather than settling well under it. The agent is
+told the descriptions are shortened and where to read the full text.
+
+Only the last step drops skills, and it drops the lowest-precedence layer first
+— `extra` (the directories you listed in `skills.extra_dirs`), then `bundled`,
+and only then `managed`, `personal`, `project`, `workspace`. A drop is logged as
 `skills_filter.budget_truncated` with the names, and the affected skills report
-a `prompt_budget` reason on the Skills screen.
+a `prompt_budget` reason on the Skills screen. Any step below `full` is logged
+as `skills_filter.budget_degraded` and recorded per turn as
+`skills_render_mode` in the decision log, because a block that quietly lost its
+descriptions used to be indistinguishable from one with fewer skills in it.
 
 The default of 24000 is sized so a default install lists every bundled skill
-*with* its description and still has room for skills you add. Lower it only if
-you are running a model with a small context window: the whole-request ceiling
-on a model below roughly 64k tokens can be smaller than this budget, in which
-case the skills block alone would not fit.
+*with* its description and still has room for roughly 17 skills you add — past
+that, descriptions start being shortened. If `skills_render_mode` is not `full`
+and you have context to spare, raise the budget; the alternative is
+`skills.filter_enabled`, which injects only the skills relevant to each message
+and so needs far less room. Lower it only if you are running a model with a
+small context window: the whole-request ceiling on a model below roughly 64k
+tokens can be smaller than this budget, in which case the skills block alone
+would not fit.
+
+With `filter_enabled = false` the list is identical on every turn, so it is
+injected as part of the cacheable system prompt. With filtering on it is re-picked
+per message and is kept out of the cached prefix instead.
 
 ```sh
 agentos config get skills.max_skills_prompt_chars

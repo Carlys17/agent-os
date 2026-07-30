@@ -287,7 +287,7 @@ async def test_standalone_recomputation_matches_the_engine_offered_set(
 
     # Standalone path — no turn, no shared state, same inputs.
     gated, availability = gate_skills(loader.load_all(), tools, EligibilityContext(os_name="linux"))
-    plan = plan_injection(gated, max_chars, "system")
+    plan = plan_injection(gated, max_chars, "system", skill_list_tool="skill_list" in tools)
     availability.update(plan.availability)
 
     engine_offered = {
@@ -297,7 +297,10 @@ async def test_standalone_recomputation_matches_the_engine_offered_set(
 
     assert standalone_offered == engine_offered
     assert standalone_offered == {s.name for s in plan.offered}
-    assert plan.prompt == ctx.system_prompt[1]
+    # Byte-for-byte, and appended to the base prompt: with relevance filtering
+    # off the block is part of the cacheable system message, not the dynamic
+    # suffix the prompt cache ships as a user message.
+    assert ctx.system_prompt == "base" + plan.prompt
     assert len(standalone_offered) == ctx.metadata["skill_count"]
 
 

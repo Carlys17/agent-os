@@ -106,6 +106,17 @@ def _ctx(
     )
 
 
+def _injected(ctx: TurnContext) -> str:
+    """Everything the pipeline put in the system prompt, whichever slot it used.
+
+    Which slot the skills block lands in is its own contract (see
+    ``test_skills_injector``); tests that only ask "was this skill listed"
+    should not have to care.
+    """
+    prompt = ctx.system_prompt
+    return prompt if isinstance(prompt, str) else "\n\n".join(prompt)
+
+
 def test_bundled_directory_only_contains_retained_default_skills() -> None:
     bundled_names = {
         path.name for path in BUNDLED.iterdir() if path.is_dir() and (path / "SKILL.md").is_file()
@@ -148,7 +159,7 @@ async def test_default_prompt_only_injects_retained_bundled_skills(
 
     ctx = await filter_skills(_ctx(loader))
 
-    prompt = ctx.system_prompt[1]
+    prompt = _injected(ctx)
     for name in PROMPT_DEFAULTS_WITHOUT_AUDIO_TOOLS:
         assert f"<name>{name}</name>" in prompt
     for name in AUDIO_DEFAULTS:
@@ -180,7 +191,7 @@ async def test_allowlist_does_not_hide_managed_or_workspace_skills(
 
     ctx = await filter_skills(_ctx(loader))
 
-    assert "<name>custom-community</name>" in ctx.system_prompt[1]
+    assert "<name>custom-community</name>" in _injected(ctx)
 
 
 @pytest.mark.asyncio
@@ -287,7 +298,7 @@ async def test_disable_model_invocation_hides_from_prompt_but_not_loader(
 
     assert skill is not None
     assert skill.content == "# Hidden"
-    assert "<name>hidden-skill</name>" not in ctx.system_prompt[1]
+    assert "<name>hidden-skill</name>" not in _injected(ctx)
 
 
 def test_retained_default_skills_are_parseable_and_not_disabled(tmp_path: Path) -> None:

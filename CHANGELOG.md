@@ -10,6 +10,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Native support for Capminal Skills (`Capminal/agent-skills`) in the Skills hub: browse, inspect, and install allowlisted Capminal skills with publisher branding.
 
+### Fixed
+
+- The agent could not tell which of its installed skills applied to a request,
+  and answered from general knowledge instead. Four separate causes, each of
+  which alone was enough to produce that:
+
+  - The prompt budget was a cliff. One skill over it and *every* description in
+    the block was dropped for a name-only list — a 27k render fell to 3.5k
+    against a 24k budget, so 20k of the configured allowance bought nothing and
+    the model had never seen a single description. Descriptions are now
+    shortened to the longest length that fits (the widest, not the first that
+    works: 451 chars where a fixed step would have settled for 320), and skills
+    are only dropped once even a names-only list overruns. A default install
+    was unaffected; the cliff was reached by installing skills, which is
+    backwards.
+  - Names-only mode told the model to call `skill_view` on every entry that
+    might be relevant — up to one call per skill, which no model will do — and
+    never mentioned `skill_list`, which returns every description in one call.
+    It now points at `skill_list`, and only when the session actually has it.
+  - With prompt caching on (the default), the block was delivered as a *user*
+    message headed "not a user request … use it only when it is relevant",
+    contradicting its own "read this before answering" from the weakest
+    position in the request. When the skill list is the same every turn
+    (relevance filtering off, the default) it now belongs to the cacheable
+    system prompt instead, which is also where it is cheapest.
+  - Scheduled (cron) turns received the block but not `skill_view` or
+    `skill_list`, so following it was impossible. Both tools — read-only — are
+    now on the cron allowlist.
+
+- A skills block that quietly lost its descriptions was indistinguishable from
+  an operator uninstalling skills: nothing was reported as dropped and the
+  character count simply fell. Each turn now records `skills_render_mode` and
+  `skills_description_max_chars` in the decision log, and any render below
+  `full` is logged as `skills_filter.budget_degraded` with what to change.
+
 ## [2026.7.29] - 2026-07-29
 
 ### Added
