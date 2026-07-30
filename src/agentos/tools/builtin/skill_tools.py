@@ -395,7 +395,13 @@ def create_skill_tools(loader: SkillLoader) -> None:
         return DEFAULT_MAX_SKILL_VIEW_CHARS
 
     def _linked_files(skill: Any) -> list[str]:
-        """Supporting files, relative to the skill directory."""
+        """Supporting files, relative to the skill directory, POSIX-style.
+
+        Always forward slashes, including on Windows. These paths are handed to
+        the model to quote back as ``file_path``, where a backslash is an escape
+        character in the tool call's JSON, and they have to match how a SKILL.md
+        writes its own links.
+        """
         try:
             base = Path(skill.base_dir)
             from agentos.skills.resources import SkillResources
@@ -406,7 +412,7 @@ def create_skill_tools(loader: SkillLoader) -> None:
                 *resources.list_scripts(),
                 *resources.list_assets(),
             ]
-            return [str(path.relative_to(base)) for path in found]
+            return [path.relative_to(base).as_posix() for path in found]
         except Exception:  # pragma: no cover — a listing is never worth failing on
             logger.debug("skill_view.linked_files_failed", exc_info=True)
             return []

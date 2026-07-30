@@ -110,8 +110,11 @@ async def test_a_large_skill_returns_its_opening_plus_an_index(loaded: SkillLoad
     assert "Section 0" in result
     assert "Sections:" in result
     assert 'skill_view(name="big-skill", section="<title>")' in result
-    # Supporting files are named, never inlined.
+    # Supporting files are named, never inlined — and named with forward
+    # slashes on every platform, because the model quotes these back as
+    # file_path, where a backslash is a JSON escape.
     assert "references/api.md" in result
+    assert "references\\api.md" not in result
     assert "reference body" not in result
 
 
