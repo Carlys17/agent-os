@@ -536,6 +536,81 @@ def create_skill_tools(loader: SkillLoader) -> None:
         )
         return "\n\n".join(part for part in (head, "---", note, outline) if part)
 
+    def _session_has_tool(tool_name: str) -> bool:
+        """Whether this session can actually call ``tool_name`` right now.
+
+        Registration is not availability: a cron turn runs under an allowlist,
+        and an operator can deny a tool. Naming one the caller cannot reach
+        turns a useful next step into an instruction it fails to follow.
+        """
+        try:
+            from agentos.tools.registry import get_default_registry
+            from agentos.tools.types import current_tool_context
+            from agentos.tools.visibility import is_tool_visible
+
+            registered = get_default_registry().get(tool_name)
+            if registered is None:
+                return False
+            return is_tool_visible(registered, current_tool_context.get())
+        except Exception:  # pragma: no cover — a hint is never worth failing on
+            logger.debug("skill_view.tool_probe_failed", tool=tool_name, exc_info=True)
+            return False
+
+    def _near_names(name: str, limit: int = 3) -> list[str]:
+        """Installed skill names close enough to ``name`` to be worth naming."""
+        if _loader is None:
+            return []
+        try:
+            import difflib
+
+            names = [s.name for s in _loader.load_all()]
+            wanted = name.strip().casefold()
+            close = difflib.get_close_matches(wanted, [n.casefold() for n in names], n=limit)
+            by_fold = {n.casefold(): n for n in names}
+            return [by_fold[c] for c in close if c in by_fold]
+        except Exception:  # pragma: no cover
+            logger.debug("skill_view.near_names_failed", exc_info=True)
+            return []
+
+    def _skill_not_found(name: str) -> str:
+        """What to say when the skill is not installed.
+
+        The old text said what *not* to do — do not go looking on disk — and
+        then to tell the user it is not installed, which is a dead end even
+        though a hub may carry the skill and the tools to fetch it are right
+        there. A model handed a dead end reports a failure instead of the next
+        step: the report behind this said `skill_view` "returned error: 14",
+        a code that exists nowhere in this codebase, invented while paraphrasing
+        the old message.
+        """
+        lines = [
+            f"Skill not found: {name}. It is not installed, so there is nothing "
+            "to read yet. Do not search host filesystem paths to recover it.",
+        ]
+        near = [n for n in _near_names(name) if n != name]
+        if near:
+            quoted = ", ".join(f"`{n}`" for n in near)
+            lines.append(f"Installed skills with similar names: {quoted}.")
+        if _session_has_tool("skill_search_community"):
+            install = (
+                " and offer to install it with skill_install_community"
+                if _session_has_tool("skill_install_community")
+                else ""
+            )
+            lines.append(
+                f"It may still be published on a configured skill hub — search with "
+                f'skill_search_community(query="{name}"){install}. Installing changes '
+                "this machine, so ask the user before doing it rather than installing "
+                "on your own."
+            )
+        lines.append(
+            "Otherwise use skill_list to see what is installed, continue with the "
+            "tools available in this session, or tell the user the skill is not "
+            "installed. Do not report this as a tool error — the lookup worked, "
+            "the skill simply is not here."
+        )
+        return " ".join(lines)
+
     @tool(
         name="skill_view",
         description=(
@@ -571,13 +646,7 @@ def create_skill_tools(loader: SkillLoader) -> None:
             return "No skill loader available."
         skill = _loader.get_by_name(name)
         if skill is None:
-            return (
-                f"Skill not found: {name}. This skill is not available in the "
-                "current skill catalog. Do not search host filesystem paths to "
-                "recover missing skills. Use skill_list to inspect available "
-                "skills, continue with available tools, or tell the user the "
-                "skill is not installed."
-            )
+            return _skill_not_found(name)
 
         if file_path:
             normalized_path = file_path.strip().lstrip("./")

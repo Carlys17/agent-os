@@ -39,6 +39,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     `skill_list`, so following it was impossible. Both tools — read-only — are
     now on the cron allowlist.
 
+- Asking for a skill that is not installed read as a broken tool. `skill_view`
+  answered with what *not* to do and "tell the user the skill is not installed",
+  offering no next step even when a configured hub carries the skill and the
+  tools to fetch it are in the session — so a model dressed the dead end up as a
+  failure, reporting that `skill_view` "returned error: 14", a code that exists
+  nowhere in AgentOS. It now says the lookup worked and the skill simply is not
+  here, names installed skills with similar names, and points at
+  `skill_search_community` — only when the session can actually reach it, and
+  always as an offer to install rather than an instruction to (#162).
+
 - Reading a large skill cost the whole skill. `skill_view` returned every byte
   of a SKILL.md, and unlike the system prompt a tool result is not cached, so a
   56 000-character hub skill spent ~14 000 tokens per read and again on every

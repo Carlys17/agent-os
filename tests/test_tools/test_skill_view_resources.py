@@ -95,9 +95,12 @@ async def test_skill_view_missing_skill_uses_catalog_guidance(
     result = await _skill_view("missing-skill")
 
     assert "Skill not found: missing-skill" in result
-    assert "current skill catalog" in result
+    assert "not installed" in result
     assert "Do not search host filesystem paths" in result
     assert "skill_list" in result
+    # The lookup succeeded; only the skill is absent. Reported as a tool error,
+    # it becomes "skill_view returned error: 14" in the answer to the user.
+    assert "Do not report this as a tool error" in result
 
 
 @pytest.mark.asyncio

@@ -186,3 +186,56 @@ async def test_a_missing_config_still_applies_the_ceiling(loaded: SkillLoader) -
     result = await _skill_view("big-skill")
 
     assert "Sections:" in result
+
+
+@pytest.mark.asyncio
+async def test_a_missing_skill_is_pointed_at_the_hub_that_may_carry_it(
+    loaded: SkillLoader,
+) -> None:
+    """A skill named in the catalog but not installed is not a failure.
+
+    The old text offered no next step beyond "tell the user", so a model asked
+    for a hub skill reported the lookup as broken — the issue behind this said
+    `skill_view` "returned error: 14", a code that exists nowhere in AgentOS.
+    """
+    _set_budget(None)
+
+    result = await _skill_view("capminal")
+
+    assert "Skill not found: capminal" in result
+    assert 'skill_search_community(query="capminal")' in result
+    # Installing touches the machine, so it is offered, never assumed.
+    assert "ask the user before" in result
+    assert "Do not report this as a tool error" in result
+
+
+@pytest.mark.asyncio
+async def test_a_near_miss_names_the_installed_skill_it_probably_meant(
+    loaded: SkillLoader,
+) -> None:
+    _set_budget(None)
+
+    result = await _skill_view("big-skil")
+
+    assert "`big-skill`" in result
+
+
+@pytest.mark.asyncio
+async def test_the_hub_is_not_suggested_to_a_session_that_cannot_reach_it(
+    loaded: SkillLoader,
+) -> None:
+    """Cron runs under an allowlist that carries neither hub tool."""
+    from agentos.tools.types import CRON_AGENT_ALLOW, CallerKind, ToolContext, current_tool_context
+
+    _set_budget(None)
+    token = current_tool_context.set(
+        ToolContext(caller_kind=CallerKind.CRON, allowed_tools=set(CRON_AGENT_ALLOW))
+    )
+    try:
+        result = await _skill_view("capminal")
+    finally:
+        current_tool_context.reset(token)
+
+    assert "skill_search_community" not in result
+    assert "skill_install_community" not in result
+    assert "skill_list" in result
