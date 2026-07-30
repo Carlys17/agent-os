@@ -6,9 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.7.30] - 2026-07-30
+
 ### Added
 
-- Native support for Capminal Skills (`Capminal/agent-skills`) in the Skills hub: browse, inspect, and install allowlisted Capminal skills with publisher branding.
+- Native support for Capminal Skills (`Capminal/agent-skills`) in the Skills
+  hub: browse, inspect, and install allowlisted Capminal skills with publisher
+  branding, carried by a Capminal brand mark that falls back cleanly when the
+  logo cannot be fetched (#144).
+
+### Changed
+
+- Runtime dependencies in `pyproject.toml` now carry upper bounds, so a major
+  release of a dependency cannot land in an install that was resolved against
+  the previous one (#153).
 
 ### Fixed
 
@@ -66,6 +77,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   character count simply fell. Each turn now records `skills_render_mode` and
   `skills_description_max_chars` in the decision log, and any render below
   `full` is logged as `skills_filter.budget_degraded` with what to change.
+
+- A skill's linked files were named with the platform separator, so on Windows
+  the index offered `references\api.md`. A model quotes that back as
+  `file_path`, where the backslash is a JSON escape, and it matches neither the
+  tool call nor how a `SKILL.md` writes its own links. Paths are emitted as
+  POSIX now. Nothing was unreadable — the reader already normalised separators;
+  the defect was in what the agent was told to type.
+
+- Skill cards in the Web UI overflowed their grid tracks and changed height
+  with their content, so the hub grid reflowed as cards loaded. The card layout
+  is fixed now and long text is contained rather than pushing the track wider
+  (#135, #161).
+
+- The **Installed** chip in the skill detail dialog did not reflect whether the
+  skill was actually installed (#121).
 
 ## [2026.7.29] - 2026-07-29
 
