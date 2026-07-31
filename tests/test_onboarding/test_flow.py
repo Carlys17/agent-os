@@ -561,7 +561,7 @@ def test_interactive_onboard_migration_defaults_to_all_sources_and_keeps_importe
     data = tomllib.loads(target.read_text())
     assert data["llm"]["provider"] == "openrouter"
     assert data["llm"]["api_key_env"] == "OPENROUTER_API_KEY"
-    assert data["llm"]["model"] == "minimax/minimax-m3"
+    assert data["llm"]["model"] == "openai/gpt-5.6-luna"
     assert data["agentos_router"]["enabled"] is True
     assert data["agentos_router"]["tier_profile"] == "openrouter"
     assert "api_key" not in data["llm"]
@@ -671,7 +671,7 @@ def test_interactive_onboard_imported_provider_prefers_inline_key_over_env(
     assert data["llm"]["provider"] == "openrouter"
     assert data["llm"]["api_key"] == "sk-imported"
     assert data["llm"].get("api_key_env", "") == ""
-    assert data["llm"]["model"] == "minimax/minimax-m3"
+    assert data["llm"]["model"] == "openai/gpt-5.6-luna"
 
 
 def test_interactive_onboard_imported_provider_finalize_error_continues_setup(
@@ -795,7 +795,7 @@ def test_interactive_onboard_imported_provider_finalize_error_continues_setup(
     data = tomllib.loads(target.read_text())
     assert data["llm"]["provider"] == "openrouter"
     assert data["llm"]["api_key_env"] == "OPENROUTER_API_KEY"
-    assert data["llm"]["model"] == "minimax/minimax-m3"
+    assert data["llm"]["model"] == "openai/gpt-5.6-luna"
 
 
 def test_onboard_migration_selection_summary_lists_checked_sources(tmp_path, monkeypatch):
@@ -1100,7 +1100,7 @@ def test_interactive_onboard_migration_prompts_for_missing_imported_provider_key
     data = tomllib.loads(target.read_text())
     assert data["llm"]["provider"] == "openrouter"
     assert data["llm"]["api_key"] == "sk-new"
-    assert data["llm"]["model"] == "minimax/minimax-m3"
+    assert data["llm"]["model"] == "openai/gpt-5.6-luna"
 
 
 def test_interactive_onboard_can_enable_image_generation(tmp_path, monkeypatch):

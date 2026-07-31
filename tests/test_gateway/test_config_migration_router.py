@@ -176,7 +176,33 @@ def test_legacy_openrouter_default_models_are_migrated_forward() -> None:
     tiers = result.payload["agentos_router"]["tiers"]
     assert tiers["c1"]["model"] == "minimax/minimax-m3"
     assert tiers["c2"]["model"] == "z-ai/glm-5.2"
-    assert tiers["c3"]["model"] == "anthropic/claude-opus-4.8"
+    assert tiers["c3"]["model"] == "anthropic/claude-opus-5"
+    assert tiers["image_model"]["model"] == "minimax/minimax-m3"
+
+
+def test_superseded_opus_c3_default_is_migrated_to_opus_5() -> None:
+    # claude-opus-4.8 still resolves upstream, but it is the previous C3 default,
+    # so configs carrying it forward are refreshed — the same treatment
+    # claude-opus-4.7 got when 4.8 replaced it. Both the namespaced OpenRouter id
+    # and the bare gateway id are covered.
+    result = migrate_config_payload(
+        {
+            "llm": {"provider": "bankr", "model": "claude-opus-4.8"},
+            "agentos_router": {
+                "enabled": True,
+                "tiers": {
+                    "c3": {"provider": "openrouter", "model": "anthropic/claude-opus-4.8"},
+                    "image_model": {"provider": "openrouter", "model": "minimax/minimax-m3"},
+                },
+            },
+        }
+    )
+
+    assert result.changed is True
+    assert result.payload["llm"]["model"] == "claude-opus-5"
+    tiers = result.payload["agentos_router"]["tiers"]
+    assert tiers["c3"]["model"] == "anthropic/claude-opus-5"
+    # The vision route still runs on MiniMax, so it must survive the migration.
     assert tiers["image_model"]["model"] == "minimax/minimax-m3"
 
 

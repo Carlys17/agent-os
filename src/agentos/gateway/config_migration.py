@@ -82,13 +82,16 @@ DEPRECATED_MEMORY_LEAVES: frozenset[str] = frozenset(
 
 # The Bankr gateway serves bare model ids; the older "virtuals/" namespace is
 # mapped to its bare form for configs that still carry it. Removed ids
-# (kimi-k2.6) map to the new default for their old tier role.
+# (kimi-k2.6) map to the new default for their old tier role. Superseded
+# defaults that still resolve upstream (claude-opus-4.8) are refreshed to the
+# current default for the same tier, mirroring LEGACY_OPENROUTER_MODEL_IDS.
 LEGACY_GATEWAY_MODEL_IDS: dict[str, str] = {
     "virtuals/minimax-m3": "minimax-m3",
     "virtuals/deepseek-v4-flash": "deepseek-v4-flash",
     "virtuals/qwen3.7-max": "qwen3.7-max",
-    "virtuals/claude-opus-4.8": "claude-opus-4.8",
+    "virtuals/claude-opus-4.8": "claude-opus-5",
     "virtuals/kimi-k2.6": "minimax-m3",
+    "claude-opus-4.8": "claude-opus-5",
 }
 
 # Prior OpenRouter tier defaults, mapped to the defaults that replaced them.
@@ -98,7 +101,8 @@ LEGACY_GATEWAY_MODEL_IDS: dict[str, str] = {
 LEGACY_OPENROUTER_MODEL_IDS: dict[str, str] = {
     "deepseek/deepseek-v4-pro": "minimax/minimax-m3",
     "z-ai/glm-5.1": "z-ai/glm-5.2",
-    "anthropic/claude-opus-4.7": "anthropic/claude-opus-4.8",
+    "anthropic/claude-opus-4.7": "anthropic/claude-opus-5",
+    "anthropic/claude-opus-4.8": "anthropic/claude-opus-5",
     "moonshotai/kimi-k2.6": "minimax/minimax-m3",
 }
 

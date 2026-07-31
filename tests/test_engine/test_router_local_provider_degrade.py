@@ -78,7 +78,7 @@ async def test_local_provider_degrades_cloud_tier_model_to_llm_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _ollama_config_with_cloud_tiers()
-    # Default c1 tier points at "minimax/minimax-m3" via provider="openrouter".
+    # Default c1 tier points at "openai/gpt-5.6-luna" via provider="openrouter".
     _pin_strategy(monkeypatch, "c1")
     ctx = _make_context(config)
 
@@ -131,7 +131,7 @@ async def test_cloud_provider_applies_tier_model_unchanged(
 
     routed = await apply_agentos_router(ctx)
 
-    assert routed.model == "minimax/minimax-m3"
+    assert routed.model == "openai/gpt-5.6-luna"
     assert routed.metadata.get("routing_degraded") is not True
 
 
@@ -164,7 +164,7 @@ async def test_empty_llm_model_keeps_route_and_does_not_lie(
 
     routed = await apply_agentos_router(ctx)
 
-    assert routed.model == "minimax/minimax-m3"
+    assert routed.model == "openai/gpt-5.6-luna"
     assert routed.metadata.get("routing_degraded") is not True
 
 
@@ -226,7 +226,7 @@ async def test_mixed_tier_table_degrades_only_mismatched_tiers(
             "enabled": True,
             "tiers": {
                 "c0": {"provider": "ollama", "model": "qwen3.5:2b"},
-                "c1": {"provider": "openrouter", "model": "minimax/minimax-m3"},
+                "c1": {"provider": "openrouter", "model": "openai/gpt-5.6-luna"},
             },
         },
     )

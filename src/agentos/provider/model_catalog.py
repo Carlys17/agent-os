@@ -62,6 +62,7 @@ _STATIC_FALLBACK: dict[str, tuple[int, int]] = {
     "minimax-m3": (131_072, 1_048_576),
     "qwen3.7-max": (32_768, 256_000),
     "qwen3.7-plus": (32_768, 256_000),
+    "claude-opus-5": (128_000, 1_000_000),
     "claude-opus-4.8": (128_000, 1_000_000),
     "claude-sonnet-5": (64_000, 1_000_000),
     "claude-sonnet-4.6": (64_000, 1_000_000),
