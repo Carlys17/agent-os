@@ -1668,6 +1668,18 @@ async def build_services(
     if usage_tracker is None:
         usage_tracker = _UsageTracker(default_provider_id=config.llm.provider)
 
+    # ── Auxiliary LLM client (needs the tracker above to bill side tasks) ──
+    try:
+        from agentos.provider.auxiliary import configure_auxiliary
+
+        configure_auxiliary(
+            config.auxiliary,
+            llm_config=config.llm,
+            usage_tracker=usage_tracker,
+        )
+    except Exception as e:
+        log.warning("build_services.auxiliary_config_failed", error=str(e))
+
     # ── Search provider (brave > duckduckgo fallback) ───────────────
     try:
         import agentos.search.providers.brave  # noqa: F401 — registers provider

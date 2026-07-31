@@ -323,6 +323,7 @@ def sync_provider_selector(ctx: RpcContext, config: Any) -> None:
 
 
 def sync_media(config: Any) -> None:
+    from agentos.provider.auxiliary import configure_auxiliary
     from agentos.tools.builtin.media import configure_audio, configure_image_generation
 
     configure_image_generation(
@@ -331,6 +332,10 @@ def sync_media(config: Any) -> None:
         agentos_router_config=getattr(config, "agentos_router", None),
     )
     configure_audio(getattr(config, "audio", None))
+    configure_auxiliary(
+        getattr(config, "auxiliary", None),
+        llm_config=getattr(config, "llm", None),
+    )
 
 
 def sync_search(config: Any) -> None:
