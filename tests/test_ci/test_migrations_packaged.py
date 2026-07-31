@@ -55,8 +55,8 @@ def test_installed_wheel_resolves_migrations(tmp_path: Path) -> None:
         capture_output=True,
         timeout=120,
     )
-    pip = venv_dir / ("Scripts" if os.name == "nt" else "bin") / "pip"
-    py = venv_dir / ("Scripts" if os.name == "nt" else "bin") / "python"
+    python_name = "python.exe" if os.name == "nt" else "python"
+    py = venv_dir / ("Scripts" if os.name == "nt" else "bin") / python_name
 
     wheel_dir = tmp_path / "dist"
     subprocess.run(
@@ -74,11 +74,13 @@ def test_installed_wheel_resolves_migrations(tmp_path: Path) -> None:
     # rather than skipping preserves the test's intent — verify the
     # built wheel installs cleanly into a fresh venv and the migration
     # resolver finds V010 afterwards.
+    # Using uv instead of pip avoids network downloads of 90+ dependencies from PyPI
+    # and prevents flaky timeouts (C1).
     subprocess.run(
-        [str(pip), "install", str(wheels[0])],
+        ["uv", "pip", "install", "--python", str(py), str(wheels[0])],
         check=True,
         capture_output=True,
-        timeout=300,
+        timeout=120,
     )
 
     result = subprocess.run(

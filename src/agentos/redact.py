@@ -95,6 +95,9 @@ _PREFIX_PATTERNS: tuple[str, ...] = (
     r"xai-[A-Za-z0-9]{20,}",  # xAI
     r"AIza[A-Za-z0-9_-]{30,}",  # Google API key
     r"AKIA[A-Z0-9]{16}",  # AWS access key id
+    r"ASIA[A-Z0-9]{16}",  # AWS temporary credentials
+    r"ABIA[A-Z0-9]{16}",  # AWS Backint Agent key id
+    r"ACCA[A-Z0-9]{16}",  # AWS Backup key id
     r"xox[baprs]-[A-Za-z0-9-]{16,}",  # Slack
     r"xapp-\d+-[A-Za-z0-9-]{16,}",  # Slack app-level
     r"hf_[A-Za-z0-9]{16,}",  # Hugging Face
@@ -277,13 +280,15 @@ _ASSIGNMENT_RE = re.compile(
 )
 
 _AUTH_HEADER_RE = re.compile(
-    r"((?:Proxy-)?Authorization\s*:\s*)([A-Za-z][\w.+-]*\s+)?([^\s\"',]+)",
+    r"((?:Proxy-)?Authorization['\"]?\s*:\s*['\"]?)([A-Za-z][\w.+-]*\s+)?([^\s\"',]+)",
     re.IGNORECASE,
 )
 _SECRET_HEADER_NAMES = (
     r"(?:x-api-key|x-goog-api-key|api-key|apikey|x-api-token|x-auth-token|x-access-token)"
 )
-_SECRET_HEADER_RE = re.compile(rf"({_SECRET_HEADER_NAMES}\s*:\s*)([^\s\"',]+)", re.IGNORECASE)
+_SECRET_HEADER_RE = re.compile(
+    rf"({_SECRET_HEADER_NAMES}['\"]?\s*:\s*['\"]?)([^\s\"',]+)", re.IGNORECASE
+)
 
 
 def secret_literal_marker(text: str | None) -> str | None:
