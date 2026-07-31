@@ -6,10 +6,15 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
+
 from agentos.mcp.client import MCPClient
 from agentos.mcp.types import MCPServerConfig, MCPToolDef
 from agentos.tools.registry import ToolRegistry
+from agentos.tools.schema_sanitize import sanitize_input_schema
 from agentos.tools.types import ToolSpec
+
+log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -95,8 +100,12 @@ def _make_tool_handler(
     timeout_seconds: float,
 ) -> None:
     """Register a single MCP tool into the registry with an mcp_ prefix."""
-    # Extract properties and required from input_schema
-    schema = tool_def.input_schema
+    # The server's schema goes out verbatim in every provider request, so it is
+    # normalized once here rather than per turn. A shape one backend tolerates
+    # can make another reject the whole call, tools and all.
+    schema, fixes = sanitize_input_schema(tool_def.input_schema)
+    if fixes:
+        log.info("mcp.schema_sanitized", tool=tool_name, fixes=fixes)
     properties: dict[str, Any] = schema.get("properties", {})
     required: list[str] = schema.get("required", [])
 
