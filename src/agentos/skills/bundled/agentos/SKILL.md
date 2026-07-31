@@ -155,6 +155,18 @@ through AgentOS; edit the file by hand if one is genuinely needed. When
 `agentos env list` reports a variable's source as `process env`, the shell
 that started the gateway exported it and that value wins over the file.
 
+Shell commands inherit most of that environment, so `gh`, `aws` and friends
+work as they do in your own shell. The gateway token and the sandbox guard
+switches are withheld; `AGENTOS_STRIP_PROVIDER_ENV=1` withholds AgentOS's
+provider keys too. `execute_code` is the opposite — it forwards a small fixed
+allowlist, and a skill reaches its own key there by declaring
+`metadata.agentos.requires.env: [NAME]`, which is added for the session that
+loaded the skill. Prefer that, or `$NAME` in a shell command, over pasting a
+key into a payload: outbound tools refuse credential *material* (private keys,
+`sk-ant-…`/`ghp_…`/`AKIA…` provider keys, DSN passwords), and command output is
+masked before it reaches you. An opaque API key in an `Authorization` or
+`x-api-key` header is fine and is not refused.
+
 Main `agentos.toml` sections (full commented reference:
 `agentos.toml.example` in the repo):
 

@@ -26,6 +26,38 @@ _HARD_BLOCKED_NETWORKS: tuple[IPNetwork, ...] = (
     ipaddress.ip_network("fe80::/10"),
 )
 
+#: Hostnames that resolve to a cloud metadata service. Blocked by name as well
+#: as by address, because a resolver that answers them at all is answering for
+#: the credential endpoint.
+_METADATA_HOSTNAMES: frozenset[str] = frozenset(
+    {
+        "metadata.google.internal",
+        "metadata.goog",
+        "instance-data",
+    }
+)
+
+#: Addresses that serve instance credentials to anything that can reach them.
+#: These are the non-negotiable floor: unlike ordinary private ranges they have
+#: no legitimate agent use, on any tool, under any configuration.
+_METADATA_ADDRESSES: frozenset[IPAddress] = frozenset(
+    {
+        ipaddress.ip_address("169.254.169.254"),  # AWS / GCP / Azure / DO / Oracle
+        ipaddress.ip_address("169.254.169.253"),  # Azure IMDS wire server
+        ipaddress.ip_address("169.254.170.2"),  # AWS ECS task role credentials
+        ipaddress.ip_address("100.100.100.200"),  # Alibaba Cloud
+        ipaddress.ip_address("fd00:ec2::254"),  # AWS metadata over IPv6
+    }
+)
+
+#: The whole link-local range. Nothing an agent should be talking to lives
+#: here, and enumerating individual metadata addresses has repeatedly missed a
+#: cloud vendor's variant.
+_METADATA_NETWORKS: tuple[IPNetwork, ...] = (
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("fe80::/10"),
+)
+
 _trusted_fake_ip_cidrs: tuple[IPNetwork, ...] = ()
 
 
@@ -59,6 +91,74 @@ def configure_trusted_fake_ip_cidrs(values: Iterable[str]) -> None:
 def get_trusted_fake_ip_cidrs() -> list[str]:
     """Return the process-wide trusted fake-IP CIDRs as normalized strings."""
     return [str(network) for network in _trusted_fake_ip_cidrs]
+
+
+def _is_metadata_address(addr: IPAddress) -> bool:
+    """Return whether *addr* is a cloud metadata endpoint."""
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        # ``::ffff:169.254.169.254`` is the same endpoint wearing a different
+        # hat, and compares equal to neither the IPv4 address nor the IPv4
+        # networks. Unwrap before deciding.
+        addr = addr.ipv4_mapped
+    if addr in _METADATA_ADDRESSES:
+        return True
+    return any(
+        addr.version == network.version and addr in network for network in _METADATA_NETWORKS
+    )
+
+
+def assert_not_metadata_endpoint(url: str) -> None:
+    """Raise :class:`SSRFBlockedError` if *url* targets a cloud metadata service.
+
+    The security floor for tools that must keep reaching private addresses.
+    ``http_request`` is routinely pointed at ``localhost`` and LAN services on
+    purpose, so it cannot take the full :func:`validate_http_url_for_fetch`
+    treatment — but no configuration makes the instance-credential endpoint a
+    legitimate destination.
+
+    A hostname that cannot be resolved is not blocked: the request that follows
+    will fail on its own, and failing closed here would take the tool offline
+    whenever DNS is unavailable.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return
+    hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+    if not hostname:
+        return
+    if hostname in _METADATA_HOSTNAMES:
+        raise SSRFBlockedError(
+            f"Blocked request to {hostname}: cloud metadata endpoints serve instance "
+            "credentials and are never a valid agent target."
+        )
+
+    try:
+        literal = ipaddress.ip_address(hostname.strip("[]"))
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if _is_metadata_address(literal):
+            raise SSRFBlockedError(
+                f"Blocked request to {hostname}: link-local/metadata addresses serve "
+                "instance credentials and are never a valid agent target."
+            )
+        return
+
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except (socket.gaierror, UnicodeError, ValueError):
+        return
+    for info in infos:
+        try:
+            addr = ipaddress.ip_address(info[4][0])
+        except ValueError:  # pragma: no cover - getaddrinfo returned a non-address
+            continue
+        if _is_metadata_address(addr):
+            raise SSRFBlockedError(
+                f"Blocked request to {hostname}: it resolves to {addr}, a cloud "
+                "metadata endpoint that serves instance credentials."
+            )
 
 
 def validate_http_url_for_fetch(

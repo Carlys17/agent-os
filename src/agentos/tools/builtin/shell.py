@@ -21,6 +21,7 @@ from typing import Any, cast
 import structlog
 
 from agentos.gateway.approval_queue import get_approval_queue
+from agentos.redact import redact_terminal_output
 from agentos.sandbox.backend.bubblewrap import BubblewrapBackend, build_bwrap_argv
 from agentos.sandbox.backend.noop import NoopBackend
 from agentos.sandbox.backend.seatbelt import (
@@ -39,6 +40,7 @@ from agentos.sandbox.integration import (
 from agentos.sandbox.policy import build_policy, select_level
 from agentos.sandbox.types import DenialReason, DenialResult, SandboxPolicy, SandboxRequest
 from agentos.tools.builtin.shell_policy import check_safe_bin
+from agentos.tools.env_passthrough import build_subprocess_env
 from agentos.tools.path_policy import reject_foreign_host_path
 from agentos.tools.registry import tool
 from agentos.tools.types import (
@@ -196,6 +198,54 @@ def _workdir_is_configured_workspace(workdir: str | None) -> bool:
         return False
 
 
+#: Binaries and URL schemes that move bytes off the machine. A command with
+#: none of these cannot exfiltrate whatever the payload scan would have found,
+#: so the scan is skipped and its false positives with it.
+_NETWORK_EGRESS_TOKENS: tuple[str, ...] = (
+    "curl",
+    "wget",
+    "http://",
+    "https://",
+    "httpie",
+    " nc ",
+    "netcat",
+    "ncat",
+    "telnet",
+    "socat",
+    "ssh",
+    "scp",
+    "sftp",
+    "rsync",
+    "ftp",
+    "git push",
+    "git remote",
+    "aws ",
+    "gcloud ",
+    "az ",
+    "gh api",
+    "invoke-webrequest",
+    "invoke-restmethod",
+    "start-bitstransfer",
+    # Interpreters. A one-liner can open a socket without naming any of the
+    # binaries above, and the destination may come from a variable rather than
+    # a URL literal the scan would otherwise see.
+    "python",
+    "python3",
+    "node",
+    "deno",
+    "bun",
+    "ruby",
+    "perl",
+    "php",
+)
+
+
+def _has_network_egress(command: str) -> bool:
+    """Return whether *command* can send data off the machine."""
+    lowered = f" {command.lower()} "
+    return any(token in lowered for token in _NETWORK_EGRESS_TOKENS)
+
+
 def _sensitive_shell_block(
     tool_name: str,
     command: str,
@@ -224,6 +274,13 @@ def _sensitive_shell_block(
         _sensitive_body_marker,
         _sensitive_url_marker,
     )
+
+    # Only commands that can actually put bytes on the network get the payload
+    # scan, mirroring the gate ``code_exec`` already applies. Without it the
+    # check reads every command as if it were an upload, and ``grep "token: "``
+    # or a commit message mentioning a token is refused for no gain.
+    if not _has_network_egress(checked_command):
+        return None
 
     for token in checked_text.split():
         stripped = token.strip("'\"")
@@ -652,9 +709,9 @@ async def exec_command(
                 )
             return json.dumps(approval_response)
 
-    merged_env = os.environ.copy()
-    if env:
-        merged_env.update(env)
+    # AgentOS's own provider credentials do not cross into a child process;
+    # see tools/env_passthrough.py for why the rest of the environment does.
+    merged_env = build_subprocess_env(extra=env)
     effective_timeout = _resolve_exec_timeout(timeout)
 
     # /elevated on|bypass|full — route exec around the sandbox backend so host
@@ -708,14 +765,16 @@ async def exec_command(
                     proc.kill()
                     await proc.communicate()
                     return f"[timeout after {effective_timeout}s]\ncommand: {command}"
-                output = stdout_bytes.decode("utf-8", errors="replace")
+                output = redact_terminal_output(
+                    stdout_bytes.decode("utf-8", errors="replace"), command
+                )
                 return f"exit_code={proc.returncode}\n{output}"
             except Exception as e:
                 return f"[error] {e}"
         output = sandbox_result.stdout
         if sandbox_result.stderr:
             output += sandbox_result.stderr
-        output = _append_sandbox_network_hint(output)
+        output = _append_sandbox_network_hint(redact_terminal_output(output, command))
         return f"exit_code={sandbox_result.returncode}\n{output}"
 
     if elevated_bypass:
@@ -745,7 +804,9 @@ async def exec_command(
 
             output_file.flush()
             output_file.seek(0)
-            output = output_file.read().decode("utf-8", errors="replace")
+            output = redact_terminal_output(
+                output_file.read().decode("utf-8", errors="replace"), command
+            )
             return f"exit_code={proc.returncode}\n{output}"
     except Exception as e:
         return f"[error] {e}"
@@ -875,7 +936,7 @@ async def background_process(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=cwd,
-            env=os.environ.copy(),
+            env=build_subprocess_env(),
             start_new_session=True,
         )
     else:
@@ -885,7 +946,7 @@ async def background_process(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=cwd,
-            env=os.environ.copy(),
+            env=build_subprocess_env(),
         )
 
     ctx = current_tool_context.get()
@@ -1047,7 +1108,7 @@ async def process(
         )
 
     if action == "log":
-        output = "".join(session.output_lines)
+        output = redact_terminal_output("".join(session.output_lines), session.command)
         start = max(0, int(offset or 0))
         requested_limit = 20000 if limit is None else int(limit)
         max_chars = max(0, min(requested_limit, 100000))

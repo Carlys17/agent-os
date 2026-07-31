@@ -120,6 +120,35 @@ agentos diagnostics on
 Search results and fetched pages are external data. They should inform the
 answer, not override tool policy or user instructions.
 
+`http_request` refuses cloud metadata endpoints (`169.254.169.254`,
+`metadata.google.internal`) on every configuration; ordinary private addresses
+stay reachable, so pointing it at a local dev server still works. `web_fetch`
+is stricter and blocks private addresses outright.
+
+## Credentials
+
+Authenticated API calls work normally: an API key in an `Authorization` or
+`x-api-key` header is not refused. What outbound tools refuse is credential
+*material* with no legitimate destination — a PEM private key, a
+vendor-prefixed provider key (`sk-ant-…`, `ghp_…`, `AKIA…`), a connection
+string with an inline password, an `/etc/passwd` line.
+
+Prefer referencing a credential over pasting it. In a shell command use
+`$NAME`; for sandboxed code, have the skill declare it:
+
+```yaml
+metadata:
+  agentos:
+    requires:
+      env: [CAP_API_KEY]
+```
+
+The value is then read at spawn time and never enters the transcript. Command
+output is masked before the model sees it, and the gateway token never reaches
+a child process.
+
+Read: [`configuration.md`](configuration.md#credentials-and-child-processes)
+
 ## Tool Compression
 
 Large tool results may be compacted before they are shown to the model. This is

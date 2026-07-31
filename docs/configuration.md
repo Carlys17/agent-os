@@ -65,14 +65,67 @@ every AgentOS surface — the Web UI, the CLI, the RPC, and the agent tool:
 - Shell and implicitly-invoked commands: `PATH`, `SHELL`, `IFS`, `BASH_ENV`,
   `EDITOR`, `VISUAL`, `PAGER`, `BROWSER`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`
 - AgentOS posture and state location: `AGENTOS_SENSITIVE_PATHS_DISABLED`,
-  `AGENTOS_SHELL_DENYLIST`, `AGENTOS_SAFE_BIN_*`, `AGENTOS_AGENT_PERMISSIONS`,
-  `AGENTOS_HOOKS`, `AGENTOS_GATEWAY_TOKEN`, `AGENTOS_GATEWAY_CONFIG_PATH`,
-  `AGENTOS_STATE_DIR`, `AGENTOS_ROOT`, and the bind settings
+  `AGENTOS_SENSITIVE_PAYLOAD_DISABLED`, `AGENTOS_REDACT_SECRETS`,
+  `AGENTOS_STRIP_PROVIDER_ENV`, `AGENTOS_SHELL_DENYLIST`, `AGENTOS_SAFE_BIN_*`,
+  `AGENTOS_AGENT_PERMISSIONS`, `AGENTOS_HOOKS`, `AGENTOS_GATEWAY_TOKEN`,
+  `AGENTOS_GATEWAY_CONFIG_PATH`, `AGENTOS_STATE_DIR`, `AGENTOS_ROOT`, and the
+  bind settings
 
-Every tool AgentOS spawns inherits `os.environ`, and several AgentOS guards are
-themselves read from it, so a surface that could write these names could widen
-what the agent is allowed to do. The `AGENTOS_` prefix is not blanket-blocked —
-ordinary credentials such as `AGENTOS_LLM_API_KEY` remain writable.
+Tools AgentOS spawns inherit most of `os.environ`, and several AgentOS guards
+are themselves read from it, so a surface that could write these names could
+widen what the agent is allowed to do. The `AGENTOS_` prefix is not
+blanket-blocked — ordinary credentials such as `AGENTOS_LLM_API_KEY` remain
+writable.
+
+### Credentials and child processes
+
+`exec_command` and `background_process` pass most of the environment to the
+command they run, so `gh`, `aws`, `docker` and the rest keep working as they do
+in your own shell. Three groups are treated differently:
+
+| Group | Reaches a child? | Why |
+| --- | --- | --- |
+| `AGENTOS_GATEWAY_TOKEN` and the guard switches above | never | The token authenticates to the control plane; the switches let a child reconfigure the next call. |
+| AgentOS provider keys (LLM, search, image, audio, embeddings) | yes, unless you opt out | Bundled skills read them from `os.environ`. Set `AGENTOS_STRIP_PROVIDER_ENV=1` before starting AgentOS to withhold them. |
+| Everything else | yes | Your own credentials, in your own shell. |
+
+`execute_code` is the other way round: it forwards a small fixed allowlist and
+nothing else. A skill that needs its own API key there declares it, and the
+name is added for the session that loaded the skill:
+
+```yaml
+metadata:
+  agentos:
+    requires:
+      env: [CAP_API_KEY]
+```
+
+The value is read from the environment at spawn time and never enters the
+transcript. A skill installed from a hub cannot declare one of AgentOS's own
+provider keys this way — that request is refused and logged.
+
+Output from `exec_command`, `background_process` and `process(action=log)` is
+scanned for credentials before it reaches the model. Vendor-shaped keys, auth
+headers, JWTs, private keys and DSN passwords are masked. Set
+`AGENTOS_REDACT_SECRETS=0` before starting AgentOS to turn this off; it is read
+once at startup, so a command the agent runs cannot switch it off mid-session.
+
+### What the outbound guard refuses
+
+`http_request`, `exec_command` and `execute_code` refuse to put credential
+*material* on the network: a PEM private key, an `/etc/passwd`-shaped line, a
+vendor-prefixed provider key (`sk-ant-…`, `ghp_…`, `AKIA…`), or a connection
+string with an inline password. The shell check only applies to commands that
+can actually reach the network.
+
+An opaque API key in an `x-api-key` or `Authorization` header is **not**
+refused — that is how authenticated APIs work, and it cannot be told apart from
+exfiltration by looking at the bytes. What keeps it safe is the credential path
+above, not a pattern match. `web_search` is stricter than the rest, because a
+search provider has no business with any credential in a query.
+
+Set `AGENTOS_SENSITIVE_PAYLOAD_DISABLED=1` before starting AgentOS to disable
+the check entirely.
 
 The gate applies on *write* only. Values you set in your shell or by editing
 `~/.agentos/.env` by hand keep working exactly as before.

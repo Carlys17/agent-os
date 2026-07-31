@@ -403,6 +403,11 @@ If `agentos env list` reports a variable as coming from `process env`, the
 shell that started the gateway exported it and that value wins over the file.
 Editing the file will not change anything until the export is removed.
 
+Shell commands the agent runs inherit most of this environment, but not the
+gateway token or the sandbox guard switches, and `execute_code` forwards only a
+small allowlist plus what a skill declares. See
+[Credentials and child processes](configuration.md#credentials-and-child-processes).
+
 Read:
 
 - [`configuration.md`](configuration.md)

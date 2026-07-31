@@ -6,6 +6,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Any skill that called an authenticated HTTP API was dead on arrival. The
+  outbound guard matched credential-ish *names*, so `http_request` refused
+  every `Authorization` and `x-api-key` header, and `exec_command` refused
+  `{"sellToken": …}` (a web3 asset, not a token), `grep "token: "`, and
+  `CAP_API_KEY=$(jq -r …)` — while a real key pasted inline passed through.
+  With no working call path and no approval route, the model routed around it
+  by writing the key to a file and running that, which the guard never
+  inspected (#165).
+
+  The guard now matches credential **values** — a PEM block, a
+  vendor-prefixed provider key, a DSN password, an `/etc/passwd` line — and
+  leaves names alone. An opaque API key in a header is how authenticated APIs
+  work and is no longer refused. The shell check runs only on commands that
+  can reach the network, mirroring the gate `execute_code` already applied.
+  Blocks now name a working alternative instead of dead-ending, and
+  `AGENTOS_SENSITIVE_PAYLOAD_DISABLED=1` turns the check off.
+
+  What replaces the pattern match is a credential path: a skill declares
+  `metadata.requires.env`, and those names — and only those — are forwarded
+  into `execute_code`'s sandbox for the session that loaded the skill, so the
+  value never enters the transcript. A skill AgentOS did not ship cannot
+  declare one of AgentOS's own provider keys.
+
+### Added
+
+- Command output is scanned for credentials before it reaches the model.
+  `exec_command`, `background_process` and `process(action=log)` mask
+  vendor-shaped keys, auth headers, JWTs, private keys and DSN passwords.
+  File content gets a non-reusable sentinel rather than a head/tail mask, so
+  an agent that reads a key and writes it back cannot silently corrupt it.
+  `AGENTOS_REDACT_SECRETS=0` disables it; the value is read once at startup so
+  a command cannot switch it off mid-session.
+
+- `AGENTOS_STRIP_PROVIDER_ENV=1` withholds AgentOS's provider credentials from
+  child processes. Off by default because bundled skills read those names from
+  `os.environ`.
+
+### Security
+
+- `AGENTOS_GATEWAY_TOKEN` and the sandbox guard switches no longer reach
+  child processes. Every `exec_command` previously inherited `os.environ`
+  verbatim, including the token that authenticates to the control plane.
+
+- `http_request` now refuses cloud metadata endpoints (`169.254.169.254`,
+  `metadata.google.internal`, ECS task credentials). The repo already shipped
+  an SSRF guard and `web_fetch` used it, but `http_request` validated only the
+  URL scheme. Ordinary private addresses stay reachable — unlike `web_fetch`,
+  this is the tool people point at a local dev server on purpose.
+
 ## [2026.7.30] - 2026-07-30
 
 ### Added

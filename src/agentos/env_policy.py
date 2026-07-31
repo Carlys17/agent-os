@@ -4,12 +4,12 @@
 *written* back through an AgentOS surface — the Web UI, ``agentos env``, the
 gateway RPC, or an agent tool.
 
-Writing an environment variable is not a neutral convenience. Every subprocess
-AgentOS spawns inherits ``os.environ`` verbatim (``tools/builtin/shell.py``
-passes ``os.environ.copy()``), and several AgentOS behaviours — sandbox
-guards, the shell allowlist, the gateway token — are themselves read from the
-environment. A surface that can write any name is therefore a surface that can
-disable the sandbox or execute arbitrary code on the next tool call.
+Writing an environment variable is not a neutral convenience. Subprocesses
+AgentOS spawns inherit most of ``os.environ`` (``tools/env_passthrough.py``
+decides what is withheld), and several AgentOS behaviours — sandbox guards, the
+shell allowlist, the gateway token — are themselves read from the environment.
+A surface that can write any name is therefore a surface that can disable the
+sandbox or execute arbitrary code on the next tool call.
 
 The gate here is deliberately narrow and name-by-name:
 
@@ -101,6 +101,9 @@ _SHELL_NAMES = (
 # where AgentOS keeps its state:
 #
 #   AGENTOS_SENSITIVE_PATHS_DISABLED  sandbox/sensitive_paths.py
+#   AGENTOS_SENSITIVE_PAYLOAD_DISABLED  redact.py
+#   AGENTOS_REDACT_SECRETS            redact.py
+#   AGENTOS_STRIP_PROVIDER_ENV        tools/env_passthrough.py
 #   AGENTOS_SHELL_DENYLIST            tools/builtin/shell_policy.py
 #   AGENTOS_SAFE_BIN_ALLOW/DENY/WARN  tools/builtin/shell_policy.py
 #   AGENTOS_AGENT_PERMISSIONS         cli/agent_cmd.py
@@ -113,6 +116,9 @@ _SHELL_NAMES = (
 # already refuses to persist it — so it is listed here for the same reason.
 _AGENTOS_POSTURE_NAMES = (
     "AGENTOS_SENSITIVE_PATHS_DISABLED",
+    "AGENTOS_SENSITIVE_PAYLOAD_DISABLED",
+    "AGENTOS_REDACT_SECRETS",
+    "AGENTOS_STRIP_PROVIDER_ENV",
     "AGENTOS_SHELL_DENYLIST",
     "AGENTOS_SAFE_BIN_ALLOW",
     "AGENTOS_SAFE_BIN_DENY",

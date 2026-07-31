@@ -166,6 +166,26 @@ _SAFE_ENV_KEYS = frozenset(
 )
 
 
+def _build_safe_env() -> dict[str, str]:
+    """Return the sandbox environment: the safe base plus skill declarations.
+
+    The allowlist above is what any code can see. A skill that declares
+    ``metadata.requires.env`` adds its own names on top for the session that
+    loaded it — that is the supported way for a skill to reach a third-party
+    API from sandboxed code, and it is why the guard on the way out no longer
+    has to guess whether a payload is a credential. A skill AgentOS did not
+    ship is refused AgentOS's own credentials at registration, so this cannot
+    widen past them.
+    """
+    from agentos.tools.env_passthrough import is_env_passthrough
+
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key in _SAFE_ENV_KEYS or is_env_passthrough(key)
+    }
+
+
 def _execution_result_json(
     *,
     returncode: int,
@@ -325,7 +345,7 @@ async def execute_code(
         cleanup_dir = workdir
     start_ns = time.monotonic_ns()
 
-    safe_env = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_KEYS}
+    safe_env = _build_safe_env()
 
     from agentos.tools.builtin.shell import _elevated_mode
 
@@ -364,7 +384,9 @@ async def execute_code(
                 return json.dumps(escalation.to_dict())
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    python_bin, "-c", code,
+                    python_bin,
+                    "-c",
+                    code,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(workdir_path),
@@ -379,8 +401,11 @@ async def execute_code(
                     await proc.communicate()
                     elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
                     return _execution_result_json(
-                        returncode=-1, stdout="", stderr=f"Execution timed out after {timeout}s",
-                        timed_out=True, elapsed_ms=elapsed_ms,
+                        returncode=-1,
+                        stdout="",
+                        stderr=f"Execution timed out after {timeout}s",
+                        timed_out=True,
+                        elapsed_ms=elapsed_ms,
                     )
                 elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
                 return _execution_result_json(
@@ -392,8 +417,11 @@ async def execute_code(
                 )
             except Exception as exc:
                 return _execution_result_json(
-                    returncode=-1, stdout="", stderr=f"Execution error: {exc}",
-                    timed_out=False, elapsed_ms=0,
+                    returncode=-1,
+                    stdout="",
+                    stderr=f"Execution error: {exc}",
+                    timed_out=False,
+                    elapsed_ms=0,
                 )
         elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
         stdout = sandbox_result.stdout

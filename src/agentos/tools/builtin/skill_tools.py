@@ -225,6 +225,43 @@ def _import_offer(name: str) -> str:
     return f"{name} is already available from {source.label} — `agentos env import {name}`."
 
 
+def _register_skill_env_passthrough(skill: Any) -> None:
+    """Let a viewed skill's declared variables reach sandboxed child processes.
+
+    ``execute_code`` forwards almost nothing by default, so a skill that wraps
+    a third-party API could not read its own key there. Declaring it under
+    ``metadata.requires.env`` is the supported alternative to the pattern this
+    replaces — pasting the key into the command, or writing it to a file and
+    running that. AgentOS's own provider credentials are refused at
+    registration, so a skill cannot use this to reach them.
+    """
+    meta = getattr(skill, "metadata", None)
+    requires = getattr(meta, "requires", None) if meta is not None else None
+    declared = getattr(requires, "env", None) or []
+    names = [getattr(item, "name", "") or str(item) for item in declared]
+    if not names:
+        return
+    try:
+        from agentos.tools.env_passthrough import register_env_passthrough
+
+        # Bundled skills ship in the wheel, so their declaration is AgentOS's
+        # own; anything installed from a hub is not, and cannot name a
+        # credential the runtime authenticates with.
+        trusted = getattr(skill, "layer", None) == SkillLayer.BUNDLED
+        refused = register_env_passthrough(names, trusted=trusted)
+    except Exception:  # pragma: no cover - passthrough must never break a read
+        logger.debug(
+            "skill_env_passthrough_failed", skill=getattr(skill, "name", ""), exc_info=True
+        )
+        return
+    if refused:
+        logger.warning(
+            "skill_env_passthrough_refused",
+            skill=getattr(skill, "name", ""),
+            names=refused,
+        )
+
+
 def _skill_setup_note(skill: Any) -> str:
     """Return a ``[Skill setup note: ...]`` block when a requirement is unmet.
 
@@ -647,6 +684,8 @@ def create_skill_tools(loader: SkillLoader) -> None:
         skill = _loader.get_by_name(name)
         if skill is None:
             return _skill_not_found(name)
+
+        _register_skill_env_passthrough(skill)
 
         if file_path:
             normalized_path = file_path.strip().lstrip("./")

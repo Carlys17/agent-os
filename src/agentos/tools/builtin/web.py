@@ -6,7 +6,6 @@ import base64
 import hashlib
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
@@ -14,10 +13,12 @@ from urllib.parse import parse_qsl, urlparse
 import httpx
 
 from agentos.env import trust_env as _trust_env
+from agentos.redact import credential_text_marker, secret_header_marker, secret_literal_marker
 from agentos.sandbox.integration import sandboxed
 from agentos.search.types import SearchProviderError, SearchResult
 from agentos.tools.path_policy import reject_foreign_host_path
 from agentos.tools.registry import tool
+from agentos.tools.ssrf import assert_not_metadata_endpoint
 from agentos.tools.types import ToolError, UnsupportedURLSchemeError, current_tool_context
 
 
@@ -25,71 +26,46 @@ def _validate_http_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         raise UnsupportedURLSchemeError(url)
+    # Cloud metadata endpoints hand out instance credentials to anything that
+    # can reach them, which makes them the first stop for an SSRF payload and
+    # never a legitimate agent target. Ordinary private addresses stay
+    # reachable — unlike web_fetch, http_request is the tool people point at a
+    # local dev server on purpose.
+    assert_not_metadata_endpoint(url)
 
 
-_SECRET_KEY_PATTERN = (
-    r"API[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE[_-]?KEY|"
-    r"ACCESS[_-]?KEY|AUTHORIZATION|BEARER"
-)
-_SECRET_NAME_RE = re.compile(_SECRET_KEY_PATTERN, re.IGNORECASE)
-_SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?im)(?:^|[\s\"'{,])(?:\d+\t)?"
-    rf"[A-Z0-9_]*(?:{_SECRET_KEY_PATTERN})[A-Z0-9_]*\s*[:=]"
-)
-_SECRET_JSON_KEY_RE = re.compile(
-    rf"(?im)(?:^|[\s{{,])['\"][^'\"\n]{{0,80}}(?:{_SECRET_KEY_PATTERN})"
-    r"[^'\"\n]{0,80}['\"]\s*:"
-)
-_PEM_PRIVATE_KEY_RE = re.compile(
-    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----",
-    re.IGNORECASE,
-)
-_PASSWD_ENTRY_RE = re.compile(r"(?m)^(?:\d+\t)?[a-z_][a-z0-9_-]*:x?:\d+:\d+:")
-_SENSITIVE_HTTP_METHODS = {"POST", "PUT", "PATCH"}
 _TEXT_BODY_LIMIT = 10_000
 _BINARY_BODY_LIMIT = 1_000_000
 _FETCH_DIR_NAME = ".fetch"
 
 
 def _sensitive_body_marker(body: str | None) -> str | None:
-    if not body:
-        return None
-    if _PEM_PRIVATE_KEY_RE.search(body):
-        return "private_key"
-    if _PASSWD_ENTRY_RE.search(body):
-        return "passwd_entry"
-    if _SECRET_ASSIGNMENT_RE.search(body):
-        return "secret_assignment"
-    if _SECRET_JSON_KEY_RE.search(body):
-        return "secret_json_key"
-    return None
+    """Return a marker when *body* carries credential material.
+
+    Delegates to :func:`agentos.redact.secret_literal_marker`, which matches on
+    credential *values* — a PEM block, a vendor-prefixed key, a DSN password —
+    rather than on field names. Names cannot carry this decision: in a web3
+    payload ``sellToken`` is an asset and ``x-api-key`` is how the API
+    authenticates, while a pasted key announces itself in neither.
+    """
+    return secret_literal_marker(body)
 
 
 def _sensitive_url_marker(url: str) -> str | None:
     parsed = urlparse(url)
     for segment in parsed.path.split("/"):
-        if _sensitive_body_marker(segment) is not None:
+        if secret_literal_marker(segment) is not None:
             return "sensitive_url_path"
     if not parsed.query:
         return None
-    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
-        if _sensitive_body_marker(f"{key}={value}") is not None:
+    for _key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if secret_literal_marker(value) is not None:
             return "sensitive_query"
     return None
 
 
 def _sensitive_headers_marker(headers: dict[str, str] | None) -> str | None:
-    if not headers:
-        return None
-    for key, value in headers.items():
-        normalized_key = key.strip()
-        if _SECRET_NAME_RE.search(normalized_key):
-            return "sensitive_header"
-        if _sensitive_body_marker(f"{normalized_key}={value}") is not None:
-            return "sensitive_header"
-        if normalized_key.lower() in {"authorization", "cookie", "proxy-authorization"}:
-            return "sensitive_header"
-    return None
+    return secret_header_marker(headers)
 
 
 def _sensitive_body_block(tool_name: str, marker: str) -> str:
@@ -99,9 +75,13 @@ def _sensitive_body_block(tool_name: str, marker: str) -> str:
         "tool": tool_name,
         "sensitive_payload": marker,
         "message": (
-            "Refusing to send an HTTP request body that appears to contain "
-            "secrets or host account data. Remove the sensitive content or use "
-            "an explicit operator-approved transfer path."
+            f"Refusing to send credential material ({marker}) over the wire. "
+            "Reference the value instead of pasting it — a shell command can "
+            "use $NAME, and a skill that declares the variable under "
+            "metadata.requires.env gets it in the child environment without "
+            "the literal ever entering this transcript. Set "
+            "AGENTOS_SENSITIVE_PAYLOAD_DISABLED=1 before starting AgentOS to "
+            "turn this check off entirely."
         ),
         "retryable": False,
     }
@@ -217,10 +197,12 @@ async def http_request(
     if marker is not None:
         return _sensitive_body_block("http_request", marker)
     method_upper = method.upper()
-    if method_upper in _SENSITIVE_HTTP_METHODS:
-        marker = _sensitive_body_marker(body)
-        if marker is not None:
-            return _sensitive_body_block("http_request", marker)
+    # Scan whatever body is present rather than only the methods that
+    # conventionally carry one: DELETE and even GET accept a body, and an
+    # exfiltration path is not going to pick a method out of politeness.
+    marker = _sensitive_body_marker(body)
+    if marker is not None:
+        return _sensitive_body_block("http_request", marker)
 
     try:
         import httpx
@@ -461,7 +443,11 @@ async def run_web_search_payload(
 
     _ensure_builtin_search_providers()
     provider_name = provider_name or _active_provider
-    marker = _sensitive_body_marker(query)
+    # A search query goes to a third party that has no business with any
+    # credential in it, so this boundary uses the broader check: unlike an
+    # authenticated API call, there is no reading of ``API_KEY=<value>`` that
+    # makes it a legitimate thing to search for.
+    marker = credential_text_marker(query)
     if marker is not None:
         return _search_failure_payload(
             {
