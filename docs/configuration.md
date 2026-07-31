@@ -339,7 +339,9 @@ agentos configure router --router disabled
 
 Router-supported provider profiles depend on the installed build and configured
 provider. Read [`features/agentos-router.md`](features/agentos-router.md) before
-using direct model runs for evaluation.
+using direct model runs for evaluation. For what the four text tiers
+(`c0`–`c3`) mean and how a turn is assigned to one, see
+[Model Tiers](features/agentos-router.md#model-tiers).
 
 ### Router strategy
 

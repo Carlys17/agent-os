@@ -25,6 +25,66 @@ Pilot Router is useful when you want:
 
 It is not required. AgentOS can also run in direct single-model mode.
 
+## Model Tiers
+
+Pilot Router sorts every turn into one of four text tiers, ordered from
+cheapest and fastest to strongest, plus a separate vision route. `c1` is the
+default tier: it handles ordinary work, and it is where the router falls back
+whenever it is unsure or its model bundle is unavailable.
+
+| Tier | Handles |
+| --- | --- |
+| `c0` | Trivial chat, short rewrites, extraction, and low-risk simple Q&A. |
+| `c1` | Normal agent work: coding assistance, debugging, and moderate analysis. **Default tier.** |
+| `c2` | Multi-step coding, structured reasoning, larger-context synthesis, and harder analysis. |
+| `c3` | Difficult planning, deep review, complex debugging, and high-stakes synthesis. |
+| `image_model` | Vision route for user-supplied image attachments, screenshots, and diagrams. |
+
+**`image_model` is not a difficulty level.** It is chosen when the turn carries
+image attachments, independently of the `c0`–`c3` classification.
+
+**Each provider profile maps its own models.** The tier is the routing
+decision; which model serves that tier comes from `[agentos_router.tiers]`, and
+the defaults differ per provider profile. See the annotated tier block in
+`agentos.toml.example`, or the Providers and Models page for the profiles
+themselves.
+
+**Classes and tiers are the same four levels.** The classifier reports
+`R0`–`R3`; these map one-to-one onto `c0`–`c3`. Diagnostics output and the LLM
+judge use the `R` names, while config, the CLI, and this page use the `c` names.
+
+**Reasoning effort follows the tier** when `auto_thinking` is enabled: `c3`
+raises thinking to T3, `c2` to T2, `c1` to T1, and `c0` runs with no thinking
+budget.
+
+### How a Turn Lands on a Tier
+
+The tier for a turn is not only the classifier's opinion. These steps apply in
+order, and a later one can override an earlier one:
+
+1. **Image attachments** route the turn to `image_model` outright, skipping
+   text classification;
+2. **a manual pin** (`/c0` … `/c3`) overrides classification, and stays in
+   effect until you run `/auto`, leave the session, or the hold idles out after
+   ten minutes;
+3. **the strategy classifies** the current message into `R0`–`R3` and maps it to
+   the matching tier — only the current message is classified, not the history;
+4. **a low-confidence decision snaps back to the default tier** — when the
+   strategy's confidence falls below `confidence_threshold` (default `0.5`), a
+   non-default tier is replaced by `c1`;
+5. **a short complaint upgrades one tier** — a brief frustrated follow-up (at
+   most `complaint_upgrade_max_chars`, default 160) raises the turn by
+   `complaint_upgrade_steps` (default 1);
+6. **cache continuity holds a higher tier** — when a recent turn (within
+   `kv_cache_anti_downgrade_window_seconds`, default 600) ran higher, the turn
+   is not downgraded below it;
+7. **a large context raises a floor** — roughly 25,000 material tokens floors
+   the turn at `c2`, and roughly 80,000 tokens, or 40% of the model's context
+   window, floors it at `c3`.
+
+To see which of these applied to a given turn, turn on diagnostics as described
+in [What the Router Can Affect](#what-the-router-can-affect).
+
 ## Strategies
 
 Pilot Router has two selectable strategies, set via
