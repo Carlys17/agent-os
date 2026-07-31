@@ -28,7 +28,12 @@ from agentos.engine.cache_break_monitor import (
 )
 from agentos.engine.fallback import FallbackPolicy, backoff_sleep
 from agentos.engine.history import limit_turns, repair_tool_pairing
-from agentos.engine.progress_watchdog import ProgressObservation, ProgressWatchdog
+from agentos.engine.progress_watchdog import (
+    ProgressObservation,
+    ProgressWatchdog,
+    guidance_for,
+    tool_call_signature,
+)
 from agentos.engine.session_sanitize import (
     SessionSanitizeResult,
     project_historical_tool_payloads,
@@ -3468,6 +3473,7 @@ class Agent:
                     (result for result in executed_results if result.is_error),
                     None,
                 )
+                arguments_by_id = {tc.tool_use_id: tc.arguments for tc in tool_calls}
                 watchdog_decision = progress_watchdog.observe(
                     ProgressObservation(
                         iteration=iterations,
@@ -3485,6 +3491,15 @@ class Agent:
                                 f"{str(first_tool_error.content)[:160]}"
                             )
                         ),
+                        tool_calls=tuple(
+                            tool_call_signature(
+                                result.tool_name,
+                                arguments_by_id.get(result.tool_use_id),
+                                result.content,
+                                is_error=result.is_error,
+                            )
+                            for result in executed_results
+                        ),
                     )
                 )
                 if watchdog_decision.action != "observe":
@@ -3493,6 +3508,7 @@ class Agent:
                         action=watchdog_decision.action,
                         reason=watchdog_decision.reason,
                         details=watchdog_decision.details,
+                        guidance=guidance_for(watchdog_decision),
                     )
                 terminal_error = _turn_budget_error()
                 if terminal_error is not None:
