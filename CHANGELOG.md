@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.7.31] - 2026-07-31
+
+### Changed
+
+- Onboarding router tier defaults move up a generation across all three
+  gateway profiles (`openrouter`, `bankr`, `opencap`): C1 goes from
+  `minimax-m3` to `gpt-5.6-luna` and C3 from `claude-opus-4.8` to
+  `claude-opus-5`. On the OpenRouter profile C0 moves to
+  `deepseek/deepseek-v4-flash` so C0 and C1 do not collapse onto the same
+  model and the cheap tier keeps its purpose. `claude-opus-5` is registered
+  in the model catalog and pricing tables, so its context window is 1M rather
+  than the 200K default and the usage tracker reports real cost.
+  `minimax-m3` stays as the `image_model` vision route and is deliberately
+  left out of the migration maps, which apply to every tier including
+  `image_model` (#169).
+
+- The Pilot Router docs now describe the C0–C3 tiers — what each tier is for,
+  which model each gateway profile assigns to it, and how to pick one — and
+  the OpenCAP routing page no longer mentions `oc-uncensored-1.0` (#170).
+
 ### Fixed
 
 - Any skill that called an authenticated HTTP API was dead on arrival. The
