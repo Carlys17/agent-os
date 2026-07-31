@@ -13,12 +13,22 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+import structlog
+
 from agentos.identity.workspace import BOOTSTRAP_FILENAMES
 from agentos.sandbox.integration import get_runtime, sandboxed
+from agentos.tools.fuzzy_match import (
+    AmbiguousMatchError,
+    FuzzyMatchError,
+    FuzzyMatchResult,
+    fuzzy_find_and_replace,
+)
 from agentos.tools.path_policy import reject_foreign_host_path
 from agentos.tools.registry import tool
 from agentos.tools.types import ToolError, WorkspaceAccessError, current_tool_context
 from agentos.tools.write_tracking import record_workspace_file_write
+
+log = structlog.get_logger(__name__)
 
 _SPREADSHEET_EXTENSIONS = {".csv", ".tsv", ".xlsx"}
 _OFFICE_BINARY_EXTENSIONS = {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
@@ -772,9 +782,35 @@ async def write_file(path: str, content: str, approval_id: str | None = None) ->
     return f"Written {len(content)} bytes to {p}"
 
 
+def _locate_edit(original: str, old_text: str, new_text: str, *, path: str) -> FuzzyMatchResult:
+    """Find *old_text* in *original*, tolerating whitespace and quote drift.
+
+    Exact equality is tried first and costs nothing extra. The fallback chain
+    only runs once exact has missed, so the common case is unchanged. Both
+    failure modes keep the wording the model already knows, enriched with
+    whatever the matcher learned.
+    """
+
+    try:
+        return fuzzy_find_and_replace(original, old_text, new_text)
+    except AmbiguousMatchError as exc:
+        lines = ", ".join(str(line) for line in exc.lines)
+        raise ValueError(
+            f"old_text matches {exc.match_count} locations in {path} (lines {lines});"
+            " be more specific"
+        ) from exc
+    except FuzzyMatchError as exc:
+        detail = f" Closest match: {exc.hint}" if exc.hint else ""
+        raise ValueError(f"old_text not found in {path}.{detail}") from exc
+
+
 @tool(
     name="edit_file",
-    description="Edit a file by replacing old_text with new_text (exact string replacement).",
+    description=(
+        "Edit a file by replacing old_text with new_text. Matching tolerates"
+        " indentation, whitespace and smart-quote drift; text appearing more"
+        " than once is rejected rather than guessed."
+    ),
     params={
         "path": {"type": "string", "description": "Absolute path to the file to edit."},
         "old_text": {"type": "string", "description": "Text to find and replace."},
@@ -804,14 +840,8 @@ async def edit_file(
     loop = asyncio.get_event_loop()
     original = await loop.run_in_executor(None, p.read_text, "utf-8")
 
-    if old_text not in original:
-        raise ValueError(f"old_text not found in {path}")
-
-    count = original.count(old_text)
-    if count > 1:
-        raise ValueError(f"old_text matches {count} locations in {path}; be more specific")
-
-    updated = original.replace(old_text, new_text, 1)
+    match = _locate_edit(original, old_text, new_text, path=path)
+    updated = match.updated
 
     def _write() -> None:
         p.write_text(updated, encoding="utf-8")
@@ -819,7 +849,18 @@ async def edit_file(
     await loop.run_in_executor(None, _write)
     _notify_memory_source_write(p)
     _notify_bootstrap_source_write(p)
-    return f"Edited {p}: replaced {len(old_text)} chars with {len(new_text)} chars"
+    summary = f"replaced {len(old_text)} chars with {len(new_text)} chars"
+    if match.strategy == "exact":
+        return f"Edited {p}: {summary}"
+    # Surface the fallback: an edit that landed via similarity deserves a
+    # second look, and the operator log needs to show how often this happens.
+    log.info(
+        "tools.edit_file.fuzzy_match",
+        strategy=match.strategy,
+        path=str(p),
+        match_count=match.match_count,
+    )
+    return f"Edited {p} [match={match.strategy}]: {summary}"
 
 
 @tool(
