@@ -115,7 +115,7 @@ base_url = "https://openrouter.ai/api/v1"
 # "deepseek/deepseek-v4-flash" = "deepseek"
 # "minimax/minimax-m3" = "minimax"
 # "z-ai/glm-5.2" = "z-ai"
-# "anthropic/claude-opus-4.8" = "anthropic"
+# "anthropic/claude-opus-5" = "anthropic"
 #
 # OpenCAP uses bare model IDs and sends values as a provider allow-list. Check
 # its live model catalog for current model and upstream provider IDs. Omit this
@@ -316,14 +316,14 @@ safety_net_threshold = 0.5
 
 [agentos_router.tiers.c0]
 provider = "openrouter"
-model = "openai/gpt-5.6-luna"
-description = "Fast GPT-5.6 Luna route for trivial chat, short rewrites, extraction, and low-risk simple Q&A"
+model = "deepseek/deepseek-v4-flash"
+description = "Fast DeepSeek V4 Flash route for trivial chat, short rewrites, extraction, and low-risk simple Q&A"
 supports_image = false
 thinking_level = "high"
 
 [agentos_router.tiers.c1]
 provider = "openrouter"
-model = "minimax/minimax-m3"
+model = "openai/gpt-5.6-luna"
 description = "Default balanced text route for normal agent work, coding assistance, debugging, and moderate analysis"
 supports_image = false
 thinking_level = "high"
@@ -337,7 +337,7 @@ thinking_level = "high"
 
 [agentos_router.tiers.c3]
 provider = "openrouter"
-model = "anthropic/claude-opus-4.8"
+model = "anthropic/claude-opus-5"
 description = "Highest-quality text reasoning route for difficult planning, deep review, complex debugging, and high-stakes synthesis"
 supports_image = false
 thinking_level = "high"

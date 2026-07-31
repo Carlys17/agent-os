@@ -86,7 +86,7 @@ current catalog.
 
 OpenCAP defaults to `https://gw.capminal.ai/api/inference/v1` and uses one
 OpenAI-compatible key for inference. Its public model catalog is unauthenticated.
-The default direct/fallback model is the balanced C1 model, `minimax-m3`. The `recommended`
+The default direct/fallback model is the balanced C1 model, `gpt-5.6-luna`. The `recommended`
 router profile selects bare OpenCAP model IDs across C0-C3 and the vision route,
 with `oc-uncensored-1.0` available as an explicit C0 route rather than the setup default.
 

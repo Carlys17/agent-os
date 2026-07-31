@@ -10,9 +10,10 @@ OPENROUTER_DEFAULT_PROVIDER_ROUTING = {
     "deepseek/deepseek-v4-flash": "deepseek",
     "minimax/minimax-m3": "minimax",
     "z-ai/glm-5.2": "z-ai",
-    "anthropic/claude-opus-4.8": "anthropic",
+    "anthropic/claude-opus-5": "anthropic",
     # Prior tier defaults — kept pinned for configs written before the
     # current defaults; existing installs keep using these ids.
+    "anthropic/claude-opus-4.8": "anthropic",
     "z-ai/glm-5.1": "z-ai",
     "anthropic/claude-opus-4.7": "anthropic",
     "moonshotai/kimi-k2.6": "moonshotai",

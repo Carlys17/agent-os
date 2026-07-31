@@ -58,13 +58,13 @@ def test_agentos_router_defaults_match_runtime_router_config() -> None:
     assert not hasattr(cfg, "v4_use_aux_head")
     assert cfg.require_router_runtime is False
 
-    assert cfg.tiers["c0"]["model"] == "openai/gpt-5.6-luna"
+    assert cfg.tiers["c0"]["model"] == "deepseek/deepseek-v4-flash"
     assert cfg.tiers["c0"]["thinking_level"] == "high"
-    assert cfg.tiers["c1"]["model"] == "minimax/minimax-m3"
+    assert cfg.tiers["c1"]["model"] == "openai/gpt-5.6-luna"
     assert cfg.tiers["c1"]["thinking_level"] == "high"
     assert cfg.tiers["c2"]["model"] == "z-ai/glm-5.2"
     assert cfg.tiers["c2"]["thinking_level"] == "high"
-    assert cfg.tiers["c3"]["model"] == "anthropic/claude-opus-4.8"
+    assert cfg.tiers["c3"]["model"] == "anthropic/claude-opus-5"
     assert cfg.tiers["c3"]["thinking_level"] == "high"
     assert cfg.tiers["image_model"]["model"] == "minimax/minimax-m3"
     assert cfg.tiers["image_model"]["supports_image"] is True
@@ -444,13 +444,13 @@ def test_example_toml_enables_runtime_router_defaults() -> None:
     assert "require_router_runtime" not in agentos_router
 
     tiers = agentos_router["tiers"]
-    assert tiers["c0"]["model"] == "openai/gpt-5.6-luna"
+    assert tiers["c0"]["model"] == "deepseek/deepseek-v4-flash"
     assert tiers["c0"]["thinking_level"] == "high"
-    assert tiers["c1"]["model"] == "minimax/minimax-m3"
+    assert tiers["c1"]["model"] == "openai/gpt-5.6-luna"
     assert tiers["c1"]["thinking_level"] == "high"
     assert tiers["c2"]["model"] == "z-ai/glm-5.2"
     assert tiers["c2"]["thinking_level"] == "high"
-    assert tiers["c3"]["model"] == "anthropic/claude-opus-4.8"
+    assert tiers["c3"]["model"] == "anthropic/claude-opus-5"
     assert tiers["c3"]["thinking_level"] == "high"
     assert tiers["image_model"]["model"] == "minimax/minimax-m3"
     assert tiers["image_model"]["supports_image"] is True

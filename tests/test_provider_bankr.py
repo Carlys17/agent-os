@@ -57,10 +57,10 @@ def test_default_tiers_route_through_openrouter() -> None:
     tiers = _default_tiers()
     assert tiers == _openrouter_tiers()
     assert tiers["c0"]["provider"] == "openrouter"
-    assert tiers["c0"]["model"] == "openai/gpt-5.6-luna"
-    assert tiers["c1"]["model"] == "minimax/minimax-m3"
+    assert tiers["c0"]["model"] == "deepseek/deepseek-v4-flash"
+    assert tiers["c1"]["model"] == "openai/gpt-5.6-luna"
     assert tiers["c2"]["model"] == "z-ai/glm-5.2"
-    assert tiers["c3"]["model"] == "anthropic/claude-opus-4.8"
+    assert tiers["c3"]["model"] == "anthropic/claude-opus-5"
     assert tiers["image_model"]["supports_image"] is True
 
 
@@ -76,19 +76,20 @@ def test_bankr_is_a_tier_profile() -> None:
     assert tiers == _bankr_tiers()
     assert tiers["c0"]["provider"] == "bankr"
     assert tiers["c0"]["model"] == "deepseek-v4-flash"
-    assert tiers["c1"]["model"] == "minimax-m3"
+    assert tiers["c1"]["model"] == "gpt-5.6-luna"
     assert tiers["c2"]["model"] == "glm-5.2"
-    assert tiers["c3"]["model"] == "claude-opus-4.8"
+    assert tiers["c3"]["model"] == "claude-opus-5"
     assert tiers["image_model"]["model"] == "minimax-m3"
     assert tiers["image_model"]["supports_image"] is True
 
 
 def test_bankr_gateway_capabilities_enable_vision_for_image_models() -> None:
     catalog = ModelCatalog()
-    default_model = catalog.get_capabilities("minimax-m3", "bankr")
-    assert default_model.supports_vision is True
-    assert default_model.supports_tools is True
-    for vision_id in ("claude-opus-4.8", "gemini-3.5-flash", "grok-4.3", "gpt-5.5"):
+    image_model = catalog.get_capabilities("minimax-m3", "bankr")
+    assert image_model.supports_vision is True
+    assert image_model.supports_tools is True
+    vision_ids = ("claude-opus-5", "claude-opus-4.8", "gemini-3.5-flash", "grok-4.3", "gpt-5.5")
+    for vision_id in vision_ids:
         assert catalog.get_capabilities(vision_id, "bankr").supports_vision is True
     for text_id in ("qwen3.7-max", "gpt-5.4-mini", "glm-5.2", "oc-uncensored-1.0"):
         assert catalog.get_capabilities(text_id, "bankr").supports_vision is False

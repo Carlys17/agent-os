@@ -652,7 +652,7 @@ def _bankr_tiers() -> dict:
         },
         "c1": {
             "provider": "bankr",
-            "model": "minimax-m3",
+            "model": "gpt-5.6-luna",
             "description": (
                 "default balanced text model for normal agent work, coding assistance, "
                 "debugging, and moderate analysis"
@@ -672,7 +672,7 @@ def _bankr_tiers() -> dict:
         },
         "c3": {
             "provider": "bankr",
-            "model": "claude-opus-4.8",
+            "model": "claude-opus-5",
             "description": (
                 "Highest-quality text reasoning model for difficult planning, "
                 "deep review, complex debugging, and high-stakes synthesis"
@@ -711,9 +711,9 @@ def _openrouter_tiers() -> dict:
     return {
         "c0": {
             "provider": "openrouter",
-            "model": "openai/gpt-5.6-luna",
+            "model": "deepseek/deepseek-v4-flash",
             "description": (
-                "fast GPT-5.6 Luna route for trivial chat, short rewrites, "
+                "fast DeepSeek V4 Flash route for trivial chat, short rewrites, "
                 "extraction, and low-risk simple Q&A"
             ),
             "supports_image": False,
@@ -721,7 +721,7 @@ def _openrouter_tiers() -> dict:
         },
         "c1": {
             "provider": "openrouter",
-            "model": "minimax/minimax-m3",
+            "model": "openai/gpt-5.6-luna",
             "description": (
                 "default balanced text model for normal agent work, coding assistance, "
                 "debugging, and moderate analysis"
@@ -741,7 +741,7 @@ def _openrouter_tiers() -> dict:
         },
         "c3": {
             "provider": "openrouter",
-            "model": "anthropic/claude-opus-4.8",
+            "model": "anthropic/claude-opus-5",
             "description": (
                 "Highest-quality text reasoning model for difficult planning, "
                 "deep review, complex debugging, and high-stakes synthesis"

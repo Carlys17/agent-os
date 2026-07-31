@@ -129,6 +129,6 @@ async def test_router_control_replay_event_replays_turn_once(monkeypatch) -> Non
 
     assert len(replay_events) == 1
     assert replay_events[0].target_tier == "c3"
-    assert provider.calls == ["minimax/minimax-m3", "anthropic/claude-opus-4.8"]
+    assert provider.calls == ["openai/gpt-5.6-luna", "anthropic/claude-opus-5"]
     assert done_events[-1].text == "new final"
     assert text.endswith("new final")

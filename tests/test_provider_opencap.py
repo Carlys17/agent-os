@@ -62,9 +62,9 @@ def test_opencap_gateway_onboarding_spec() -> None:
     assert spec.deployment == "cloud"
     assert spec.requires_api_key is True
     assert spec.default_base_url == "https://gw.capminal.ai/api/inference/v1"
-    assert spec.default_direct_model == "minimax-m3"
+    assert spec.default_direct_model == "gpt-5.6-luna"
     model_field = next(field for field in spec.fields if field.name == "model")
-    assert model_field.default == "minimax-m3"
+    assert model_field.default == "gpt-5.6-luna"
     assert any(field.name == "api_key" and field.required for field in spec.fields)
 
 
@@ -93,9 +93,9 @@ def test_opencap_router_profile_contract() -> None:
 
     assert {tier["provider"] for tier in tiers.values()} == {"opencap"}
     assert tiers["c0"]["model"] == "deepseek-v4-flash"
-    assert tiers["c1"]["model"] == "minimax-m3"
+    assert tiers["c1"]["model"] == "gpt-5.6-luna"
     assert tiers["c2"]["model"] == "glm-5.2"
-    assert tiers["c3"]["model"] == "claude-opus-4.8"
+    assert tiers["c3"]["model"] == "claude-opus-5"
     assert tiers["image_model"]["model"] == "minimax-m3"
     assert tiers["image_model"]["supports_image"] is True
     assert tiers["image_model"]["image_only"] is True
