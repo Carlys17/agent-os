@@ -21,6 +21,12 @@ Tiers, in the order a failure should be investigated:
   derivation. These are the 42 assertions carried over from the Node self-test.
 * **Tier 4 — domain.** PositionInfo unpacking, hook permission bits, range
   aggregation from real logs, and the display helpers.
+* **Tier 5 — planning ergonomics.** Tick pull-off, the price cache, the messages
+  that decide whether a caller reaches a mint or goes in circles.
+* **Tier 6 — PLAN_HASH coverage.** That every flag reaching the calldata also
+  reaches the hash the human approved. Tiers 5 and 6 have no Node oracle — they
+  test properties (this changes that, that survives a re-run), not values, so
+  nothing self-generated is written into the vectors.
 
 Tiers whose modules do not exist yet are reported as skipped rather than failed,
 so this runs usefully from the first phase of the port onward.
@@ -64,6 +70,8 @@ Base (8453) — one live token per launchpad, each with ``--chain base``
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import math
 import os
@@ -801,6 +809,219 @@ def tier5(g: dict, r: Results) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tier 6 — PLAN_HASH covers every flag that reaches the calldata
+# ---------------------------------------------------------------------------
+
+# The confirm gate spans two processes: the dry run prints a hash, a human approves it,
+# and a second invocation broadcasts with --confirm. Nothing but the hash ties those two
+# invocations together, so a flag that changes the calldata (or loosens a guard shown in
+# the approved table) and does NOT change the hash can be swapped in between. That is a
+# whole bug class, not one bug — `increase --recipient` and `approve --expiration-days`
+# both shipped that way — so it is tested as a class: mutate one flag at a time and
+# require a different hash.
+#
+# Everything here runs without RPC: the four loaders that talk to a node are stubbed and
+# run_plan (which simulates) is replaced by a capture.
+
+_TS = 1_767_225_600            # fixed block clock; hashes must not depend on it
+_POOL = "0xdb2c20421239d46bb30a7a73029b7f9b7f166489bfb972057d33cbd7249413a5f"
+_POOL_ALT = "0x1299aa8c4ea0db5b8453757ed129ed8e916561925926a161cb89842e3987401a"
+_TOKEN = "0x4200000000000000000000000000000000000006"
+_TOKEN_ALT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+_ME = "0x7de10Fec3dBC1267446d00a1F3ccFcb7F4176412"
+_THEM = "0x000000000000000000000000000000000000dEaD"
+
+_BASELINE = {
+    "approve": {"token": _TOKEN, "amount": "1", "expiration-days": "30"},
+    "mint": {"pool": _POOL, "tick-lower": "-600", "tick-upper": "600",
+             "liquidity": "1000000", "slippage-bps": "100", "recipient": _ME,
+             "max-tick-drift": "60", "deadline-secs": "1200"},
+    "increase": {"token-id": "429610", "liquidity": "1000000", "slippage-bps": "100",
+                 "recipient": _ME, "deadline-secs": "1200"},
+    "decrease": {"token-id": "429610", "liquidity": "500000", "slippage-bps": "100",
+                 "recipient": _ME, "deadline-secs": "1200"},
+    "collect": {"token-id": "429610", "recipient": _ME, "deadline-secs": "1200"},
+    "burn": {"token-id": "429610", "slippage-bps": "100", "recipient": _ME,
+             "deadline-secs": "1200"},
+}
+
+# Every flag each command reads that ends up in the calldata, in msg.value, or in a bound
+# the user approved. Adding a flag to a command means adding a line here.
+_MUTATIONS = [
+    ("approve", "token", _TOKEN_ALT),
+    ("approve", "amount", "2"),
+    ("approve", "expiration-days", "3650"),
+    ("mint", "pool", _POOL_ALT),
+    ("mint", "tick-lower", "-1200"),
+    ("mint", "tick-upper", "1200"),
+    ("mint", "liquidity", "2000000"),
+    ("mint", "slippage-bps", "500"),
+    ("mint", "recipient", _THEM),
+    ("mint", "max-tick-drift", "6000"),
+    ("mint", "deadline-secs", "600"),
+    ("increase", "token-id", "429611"),
+    ("increase", "liquidity", "2000000"),
+    ("increase", "slippage-bps", "500"),
+    ("increase", "recipient", _THEM),
+    ("increase", "deadline-secs", "600"),
+    ("decrease", "token-id", "429611"),
+    ("decrease", "liquidity", "600000"),
+    ("decrease", "slippage-bps", "500"),
+    ("decrease", "recipient", _THEM),
+    ("decrease", "deadline-secs", "600"),
+    ("collect", "token-id", "429611"),
+    ("collect", "recipient", _THEM),
+    ("collect", "deadline-secs", "600"),
+    ("burn", "token-id", "429611"),
+    ("burn", "slippage-bps", "500"),
+    ("burn", "recipient", _THEM),
+    ("burn", "deadline-secs", "600"),
+]
+
+# Frozen field sets. The mutation table above catches a field that stops mattering; this
+# catches one that is quietly dropped, and it is the diff a reviewer should have to justify.
+_HASH_FIELDS = {
+    "approve": ["amount", "chainId", "cmd", "expirationDays", "needErc20", "needPermit2",
+                "signer", "token"],
+    "mint": ["amount0Max", "amount1Max", "chainId", "cmd", "deadlineSecs", "liquidity",
+             "maxTickDrift", "poolId", "recipient", "signer", "tickLower", "tickUpper",
+             "to"],
+    "increase": ["amount0Max", "amount1Max", "chainId", "cmd", "deadlineSecs", "liquidity",
+                 "recipient", "signer", "to", "tokenId"],
+    "decrease": ["amount0Min", "amount1Min", "chainId", "cmd", "deadlineSecs", "liquidity",
+                 "recipient", "signer", "to", "tokenId"],
+    "collect": ["chainId", "cmd", "deadlineSecs", "recipient", "signer", "to", "tokenId"],
+    "burn": ["amount0Min", "amount1Min", "chainId", "cmd", "deadlineSecs", "liquidity",
+             "recipient", "signer", "to", "tokenId"],
+}
+
+
+class _StubClient:
+    """Once the loaders are stubbed, get_block is the only call left in a dry run."""
+
+    def __init__(self, timestamp: int = _TS) -> None:
+        self.timestamp = timestamp
+
+    def get_block(self, block: str = "latest") -> dict:
+        return {"timestamp": hex(self.timestamp)}
+
+
+def _plan_of(lp_write, chain: dict, command: str, args: dict, *,
+             currency0: str = _TOKEN, timestamp: int = _TS) -> dict:
+    """Run one write command up to the point it has a hash, with no RPC and no key."""
+    captured: dict = {}
+    pool_key = {"currency0": currency0, "currency1": _TOKEN_ALT, "fee": 3000,
+                "tickSpacing": 60, "hooks": lp_write.NATIVE}
+    state = {"poolId": _POOL, "poolKey": pool_key, "sqrtPriceX96": 1 << 96, "tick": 0,
+             "lpFee": 3000, "activeLiquidity": 10**18}
+    granted = command != "approve"   # approve must find work to do, or it returns early
+
+    def stub_pool_key(client, chn, pool_id, a):
+        return pool_key
+
+    def stub_state(client, chn, pool_id, key):
+        return dict(state, poolId=pool_id, poolKey=key)
+
+    def stub_position(client, chn, token_id):
+        return {"tokenId": int(token_id), "poolKey": pool_key, "poolId": _POOL,
+                "tickLower": -600, "tickUpper": 600, "hasSubscriber": False,
+                "liquidity": 1_000_000, "owner": _ME}
+
+    def stub_token_info(client, chn, address):
+        if lp_write.is_native_currency(address):
+            return {"address": lp_write.NATIVE, "symbol": "ETH", "decimals": 18,
+                    "isNative": True}
+        return {"address": address, "symbol": "TKN", "decimals": 18, "isNative": False}
+
+    def stub_allowances(client, chn, owner, currencies):
+        return [{"currency": c, "native": True, "ok": True}
+                if lp_write.is_native_currency(c) else
+                {"currency": c, "native": False,
+                 "erc20ToPermit2": 10**30 if granted else 0,
+                 "permit2ToPosm": 10**30 if granted else 0,
+                 "permit2Expiration": timestamp + 10**7 if granted else 0,
+                 "balance": 10**30}
+                for c in currencies]
+
+    real_plan_hash = lp_write.plan_hash
+
+    def recording_plan_hash(fields):
+        captured["fields"] = dict(fields)
+        return real_plan_hash(fields)
+
+    def stub_run_plan(client, chn, a, signer, ctx):
+        captured["rows"] = ctx["rows"]
+        return lp_write.plan_hash(ctx["hashFields"])
+
+    stubs = {"pool_key_for_id": stub_pool_key, "load_pool_state": stub_state,
+             "load_position_for_write": stub_position, "token_info": stub_token_info,
+             "check_allowances": stub_allowances, "plan_hash": recording_plan_hash,
+             "run_plan": stub_run_plan}
+    saved = {name: getattr(lp_write, name) for name in stubs}
+    signer = {"address": _ME, "privateKey": None, "simulateOnly": True}
+    try:
+        for name, fn in stubs.items():
+            setattr(lp_write, name, fn)
+        with contextlib.redirect_stdout(io.StringIO()):
+            lp_write.COMMANDS[command](_StubClient(timestamp), chain, dict(args), signer)
+    finally:
+        for name, fn in saved.items():
+            setattr(lp_write, name, fn)
+
+    fields = captured["fields"]
+    return {"fields": fields, "hash": real_plan_hash(fields),
+            "rows": captured.get("rows", [])}
+
+
+def tier6(g: dict, r: Results) -> None:
+    try:
+        import lp_write
+        from unilp.chains import resolve_chain
+    except ImportError:
+        r.skip("tier6/plan-hash-coverage", "lp_write not importable")
+        return
+
+    chain = resolve_chain("base")
+    plans = {cmd: _plan_of(lp_write, chain, cmd, args)
+             for cmd, args in _BASELINE.items()}
+
+    for command, keys in _HASH_FIELDS.items():
+        r.check(f"{command} hashes exactly the agreed field set",
+                sorted(plans[command]["fields"]), keys)
+
+    for command, flag, value in _MUTATIONS:
+        mutated = _plan_of(lp_write, chain, command,
+                           dict(_BASELINE[command], **{flag: value}))
+        r.check(f"{command} --{flag} changes PLAN_HASH",
+                mutated["hash"] != plans[command]["hash"], True)
+
+    # The other half of the contract: the hash must survive a re-run minutes later, or a
+    # human would be asked to re-approve an identical plan and would learn to ignore the
+    # mismatch. Only the block clock moves here.
+    later = _plan_of(lp_write, chain, "mint", _BASELINE["mint"], timestamp=_TS + 900)
+    r.check("a later block does not change PLAN_HASH",
+            later["hash"], plans["mint"]["hash"])
+    r.check("the absolute deadline stays out of the hash",
+            "deadline" in later["fields"], False)
+
+    # increase --recipient was invisible as well as unbound: it is the SWEEP target, so a
+    # reviewer reading the table could not see where the native refund goes.
+    def _row(rows, label):
+        return next((v for k, v in rows if k == label), None)
+
+    r.check("increase shows the recipient in the table",
+            _ME in (_row(plans["increase"]["rows"], "recipient") or ""), True)
+    native = _plan_of(lp_write, chain, "increase", _BASELINE["increase"],
+                      currency0=lp_write.NATIVE)
+    r.check("increase names SWEEP when the refund is real",
+            "SWEEP" in (_row(native["rows"], "recipient") or ""), True)
+    r.check("increase says so when the recipient is inert",
+            "unused" in (_row(plans["increase"]["rows"], "recipient") or ""), True)
+    r.check("mint shows the tick-drift bound it hashes",
+            "60" in (_row(plans["mint"]["rows"], "max tick drift") or ""), True)
+
+
+# ---------------------------------------------------------------------------
 
 TIERS = (
     ("Tier 0 — primitives (keccak, EIP-55, fixed point, JS arithmetic)", tier0),
@@ -809,6 +1030,7 @@ TIERS = (
     ("Tier 3 — pool math and poolId", tier3),
     ("Tier 4 — domain layer (PositionInfo, hooks, ranges, display)", tier4),
     ("Tier 5 — planning ergonomics (tick pull-off, price cache, messages)", tier5),
+    ("Tier 6 — PLAN_HASH covers every calldata-affecting flag", tier6),
 )
 
 

@@ -98,9 +98,11 @@ senior-unilp-manager — Uniswap V4 LP writes (DRY RUN unless --broadcast --conf
            (--amount0 <n> | --amount1 <n> | --liquidity <raw>)
            [--slippage-bps 100] [--recipient <addr>] [--allow-hooked]
   increase --token-id <id> (--amount0 <n> | --amount1 <n> | --liquidity <raw>)
+           [--slippage-bps 100] [--recipient <addr>]   recipient = native SWEEP refund
   decrease --token-id <id> (--pct <0-100> | --liquidity <raw>) [--slippage-bps 100]
+           [--recipient <addr>]
   collect  --token-id <id> [--recipient <addr>]
-  burn     --token-id <id> [--slippage-bps 100]
+  burn     --token-id <id> [--slippage-bps 100] [--recipient <addr>]
 
 Safety:  --broadcast --confirm <PLAN_HASH>   both required to send
          --from <addr>            simulate only, no key needed
@@ -113,6 +115,7 @@ Global:  --chain <key|id>  --rpc <url>
 """
 
 DEFAULT_SLIPPAGE_BPS = 100
+DEFAULT_DEADLINE_SECS = 1200
 MAX_UINT160 = 2**160 - 1
 MAX_UINT256 = 2**256 - 1
 
@@ -137,9 +140,12 @@ class Big(int):
 def plan_hash(fields: dict) -> str:
     """First 4 bytes of keccak over the canonically serialised parameters.
 
-    Deliberately excludes the deadline and gas price so a re-run minutes later still
-    matches the hash the user approved. It includes everything that changes what the
-    transaction DOES.
+    Excludes the *absolute* deadline and the gas price so a re-run minutes later still
+    matches the hash the user approved — but binds the deadline *offset*, which is a flag
+    the user gave. It includes everything that changes what the transaction DOES, and
+    everything that loosens a guard the user saw when they approved (the Permit2
+    expiration, the tick-drift bound). A parameter that reaches the calldata without
+    reaching this hash can be swapped between the approved dry run and the broadcast.
     """
     canonical = json.dumps(
         {key: (str(value) if isinstance(value, Big) else value)
@@ -386,9 +392,8 @@ def run_plan(client, chain: dict, args: dict, signer: dict, ctx: dict):
         ctx["revalidate"]()
 
     # --- send ---------------------------------------------------------------
-    deadline_secs = int(args.get("deadline-secs") or 1200)
     block = client.get_block()
-    deadline = int(block["timestamp"], 16) + deadline_secs
+    deadline = int(block["timestamp"], 16) + deadline_offset(args)
     data = ctx["rebuildData"](deadline) if ctx.get("rebuildData") else ctx["data"]
 
     return _send(client, chain, args, signer, chain["positionManager"], data,
@@ -420,6 +425,11 @@ def encode_call(plan: dict, deadline: int) -> str:
         POSITION_MANAGER_ABI, "modifyLiquidities",
         [encode_unlock_data(plan["actions"], plan["params"]), int(deadline)],
     )
+
+
+def deadline_offset(args: dict) -> int:
+    """Seconds from now, not the absolute deadline. PLAN_HASH binds this; see plan_hash."""
+    return int(args.get("deadline-secs") or DEFAULT_DEADLINE_SECS)
 
 
 def with_slippage_up(amount: int, bps: int) -> int:
@@ -494,9 +504,12 @@ def cmd_approve(client, chain: dict, args: dict, signer: dict) -> None:
         print("\n  Already approved. Nothing to do.")
         return
 
+    # expirationDays, not the absolute expiration: the absolute value moves with the block
+    # timestamp between the dry run and the broadcast, the flag the user approved does not.
     hash_value = plan_hash({
         "chainId": chain["chainId"], "cmd": "approve", "token": token, "amount": Big(amount),
-        "needErc20": need_erc20, "needPermit2": need_permit2, "signer": signer["address"],
+        "expirationDays": expiration_days, "needErc20": need_erc20,
+        "needPermit2": need_permit2, "signer": signer["address"],
     })
     print(f"\n  PLAN_HASH: {hash_value}")
     if not args.get("broadcast"):
@@ -598,6 +611,7 @@ def cmd_mint(client, chain: dict, args: dict, signer: dict) -> None:
     plan = build_mint_plan(pool_key, tick_lower, tick_upper, liquidity,
                            amount0_max, amount1_max, recipient)
 
+    max_drift = int(args.get("max-tick-drift") or pool_key["tickSpacing"])
     now_secs = int(client.get_block()["timestamp"], 16)
     allowances = check_allowances(client, chain, signer["address"],
                                   [pool_key["currency0"], pool_key["currency1"]])
@@ -623,6 +637,7 @@ def cmd_mint(client, chain: dict, args: dict, signer: dict) -> None:
         ["amount1Max", f"{fmt_units(amount1_max, info1['decimals'])} {info1['symbol']}  "
                        f"(+{bps} bps)"],
         ["recipient", recipient],
+        ["max tick drift", f"{max_drift}  (re-checked against the pool just before sending)"],
         ["actions", describe_actions(plan["actions"])],
         ["msg.value", "0" if plan["value"] == 0
                       else f"{fmt_units(plan['value'], 18)} {chain['nativeCurrency']['symbol']}"],
@@ -645,9 +660,8 @@ def cmd_mint(client, chain: dict, args: dict, signer: dict) -> None:
         print("  whether the pool/hook accepts the add; expect the SETTLE_PAIR leg to fail "
               "afterwards.")
 
-    deadline = now_secs + int(args.get("deadline-secs") or 1200)
+    deadline = now_secs + deadline_offset(args)
     planned_tick = pool["tick"]
-    max_drift = int(args.get("max-tick-drift") or pool_key["tickSpacing"])
 
     def revalidate() -> None:
         fresh = load_pool_state(client, chain, pool_id, pool_key)
@@ -667,6 +681,7 @@ def cmd_mint(client, chain: dict, args: dict, signer: dict) -> None:
             "poolId": pool_id, "tickLower": tick_lower, "tickUpper": tick_upper,
             "liquidity": Big(liquidity), "amount0Max": Big(amount0_max),
             "amount1Max": Big(amount1_max), "recipient": recipient,
+            "maxTickDrift": max_drift, "deadlineSecs": deadline_offset(args),
             "signer": signer["address"],
         },
         "data": encode_call(plan, deadline),
@@ -703,7 +718,11 @@ def cmd_increase(client, chain: dict, args: dict, signer: dict) -> None:
     recipient = checksum_address(args["recipient"]) if args.get("recipient") else signer["address"]
     plan = build_increase_plan(pos["poolKey"], pos["tokenId"], liquidity,
                                amount0_max, amount1_max, recipient)
-    deadline = int(client.get_block()["timestamp"], 16) + int(args.get("deadline-secs") or 1200)
+    deadline = int(client.get_block()["timestamp"], 16) + deadline_offset(args)
+    # On a native-currency0 pool the plan ends in SWEEP, which refunds the unspent part of
+    # msg.value (amount0Max minus what the pool actually took) to this address. Elsewhere
+    # it is inert — but it is still hashed, so the field set stays the same per command.
+    sweeps_native = is_native_currency(pos["poolKey"]["currency0"])
 
     run_plan(client, chain, args, signer, {
         "title": f"increase liquidity on position #{token_id}",
@@ -721,12 +740,16 @@ def cmd_increase(client, chain: dict, args: dict, signer: dict) -> None:
              f"{fmt_units(required['amount1'], info1['decimals'])} {info1['symbol']}"],
             ["amount0Max", fmt_units(amount0_max, info0["decimals"])],
             ["amount1Max", fmt_units(amount1_max, info1["decimals"])],
+            ["recipient", f"{recipient}  " + (
+                f"(SWEEP — unspent {chain['nativeCurrency']['symbol']} is refunded here)"
+                if sweeps_native else "(unused — this pool has no native side)")],
             ["actions", describe_actions(plan["actions"])],
         ],
         "hashFields": {
             "chainId": chain["chainId"], "to": chain["positionManager"], "cmd": "increase",
             "tokenId": Big(pos["tokenId"]), "liquidity": Big(liquidity),
             "amount0Max": Big(amount0_max), "amount1Max": Big(amount1_max),
+            "recipient": recipient, "deadlineSecs": deadline_offset(args),
             "signer": signer["address"],
         },
         "data": encode_call(plan, deadline),
@@ -772,7 +795,7 @@ def cmd_decrease(client, chain: dict, args: dict, signer: dict) -> None:
     recipient = checksum_address(args["recipient"]) if args.get("recipient") else signer["address"]
     plan = build_decrease_plan(pos["poolKey"], pos["tokenId"], liquidity,
                                amount0_min, amount1_min, recipient)
-    deadline = int(client.get_block()["timestamp"], 16) + int(args.get("deadline-secs") or 1200)
+    deadline = int(client.get_block()["timestamp"], 16) + deadline_offset(args)
 
     run_plan(client, chain, args, signer, {
         "title": f"decrease liquidity on position #{token_id}",
@@ -799,7 +822,8 @@ def cmd_decrease(client, chain: dict, args: dict, signer: dict) -> None:
             "chainId": chain["chainId"], "to": chain["positionManager"], "cmd": "decrease",
             "tokenId": Big(pos["tokenId"]), "liquidity": Big(liquidity),
             "amount0Min": Big(amount0_min), "amount1Min": Big(amount1_min),
-            "recipient": recipient, "signer": signer["address"],
+            "recipient": recipient, "deadlineSecs": deadline_offset(args),
+            "signer": signer["address"],
         },
         "data": encode_call(plan, deadline),
         "value": 0,
@@ -820,7 +844,7 @@ def cmd_collect(client, chain: dict, args: dict, signer: dict) -> None:
 
     recipient = checksum_address(args["recipient"]) if args.get("recipient") else signer["address"]
     plan = build_collect_plan(pos["poolKey"], pos["tokenId"], recipient)
-    deadline = int(client.get_block()["timestamp"], 16) + int(args.get("deadline-secs") or 1200)
+    deadline = int(client.get_block()["timestamp"], 16) + deadline_offset(args)
 
     run_plan(client, chain, args, signer, {
         "title": f"collect fees from position #{token_id}",
@@ -837,7 +861,7 @@ def cmd_collect(client, chain: dict, args: dict, signer: dict) -> None:
         "hashFields": {
             "chainId": chain["chainId"], "to": chain["positionManager"], "cmd": "collect",
             "tokenId": Big(pos["tokenId"]), "recipient": recipient,
-            "signer": signer["address"],
+            "deadlineSecs": deadline_offset(args), "signer": signer["address"],
         },
         "data": encode_call(plan, deadline),
         "value": 0,
@@ -864,7 +888,7 @@ def cmd_burn(client, chain: dict, args: dict, signer: dict) -> None:
     recipient = checksum_address(args["recipient"]) if args.get("recipient") else signer["address"]
     plan = build_burn_plan(pos["poolKey"], pos["tokenId"], pos["liquidity"],
                            amount0_min, amount1_min, recipient)
-    deadline = int(client.get_block()["timestamp"], 16) + int(args.get("deadline-secs") or 1200)
+    deadline = int(client.get_block()["timestamp"], 16) + deadline_offset(args)
 
     run_plan(client, chain, args, signer, {
         "title": f"burn position #{token_id} (full exit)",
@@ -886,7 +910,8 @@ def cmd_burn(client, chain: dict, args: dict, signer: dict) -> None:
             "chainId": chain["chainId"], "to": chain["positionManager"], "cmd": "burn",
             "tokenId": Big(pos["tokenId"]), "liquidity": Big(pos["liquidity"]),
             "amount0Min": Big(amount0_min), "amount1Min": Big(amount1_min),
-            "recipient": recipient, "signer": signer["address"],
+            "recipient": recipient, "deadlineSecs": deadline_offset(args),
+            "signer": signer["address"],
         },
         "data": encode_call(plan, deadline),
         "value": 0,

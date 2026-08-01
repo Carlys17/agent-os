@@ -257,8 +257,11 @@ Things that turn this into a loop, all of them seen in practice:
    hash the script did not just print.
 
 `PLAN_HASH` covers chain, contract, subcommand, tokenId/poolId, ticks, liquidity, slippage
-bounds, recipient and signer. It excludes the deadline and gas, so a re-run a few minutes
-later still matches.
+bounds, recipient, signer, and the guards the table showed you: the Permit2 expiration, the
+tick-drift bound and the deadline offset. It excludes the *absolute* deadline and the gas
+price, so a re-run a few minutes later still matches. Anything that changes what the
+transaction does changes the hash — if you find a flag that does not, that is a bug, and
+`selftest.py` Tier 6 is where it gets pinned.
 
 ## Signing
 
@@ -337,11 +340,15 @@ recovered, so pass `--token <addr>`, or spell the key out with
 ## 9. Increase / decrease / collect / burn
 
 ```bash
-python3 "$S"/lp_write.py increase --token-id <id> --amount1 <n>
-python3 "$S"/lp_write.py decrease --token-id <id> --pct 50
-python3 "$S"/lp_write.py collect  --token-id <id>
-python3 "$S"/lp_write.py burn     --token-id <id>
+python3 "$S"/lp_write.py increase --token-id <id> --amount1 <n> [--slippage-bps 100]
+python3 "$S"/lp_write.py decrease --token-id <id> --pct 50 [--recipient <addr>]
+python3 "$S"/lp_write.py collect  --token-id <id> [--recipient <addr>]
+python3 "$S"/lp_write.py burn     --token-id <id> [--recipient <addr>]
 ```
+
+`--recipient` defaults to the signer everywhere. On `decrease`, `collect` and `burn` it is
+where the tokens come out. On `increase` it is only the `SWEEP` target — the unspent part of
+`msg.value` on a native-currency0 pool — and the table says which of the two it is.
 
 `decrease` also sweeps accrued fees — `TAKE_PAIR` returns principal and fees together. There
 is no `collect()` in v4: it is `DECREASE_LIQUIDITY` with `liquidity = 0` plus `TAKE_PAIR`.
@@ -385,7 +392,7 @@ a `WARNING` above 0.5% divergence. Causes and how to read a revert:
 ## Verifying a change
 
 ```bash
-python3 {baseDir}/scripts/selftest.py     # 463 offline assertions, no network
+python3 {baseDir}/scripts/selftest.py     # 503 offline assertions, no network
 ```
 
 Covers the keccak / EIP-55 / ABI-codec primitives, secp256k1 signing, TickMath, the AGENTOS
