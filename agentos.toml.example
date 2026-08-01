@@ -407,6 +407,24 @@ enabled = true
 # model = ""            # None = use session model
 # timeout_seconds = 30.0
 
+[auxiliary]
+# The model for work AgentOS does on its own behalf rather than as part of a
+# turn: analysing an attached document, describing an image. These calls are
+# billed to the session but tracked separately, so `agentos cost` can show what
+# the agent spent answering versus what the runtime spent on its own.
+#
+# Leave empty to reuse the [llm] provider and model. Point it at something
+# cheap if these tasks do not need your main model.
+# provider = ""
+# model = ""
+# timeout_seconds = 120.0
+
+# Per-task overrides. Tasks in use: "document" (analysing an attached file) and
+# "vision" (describing an image). A task with a capability requirement wants its
+# own entry — vision needs a model that can actually see an image.
+# [auxiliary.tasks.vision]
+# model = "openai/gpt-4o-mini"
+
 [sandbox]
 # Per-command ephemeral sandbox + security grading.
 #

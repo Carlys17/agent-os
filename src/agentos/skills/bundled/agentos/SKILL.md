@@ -184,6 +184,7 @@ Main `agentos.toml` sections (full commented reference:
 | `[control_ui]` | `allowed_origins` for reverse-proxy setups |
 | `[updates]` | `notify` (default true) — the once-per-24h "new release available" notice |
 | `[channels]` | messaging channels (`[[channels.channels]]` entries) |
+| `[auxiliary]` | model for work AgentOS runs itself, not the agent's turn (document analysis, image description): `provider`, `model`, `timeout_seconds`, `[auxiliary.tasks.<task>]`. Empty = reuse `[llm]` |
 | `[compaction]`, `[agent_token_saving]`, `[task_runtime]` | context compaction, tool-result projection, concurrency |
 
 Slack native commands auto-sync when a Slack channel entry provides `app_id`,

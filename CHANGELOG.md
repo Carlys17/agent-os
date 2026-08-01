@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `[auxiliary]` configures the model for work AgentOS runs on its own behalf
+  rather than as part of a turn — analysing an attached document, describing an
+  image. Empty values reuse `[llm]`, so an install that never sets it is
+  unchanged; point it at something cheap when those tasks do not need your main
+  model. Per-task overrides live in `[auxiliary.tasks.<task>]` (`document` and
+  `vision` today), because a text-only model cannot describe an image.
+
 ### Changed
 
 - `edit_file` no longer fails on text that differs from the file only in
@@ -26,6 +35,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   becomes `"string"`, objects without `properties` gain an empty one, and
   values that are not schemas at all are dropped along with any `required`
   entry naming them.
+
+- Side-task LLM calls spent tokens that nothing recorded. Analysing a document
+  and describing an image each built their own provider client, so the cost
+  appeared on the provider bill but never in `agentos cost`. Those calls now run
+  through one auxiliary client that bills the session that triggered them and
+  additionally records them under an `aux:<task>` scope, keeping runtime cost
+  separable from turn cost. Two copies of the provider-to-credential mapping in
+  `tools/builtin/media.py` collapse into one — the document path had only ever
+  read the environment, so it ignored a key configured in `[llm]` for the same
+  provider and now finds it.
+
+- A side task with no reachable API key sent the request anyway and failed on
+  `Illegal header value b'Bearer '`, which named neither the provider nor the
+  variable to set. It now fails before the request with both. Local backends
+  such as Ollama, which authenticate by reachability rather than by key, are
+  unaffected.
 
 ## [2026.7.31] - 2026-07-31
 

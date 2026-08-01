@@ -594,6 +594,37 @@ embedding support.
 
 Read: [`features/memory.md`](features/memory.md)
 
+## Auxiliary Model
+
+Not every provider call belongs to a turn. Analysing a document the user
+attached and describing an image are work AgentOS initiates on its own behalf.
+These run against the `[auxiliary]` model rather than the agent's:
+
+```toml
+[auxiliary]
+provider = ""            # empty = reuse [llm]
+model = ""               # empty = reuse [llm]
+timeout_seconds = 120.0
+
+[auxiliary.tasks.vision]
+model = "openai/gpt-4o-mini"
+```
+
+Point it at something cheap when these tasks do not need your main model. Tasks
+currently in use are `document` and `vision`; a task with a capability
+requirement wants its own entry, since a text-only model cannot describe an
+image.
+
+Resolution runs highest-first: `AGENTOS_<TASK>_MODEL` (for example
+`AGENTOS_VISION_MODEL`), then `[auxiliary.tasks.<task>]`, then a
+capability-aware default such as the router's image-capable tier, then
+`[auxiliary]`, then `AGENTOS_LLM_MODEL`, then `[llm]`. An install that sets
+none of this keeps using the `[llm]` model exactly as before.
+
+These calls are billed to the session that triggered them and are additionally
+tracked under an `aux:<task>` scope, so `agentos cost` can separate what the
+agent spent answering from what the runtime spent on its own.
+
 ## Sandbox and Permissions
 
 Inspect or change posture:

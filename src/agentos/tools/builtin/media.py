@@ -66,6 +66,9 @@ _PDF_RENDER_SCALE = 2.0
 _PDF_TEXT_LIMIT = 50_000
 _MAX_REDIRECTS = 5
 _VISION_ANALYSIS_TIMEOUT_SECONDS = 180.0
+# Used only when neither [auxiliary] nor [llm] names a model: small, cheap, and
+# able to read an image, which the document and vision paths both need.
+_DEFAULT_AUXILIARY_MEDIA_MODEL = "openai/gpt-4o-mini"
 _image_generation_config: Any | None = None
 _audio_config: Any | None = None
 _media_llm_config: Any | None = None
@@ -349,33 +352,17 @@ def _mime_to_ext(content_type: str) -> str:
     return mapping.get(ct, "")
 
 
-async def _complete_from_stream(provider: Any, messages: list, config: Any = None) -> str:
-    """Consume a chat() stream and return the assembled text response."""
-    text_parts: list[str] = []
-    async for event in provider.chat(messages=messages, config=config):
-        if hasattr(event, "text"):
-            text_parts.append(event.text)
-        elif hasattr(event, "delta") and isinstance(event.delta, str):
-            text_parts.append(event.delta)
-        elif getattr(event, "kind", None) == "error":
-            code = getattr(event, "code", "") or "provider_error"
-            message = getattr(event, "message", "") or "Provider stream failed"
-            raise RuntimeError(f"Provider stream error ({code}): {message}")
-    return "".join(text_parts)
+def _aux_session_key() -> str | None:
+    ctx = current_tool_context.get()
+    return getattr(ctx, "session_key", None) if ctx is not None else None
 
 
 async def _call_vision_provider(b64_data: str, media_type: str, prompt: str) -> str:
-    """Send image to provider vision API. Raises if provider not available."""
-    try:
-        from agentos.provider.selector import ModelSelector, SelectorConfig
-        from agentos.provider.types import ContentBlockImage, ContentBlockText, Message
+    """Send image to the auxiliary vision model. Raises if it is unavailable."""
+    from agentos.provider.auxiliary import AuxiliaryError, get_auxiliary_client
+    from agentos.provider.types import ContentBlockImage, ContentBlockText, Message
 
-        cfg = _resolve_vision_provider_config(default_model="openai/gpt-4o-mini")
-        selector = ModelSelector(SelectorConfig(primary=cfg))
-        provider = selector.resolve()
-    except Exception as exc:
-        raise RuntimeError(f"Provider not available: {exc}") from exc
-
+    hint_provider, hint_model = _vision_model_hint()
     vision_message = Message(
         role="user",
         content=[
@@ -383,7 +370,18 @@ async def _call_vision_provider(b64_data: str, media_type: str, prompt: str) -> 
             ContentBlockText(text=prompt),
         ],
     )
-    return await _complete_from_stream(provider, [vision_message])
+    try:
+        result = await get_auxiliary_client().complete(
+            task="vision",
+            messages=[vision_message],
+            preferred_provider=hint_provider,
+            preferred_model=hint_model,
+            default_model=_DEFAULT_AUXILIARY_MEDIA_MODEL,
+            session_key=_aux_session_key(),
+        )
+    except AuxiliaryError as exc:
+        raise RuntimeError(f"Provider not available: {exc}") from exc
+    return result.text
 
 
 # ---------------------------------------------------------------------------
@@ -758,16 +756,18 @@ def _parse_page_range(pages: str, total: int) -> list[int]:
 
 
 async def _call_llm_with_text(text: str, prompt: str) -> str:
-    """Send extracted text to LLM with analysis prompt. Graceful fallback."""
+    """Send extracted text to the auxiliary model. Graceful fallback."""
     try:
-        from agentos.provider.selector import ModelSelector, SelectorConfig
+        from agentos.provider.auxiliary import get_auxiliary_client
         from agentos.provider.types import Message
 
-        cfg = _resolve_provider_config("LLM", default_model="openai/gpt-4o-mini")
-        selector = ModelSelector(SelectorConfig(primary=cfg))
-        provider = selector.resolve()
-        message = Message(role="user", content=f"{prompt}\n\n---\n{text}")
-        return await _complete_from_stream(provider, [message])
+        result = await get_auxiliary_client().complete(
+            task="document",
+            messages=[Message(role="user", content=f"{prompt}\n\n---\n{text}")],
+            default_model=_DEFAULT_AUXILIARY_MEDIA_MODEL,
+            session_key=_aux_session_key(),
+        )
+        return result.text
     except Exception:
         return f"[LLM analysis not available] Extracted text ({len(text)} chars) ready."
 
@@ -802,92 +802,42 @@ def _configured_image_tier(router_config: Any | None) -> Any | None:
     return None
 
 
-def _configured_provider_config(provider_name: str, model: str):
-    from agentos.provider.selector import ProviderConfig
+def _vision_model_hint() -> tuple[str, str]:
+    """The image-capable tier the router already knows about, if any.
 
-    provider_name = str(provider_name or "").strip().lower() or "openrouter"
-    llm_provider = str(_config_value(_media_llm_config, "provider", "") or "").strip().lower()
-    use_llm_config = provider_name == llm_provider
+    Offered to the auxiliary client as a hint rather than a decision. It is
+    withheld when the operator pinned the vision scope through the
+    environment, so an explicit ``AGENTOS_VISION_*`` still outranks anything
+    derived — the same precedence this had before resolution moved out.
+    """
 
-    api_key = str(_config_value(_media_llm_config, "api_key", "") or "") if use_llm_config else ""
-    if use_llm_config and not api_key:
-        api_key_env = str(_config_value(_media_llm_config, "api_key_env", "") or "")
-        if api_key_env:
-            api_key = os.environ.get(api_key_env, "")
-
-    base_url = str(_config_value(_media_llm_config, "base_url", "") or "") if use_llm_config else ""
-    proxy = str(_config_value(_media_llm_config, "proxy", "") or "") if use_llm_config else ""
-    provider_routing = (
-        _config_value(_media_llm_config, "provider_routing", {}) if use_llm_config else {}
+    if _has_explicit_scope_override("VISION"):
+        return "", ""
+    tier = _configured_image_tier(_media_agentos_router_config)
+    model = str(_config_value(tier, "model", "") or "")
+    if tier is None or not model:
+        return "", ""
+    provider = str(
+        _config_value(tier, "provider", _config_value(_media_llm_config, "provider", "")) or ""
     )
-    if not isinstance(provider_routing, dict):
-        provider_routing = {}
-
-    if provider_name == "anthropic":
-        api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        base_url = base_url or os.environ.get("ANTHROPIC_BASE_URL", "")
-    elif provider_name == "openrouter":
-        api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "") or os.environ.get(
-            "OPENAI_API_KEY", ""
-        )
-        base_url = base_url or os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    else:
-        api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        base_url = base_url or os.environ.get("OPENAI_BASE_URL", "")
-
-    return ProviderConfig(
-        provider=provider_name,
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
-        proxy=proxy or os.environ.get("AGENTOS_LLM_PROXY", ""),
-        provider_routing=provider_routing,
-    )
+    return provider, model
 
 
 def _resolve_vision_provider_config(*, default_model: str):
-    if not _has_explicit_scope_override("VISION"):
-        tier = _configured_image_tier(_media_agentos_router_config)
-        model = str(_config_value(tier, "model", "") or "")
-        if tier is not None and model:
-            provider_name = str(
-                _config_value(tier, "provider", _config_value(_media_llm_config, "provider", ""))
-                or "openrouter"
-            )
-            return _configured_provider_config(provider_name, model)
-    return _resolve_provider_config("VISION", default_model=default_model)
+    """Resolve the vision provider, credentials included.
 
+    Kept as a named seam because the resolution it performs is what the vision
+    path depends on; the work itself now lives in the auxiliary client.
+    """
 
-def _resolve_provider_config(scope: str, *, default_model: str):
-    from agentos.provider.selector import ProviderConfig
+    from agentos.provider.auxiliary import get_auxiliary_client
 
-    provider_name = (
-        os.environ.get(f"AGENTOS_{scope}_PROVIDER")
-        or os.environ.get("AGENTOS_LLM_PROVIDER")
-        or "openrouter"
-    )
-    model = (
-        os.environ.get(f"AGENTOS_{scope}_MODEL")
-        or os.environ.get("AGENTOS_LLM_MODEL")
-        or default_model
-    )
-
-    if provider_name == "anthropic":
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        base_url = os.environ.get("ANTHROPIC_BASE_URL", "")
-    elif provider_name == "openrouter":
-        api_key = os.environ.get("OPENROUTER_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
-        base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    else:
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        base_url = os.environ.get("OPENAI_BASE_URL", "")
-
-    return ProviderConfig(
-        provider=provider_name,
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
-        proxy=os.environ.get("AGENTOS_LLM_PROXY", ""),
+    hint_provider, hint_model = _vision_model_hint()
+    return get_auxiliary_client().provider_config(
+        "vision",
+        preferred_provider=hint_provider,
+        preferred_model=hint_model,
+        default_model=default_model,
     )
 
 
