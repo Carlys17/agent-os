@@ -108,6 +108,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- A turn could die with `TypeError: 'NoneType' object is not iterable` partway
+  through a streaming reply, taking the whole answer with it. The OpenAI-compat
+  stream reader read `choices`, `delta`, `tool_calls` and each tool call's
+  `function` with a `dict.get(key, default)` — but that default only applies
+  when the key is *absent*, and several gateways send the key with an explicit
+  `null` instead of omitting it (a text-only delta carrying `"tool_calls":
+  null`, or a usage-only final chunk carrying `"choices": null`). Those reads
+  now treat null and missing identically, so a chunk shaped that way is skipped
+  rather than crashing the turn. The non-streaming path read `choices` the same
+  way and is fixed alongside it.
+
 - Tool schemas from MCP servers went to the provider exactly as the server
   emitted them, so one malformed tool could fail the whole request and take
   every other tool down with it. Schemas are now normalized once at discovery:

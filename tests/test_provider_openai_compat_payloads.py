@@ -17,6 +17,7 @@ from agentos.provider.types import (
     Message,
     ModelCapabilities,
     ProviderHeartbeatEvent,
+    TextDeltaEvent,
     ToolDefinition,
     ToolInputSchema,
     ToolUseEndEvent,
@@ -1483,4 +1484,156 @@ def test_gemini_stream_multiple_tool_calls_without_indexes_stay_separate(
     assert [(event.tool_use_id, event.tool_name, event.arguments) for event in tool_ends] == [
         ("call_lookup", "lookup", {"q": "hi"}),
         ("call_save", "save", {"value": 1}),
+    ]
+
+
+# --- Null-valued streaming fields -------------------------------------------
+#
+# ``dict.get(key, default)`` only returns ``default`` when the key is ABSENT.
+# Several OpenAI-compatible gateways (glm-* via capminal/opencap among them)
+# emit the key with an explicit ``null`` instead of omitting it, so the stream
+# loop must treat null and missing identically or the whole turn dies with
+# ``TypeError: 'NoneType' object is not iterable``.
+
+
+def _null_field_body(chunks: list[dict[str, Any]]) -> bytes:
+    body = b"".join(f"data: {json.dumps(chunk)}\n\n".encode() for chunk in chunks)
+    return body + b"data: [DONE]\n\n"
+
+
+def _streamed_text(events: list[Any]) -> str:
+    return "".join(e.text for e in events if isinstance(e, TextDeltaEvent))
+
+
+def _glm_provider() -> OpenAIProvider:
+    return OpenAIProvider(
+        api_key="test",
+        model="glm-5.2",
+        base_url="https://gw.capminal.ai/api/inference/v1",
+        provider_kind="opencap",
+    )
+
+
+def test_stream_survives_an_explicit_null_tool_calls_in_a_delta(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+    _patch_transport_body(
+        monkeypatch,
+        captured,
+        _null_field_body(
+            [
+                {
+                    "model": "glm-5.2",
+                    "choices": [
+                        {
+                            "delta": {"content": "hello", "tool_calls": None},
+                            "finish_reason": None,
+                        }
+                    ],
+                },
+                {
+                    "model": "glm-5.2",
+                    "choices": [{"delta": {}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+                },
+            ]
+        ),
+    )
+
+    events = _collect_events(_glm_provider(), ChatConfig())
+
+    assert not [event for event in events if isinstance(event, ErrorEvent)]
+    assert _streamed_text(events) == "hello"
+
+
+def test_stream_survives_an_explicit_null_choices_on_the_usage_chunk(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+    _patch_transport_body(
+        monkeypatch,
+        captured,
+        _null_field_body(
+            [
+                {
+                    "model": "glm-5.2",
+                    "choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}],
+                },
+                {
+                    "model": "glm-5.2",
+                    "choices": None,
+                    "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+                },
+            ]
+        ),
+    )
+
+    events = _collect_events(_glm_provider(), ChatConfig())
+
+    assert not [event for event in events if isinstance(event, ErrorEvent)]
+    assert _streamed_text(events) == "hi"
+    done = next(event for event in events if isinstance(event, DoneEvent))
+    assert done.input_tokens == 2
+
+
+def test_stream_survives_an_explicit_null_delta(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+    _patch_transport_body(
+        monkeypatch,
+        captured,
+        _null_field_body(
+            [
+                {"model": "glm-5.2", "choices": [{"delta": None, "finish_reason": None}]},
+                {
+                    "model": "glm-5.2",
+                    "choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}],
+                },
+            ]
+        ),
+    )
+
+    events = _collect_events(_glm_provider(), ChatConfig())
+
+    assert not [event for event in events if isinstance(event, ErrorEvent)]
+    assert _streamed_text(events) == "hi"
+
+
+def test_stream_survives_a_null_function_object_inside_a_tool_call(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+    _patch_transport_body(
+        monkeypatch,
+        captured,
+        _null_field_body(
+            [
+                {
+                    "model": "glm-5.2",
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {"index": 0, "id": "call_a", "function": None},
+                                    {
+                                        "index": 0,
+                                        "function": {
+                                            "name": "lookup",
+                                            "arguments": '{"q": "hi"}',
+                                        },
+                                    },
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                },
+                {
+                    "model": "glm-5.2",
+                    "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+                },
+            ]
+        ),
+    )
+
+    events = _collect_events(_glm_provider(), ChatConfig())
+
+    assert not [event for event in events if isinstance(event, ErrorEvent)]
+    tool_ends = [event for event in events if isinstance(event, ToolUseEndEvent)]
+    assert [(event.tool_use_id, event.tool_name, event.arguments) for event in tool_ends] == [
+        ("call_a", "lookup", {"q": "hi"}),
     ]
