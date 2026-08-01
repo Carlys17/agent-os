@@ -17,6 +17,13 @@ _HARD_BLOCK_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r":(){ :\|:& };:", re.IGNORECASE),
 ]
 
+_BLOCKED_INVISIBLE_MARKS: frozenset[int] = frozenset(
+    [0x034F]
+    + list(range(0x180B, 0x180E))
+    + list(range(0xFE00, 0xFE0E))
+    + list(range(0xE0100, 0xE01F0))
+)
+
 _SOFT_BLOCK_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.IGNORECASE),
     re.compile(r"you\s+are\s+now\s+", re.IGNORECASE),
@@ -31,7 +38,9 @@ def scan_cron_prompt(task: str) -> tuple[bool, str]:
     """Return whether a scheduled prompt should be rejected."""
     for char in task:
         cat = unicodedata.category(char)
-        if cat in ("Cf", "Cc") and char not in ("\n", "\r", "\t"):
+        is_invisible_control = cat in ("Cf", "Cc") and char not in ("\n", "\r", "\t")
+        is_blocked_mark = cat == "Mn" and ord(char) in _BLOCKED_INVISIBLE_MARKS
+        if is_invisible_control or is_blocked_mark:
             log.warning("cron_prompt_blocked", pattern="invisible_unicode", char=repr(char))
             return True, f"Blocked: invisible unicode character detected ({repr(char)})"
 
