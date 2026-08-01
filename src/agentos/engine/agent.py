@@ -49,6 +49,10 @@ from agentos.engine.tool_result_store import (
 )
 from agentos.engine.tool_text_compat import strip_synthetic_tool_call_suffix
 from agentos.engine.tool_token_estimate import estimate_tokens as get_approx_tokens
+from agentos.engine.verification_ledger import (
+    VerificationLedger,
+    build_verification_nudge,
+)
 from agentos.execution_status import (
     mark_execution_status_truncated,
     runtime_execution_status,
@@ -485,6 +489,39 @@ class _ProviderRetryPolicy:
                 < self.provider_failure_budgets.get(failure_kind, self.max_provider_retries)
             )
         return provider_retry_attempt < self.max_provider_retries
+
+
+_MUTATING_TOOL_NAMES = frozenset({"write_file", "edit_file", "apply_patch"})
+_COMMAND_TOOL_NAMES = frozenset({"exec_command", "execute_code", "background_process"})
+# Sessions whose surface is a person in a chat rather than a checkout. There is
+# usually no test command to run there, so the verification nudge is withheld.
+_MESSAGING_SESSION_MARKERS = ("telegram", "slack", "discord", "msteams", "whatsapp", "signal")
+
+
+def _mutated_paths(arguments: dict[str, Any]) -> list[str]:
+    """Pull the touched paths out of a mutating tool's arguments."""
+
+    paths: list[str] = []
+    for key in ("path", "file_path", "target"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            paths.append(value.strip())
+    patch = arguments.get("patch")
+    if isinstance(patch, str):
+        # apply_patch names its files inside the patch body.
+        for line in patch.splitlines():
+            stripped = line.strip()
+            for marker in ("*** Update File:", "*** Add File:", "*** Delete File:"):
+                if stripped.startswith(marker):
+                    candidate = stripped[len(marker) :].strip()
+                    if candidate:
+                        paths.append(candidate)
+    return paths
+
+
+def _is_messaging_surface(session_key: str | None) -> bool:
+    key = str(session_key or "").casefold()
+    return any(marker in key for marker in _MESSAGING_SESSION_MARKERS)
 
 
 def _classify_provider_attempt(
@@ -1854,6 +1891,7 @@ class Agent:
         max_iterations_finalization_pending = False
         max_iterations_finalization_message: Message | None = None
         progress_watchdog = ProgressWatchdog(observe_only=True)
+        verification_ledger = VerificationLedger()
         _fallback = FallbackPolicy(
             max_retries=self.config.max_provider_retries,
             base_backoff_ms=self.config.retry_base_backoff_ms,
@@ -3141,6 +3179,22 @@ class Agent:
                 # No tool calls → we're done
                 if not tool_calls:
                     max_iterations_finalization_pending = False
+                    # The model is answering rather than acting: this is the
+                    # moment it stops, and the last chance to notice that it is
+                    # stopping on edits nothing checked.
+                    verification_decision = verification_ledger.decide(
+                        is_messaging_surface=_is_messaging_surface(self._session_key)
+                    )
+                    if verification_decision.needs_verification:
+                        nudge = build_verification_nudge(verification_decision)
+                        self._write_turn_call_log(
+                            "verification_ledger",
+                            reason=verification_decision.reason,
+                            changed_paths=list(verification_decision.changed_paths),
+                            details=verification_decision.details,
+                            guidance=nudge,
+                        )
+                        yield WarningEvent(code="unverified_code_changes", message=nudge)
                     break
 
                 tool_deadline = _loop.time() + self.config.iteration_timeout
@@ -3474,6 +3528,19 @@ class Agent:
                     None,
                 )
                 arguments_by_id = {tc.tool_use_id: tc.arguments for tc in tool_calls}
+
+                # Record what this iteration changed and whether it checked it.
+                # Order matters: a check only counts for edits made before it.
+                for result in executed_results:
+                    if result.is_error:
+                        continue
+                    arguments = arguments_by_id.get(result.tool_use_id) or {}
+                    if result.tool_name in _MUTATING_TOOL_NAMES:
+                        verification_ledger.record_mutation(_mutated_paths(arguments))
+                    elif result.tool_name in _COMMAND_TOOL_NAMES:
+                        verification_ledger.record_command(
+                            str(arguments.get("command") or arguments.get("code") or "")
+                        )
                 watchdog_decision = progress_watchdog.observe(
                     ProgressObservation(
                         iteration=iterations,
