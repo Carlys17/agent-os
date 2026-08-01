@@ -31,6 +31,7 @@ agentos <command> --help
 | `agentos sandbox` | Inspect or change default sandbox posture. |
 | `agentos cron` | Manage scheduled AgentOS runs. |
 | `agentos cost` | Inspect usage and estimated cost. |
+| `agentos context` | Show the fixed per-request context cost and what each tool profile would cost. |
 | `agentos diagnostics` | Enable or disable runtime diagnostics logging. |
 | `agentos replay` | Replay a recorded turn from the decision log. |
 | `agentos migrate` | Import state from external agent runtimes. |
@@ -521,12 +522,21 @@ Read:
 ## Cost, Diagnostics, and Replay
 
 ```sh
+agentos context
+agentos context --json
 agentos cost
 agentos diagnostics status
 agentos diagnostics on
 agentos diagnostics off
 agentos replay --session <session-key> --turn <turn-id>
 ```
+
+`agentos context` answers a different question from `agentos cost`: not what a
+session spent, but what every request carries before the conversation starts.
+Tool schemas dominate it — around 7,300 tokens on a stock install, charged on
+every call in every turn — and the command prices each `[tools] profile` against
+the current one so the trade is visible before you make it. A profile is fixed
+for the session, so narrowing it does not disturb the prompt cache.
 
 Use diagnostics and replay when you need to understand why a turn behaved a
 certain way.

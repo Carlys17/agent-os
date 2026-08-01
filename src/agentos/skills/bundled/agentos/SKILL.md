@@ -176,7 +176,7 @@ Main `agentos.toml` sections (full commented reference:
 | `[llm]` | `provider`, `model`, `api_key`, `base_url`, `proxy`, `[llm.provider_routing]` |
 | `[agentos_router]` | router on/off, `strategy` (`pilot-v1`), tier settings under `[agentos_router.tiers.c0..c3]` |
 | `[skills]` | skill filtering/injection: `filter_strategy`, `filter_top_k`, `injection_mode`, `max_skills_prompt_chars` (default 24000), `max_skill_view_chars` (default 10000, 0 disables) |
-| `[tools]` | model-visible tools and policy; `enabled = false` runs providers in plain-text mode |
+| `[tools]` | model-visible tools and policy; `enabled = false` runs providers in plain-text mode; `profile` (`full` \| `coding` \| `messaging` \| `memory_only` \| `minimal`) sets the base allowlist — `agentos context` prices each one |
 | `[memory]` | memory source and embedding model, `[memory.nudge]` (periodic memory review) |
 | `[sandbox]` | `sandbox`, `default_level` (DISABLED/STANDARD/STRICT/LOCKED), `backend`, network/mounts |
 | `[permissions]` | `default_mode` = `off` \| `on` \| `bypass` \| `full` (pair with `agentos sandbox …`) |

@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   paid for once per session rather than once per turn. Only names are emitted,
   never paths. Turn it off with `[prompt] env_probe_enabled = false`.
 
+- `agentos context` shows what every provider request carries before the
+  conversation starts. Tool schemas dominate that overhead — about 7,300 tokens
+  on a stock install, charged on every call in every turn — and nothing
+  surfaced the number, so the only way to learn it was to write a script
+  against the registry. The command breaks the cost down, lists the largest
+  schemas, and prices each `[tools] profile` against the current one.
+
+- `[tools] profile` is now documented. It already narrowed the tool surface
+  sharply — `coding` costs 77% less than `full`, `messaging` 92% less — but it
+  appeared in no example config, no doc page and no operator guide, so the
+  largest available lever on per-request cost was undiscoverable. Because a
+  profile is fixed for the session, narrowing it does not disturb the prompt
+  cache.
+
 ### Changed
 
 - `edit_file` no longer fails on text that differs from the file only in
