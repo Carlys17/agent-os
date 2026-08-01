@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `edit_file` no longer fails on text that differs from the file only in
+  formatting. It still tries an exact match first, then falls back through a
+  chain of increasingly permissive strategies — indentation, whitespace runs,
+  unescaped `\n` literals, smart quotes, and finally block similarity — and
+  names the strategy that matched in its result. Text that appears more than
+  once is still rejected rather than guessed, now with the line numbers of
+  every match, and a failed edit reports the closest regions it found.
+
+### Fixed
+
+- Tool schemas from MCP servers went to the provider exactly as the server
+  emitted them, so one malformed tool could fail the whole request and take
+  every other tool down with it. Schemas are now normalized once at discovery:
+  `$ref` into `$defs` is inlined, `anyOf`/`oneOf` unions that exist only to
+  permit `null` collapse to their concrete branch, `"type": ["string", "null"]`
+  becomes `"string"`, objects without `properties` gain an empty one, and
+  values that are not schemas at all are dropped along with any `required`
+  entry naming them.
+
 ## [2026.7.31] - 2026-07-31
 
 ### Changed
