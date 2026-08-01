@@ -41,6 +41,7 @@ DEFAULTS = {
     "robinhood-agentic-trading",
     "robinhood-rwa-addresses",
     "seedance-2-prompt",
+    "senior-unilp-manager",
     "srt-from-script",
     "sub-agent",
     "subtitle-burner",
@@ -53,7 +54,11 @@ DEFAULTS = {
     "weather",
     "xlsx",
 } | AUDIO_DEFAULTS
-PROMPT_DEFAULTS_WITHOUT_AUDIO_TOOLS = DEFAULTS - AUDIO_DEFAULTS
+# Bundled but gated out of the prompt until its environment is configured: it declares
+# `requires.env`, so `gate_skills` drops it while any of those variables is unset. That is
+# the intended "Needs setup" behaviour, not a regression.
+ENV_GATED_DEFAULTS = {"senior-unilp-manager"}
+PROMPT_DEFAULTS_WITHOUT_AUDIO_TOOLS = DEFAULTS - AUDIO_DEFAULTS - ENV_GATED_DEFAULTS
 INTERNAL_HELPERS = {
     "stack-trace-generic-probe",
     "stack-trace-go-probe",
@@ -155,6 +160,10 @@ async def test_default_prompt_only_injects_retained_bundled_skills(
             has_bin_cache=MockBinCache(),
         ),
     )
+    # A developer who happens to have these exported would otherwise see a different
+    # prompt than CI does.
+    for name in ("RPC_BASE_URL", "RPC_ROBINHOOD_URL", "UNIV4_LP_PRIVATE_KEY"):
+        monkeypatch.delenv(name, raising=False)
     loader = SkillLoader(bundled_dir=BUNDLED, snapshot_path=tmp_path / "snapshot.json")
 
     ctx = await filter_skills(_ctx(loader))
@@ -165,6 +174,8 @@ async def test_default_prompt_only_injects_retained_bundled_skills(
     for name in AUDIO_DEFAULTS:
         assert f"<name>{name}</name>" not in prompt
     for name in INTERNAL_HELPERS:
+        assert f"<name>{name}</name>" not in prompt
+    for name in ENV_GATED_DEFAULTS:
         assert f"<name>{name}</name>" not in prompt
     assert "<name>healthcheck</name>" not in prompt
 

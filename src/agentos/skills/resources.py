@@ -6,6 +6,24 @@ from pathlib import Path, PurePosixPath
 
 _RESOURCE_DIRS = ("references", "scripts", "assets", "templates")
 
+# A SKILL.md is written before anyone knows where it will be installed — bundled
+# under site-packages on one machine, under a workspace directory on the next —
+# so it names its own files through this placeholder instead of a real path.
+SKILL_BASE_DIR_PLACEHOLDER = "{baseDir}"
+
+
+def expand_skill_placeholders(text: str, base_dir: str) -> str:
+    """Resolve ``{baseDir}`` in a skill body against its install directory.
+
+    Only ever called on the copy handed to the model. Expanding at load time
+    would put a machine-specific absolute path into ``SkillSpec.content``, which
+    ``skill_edit`` writes back to disk when it is asked to change frontmatter
+    and not the body.
+    """
+    if not text or not base_dir:
+        return text
+    return text.replace(SKILL_BASE_DIR_PLACEHOLDER, base_dir)
+
 
 class SkillResources:
     """Access skill resource directories: scripts/, references/, assets/."""

@@ -19,6 +19,7 @@ import { MotionListItem } from '@/lib/motion'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
+import agentosMarkUrl from '@/assets/agentos-mark.png'
 import bankrSymbolUrl from '@/assets/bankr-symbol.svg'
 import capminalSymbolUrl from '@/assets/capminal-symbol.svg'
 import robinhoodSymbolUrl from '@/assets/robinhood-symbol.png'
@@ -53,6 +54,7 @@ import {
   skillCanUpdate,
   skillDotClass,
   skillDotTitle,
+  skillGroupKey,
   skillPublisherId,
   skillStats,
   skillStatus,
@@ -103,7 +105,8 @@ const PARTNER_BRANDS: Record<PartnerBrand, { label: string; asset: string }> = {
  * finding four more ternaries.
  *
  * Robinhood is absent: its tab lists installed skills, not a catalog, so it
- * renders its own intro rather than going through `RegistryPanel`.
+ * renders its own intro (`ROBINHOOD_INTRO`) rather than going through
+ * `RegistryPanel`.
  */
 const REGISTRY_INTRO: Record<
   Exclude<RegistryGroup, 'community'>,
@@ -120,6 +123,25 @@ const REGISTRY_INTRO: Record<
       'Wallet, token-launch, and on-chain execution skills maintained by the Capminal team.',
     notice: "the 'capminal' skill is required for all skills in this catalog.",
   },
+}
+
+/**
+ * Header copy for the Robinhood tab. Kept beside `REGISTRY_INTRO` so partner
+ * copy lives in one place, even though the panel that renders it lists
+ * installed skills instead of a remote catalog.
+ *
+ * The notice is skill-specific rather than catalog-wide: only
+ * `robinhood-agentic-trading` needs the dedicated Agentic account, which
+ * Robinhood provisions through its own onboarding flow — the skill cannot
+ * create it, so a user who installs and runs it first only finds out when the
+ * first tool call fails.
+ */
+const ROBINHOOD_INTRO = {
+  title: 'Robinhood skills',
+  description:
+    'Official bundled capabilities for Robinhood products and on-chain assets, maintained by AgentOS against the Robinhood Trading MCP.',
+  notice:
+    "the 'robinhood-agentic-trading' skill trades from a dedicated Robinhood Agentic account — create that account in Robinhood and complete its authorization flow before using the skill.",
 }
 
 /** The brand name for a catalog tab's search/loading copy ('community' has none). */
@@ -294,6 +316,17 @@ function SkillIcon({
 }) {
   const brand = partnerBrandOf(skill)
   if (brand) return <PartnerLogo brand={brand} className={brandClass} />
+  // "AgentOS Crypto Skills" is an AgentOS-authored group by construction:
+  // `skillGroupKey` only returns 'crypto' for a shipped/bundled skill, the same
+  // trust gate that keeps a hand-dropped directory out of a heading carrying the
+  // AgentOS name. Reusing it means a new crypto skill is branded without a
+  // frontend edit, and it stays clear of `publisher` — routing through that would
+  // move the skill into Partner Skills.
+  if (skillGroupKey(skill) === 'crypto') {
+    return (
+      <img className={brandClass} src={agentosMarkUrl} alt="AgentOS logo" width="40" height="40" />
+    )
+  }
   return (
     <span className={iconClass} aria-hidden="true">
       <PackageIcon />
@@ -1452,8 +1485,9 @@ function RobinhoodPanel({
     >
       <PartnerIntro
         brand="robinhood"
-        title="Robinhood skills"
-        description="Official bundled capabilities for Robinhood products and on-chain assets."
+        title={ROBINHOOD_INTRO.title}
+        description={ROBINHOOD_INTRO.description}
+        notice={ROBINHOOD_INTRO.notice}
         count={skills.length}
       />
       <div className="sk-browse__bar">
@@ -1808,8 +1842,12 @@ function SkillDialog({
             <div className="sk-dialog__section-title">Missing</div>
             <ul className="sk-dialog__missing">
               {missingBins.map((b) => (
-                <li key={`bin:${b}`}>
-                  <code>{b}</code> <span className="sk-dim">binary</span>
+                <li key={`bin:${b}`} className="sk-dialog__missing-row">
+                  <div className="sk-dialog__missing-info">
+                    <div className="sk-dialog__missing-head">
+                      <code>{b}</code> <span className="sk-dim">binary</span>
+                    </div>
+                  </div>
                 </li>
               ))}
               {missingEnv.map((e) => {
@@ -1818,23 +1856,41 @@ function SkillDialog({
                 // same class of problem, so it gets an action too.
                 const detail = (skill.missing_env_detail || []).find((d) => d.name === e)
                 return (
-                  <li key={`env:${e}`} className="sk-dialog__missing-env">
-                    <div>
-                      <code>{e}</code> <span className="sk-dim">env var</span>
-                      {detail?.description ? (
-                        <span className="sk-dim"> — {detail.description}</span>
-                      ) : null}
-                      {detail?.url ? (
-                        <>
-                          {' '}
-                          <a href={detail.url} target="_blank" rel="noopener noreferrer">
-                            where to get it ↗
-                          </a>
-                        </>
+                  <li key={`env:${e}`} className="sk-dialog__missing-row sk-dialog__missing-env">
+                    <div className="sk-dialog__missing-info">
+                      <div className="sk-dialog__missing-head">
+                        <code>{e}</code> <span className="sk-dim">env var</span>
+                      </div>
+                      {detail?.description || detail?.url ? (
+                        <p className="sk-dialog__missing-desc">
+                          {detail.description}
+                          {detail.url ? (
+                            <>
+                              {detail.description ? ' ' : null}
+                              <a
+                                className="sk-dialog__missing-link"
+                                href={detail.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                where to get it ↗
+                              </a>
+                            </>
+                          ) : null}
+                        </p>
                       ) : null}
                     </div>
-                    <Button type="button" size="sm" onClick={() => onSetEnv(e)}>
-                      Set {e}
+                    {/* The name already sits in the chip beside it, so the button
+                        says just "Set" — three long primary buttons read as a wall.
+                        `aria-label` keeps the full accessible name. */}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Set ${e}`}
+                      onClick={() => onSetEnv(e)}
+                    >
+                      Set
                     </Button>
                   </li>
                 )

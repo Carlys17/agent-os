@@ -186,6 +186,9 @@ class SkillPlatformMeta:
     skill_key: str = ""
     primary_env: str = ""
     homepage: str = ""
+    #: Subject-matter grouping for the Skills page (e.g. "crypto"). Distinct from
+    #: ``capabilities``, which describes risk surface rather than topic.
+    category: str = ""
     always: bool | None = None
     os: list[str] = field(default_factory=list)
     requires: SkillRequires | None = None

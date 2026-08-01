@@ -34,7 +34,7 @@ MAX_SKILLS_PER_SOURCE = 200  # per layer cap
 # 10: publisher was added. A version-9 snapshot parses cleanly and would restore
 #    every skill without a publisher, so partner skills would silently lose
 #    their brand grouping until something else invalidated the cache.
-_SNAPSHOT_SCHEMA_VERSION = 10
+_SNAPSHOT_SCHEMA_VERSION = 11
 
 
 def _string_list(value: object) -> list[str]:
@@ -86,6 +86,7 @@ def _resolve_metadata(frontmatter: dict) -> SkillPlatformMeta | None:
         if isinstance(agentos_meta, dict):
             for key in (
                 "emoji",
+                "category",
                 "skillKey",
                 "primaryEnv",
                 "homepage",
@@ -141,6 +142,7 @@ def _resolve_metadata(frontmatter: dict) -> SkillPlatformMeta | None:
     config_vars = raw_config if isinstance(raw_config, list) else [raw_config]
     return SkillPlatformMeta(
         emoji=raw_meta.get("emoji", ""),
+        category=str(raw_meta.get("category", "")).strip().lower(),
         skill_key=raw_meta.get("skillKey", ""),
         primary_env=raw_meta.get("primaryEnv", ""),
         homepage=raw_meta.get("homepage", ""),
@@ -309,6 +311,7 @@ class SkillLoader:
                     "metadata": {
                         "os": s.metadata.os if s.metadata else [],
                         "emoji": s.metadata.emoji if s.metadata else "",
+                        "category": s.metadata.category if s.metadata else "",
                         "skill_key": s.metadata.skill_key if s.metadata else "",
                         "primary_env": s.metadata.primary_env if s.metadata else "",
                         "homepage": s.metadata.homepage if s.metadata else "",
@@ -409,6 +412,7 @@ class SkillLoader:
                 ]
                 meta = SkillPlatformMeta(
                     emoji=raw_meta.get("emoji", ""),
+                    category=str(raw_meta.get("category", "")).strip().lower(),
                     skill_key=raw_meta.get("skill_key", ""),
                     primary_env=raw_meta.get("primary_env", ""),
                     homepage=raw_meta.get("homepage", ""),

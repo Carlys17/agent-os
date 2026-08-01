@@ -29,6 +29,8 @@ export interface RawSkill {
   missing_env_detail?: MissingEnvDetail[]
   install?: SkillInstallOption[]
   requirements?: SkillRequirements
+  /** Subject-matter grouping declared in frontmatter (`metadata.agentos.category`). */
+  category?: string
   /** Allowlisted brand, or all-empty. Absent only on a pre-#130 gateway. */
   publisher?: SkillPublisher
   /** How the skill got here and what an operator may do to it. */
@@ -302,27 +304,41 @@ export function skillRank(s: RawSkill): number {
 }
 
 /** The Installed tab's headings, in the order they render. */
-export type SkillGroupKey = 'partners' | 'shipped' | 'hub' | 'local'
+export type SkillGroupKey = 'partners' | 'crypto' | 'shipped' | 'hub' | 'local'
 
 export const SKILL_GROUP_ORDER: readonly SkillGroupKey[] = [
   'partners',
+  'crypto',
   'shipped',
   'hub',
   'local',
 ] as const
 
 export const SKILL_GROUP_LABEL: Record<SkillGroupKey, string> = {
-  partners: 'Partners',
-  shipped: 'Shipped with AgentOS',
+  partners: 'Partner Skills',
+  crypto: 'AgentOS Crypto Skills',
+  shipped: 'AgentOS Normal Skills',
   hub: 'Installed from a hub',
   local: 'Your local skills',
 }
 
 export const SKILL_GROUP_HELP: Record<SkillGroupKey, string> = {
   partners: 'Skills published by an AgentOS partner.',
+  crypto: 'On-chain and wallet skills that ship with AgentOS.',
   shipped: 'Skills that ship with AgentOS.',
   hub: 'Skills you installed from a skill hub.',
   local: 'Skills you added yourself, from a local skill directory.',
+}
+
+/**
+ * Whether a skill declares itself as on-chain / wallet subject matter.
+ *
+ * Reads the manifest's `category`, never the name: inferring a topic from a
+ * string in the name is the same mistake `skillPublisherId` exists to avoid, and
+ * it would mean editing and rebuilding the frontend for every new crypto skill.
+ */
+export function isCryptoSkill(skill: RawSkill): boolean {
+  return (skill.category ?? '').trim().toLowerCase() === 'crypto'
 }
 
 /**
@@ -337,8 +353,14 @@ export const SKILL_GROUP_HELP: Record<SkillGroupKey, string> = {
 export function skillGroupKey(skill: RawSkill): SkillGroupKey {
   if (isPartnerSkill(skill)) return 'partners'
   const kind = skill.acquisition?.kind
-  if (kind === 'shipped' || kind === 'hub' || kind === 'local') return kind
-  if (skill.layer === 'bundled') return 'shipped'
+  // Crypto is a split of `shipped`, not a fifth provenance. Gating it on shipped
+  // is deliberate: a directory a user dropped into their skills dir must not be
+  // able to claim a heading that carries the AgentOS name just by writing
+  // `category: crypto` — the same reasoning as SELF_DECLARING_LAYERS for publishers.
+  if (kind === 'shipped' || (!kind && skill.layer === 'bundled')) {
+    return isCryptoSkill(skill) ? 'crypto' : 'shipped'
+  }
+  if (kind === 'hub' || kind === 'local') return kind
   if (skill.layer === 'managed') return 'hub'
   return 'local'
 }

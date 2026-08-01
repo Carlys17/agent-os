@@ -57,6 +57,15 @@ describe('Skills directory CSS contract', () => {
     expect(css).not.toMatch(/\.control-surface \.sk-chip \{/)
   })
 
+  // The `Set <VAR>` button used to sit flush against its own description and
+  // against the next entry, because the row class it carried had no rule at all.
+  it('gives each missing requirement its own separated row', () => {
+    expect(css).toMatch(
+      /\.sk-dialog__missing-row \{[\s\S]*?display: flex;[\s\S]*?gap: 12px;[\s\S]*?border-radius: var\(--radius-control\);/,
+    )
+    expect(css).toMatch(/\.sk-dialog__missing \{[\s\S]*?gap: 8px;/)
+  })
+
   it('keeps the installed chip the same height as the card install action', () => {
     expect(css).toMatch(
       /\.control-surface \.sk-rcard__foot \[data-slot='button'\] \{[\s\S]*?min-height:\s*2\.25rem;/,

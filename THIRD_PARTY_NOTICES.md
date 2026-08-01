@@ -173,6 +173,7 @@ are released under AgentOS's repository license (Apache-2.0; see `LICENSE`):
 - `pptx`
 - `robinhood-agentic-trading`
 - `robinhood-rwa-addresses`
+- `senior-unilp-manager`
 - `stack-trace-generic-probe`
 - `stack-trace-go-probe`
 - `stack-trace-js-probe`

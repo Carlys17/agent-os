@@ -19,6 +19,19 @@ async def _skill_view(name: str, **kwargs: object) -> str:
     return await registered.handler(name=name, **kwargs)
 
 
+def _body(result: str) -> str:
+    """Drop the leading ``[Skill directory: ...]`` line.
+
+    Every view opens with it so the model knows where the skill's scripts live;
+    what this file asserts on is what comes after. See
+    ``test_skill_view_base_dir.py`` for the line itself.
+    """
+    marker = "]\n\n"
+    if result.startswith("[Skill directory: ") and marker in result:
+        return result.split(marker, 1)[1]
+    return result
+
+
 def _long_skill(dir_: Path, name: str, *, sections: int, section_chars: int) -> str:
     """A skill shaped like the ones that motivated the ceiling: one '# Title'
     owning the body, then several '##' sections."""
@@ -92,7 +105,7 @@ async def test_a_small_skill_comes_back_whole(loaded: SkillLoader) -> None:
 
     result = await _skill_view("small-skill")
 
-    assert result.startswith(raw)
+    assert _body(result).startswith(raw)
     assert "indexed below" not in result
 
 
@@ -124,7 +137,7 @@ async def test_a_named_section_comes_back_whole(loaded: SkillLoader) -> None:
 
     result = await _skill_view("big-skill", section="Section 7")
 
-    assert result.startswith("## Section 7")
+    assert _body(result).startswith("## Section 7")
     assert "Section 8" not in result
 
 
@@ -151,7 +164,7 @@ async def test_a_body_that_would_grow_is_returned_whole(loaded: SkillLoader) -> 
 
     result = await _skill_view("narrow-skill")
 
-    assert result.startswith(raw)
+    assert _body(result).startswith(raw)
     assert "Sections:" not in result
 
 
@@ -165,7 +178,7 @@ async def test_a_body_with_no_headings_is_never_cut(loaded: SkillLoader) -> None
 
     result = await _skill_view("prose-skill")
 
-    assert result.startswith(raw)
+    assert _body(result).startswith(raw)
 
 
 @pytest.mark.asyncio
@@ -175,7 +188,7 @@ async def test_the_ceiling_can_be_switched_off(loaded: SkillLoader) -> None:
 
     result = await _skill_view("big-skill")
 
-    assert result.startswith(raw)
+    assert _body(result).startswith(raw)
 
 
 @pytest.mark.asyncio

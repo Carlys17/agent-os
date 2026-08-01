@@ -699,7 +699,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 8px;
   font-size: 0.8125rem;
 }
 .sk-dialog__missing code {
@@ -708,6 +708,60 @@
   padding: 1px 6px;
   border-radius: var(--radius);
   color: var(--primary);
+}
+/* Each missing requirement is its own row. Without this the `Set <VAR>` button
+   sat flush against the text above it and against the next entry — three long
+   primary buttons stacked with no separation read as one cramped block. */
+.sk-dialog__missing-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--foreground) 3%, transparent);
+}
+.sk-dialog__missing-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sk-dialog__missing-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sk-dialog__missing-head code {
+  overflow-wrap: anywhere;
+}
+.sk-dialog__missing-desc {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+/* Kept on one line: "where to get it ↗" wrapping mid-phrase was the other half
+   of the visual mess. */
+.sk-dialog__missing-link {
+  color: var(--primary);
+  white-space: nowrap;
+}
+.sk-dialog__missing-row [data-slot='button'] {
+  flex: 0 0 auto;
+  align-self: center;
+  min-height: 2rem;
+}
+@media (max-width: 560px) {
+  .sk-dialog__missing-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sk-dialog__missing-row [data-slot='button'] {
+    align-self: flex-start;
+  }
 }
 /* skills.css:642-671 — per-requirement rows in the Requirements section. */
 .sk-dialog__requirements {

@@ -1,0 +1,528 @@
+// Phase 0 — harvest golden vectors from the Node skill.
+//
+// The Node/viem implementation is the ORACLE. Every number the Python port must
+// reproduce is captured here, before a single line of Python exists. Building the
+// vectors after the port would validate the new code against itself.
+//
+//   NODE_UNILP_SKILL_DIR=/path/to/node-skill node harvest.mjs > golden_vectors.json
+//
+// The oracle is the older Node/viem skill, which is not shipped here — point
+// NODE_UNILP_SKILL_DIR at wherever that checkout lives.
+//
+// Offline: no RPC, no network. Everything here is pure encoding/hashing.
+
+import {
+  keccak256,
+  toHex,
+  toBytes,
+  getAddress,
+  parseUnits,
+  formatUnits,
+  encodeAbiParameters,
+  encodeFunctionData,
+  decodeAbiParameters,
+  concatHex,
+  pad,
+} from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+
+const SKILL = process.env.NODE_UNILP_SKILL_DIR;
+if (!SKILL) {
+  throw new Error('Set NODE_UNILP_SKILL_DIR to the Node/viem senior-unilp-manager checkout.');
+}
+
+const { POOL_KEY_COMPONENTS, poolKeyTupleParam, TOPIC_INITIALIZE, TOPIC_MODIFY_LIQUIDITY } =
+  await import(`${SKILL}/scripts/abi.mjs`);
+const { computePoolId, decodePositionInfo, decodeHookFlags, formatHookFlags } =
+  await import(`${SKILL}/scripts/v4-pool.mjs`);
+const v4a = await import(`${SKILL}/scripts/v4-actions.mjs`);
+
+// --- planHash: copied VERBATIM from lp-write.mjs:108-119 (not exported there). -----
+function planHash(fields) {
+  const canonical = JSON.stringify(
+    Object.keys(fields)
+      .sort()
+      .reduce((acc, k) => {
+        const v = fields[k];
+        acc[k] = typeof v === 'bigint' ? v.toString() : v;
+        return acc;
+      }, {}),
+  );
+  return keccak256(toHex(canonical)).slice(2, 10);
+}
+
+const out = {};
+const hexOf = (s) => keccak256(toHex(s));
+
+// ---------------------------------------------------------------------------
+// Tier 0a — keccak256. Block boundaries are the classic silent-failure case:
+// the rate is 136 bytes, so 135/136/137 exercise pad, exact-fill, and spill.
+// ---------------------------------------------------------------------------
+out.keccak = {
+  empty: keccak256('0x'),
+  abc: hexOf('abc'),
+  // Length-parameterised: 'a' repeated N times, N around and past the 136-byte rate.
+  len_1: hexOf('a'.repeat(1)),
+  len_135: hexOf('a'.repeat(135)),
+  len_136: hexOf('a'.repeat(136)),
+  len_137: hexOf('a'.repeat(137)),
+  len_271: hexOf('a'.repeat(271)),
+  len_272: hexOf('a'.repeat(272)),
+  len_273: hexOf('a'.repeat(273)),
+  // Raw bytes, not utf-8, so a byte-vs-codepoint confusion shows up.
+  bytes_00_ff: keccak256(toHex(new Uint8Array([0x00, 0xff, 0x80, 0x01]))),
+};
+
+// ---------------------------------------------------------------------------
+// Tier 0b — event topics and function selectors.
+//
+// The two TOPIC_* values are hardcoded in abi.mjs. Reproducing them from their
+// signatures is a free, self-validating check on the whole keccak implementation.
+// ---------------------------------------------------------------------------
+const EVENT_SIGS = {
+  Initialize:
+    'Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)',
+  ModifyLiquidity: 'ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)',
+  Transfer: 'Transfer(address,address,uint256)',
+  TransferERC721: 'Transfer(address,address,uint256)',
+};
+out.event_topics = Object.fromEntries(
+  Object.entries(EVENT_SIGS).map(([k, sig]) => [k, { signature: sig, topic0: hexOf(sig) }]),
+);
+out.event_topics_pinned = {
+  TOPIC_INITIALIZE,
+  TOPIC_MODIFY_LIQUIDITY,
+  // Must match the computed values above — asserted by the Python selftest.
+  initialize_matches: hexOf(EVENT_SIGS.Initialize) === TOPIC_INITIALIZE,
+  modify_matches: hexOf(EVENT_SIGS.ModifyLiquidity) === TOPIC_MODIFY_LIQUIDITY,
+};
+
+const FN_SIGS = [
+  'aggregate3((address,bool,bytes)[])',
+  'modifyLiquidities(bytes,uint256)',
+  'transfer(address,uint256)',
+  'approve(address,uint256)',
+  'balanceOf(address)',
+  'decimals()',
+  'totalSupply()',
+  'getSlot0(bytes32)',
+  'getLiquidity(bytes32)',
+  'getTickBitmap(bytes32,int16)',
+  'getTickLiquidity(bytes32,int24)',
+  'getPoolAndPositionInfo(uint256)',
+  'getPositionLiquidity(uint256)',
+  'ownerOf(uint256)',
+  'nextTokenId()',
+  'getFeeGrowthInside(bytes32,int24,int24)',
+];
+out.selectors = Object.fromEntries(
+  FN_SIGS.map((sig) => [sig, hexOf(sig).slice(0, 10)]),
+);
+
+// ---------------------------------------------------------------------------
+// Tier 0c — EIP-55. The launchpad registry is full of mixed-case addresses, so
+// the "lowercase first" step must be exercised on already-checksummed input.
+// ---------------------------------------------------------------------------
+const ADDRS = [
+  '0x0000000000000000000000000000000000000000',
+  '0x4200000000000000000000000000000000000006',
+  '0xcA11bde05977b3631167028862bE2a173976CA11',
+  '0x9811f10Cd549c754Fa9E5785989c422A762c28cc',
+  '0x77247fCD1d5e34A3703AcA898A591Dc7422435f3',
+  '0x4e3468951D49f2EEa976eD0D6e75fFCb44a9a544',
+  '0xd99391dB9c2409Ac6E698A379468ccb9141fACA9',
+  '0x6eDA83Fc299C10d474068A7E69771c809Bcbbba3',
+  '0x498581fF718922c3f8e6A244956aF099B2652b2b',
+  '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+];
+out.checksum = Object.fromEntries(
+  ADDRS.map((a) => [
+    a.toLowerCase(),
+    { checksummed: getAddress(a), from_checksummed: getAddress(getAddress(a)) },
+  ]),
+);
+
+// ---------------------------------------------------------------------------
+// Tier 0d — parseUnits / formatUnits.
+//
+// viem rounds excess fraction digits half-up WITH CARRY rather than truncating.
+// Getting this wrong sizes an amount differently from the plan the user approved.
+// ---------------------------------------------------------------------------
+const PARSE_CASES = [
+  ['1', 18], ['0', 18], ['0.5', 18], ['1.5', 6], ['1234.56789', 6],
+  ['0.0000001', 6],           // below one unit -> rounds
+  ['0.9999999', 6],           // rounds up
+  ['0.99999999999999999999', 18], // carry across the whole integer part
+  ['1.9999999999999999999', 18],
+  ['123456789.123456789012345678', 18],
+  ['0.000000000000000001', 18],
+  ['1000000000', 18],
+];
+out.parse_units = PARSE_CASES.map(([v, d]) => ({
+  value: v, decimals: d, expected: parseUnits(v, d).toString(),
+}));
+
+const FORMAT_CASES = [
+  ['1000000000000000000', 18], ['1', 18], ['0', 18], ['1500000', 6],
+  ['99524320039159120000000000000', 18], ['48237000000000000', 18],
+  ['1', 0], ['123456789', 8],
+];
+out.format_units = FORMAT_CASES.map(([v, d]) => ({
+  value: v, decimals: d, expected: formatUnits(BigInt(v), d),
+}));
+
+// ---------------------------------------------------------------------------
+// Tier 1a — PoolKey encoding + poolId derivation.
+//
+// Five 32-byte words. The three Base launchpad pools are live fixtures already
+// pinned in SKILL.md, so a wrong encoder is caught immediately.
+// ---------------------------------------------------------------------------
+const POOL_KEYS = {
+  AGENTOS_robinhood: {
+    currency0: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
+    currency1: '0x6eDA83Fc299C10d474068A7E69771c809Bcbbba3',
+    fee: 0x800000, tickSpacing: 200,
+    hooks: '0x4e3468951D49f2EEa976eD0D6e75fFCb44a9a544',
+    expected_poolId: '0x1299aa8c4ea0db5b8453757ed129ed8e916561925926a161cb89842e3987401a',
+  },
+  LETTI_base_liquid: {
+    currency0: '0x4200000000000000000000000000000000000006',
+    currency1: '0xd99391dB9c2409Ac6E698A379468ccb9141fACA9',
+    fee: 0x800000, tickSpacing: 200,
+    hooks: '0x9811f10Cd549c754Fa9E5785989c422A762c28cc',
+    expected_poolId: '0x4e539dbb29b663a1345c01240a45b8412b9855b0f69e15879d6ab06aeab6f53e',
+  },
+  // Negative tickSpacing is not real for a pool, but it pins int24 sign handling
+  // in the encoder — the same code path that decodes liquidityDelta.
+  synthetic_negative_spacing: {
+    currency0: '0x0000000000000000000000000000000000000000',
+    currency1: '0x4200000000000000000000000000000000000006',
+    fee: 3000, tickSpacing: -60,
+    hooks: '0x0000000000000000000000000000000000000000',
+    expected_poolId: null,
+  },
+};
+out.pool_keys = Object.fromEntries(
+  Object.entries(POOL_KEYS).map(([name, pk]) => {
+    const encoded = encodeAbiParameters(POOL_KEY_COMPONENTS, [
+      getAddress(pk.currency0), getAddress(pk.currency1),
+      Number(pk.fee), Number(pk.tickSpacing), getAddress(pk.hooks),
+    ]);
+    return [name, {
+      poolKey: {
+        currency0: getAddress(pk.currency0), currency1: getAddress(pk.currency1),
+        fee: pk.fee, tickSpacing: pk.tickSpacing, hooks: getAddress(pk.hooks),
+      },
+      encoded,
+      poolId: computePoolId(pk),
+      pinned_poolId: pk.expected_poolId,
+    }];
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// Tier 1b — unlockData for all five plans.
+//
+// The single highest-value vector in the file: one assertion pins the entire ABI
+// encoder including the nested `bytes[]` head/tail layout.
+// ---------------------------------------------------------------------------
+const PK = POOL_KEYS.LETTI_base_liquid;
+const poolKey = {
+  currency0: getAddress(PK.currency0), currency1: getAddress(PK.currency1),
+  fee: PK.fee, tickSpacing: PK.tickSpacing, hooks: getAddress(PK.hooks),
+};
+const RECIPIENT = '0x7de10Fec3dBC1267446d00a1F3ccFcb7F4176412';
+const NATIVE_KEY = { ...poolKey, currency0: '0x0000000000000000000000000000000000000000' };
+
+const PLANS = {
+  mint: v4a.buildMintPlan({
+    poolKey, tickLower: 214000, tickUpper: 230400,
+    liquidity: 177557320016371022708535n,
+    amount0Max: 48237000000000000n, amount1Max: 9524320039159120000000000000n,
+    recipient: RECIPIENT,
+  }),
+  // Native currency0 appends SWEEP and carries a non-zero value.
+  mint_native: v4a.buildMintPlan({
+    poolKey: NATIVE_KEY, tickLower: -60, tickUpper: 60,
+    liquidity: 1000000000000000000n,
+    amount0Max: 500000000000000000n, amount1Max: 1000000n,
+    recipient: RECIPIENT,
+  }),
+  increase: v4a.buildIncreasePlan({
+    poolKey, tokenId: 2493126n, liquidity: 12345678901234567890n,
+    amount0Max: 1000000000000000000n, amount1Max: 2000000000000000000n,
+    recipient: RECIPIENT,
+  }),
+  decrease: v4a.buildDecreasePlan({
+    poolKey, tokenId: 2493126n, liquidity: 88778660008185511354267n,
+    amount0Min: 0n, amount1Min: 0n, recipient: RECIPIENT,
+  }),
+  collect: v4a.buildCollectPlan({ poolKey, tokenId: 2493126n, recipient: RECIPIENT }),
+  burn: v4a.buildBurnPlan({
+    poolKey, tokenId: 2493126n, liquidity: 177557320016371022708535n,
+    amount0Min: 0n, amount1Min: 0n, recipient: RECIPIENT,
+  }),
+  // liquidity == 0 skips the DECREASE leg entirely.
+  burn_empty: v4a.buildBurnPlan({
+    poolKey, tokenId: 2493126n, liquidity: 0n,
+    amount0Min: 0n, amount1Min: 0n, recipient: RECIPIENT,
+  }),
+};
+
+out.plans = Object.fromEntries(
+  Object.entries(PLANS).map(([name, plan]) => {
+    const unlockData = v4a.encodeUnlockData(plan.actions, plan.params);
+    const deadline = 1785581780n;
+    return [name, {
+      actions: plan.actions,
+      action_names: v4a.describeActions(plan.actions),
+      params: plan.params,
+      value: plan.value.toString(),
+      unlockData,
+      // The full calldata the PositionManager actually receives.
+      calldata: encodeFunctionData({
+        abi: [{
+          type: 'function', name: 'modifyLiquidities', stateMutability: 'payable',
+          inputs: [{ type: 'bytes' }, { type: 'uint256' }], outputs: [],
+        }],
+        functionName: 'modifyLiquidities',
+        args: [unlockData, deadline],
+      }),
+      deadline: deadline.toString(),
+    }];
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// Tier 1c — Multicall3 aggregate3: request encoding and response decoding.
+// ---------------------------------------------------------------------------
+const AGG3_IN = [
+  { type: 'tuple[]', components: [
+    { name: 'target', type: 'address' },
+    { name: 'allowFailure', type: 'bool' },
+    { name: 'callData', type: 'bytes' },
+  ]},
+];
+const AGG3_OUT = [
+  { type: 'tuple[]', components: [
+    { name: 'success', type: 'bool' },
+    { name: 'returnData', type: 'bytes' },
+  ]},
+];
+const agg3Calls = [
+  [getAddress('0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71'), true,
+   encodeFunctionData({
+     abi: [{ type: 'function', name: 'getLiquidity', stateMutability: 'view',
+             inputs: [{ type: 'bytes32' }], outputs: [{ type: 'uint128' }] }],
+     functionName: 'getLiquidity', args: [PK.expected_poolId] })],
+  [getAddress('0x4200000000000000000000000000000000000006'), true,
+   encodeFunctionData({
+     abi: [{ type: 'function', name: 'decimals', stateMutability: 'view',
+             inputs: [], outputs: [{ type: 'uint8' }] }],
+     functionName: 'decimals', args: [] })],
+];
+out.multicall3 = {
+  address: getAddress('0xcA11bde05977b3631167028862bE2a173976CA11'),
+  aggregate3_selector: hexOf('aggregate3((address,bool,bytes)[])').slice(0, 10),
+  request_calls: agg3Calls.map(([t, a, d]) => ({ target: t, allowFailure: a, callData: d })),
+  request_encoded: encodeAbiParameters(AGG3_IN, [
+    agg3Calls.map(([target, allowFailure, callData]) => ({ target, allowFailure, callData })),
+  ]),
+  // A response with one success, one empty-returnData success (no code at target),
+  // and one hard failure — the three cases the decoder must tell apart.
+  response_encoded: encodeAbiParameters(AGG3_OUT, [[
+    { success: true, returnData: pad(toHex(177557320016371022708535n), { size: 32 }) },
+    { success: true, returnData: '0x' },
+    { success: false, returnData: '0x08c379a0' },
+  ]]),
+  response_expected: [
+    { success: true, returnData: pad(toHex(177557320016371022708535n), { size: 32 }) },
+    { success: true, returnData: '0x' },
+    { success: false, returnData: '0x08c379a0' },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// Tier 1d — PositionInfo bit codec and hook flags.
+// ---------------------------------------------------------------------------
+function packPositionInfo(poolId, tickLower, tickUpper, hasSubscriber) {
+  const trunc = BigInt(poolId.slice(0, 52)); // upper 25 bytes
+  return (trunc << 56n)
+    | ((BigInt.asUintN(24, BigInt(tickUpper))) << 32n)
+    | ((BigInt.asUintN(24, BigInt(tickLower))) << 8n)
+    | (hasSubscriber ? 1n : 0n);
+}
+const POS_CASES = [
+  [PK.expected_poolId, 214000, 230400, false],
+  [PK.expected_poolId, -202000, -155000, false],   // both negative
+  [PK.expected_poolId, -887200, 887200, true],     // full range + subscriber
+  [POOL_KEYS.AGENTOS_robinhood.expected_poolId, 119600, 229600, false],
+];
+out.position_info = POS_CASES.map(([pid, lo, hi, sub]) => {
+  const packed = packPositionInfo(pid, lo, hi, sub);
+  return {
+    packed: packed.toString(),
+    packed_hex: toHex(packed, { size: 32 }),
+    expected: decodePositionInfo(packed),
+    source_poolId: pid,
+  };
+});
+
+out.hook_flags = [
+  '0x0000000000000000000000000000000000000000',
+  '0x9811f10Cd549c754Fa9E5785989c422A762c28cc', // 0x28cc Liquid
+  '0x4e3468951D49f2EEa976eD0D6e75fFCb44a9a544', // 0x2544 Doppler
+  '0xb429d62f8f2b6cfC4e5C4c0c3a5b1B4A4e0f28CC',
+].map((h) => ({ address: h, decoded: decodeHookFlags(h), formatted: formatHookFlags(h) }));
+
+// ---------------------------------------------------------------------------
+// Tier 1e — signed int decoding. A missed two's-complement conversion on
+// int256 liquidityDelta turns a REMOVAL into a ~1e77 addition, and the totals
+// still render as plausible numbers. This is the quietest failure in the port.
+// ---------------------------------------------------------------------------
+const INT_CASES = [
+  ['int24', 0], ['int24', 1], ['int24', -1], ['int24', 887272], ['int24', -887272],
+  ['int24', 8388607], ['int24', -8388608],
+  ['int128', 0], ['int128', -1], ['int128', 170141183460469231731687303715884105727n],
+  ['int128', -170141183460469231731687303715884105728n],
+  ['int256', -177557320016371022708535n], ['int256', 177557320016371022708535n],
+  ['uint24', 0x800000], ['uint128', 0], ['uint256', 2n ** 256n - 1n],
+];
+out.int_codec = INT_CASES.map(([type, v]) => {
+  const val = typeof v === 'bigint' ? v : BigInt(v);
+  const encoded = encodeAbiParameters([{ type }], [type.startsWith('u') ? val : val]);
+  return {
+    type, value: val.toString(), encoded,
+    decoded: decodeAbiParameters([{ type }], encoded)[0].toString(),
+  };
+});
+
+// ---------------------------------------------------------------------------
+// Tier 1f — a real ModifyLiquidity log with a NEGATIVE liquidityDelta, and a
+// real Initialize log. Both drive aggregateRanges / getPoolInit.
+// ---------------------------------------------------------------------------
+out.logs = {
+  modify_liquidity_negative: {
+    topics: [
+      TOPIC_MODIFY_LIQUIDITY,
+      PK.expected_poolId,
+      pad(getAddress(RECIPIENT).toLowerCase(), { size: 32 }),
+    ],
+    // (int24 tickLower, int24 tickUpper, int256 liquidityDelta, bytes32 salt)
+    data: encodeAbiParameters(
+      [{ type: 'int24' }, { type: 'int24' }, { type: 'int256' }, { type: 'bytes32' }],
+      [-202000, -155000, -1684492566057752195310837n, pad('0x00', { size: 32 })],
+    ),
+    expected: {
+      tickLower: -202000, tickUpper: -155000,
+      liquidityDelta: '-1684492566057752195310837',
+    },
+  },
+  initialize: {
+    topics: [
+      TOPIC_INITIALIZE,
+      PK.expected_poolId,
+      pad(getAddress(PK.currency0).toLowerCase(), { size: 32 }),
+      pad(getAddress(PK.currency1).toLowerCase(), { size: 32 }),
+    ],
+    // (uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)
+    data: encodeAbiParameters(
+      [{ type: 'uint24' }, { type: 'int24' }, { type: 'address' },
+       { type: 'uint160' }, { type: 'int24' }],
+      [0x800000, 200, getAddress(PK.hooks), 7762216925771853500092425780648579n, 229860],
+    ),
+    expected: {
+      fee: 0x800000, tickSpacing: 200, hooks: getAddress(PK.hooks),
+      sqrtPriceX96: '7762216925771853500092425780648579', tick: 229860,
+    },
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Tier 2a — PLAN_HASH.
+//
+// The trap: the JS builder stringifies BigInts but leaves Numbers as numbers, so
+// chainId/tickLower serialize as 8453 while liquidity/tokenId serialize as "1234".
+// Python has one int type, so that distinction must be reintroduced by hand.
+// These vectors pin it.
+// ---------------------------------------------------------------------------
+const PLAN_FIELDS = {
+  mint: {
+    chain: 'base', chainId: 8453, contract: '0x7C5f5A4bBd8fD63184577525326123B519429bDc',
+    cmd: 'mint', poolId: PK.expected_poolId,
+    tickLower: 214000, tickUpper: 230400,
+    liquidity: 177557320016371022708535n,
+    amount0Max: 48237000000000000n, amount1Max: 9524320039159120000000000000n,
+    recipient: RECIPIENT, signer: RECIPIENT, slippageBps: 100,
+  },
+  collect: {
+    chain: 'robinhood', chainId: 4663, contract: '0x58daec3116aae6D93017bAAea7749052E8a04fA7',
+    cmd: 'collect', tokenId: 429610n, recipient: RECIPIENT, signer: RECIPIENT,
+  },
+  approve: {
+    chain: 'base', chainId: 8453, cmd: 'approve',
+    token: getAddress('0x4200000000000000000000000000000000000006'),
+    amount: (2n ** 160n - 1n), expirationDays: 30, signer: RECIPIENT,
+  },
+};
+out.plan_hash = Object.fromEntries(
+  Object.entries(PLAN_FIELDS).map(([name, fields]) => {
+    const canonical = JSON.stringify(
+      Object.keys(fields).sort().reduce((acc, k) => {
+        const v = fields[k];
+        acc[k] = typeof v === 'bigint' ? v.toString() : v;
+        return acc;
+      }, {}),
+    );
+    return [name, {
+      // The exact JSON string, so a Python mismatch is diagnosable at a glance
+      // rather than showing up only as a differing 8-char hash.
+      canonical_json: canonical,
+      hash: planHash(fields),
+      // Which keys were bigint (-> quoted) vs number (-> bare) in the source.
+      bigint_keys: Object.keys(fields).filter((k) => typeof fields[k] === 'bigint').sort(),
+      number_keys: Object.keys(fields).filter((k) => typeof fields[k] === 'number').sort(),
+    }];
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// Tier 2b — secp256k1 + EIP-1559.
+//
+// Throwaway key, published in every Ethereum test suite. NEVER a real key.
+// ---------------------------------------------------------------------------
+const TEST_PK = '0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318';
+const acct = privateKeyToAccount(TEST_PK);
+
+const TX = {
+  type: 'eip1559',
+  chainId: 8453,
+  nonce: 7,
+  maxPriorityFeePerGas: 1_000_000n,
+  maxFeePerGas: 50_000_000n,
+  gas: 350_000n,
+  to: getAddress('0x7C5f5A4bBd8fD63184577525326123B519429bDc'),
+  value: 0n,
+  data: out.plans.collect.calldata,
+};
+const signedRaw = await acct.signTransaction(TX);
+
+out.signing = {
+  private_key: TEST_PK,
+  expected_address: acct.address,
+  // Deterministic RFC-6979 signature over a fixed 32-byte digest.
+  digest: keccak256(toHex('unilp golden digest')),
+  signature: await acct.sign({ hash: keccak256(toHex('unilp golden digest')) }),
+  tx: {
+    ...TX,
+    maxPriorityFeePerGas: TX.maxPriorityFeePerGas.toString(),
+    maxFeePerGas: TX.maxFeePerGas.toString(),
+    gas: TX.gas.toString(),
+    value: TX.value.toString(),
+  },
+  signed_raw: signedRaw,
+  tx_hash: keccak256(signedRaw),
+};
+
+// ---------------------------------------------------------------------------
+process.stdout.write(JSON.stringify(out, null, 2) + '\n');

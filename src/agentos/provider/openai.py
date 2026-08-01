@@ -1027,12 +1027,16 @@ class OpenAIProvider:
                                 raw_billed_cost,
                             )
 
-                        for choice in chunk.get("choices", []):
+                        # `or []` / `or {}` throughout, not a get() default: several
+                        # OpenAI-compatible gateways send these keys with an explicit
+                        # null rather than omitting them, and a get() default only
+                        # covers the missing case.
+                        for choice in chunk.get("choices") or []:
                             finish = choice.get("finish_reason")
                             if finish:
                                 stop_reason = finish
 
-                            delta = choice.get("delta", {})
+                            delta = choice.get("delta") or {}
 
                             # Text content
                             text = delta.get("content")
@@ -1054,16 +1058,17 @@ class OpenAIProvider:
                                 reasoning_parts.append(reasoning_str)
 
                             # Tool calls (may stream over multiple chunks)
-                            for tc in delta.get("tool_calls", []):
+                            for tc in delta.get("tool_calls") or []:
                                 idx = _resolve_tool_call_index(
                                     tc,
                                     pending_calls,
                                     provider_kind=self._provider_kind,
                                 )
+                                function = tc.get("function") or {}
                                 if idx not in pending_calls:
                                     pending_calls[idx] = {
-                                        "id": tc.get("id", f"call_{uuid4().hex[:12]}"),
-                                        "name": tc.get("function", {}).get("name", ""),
+                                        "id": tc.get("id") or f"call_{uuid4().hex[:12]}",
+                                        "name": function.get("name") or "",
                                         "parts": [],
                                     }
                                     emitted_stream_event = True
@@ -1075,11 +1080,11 @@ class OpenAIProvider:
                                     # id/name may arrive in later chunks
                                     if tc.get("id"):
                                         pending_calls[idx]["id"] = tc["id"]
-                                    fname = tc.get("function", {}).get("name", "")
+                                    fname = function.get("name") or ""
                                     if fname:
                                         pending_calls[idx]["name"] = fname
 
-                                fragment = tc.get("function", {}).get("arguments", "")
+                                fragment = function.get("arguments") or ""
                                 if fragment:
                                     pending_calls[idx]["parts"].append(fragment)
                                     emitted_stream_event = True
@@ -1231,7 +1236,7 @@ class OpenAIProvider:
         reasoning_parts: list[str] = []
         emitted_structured_tool = False
 
-        for choice in data.get("choices", []):
+        for choice in data.get("choices") or []:
             if choice.get("finish_reason"):
                 stop_reason = choice["finish_reason"]
             message = choice.get("message") or {}

@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- The `senior-unilp-manager` skill can now find and mint into Uniswap v4 pools
+  that have **no hook**. It only ever LPs into pools that already exist, and it
+  refuses hooked pools unless `--allow-hooked` — so hook-less was always the
+  intended default, but on Base it was effectively unreachable: the only fast
+  discovery path derived poolIds from a launchpad registry, which by
+  construction requires a hook, and Base cannot serve the log scan that would
+  find anything else. `pools --token <addr> --no-hook` now derives the poolId
+  with `hooks` pinned to the zero address across the conventional fee tiers and
+  confirms it in one multicall, so the question "does a plain pool exist for
+  this token?" is answered the same way on every chain. `pool`/`mint` accept the
+  PoolKey spelled out (`--currency0 --currency1 --fee --tick-spacing`,
+  `--hooks` defaulting to none), which skips discovery altogether for any pool
+  anywhere; the poolId is recomputed and must match, so a typo errors instead of
+  addressing the wrong pool. The skill still never creates a pool.
+
 - `[auxiliary]` configures the model for work AgentOS runs on its own behalf
   rather than as part of a turn — analysing an attached document, describing an
   image. Empty values reuse `[llm]`, so an install that never sets it is
@@ -46,6 +61,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   exercise — and messaging surfaces are exempt, since answering a person in
   chat is not maintaining a checkout.
 
+- New bundled skill `senior-unilp-manager`: read and manage Uniswap V4 liquidity
+  on Base (8453) and Robinhood Chain (4663). Reads a token's pools with exact
+  reserves and per-range market-cap bands, resolves which launchpad deployed a
+  token and whether its LP is locked (Clanker v4/v4.1, Liquid Protocol,
+  Bankr/Doppler), inspects positions, and mints / increases / decreases /
+  collects / burns. Pure Python 3 stdlib over direct JSON-RPC — keccak256, the
+  ABI codec, Multicall3, secp256k1 and EIP-1559 assembly are all in-tree, so the
+  skill has no dependency beyond a `python3` binary. Every write is a dry run
+  that prints a `PLAN_HASH`; broadcasting requires echoing that hash back with
+  `--broadcast --confirm`, and the signature is recovered and checked against the
+  signer before the transaction is sent. The signing key is read from
+  `UNIV4_LP_PRIVATE_KEY` in the environment and never from a command line.
+  `python3 scripts/selftest.py` runs 429 offline assertions pinned to golden
+  vectors harvested from the reference implementation.
+
+- Skill manifests may declare `metadata.agentos.category`, a subject-matter tag
+  distinct from `capabilities` (which describes risk surface, not topic). The
+  Skills page uses it to split shipped skills into their own headings, so a new
+  crypto skill only has to edit its own frontmatter.
+
 ### Changed
 
 - `edit_file` no longer fails on text that differs from the file only in
@@ -64,7 +99,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   re-reading a file that changed is real work, and its differing result resets
   the count.
 
+- The Skills page renames two group headings and adds one: `Partners` →
+  **Partner Skills**, `Shipped with AgentOS` → **AgentOS Normal Skills**, and a
+  new **AgentOS Crypto Skills** between them for bundled skills declaring
+  `category: crypto`. Partner skills still win over every other grouping, and a
+  local or hub-installed skill cannot move itself under an AgentOS-branded
+  heading by declaring the category.
+
 ### Fixed
+
+- `senior-unilp-manager` sent an agent round in circles on "add N of my token as LP
+  from the current price up to a market cap of X" — one real run spent twelve minutes
+  and forty commands without reaching a mint. Several things compounded, all fixed
+  here. **§8 documented the single-sided rule backwards** (it claimed a range above the
+  current price takes `currency1`; it takes `currency0`), so the agent picked the wrong
+  side, was refused, assumed it had the wrong pool, and went looking for another one.
+  **A hook was treated as disqualifying**: the docs only noted that Clanker/Liquid
+  reject third-party LPs, so the Doppler pool — the only one with real depth — was
+  abandoned for dust pools at 85% fee tiers; §8 now gives the per-hook policy and says
+  to read the decoded `BEFORE_ADD_LIQUIDITY` flag. **`ticks` snapped outward
+  unconditionally**, so a band starting at today's price always straddled the current
+  tick and came back two-sided; `--from-current` now pulls the near edge onto one side,
+  keeping the larger part of the band. `--mcap-lower` / `--mcap-upper` may be given in
+  either order rather than erroring, since which is larger depends on where the target
+  sits. `pools` ends with a `recommended pool` block — deepest by TVL, id in full,
+  whether `--allow-hooked` is needed, and the next command. Part B opens with a
+  five-command recipe covering the `approve` step, which the agent kept skipping.
+
+- `senior-unilp-manager` lost USD prices to rate limiting far too easily, and `ticks`
+  turned that into a hard failure. GeckoTerminal's free endpoint refuses after a couple
+  of calls in quick succession, and since every command is a fresh process the
+  in-memory cache never helped — running `pools` and then `ticks` on what it found was
+  enough to trip it. Prices are now cached to a short-lived file shared across
+  processes, and a throttled lookup says it is temporary and worth retrying instead of
+  reporting "no USD price", which read as a property of the token and sent callers off
+  to look at other pools.
+
+- A turn could die with `TypeError: 'NoneType' object is not iterable` partway
+  through a streaming reply, taking the whole answer with it. The OpenAI-compat
+  stream reader read `choices`, `delta`, `tool_calls` and each tool call's
+  `function` with a `dict.get(key, default)` — but that default only applies
+  when the key is *absent*, and several gateways send the key with an explicit
+  `null` instead of omitting it (a text-only delta carrying `"tool_calls":
+  null`, or a usage-only final chunk carrying `"choices": null`). Those reads
+  now treat null and missing identically, so a chunk shaped that way is skipped
+  rather than crashing the turn. The non-streaming path read `choices` the same
+  way and is fixed alongside it.
 
 - Tool schemas from MCP servers went to the provider exactly as the server
   emitted them, so one malformed tool could fail the whole request and take
@@ -98,6 +178,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and flowed into the agent's context. Error bodies are now read to a bound and
   summarised: JSON keeps its `error.message`, an HTML page collapses to its
   title and size, and anything else is truncated with the cut made visible.
+
+- `skill_view` now resolves `{baseDir}` to the skill's install directory and
+  opens every read with a `[Skill directory: ...]` line. The placeholder is how
+  every bundled skill names its own scripts, but nothing had ever expanded it and
+  nothing else in a session revealed where a skill lived — so an agent handed
+  `python3 {baseDir}/scripts/lp_read.py` looked for that path under the
+  workspace, found nothing, and reported the skill as not installed. Expansion
+  happens at render time, not at load: `skill_edit` writes `SkillSpec.content`
+  back to disk, and expanding earlier would bake one machine's absolute path
+  into a shipped `SKILL.md`.
+
+- The Skill dialog rendered `[object Object]` for every declared environment
+  variable. `_requirements_item` put `SkillRequires.env` on the wire, which is a
+  list of `SkillEnvVar` dataclasses, instead of `env_names`. No bundled skill had
+  declared `requires.env` before now, so nothing had hit it.
 
 ## [2026.7.31] - 2026-07-31
 

@@ -63,6 +63,7 @@ description: Synthetic skill with manifest risk metadata.
 metadata:
   agentos:
     risk: medium
+    category: crypto
     capabilities: [filesystem-write]
 ---
 
@@ -84,3 +85,9 @@ metadata:
     assert from_snapshot.metadata is not None
     assert from_snapshot.metadata.risk_level == "medium"
     assert from_snapshot.metadata.capabilities == ["filesystem-write"]
+    # `category` drives which heading the Skills page files a skill under. It is easy
+    # to add to the save path and forget on the load path, and the symptom would be a
+    # skill that silently changes group after a gateway restart.
+    assert fresh.metadata is not None
+    assert fresh.metadata.category == "crypto"
+    assert from_snapshot.metadata.category == "crypto"
