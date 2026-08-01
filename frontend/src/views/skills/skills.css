@@ -266,7 +266,7 @@
 .sk-card__dot.is-needs {
   background: var(--warn, #d9a441);
 }
-.sk-card__dot.is-unverified {
+.sk-card__dot.is-off {
   background: var(--dim);
 }
 .sk-card__name {
@@ -525,6 +525,22 @@
   text-transform: none;
   letter-spacing: 0.04em;
 }
+/* Where a hub install came from, and who wrote it. Deliberately the quietest
+   chip on the card: the author string passed no allowlist, so it must never
+   read as a brand or a trust signal. No accent colour, no logo — attribution
+   only. The author is dimmer still, so the hub stays the primary fact. */
+.sk-chip--origin {
+  text-transform: none;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sk-chip--origin .sk-chip__author {
+  opacity: 0.75;
+}
 /* Installed, possibly even ready, but the agent is not being offered it. A
    distinct tone from "needs setup" because the fix is a different one — and
    the chip always carries the reason as text, never colour alone. */
@@ -595,6 +611,25 @@
 .sk-dialog__skill-icon svg {
   width: 1rem;
   height: 1rem;
+}
+/* The dialog counterpart of .sk-card__brand — same box as the glyph it stands
+   in for, so the header does not shift when a partner skill is opened. */
+.sk-dialog__brand {
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 2.25rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--background);
+  object-fit: cover;
+}
+.sk-dialog__brand--fallback {
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-weight: 700;
 }
 .sk-dialog__name {
   font-family: var(--font-mono);
@@ -1090,6 +1125,29 @@
   height: 0.95rem;
 }
 
+/* Same box as .sk-card__icon so a partner card and a plain one line up. Shown
+   in full colour: the mark is here to be recognised at a glance, and a
+   desaturated logo is exactly the thing a brand is not. */
+.control-surface .sk-card__brand {
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 2rem;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--elevated);
+  object-fit: cover;
+}
+
+.control-surface .sk-card__brand--fallback {
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
 .control-surface .sk-card__name {
   min-width: 0;
   flex: 1;
@@ -1229,6 +1287,26 @@
   color: var(--muted-foreground);
   font-size: 0.75rem;
   line-height: 1.5;
+}
+
+/* A catalog-wide prerequisite. Warm enough to read before the install button,
+   not loud enough to look like an error on a healthy page. */
+.control-surface .sk-partner__notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+  color: color-mix(in srgb, var(--warn, #d9a441) 88%, var(--foreground));
+}
+
+.control-surface .sk-partner__notice svg {
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+}
+
+.control-surface .sk-partner__notice strong {
+  font-weight: 650;
+  letter-spacing: 0.01em;
 }
 
 .control-surface .sk-partner__count {

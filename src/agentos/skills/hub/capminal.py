@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import time
 from collections.abc import Sequence
 
@@ -18,7 +17,7 @@ import structlog
 
 from agentos.env import trust_env as _trust_env
 from agentos.skills.hub.github import GitHubSource, _frontmatter_field, _parse_identifier
-from agentos.skills.hub.source import SkillBundle, SkillMeta, SkillSource
+from agentos.skills.hub.source import SkillBundle, SkillMeta, SkillSource, infer_category
 
 log = structlog.get_logger(__name__)
 
@@ -30,8 +29,23 @@ _CAPMINAL_EMOJI = "🤖"
 _CATALOG_TTL_SECONDS = 15 * 60
 _FAILURE_RETRY_SECONDS = 60
 _CATALOG_CONCURRENCY = 16
+# Every Capminal skill is crypto-adjacent, so "crypto" is the bucket a row falls
+# back to when its slug and tags name nothing more specific. It is a fallback,
+# not a constant: hard-coding it for the whole catalog collapsed the browse
+# chip row into a single no-op filter.
+_FALLBACK_CATEGORY = "crypto"
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+def _category_for(slug: str, tags: Sequence[str]) -> str:
+    """Return the browse-filter bucket for a Capminal row.
+
+    :func:`infer_category` answers ``"other"`` when nothing matches, which is a
+    truthful answer for a general catalog but a useless chip here — every skill
+    in this repository is crypto tooling. So "other" is rewritten to the house
+    fallback while a real match ("trading", "dev", …) is kept as-is.
+    """
+    inferred = infer_category(slug, "Capminal", tags)
+    return _FALLBACK_CATEGORY if inferred == "other" else inferred
 
 
 def _matches(meta: SkillMeta, query: str) -> bool:
@@ -186,9 +200,8 @@ class CapminalSource(SkillSource):
         identifier = self._skill_url(slug)
         display_name = str(catalog.get("displayName") or slug)
         name = _frontmatter_field(skill_md_content, "name") or display_name
-        description = (
-            _frontmatter_field(skill_md_content, "description")
-            or str(catalog.get("description") or "")
+        description = _frontmatter_field(skill_md_content, "description") or str(
+            catalog.get("description") or ""
         )
         latest_release = catalog.get("latestRelease")
         version = ""
@@ -224,6 +237,5 @@ class CapminalSource(SkillSource):
             provider="Capminal",
             logo="",
             emoji=_CAPMINAL_EMOJI,
-            category="crypto",
+            category=_category_for(name, tags),
         )
-

@@ -432,14 +432,38 @@ same skill instead of a separate, thinner answer:
 | Key | What it says |
 | --- | --- |
 | `layer` | where the files are — `bundled`, `managed`, `personal`, `project`, `workspace`, `extra` |
-| `acquisition` | how the skill got there: `kind` is `shipped`, `hub`, or `local`, plus `source_id`, `identifier`, `version`, `installed_at`, `source_trust`, `scan_verdict`, and the `removable` / `updatable` booleans |
+| `acquisition` | how the skill got there: `kind` is `shipped`, `hub`, or `local`, plus `source_id`, `author`, `identifier`, `version`, `installed_at`, `source_trust`, `scan_verdict`, and the `removable` / `updatable` booleans |
 | `publisher` | `{id, name, url, logo}`, all empty strings when the skill is unbranded. Only publishers on an allowlist inside AgentOS resolve to a name; a skill cannot brand itself by writing one into its manifest |
 | `provenance` | unchanged, and independent of `publisher` — where the text came from and under what licence |
+| `status` | `ready`, `needs_setup`, or `not_declared`, alongside a `disabled` boolean and a `status_detail` line |
 
 `acquisition.removable` is the honest answer to "can `agentos skills uninstall`
 remove this", not a restatement of the layer: a hub install whose recorded path
 no longer matches the configured `skills.managed_dir` reports `false`, while
 `updatable` stays `true` because an update re-fetches by identifier.
+
+`status` answers "can this run". `ready` means the manifest declared
+requirements **and** every one is satisfied; `not_declared` means there was no
+`requires:` block to check. Both run — the split records only whether AgentOS
+verified anything, which is why the Web UI shows them under one **Ready**
+count and leaves the distinction to `status_detail`. `needs_setup` covers a
+missing binary, a missing required env var, a wrong OS, and a skill switched
+off via `skills.disabled` / `skills.enabled`; only the `disabled` boolean tells
+the last one apart, and it is the only one no install will fix.
+
+A required env var must be **non-blank** to count. `export ORACLE_KEY=` leaves
+the variable set but empty, which no API key, token, or path survives, so it
+reports as missing rather than as satisfied.
+
+`acquisition.author` is an attribution string, not an identity. It is whatever
+the catalog row credited — a handle a publisher chose — so it passes through no
+allowlist and must never be rendered with a logo or read as a trust signal;
+`publisher` is the only field that answers "who vouches for this". It is empty
+only when it would repeat the resolved brand, so a partner skill is credited
+once rather than twice — a *different* credit survives. That is the
+`stock-premium-lp-manager` case: written from a wallet on bankr.bot but named in
+the wheel's user-skill allowlist, so it carries Bankr's `publisher` and
+`@igoryuzo` as its `author`.
 
 There is deliberately **no `availability` key** in CLI output. Whether the
 agent is currently being offered a skill depends on a chat session's tool

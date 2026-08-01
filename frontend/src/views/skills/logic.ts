@@ -16,6 +16,10 @@ export interface RawSkill {
   status?: string
   status_detail?: string
   eligible?: boolean
+  /** Switched off by config (`skills.disabled`, or absent from `skills.enabled`).
+   *  The wire `status` folds this into `needs_setup`; `skillBucket` splits it back
+   *  out, because nothing about a disabled skill needs setting up. */
+  disabled?: boolean
   triggers?: string[]
   homepage?: string
   file_path?: string
@@ -54,6 +58,15 @@ export type SkillAcquisitionKind = 'shipped' | 'hub' | 'local'
 export interface SkillAcquisition {
   kind?: SkillAcquisitionKind | string
   source_id?: string
+  /**
+   * The author the catalog row credited, e.g. `@igoryuzo`. Free text that
+   * passed no allowlist — unlike `publisher`, which the server resolves. Render
+   * it as attribution only: never with a logo, never as a trust signal. Empty
+   * only when it would repeat the resolved `publisher`, so a partner skill is
+   * credited once rather than twice; a partner-distributed skill written by
+   * someone else keeps the handle.
+   */
+  author?: string
   identifier?: string
   version?: string
   installed_at?: string
@@ -129,8 +142,40 @@ export interface RegistryItem {
   [key: string]: unknown
 }
 
-/** The four status-filter keys the metric pills toggle (skills.js:352-366). */
-export type StatusFilter = 'all' | 'ready' | 'needs-setup' | 'not-declared'
+/** The status-filter keys the metric pills toggle (skills.js:352-366). */
+export type StatusFilter = 'all' | 'ready' | 'needs-setup' | 'disabled'
+
+/**
+ * The bucket a card is shown in — a different axis from the wire `status`.
+ *
+ * Two regroupings happen here, both display decisions:
+ *
+ * 1. `not_declared` joins `ready`. The wire keeps them apart to record whether
+ *    AgentOS verified anything, but for someone reading the list they mean the
+ *    same thing — the skill runs. Splitting them put working skills in a
+ *    separate bucket that read as a defect, and no action ever followed.
+ *    `status_detail` still distinguishes "3/3 satisfied" from "no dependencies
+ *    declared" in the tooltip, which is where that nuance belongs.
+ * 2. `disabled` leaves `needs_setup`. The gateway folds it in because both mean
+ *    `eligible: false`, but they are opposite problems: a disabled skill needs
+ *    nothing installed, and listing it under "Needs setup" both inflates that
+ *    count and offers a fix that does not exist. `disabled` is already on the
+ *    wire (`rpc_skills.py`), so the split costs no protocol change.
+ */
+export type SkillBucket = 'ready' | 'needs-setup' | 'disabled'
+
+export function skillBucket(skill: RawSkill): SkillBucket {
+  if (skill.disabled) return 'disabled'
+  // Via `skillStatus`, not the raw field: a payload without `status` (an older
+  // gateway, a hand-built row) used to count in no pill at all and vanish from
+  // every filter except All.
+  //
+  // Only `needs_setup` is a problem. Anything else — `ready`, `not_declared`,
+  // or a value a newer gateway invented — is a skill that runs. Amber is a call
+  // to action, and inventing one for a status this build cannot read would send
+  // an operator looking for a dependency that was never missing.
+  return skillStatus(skill) === 'needs_setup' ? 'needs-setup' : 'ready'
+}
 
 // ── Constants (skills.js:36-58) ──────────────────────────────────────────────
 
@@ -191,15 +236,16 @@ export interface SkillStats {
   total: number
   ready: number
   needs: number
-  notDeclared: number
+  disabled: number
 }
 
 export function skillStats(skills: RawSkill[]): SkillStats {
+  const bucket = (want: SkillBucket) => skills.filter((s) => skillBucket(s) === want).length
   return {
     total: skills.length,
-    ready: skills.filter((s) => s.status === 'ready').length,
-    needs: skills.filter((s) => s.status === 'needs_setup').length,
-    notDeclared: skills.filter((s) => s.status === 'not_declared').length,
+    ready: bucket('ready'),
+    needs: bucket('needs-setup'),
+    disabled: bucket('disabled'),
   }
 }
 
@@ -226,9 +272,7 @@ export function filterSkills(
         (s.triggers || []).some((t) => t.toLowerCase().includes(q)),
     )
   }
-  if (statusFilter === 'ready') out = out.filter((s) => s.status === 'ready')
-  else if (statusFilter === 'needs-setup') out = out.filter((s) => s.status === 'needs_setup')
-  else if (statusFilter === 'not-declared') out = out.filter((s) => s.status === 'not_declared')
+  if (statusFilter !== 'all') out = out.filter((s) => skillBucket(s) === statusFilter)
   return out
 }
 
@@ -237,16 +281,23 @@ export function installedEmptyMessage(filterText: string, statusFilter: StatusFi
   if (filterText) return `No skills match ${filterText}.`
   if (statusFilter === 'ready') return 'No skills are ready. Install dependencies to enable them.'
   if (statusFilter === 'needs-setup') return 'No skills currently need setup.'
-  if (statusFilter === 'not-declared') return 'No skills without declared dependencies.'
+  if (statusFilter === 'disabled') return 'No skills are switched off.'
   return 'No skills installed.'
 }
 
 // ── Provenance grouping + ready-first sort (skills.js:407-442) ────────────────
 
-/** skills.js:407-411 — sort rank: ready(0) < not_declared(1) < needs_setup(2). */
+/**
+ * skills.js:407-411 — sort rank, usable first.
+ *
+ * ready(0) < disabled(1) < needs_setup(2). Disabled sorts above needs-setup
+ * because nothing is broken about it: it is one config line away from working,
+ * where a needs-setup skill is waiting on the environment.
+ */
 export function skillRank(s: RawSkill): number {
-  if (s.status === 'ready') return 0
-  if (s.status === 'not_declared') return 1
+  const bucket = skillBucket(s)
+  if (bucket === 'ready') return 0
+  if (bucket === 'disabled') return 1
   return 2
 }
 
@@ -358,8 +409,8 @@ export function groupSkills(skills: RawSkill[]): SkillGroup[] {
 
 // ── Card status → tone/label (skills.js:447-465, 779-789) ─────────────────────
 
-/** The card status dot class: ready / needs / unverified. */
-export type SkillDot = 'is-ready' | 'is-needs' | 'is-unverified'
+/** The card status dot class: ready / needs / off. */
+export type SkillDot = 'is-ready' | 'is-needs' | 'is-off'
 
 /** skills.js:448 — resolve a skill's effective status (falls back to eligible). */
 export function skillStatus(skill: RawSkill): string {
@@ -368,14 +419,24 @@ export function skillStatus(skill: RawSkill): string {
 
 /** skills.js:449-452 — the status-dot class for a card. */
 export function skillDotClass(skill: RawSkill): SkillDot {
-  const status = skillStatus(skill)
-  if (status === 'ready') return 'is-ready'
-  if (status === 'needs_setup') return 'is-needs'
-  return 'is-unverified'
+  const bucket = skillBucket(skill)
+  if (bucket === 'ready') return 'is-ready'
+  // Amber says "act on this". A switched-off skill needs no action, so it goes
+  // grey rather than joining the warnings an operator is meant to work through.
+  if (bucket === 'disabled') return 'is-off'
+  return 'is-needs'
+}
+
+/** The label under the dot, per bucket. */
+export const SKILL_BUCKET_LABEL: Record<SkillBucket, string> = {
+  ready: 'Ready',
+  'needs-setup': 'Setup required',
+  disabled: 'Disabled',
 }
 
 /** skills.js:454 — the dot tooltip. */
 export function skillDotTitle(skill: RawSkill): string {
+  if (skill.disabled) return skill.status_detail || 'Disabled in config'
   return skill.status_detail || (skill.eligible ? 'Ready' : 'Needs setup')
 }
 
@@ -463,7 +524,7 @@ export function partnerEmptyMessage(
   if (query) return `No ${brand} skills match ${query}.`
   if (statusFilter === 'ready') return `No ${brand} skills are ready.`
   if (statusFilter === 'needs-setup') return `No ${brand} skills currently need setup.`
-  if (statusFilter === 'not-declared') return `No ${brand} skills without a manifest.`
+  if (statusFilter === 'disabled') return `No ${brand} skills are switched off.`
   return `${brand} skills are on the way. No ${brand} skills are installed yet.`
 }
 

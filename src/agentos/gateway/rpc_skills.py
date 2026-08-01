@@ -112,7 +112,10 @@ def _status_detail(spec: Any, report: EligibilityReport) -> str:
     """Human-readable tooltip detail for the skill status dot/chip."""
     if not report.eligible:
         if report.disabled:
-            return "Needs setup — disabled"
+            # Not "Needs setup — disabled": there is no setup to do. The skill
+            # was switched off in config, and the fix is a config line, not an
+            # install.
+            return "Disabled in config"
         if report.wrong_os:
             meta = getattr(spec, "metadata", None)
             os_list = list(meta.os) if meta and meta.os else []

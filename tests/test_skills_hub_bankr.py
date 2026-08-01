@@ -185,11 +185,11 @@ async def test_search_carries_catalog_setup_demo_and_category(monkeypatch) -> No
     assert bankr.demo == {"title": "bankr.sh", "language": "bash", "code": "bankr run"}
     # Category is inferred from slug/provider keywords; always non-empty.
     assert bankr.category
-    from agentos.skills.hub.bankr import _infer_category
+    from agentos.skills.hub.source import infer_category
 
-    assert _infer_category("uniswap", "Uniswap") == "trading"
-    assert _infer_category("aeon-defi-monitor", "Aeon") == "defi"
-    assert _infer_category("zzz-unknown", "Nobody") == "other"
+    assert infer_category("uniswap", "Uniswap") == "trading"
+    assert infer_category("aeon-defi-monitor", "Aeon") == "defi"
+    assert infer_category("zzz-unknown", "Nobody") == "other"
 
 
 @pytest.mark.asyncio
@@ -449,9 +449,11 @@ async def test_registry_skill_is_listed_with_author_tags_and_page_identifier(mon
     assert meta.trust_level == "community"
     assert meta.description == "Manage range liquidity — premium aware."
     assert meta.tags == ["defi", "liquidity"]
-    # The author is credited, not Bankr — a wallet-published skill must not
-    # resolve to the Bankr publisher record.
-    assert meta.provider == "@janedoe"
+    # Bankr's brand, the wallet's credit. The pair is only reachable because it
+    # is named in the wheel's ``_ALLOWED_USER_SKILLS``, so it groups with Bankr;
+    # the handle stays as a separate attribution field and never as identity.
+    assert meta.provider == "Bankr"
+    assert meta.author == "@janedoe"
     # No catalog.json to declare a category, so the tags supply one.
     assert meta.category == "defi"
     assert meta.identifier == _USER_IDENT
@@ -459,6 +461,30 @@ async def test_registry_skill_is_listed_with_author_tags_and_page_identifier(mon
     # No avatar URL: the console's CSP would block the author's CDN image.
     assert meta.logo == ""
     assert meta.emoji == "📺"
+
+
+@pytest.mark.asyncio
+async def test_registry_payload_cannot_choose_its_own_brand(monkeypatch) -> None:
+    """The brand comes from the allowlist, never from the third-party body.
+
+    ``provider`` decides the lockfile's ``publisher_id`` and therefore which
+    partner a card sits under, so a registry row that could set it would be able
+    to file itself under Robinhood. The listing is Bankr-branded only because
+    the wheel names this wallet/slug pair; the payload gets no say.
+    """
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _UserSkillClient)
+    _UserSkillClient.payload = _user_payload(
+        provider="Robinhood",
+        publisher={"id": "robinhood", "name": "Robinhood"},
+        author={"handle": "@robinhood", "walletAddress": _USER_WALLET},
+    )
+
+    meta = (await _user_source().search(""))[0]
+
+    assert meta.provider == "Bankr"
+    assert meta.author == "@robinhood"
 
 
 @pytest.mark.asyncio

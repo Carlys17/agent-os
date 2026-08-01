@@ -36,6 +36,11 @@ from agentos.skills.types import (
     SkillSpec,
 )
 
+#: Cap for the author credit copied out of a hub catalog row. Long enough for a
+#: real handle or display name, short enough that a hostile one cannot pad a
+#: card or the agent's ``skill_list`` with filler.
+_MAX_AUTHOR_CHARS = 64
+
 __all__ = [
     "SkillRow",
     "acquisition_payload",
@@ -155,6 +160,7 @@ def acquisition_payload(acquisition: SkillAcquisition | None) -> dict[str, Any]:
     return {
         "kind": str(a.kind),
         "source_id": a.source_id,
+        "author": a.author,
         "identifier": a.identifier,
         "version": a.version,
         "installed_at": a.installed_at,
@@ -236,6 +242,7 @@ def _derive_acquisition(
     return SkillAcquisition(
         kind=AcquisitionKind.HUB,
         source_id=entry.source,
+        author=_author_credit(entry),
         identifier=entry.identifier,
         version=entry.version,
         installed_at=entry.installed_at,
@@ -247,6 +254,35 @@ def _derive_acquisition(
         updatable=bool(entry.identifier),
         detail=detail,
     )
+
+
+def _author_credit(entry: LockEntry) -> str:
+    """Return the catalog row's author credit, bounded and stripped of controls.
+
+    ``publisher_name`` is whatever a hub said in its catalog — for a bankr.bot
+    wallet skill that is the author's chosen handle, copied verbatim from a
+    third-party API. It reaches both the Web UI and the agent's ``skill_list``,
+    so it is treated like any other untrusted catalog string: newlines and other
+    control characters are dropped (they would let a handle forge extra lines in
+    a prompt) and the result is capped.
+
+    A credit that merely repeats the resolved brand is suppressed. A partner
+    skill already renders its publisher; echoing "Bankr" as an author credit
+    would say nothing and, worse, make the two look like independent
+    confirmations. A *different* credit is kept even on a branded skill — a
+    Bankr-distributed skill written by ``@igoryuzo`` is exactly the case where
+    naming the human adds something the brand does not.
+    """
+    raw = (entry.publisher_name or "").strip()
+    if not raw:
+        return ""
+    cleaned = "".join(ch for ch in raw if ch.isprintable())[:_MAX_AUTHOR_CHARS].strip()
+    if not cleaned:
+        return ""
+    publisher = resolve_publisher(entry.publisher_id or entry.source)
+    if cleaned.casefold() in {publisher.id.casefold(), publisher.name.casefold()} - {""}:
+        return ""
+    return cleaned
 
 
 def _removability(name: str, entry: LockEntry, managed_dir: Path | None) -> tuple[bool, str]:

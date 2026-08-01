@@ -40,7 +40,7 @@ import structlog
 
 from agentos.env import trust_env as _trust_env
 from agentos.skills.hub.github import GitHubSource, _frontmatter_field, _parse_identifier
-from agentos.skills.hub.source import SkillBundle, SkillMeta, SkillSource
+from agentos.skills.hub.source import SkillBundle, SkillMeta, SkillSource, infer_category
 
 log = structlog.get_logger(__name__)
 
@@ -79,52 +79,6 @@ _CATALOG_TTL_SECONDS = 15 * 60
 # HTTP timeout to every search for the duration of a GitHub outage.
 _FAILURE_RETRY_SECONDS = 60
 _CATALOG_CONCURRENCY = 16
-
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
-
-
-# Coarse category buckets inferred from the slug/provider so the browse UI can
-# offer meaningful filter chips. Keywords match whole slug/provider tokens
-# (split on non-alphanumerics), not substrings — so "design" does not become
-# "sign" and "alphabet" does not become "bet". Ordered by specificity — first
-# keyword hit wins.
-_CATEGORY_KEYWORDS: list[tuple[str, frozenset[str]]] = [
-    ("trading", frozenset({"trade", "trading", "swap", "uniswap", "dex", "perp", "hyperliquid"})),
-    ("defi", frozenset({"defi", "aave", "lend", "yield", "vault", "stake", "liquidity", "token"})),
-    ("wallet", frozenset({"wallet", "account", "erc4337", "signer", "sign", "custody"})),
-    ("markets", frozenset({"polymarket", "kalshi", "prediction", "bet", "market", "odds"})),
-    (
-        "social",
-        frozenset({"farcaster", "twitter", "neynar", "social", "community", "chat", "message"}),
-    ),
-    (
-        "data",
-        frozenset(
-            {"alchemy", "zerion", "data", "monitor", "analytics", "index", "scan", "research"}
-        ),
-    ),
-    ("nft", frozenset({"nft", "collectible", "mint", "opensea"})),
-    (
-        "dev",
-        frozenset({"foundry", "contract", "audit", "gas", "deploy", "sdk", "dev", "skill", "eval"}),
-    ),
-    ("infra", frozenset({"ens", "rpc", "node", "infra", "gateway", "x402", "webhook"})),
-]
-
-
-def _infer_category(slug: str, provider: str, tags: Sequence[str] = ()) -> str:
-    """Return a coarse category for browse filters, or "other" when unknown.
-
-    ``tags`` is only carried by user-published skills — the repo catalogs have
-    none — and is folded into the same token set, so a skill whose slug says
-    nothing useful ("stock-premium-lp-manager") still lands in a real bucket.
-    """
-    haystack = " ".join([slug, provider, *tags]).lower()
-    tokens = set(_TOKEN_RE.findall(haystack))
-    for category, keywords in _CATEGORY_KEYWORDS:
-        if tokens & keywords:
-            return category
-    return "other"
 
 
 @dataclass(frozen=True)
@@ -205,8 +159,11 @@ def _matches(meta: SkillMeta, query: str) -> bool:
     q = query.strip().lower()
     if not q:
         return True
+    # ``author`` is in the haystack because a registry skill's handle is often
+    # the only name a user remembers it by, and it stopped being searchable the
+    # moment it moved out of ``provider``.
     haystack = " ".join(
-        [meta.name, meta.provider, meta.category, meta.description, *meta.tags]
+        [meta.name, meta.provider, meta.author, meta.category, meta.description, *meta.tags]
     ).lower()
     return q in haystack
 
@@ -456,14 +413,21 @@ class BankrSource(SkillSource):
         )
         raw_author = skill.get("author")
         author = raw_author if isinstance(raw_author, dict) else {}
-        # The author, not Bankr: a wallet-published skill is community work that
-        # happens to be distributed through Bankr's registry, so it lists its
-        # author and resolves to no recognized publisher (see
-        # ``agentos.skills.publishers``) rather than inheriting Bankr's brand.
-        provider = str(author.get("handle") or author.get("displayName") or "")
+        # Bankr's brand, the wallet's credit. A wallet-published skill reaches
+        # this function only because its ``<wallet>/<slug>`` is named in
+        # ``_ALLOWED_USER_SKILLS`` — a decision made in this repository and
+        # shipped in the wheel, the same review path a partner catalog entry
+        # gets — so it is Bankr-distributed and groups with Bankr. The brand is
+        # the allowlist's, never the payload's: nothing the registry returns can
+        # change ``provider``, so a hostile row cannot mint one for itself (see
+        # ``agentos.skills.publishers``). The handle rides along as ``author``,
+        # an attribution string the UI must render as credit and not identity.
+        provider = "Bankr"
+        author_credit = str(author.get("handle") or author.get("displayName") or "")
 
         meta = SkillMeta(
             name=ref.slug,
+            author=author_credit,
             description=description,
             source_id=self.source_id,
             trust_level=self.trust_level,
@@ -475,7 +439,7 @@ class BankrSource(SkillSource):
             # cards use the Bankr brand mark instead of a broken image.
             logo="",
             emoji=_BANKR_EMOJI,
-            category=_infer_category(ref.slug, provider, tags),
+            category=infer_category(ref.slug, provider, tags),
             tags=tags,
         )
         return meta, _user_skill_markdown(ref.slug, description, tags, content)
@@ -534,7 +498,7 @@ class BankrSource(SkillSource):
             provider=provider,
             logo=logo,
             emoji=emoji,
-            category=_infer_category(slug, provider),
+            category=infer_category(slug, provider),
             setup=setup,
             demo=demo,
         )

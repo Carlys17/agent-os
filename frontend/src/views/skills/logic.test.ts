@@ -52,7 +52,7 @@ describe('layerLabel / layerHelp', () => {
 })
 
 describe('skillStats', () => {
-  it('counts total / ready / needs_setup / not_declared', () => {
+  it('counts total / ready / needs_setup / disabled', () => {
     const list = [
       skill({ status: 'ready' }),
       skill({ status: 'ready' }),
@@ -60,7 +60,26 @@ describe('skillStats', () => {
       skill({ status: 'not_declared' }),
       skill({ status: 'other' }),
     ]
-    expect(skillStats(list)).toEqual({ total: 5, ready: 2, needs: 1, notDeclared: 1 })
+    // ready + not_declared + an unreadable status all run → all count as ready.
+    expect(skillStats(list)).toEqual({ total: 5, ready: 4, needs: 1, disabled: 0 })
+  })
+
+  // A skill with no `requires:` block runs; the wire keeps `not_declared`
+  // separate only to record that AgentOS verified nothing. Surfacing that as
+  // its own bucket read as a defect and no action ever followed it.
+  it('counts an undeclared skill as ready, not as a bucket of its own', () => {
+    const list = [skill({ status: 'ready' }), skill({ status: 'not_declared' })]
+    expect(skillStats(list)).toMatchObject({ total: 2, ready: 2, needs: 0 })
+  })
+
+  // The wire folds "switched off" into needs_setup. Counting it there tells an
+  // operator to go install something for a skill they turned off themselves.
+  it('counts a disabled skill as disabled, not as needing setup', () => {
+    const list = [
+      skill({ status: 'needs_setup', disabled: true }),
+      skill({ status: 'needs_setup' }),
+    ]
+    expect(skillStats(list)).toMatchObject({ needs: 1, disabled: 1 })
   })
 })
 
@@ -77,15 +96,17 @@ describe('filterSkills', () => {
     expect(filterSkills(list, 'charts', 'all').map((s) => s.name)).toEqual(['gamma'])
   })
 
-  it('applies the status filter (needs-setup maps to needs_setup)', () => {
-    expect(filterSkills(list, '', 'ready').map((s) => s.name)).toEqual(['alpha'])
+  // `not_declared` means the skill runs and declared nothing to verify, so it
+  // filters as Ready alongside a skill whose declared deps are all satisfied.
+  it('applies the status filter, counting an undeclared skill as ready', () => {
+    expect(filterSkills(list, '', 'ready').map((s) => s.name)).toEqual(['alpha', 'gamma'])
     expect(filterSkills(list, '', 'needs-setup').map((s) => s.name)).toEqual(['beta'])
-    expect(filterSkills(list, '', 'not-declared').map((s) => s.name)).toEqual(['gamma'])
     expect(filterSkills(list, '', 'all')).toHaveLength(3)
   })
 
   it('combines text and status filters', () => {
-    expect(filterSkills(list, 'a', 'ready').map((s) => s.name)).toEqual(['alpha'])
+    expect(filterSkills(list, 'a', 'ready').map((s) => s.name)).toEqual(['alpha', 'gamma'])
+    expect(filterSkills(list, 'a', 'needs-setup').map((s) => s.name)).toEqual(['beta'])
   })
 })
 
@@ -94,7 +115,7 @@ describe('installedEmptyMessage', () => {
     expect(installedEmptyMessage('xyz', 'all')).toContain('xyz')
     expect(installedEmptyMessage('', 'ready')).toContain('No skills are ready')
     expect(installedEmptyMessage('', 'needs-setup')).toContain('need setup')
-    expect(installedEmptyMessage('', 'not-declared')).toContain('without declared')
+    expect(installedEmptyMessage('', 'disabled')).toContain('switched off')
     expect(installedEmptyMessage('', 'all')).toBe('No skills installed.')
   })
 })
@@ -103,11 +124,13 @@ const acquired = (kind: string, o: Partial<RawSkill> = {}): RawSkill =>
   skill({ acquisition: { kind }, ...o })
 
 describe('skillRank / skillGroupKey / groupSkills', () => {
-  it('ranks ready < not_declared < needs_setup', () => {
+  it('ranks ready < disabled < needs_setup', () => {
     expect(skillRank(skill({ status: 'ready' }))).toBe(0)
-    expect(skillRank(skill({ status: 'not_declared' }))).toBe(1)
+    expect(skillRank(skill({ status: 'not_declared' }))).toBe(0)
+    expect(skillRank(skill({ status: 'needs_setup', disabled: true }))).toBe(1)
     expect(skillRank(skill({ status: 'needs_setup' }))).toBe(2)
-    expect(skillRank(skill({ status: 'weird' }))).toBe(2)
+    // An unreadable status is "nothing to report", not a warning to act on.
+    expect(skillRank(skill({ status: 'weird' }))).toBe(0)
   })
 
   it('maps acquisition.kind to a group key', () => {
@@ -147,7 +170,8 @@ describe('skillRank / skillGroupKey / groupSkills', () => {
     expect(groups[0]!.skills.map((s) => s.name)).toEqual(['bankr-swap', 'rh'])
     expect(groups[0]!.help).toContain('partner')
     const hub = groups.find((g) => g.key === 'hub')!
-    expect(hub.skills.map((s) => s.name)).toEqual(['z-ready', 'm-decl', 'a-needs'])
+    // z-ready and m-decl (not_declared) share rank 0, so name breaks the tie.
+    expect(hub.skills.map((s) => s.name)).toEqual(['m-decl', 'z-ready', 'a-needs'])
     expect(hub.label).toBe('Installed from a hub')
   })
 
@@ -182,7 +206,9 @@ describe('skillStatus / skillDotClass / skillDotTitle', () => {
   it('maps status to dot class', () => {
     expect(skillDotClass(skill({ status: 'ready' }))).toBe('is-ready')
     expect(skillDotClass(skill({ status: 'needs_setup' }))).toBe('is-needs')
-    expect(skillDotClass(skill({ status: 'not_declared' }))).toBe('is-unverified')
+    // A skill that declared nothing still runs, so it gets the ready dot.
+    expect(skillDotClass(skill({ status: 'not_declared' }))).toBe('is-ready')
+    expect(skillDotClass(skill({ status: 'needs_setup', disabled: true }))).toBe('is-off')
   })
 
   it('dot title prefers status_detail then eligible label', () => {
@@ -318,9 +344,7 @@ describe('partnerEmptyMessage', () => {
     expect(partnerEmptyMessage('Bankr', '', 'needs-setup')).toBe(
       'No Bankr skills currently need setup.',
     )
-    expect(partnerEmptyMessage('Bankr', '', 'not-declared')).toBe(
-      'No Bankr skills without a manifest.',
-    )
+    expect(partnerEmptyMessage('Bankr', '', 'disabled')).toBe('No Bankr skills are switched off.')
     expect(partnerEmptyMessage('Robinhood', '', 'all')).toContain('Robinhood skills are on the way')
   })
 })

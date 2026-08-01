@@ -35,6 +35,9 @@ import {
   installAction,
   installSource,
   installedEmptyMessage,
+  isPartnerSkill,
+  SKILL_BUCKET_LABEL,
+  skillBucket,
   layerHelp,
   layerLabel,
   markInstalled,
@@ -50,6 +53,7 @@ import {
   skillCanUpdate,
   skillDotClass,
   skillDotTitle,
+  skillPublisherId,
   skillStats,
   skillStatus,
   skillsByPublisher,
@@ -86,6 +90,41 @@ const PARTNER_BRANDS: Record<PartnerBrand, { label: string; asset: string }> = {
   bankr: { label: 'Bankr', asset: bankrSymbolUrl },
   capminal: { label: 'Capminal', asset: capminalSymbolUrl },
   robinhood: { label: 'Robinhood', asset: robinhoodSymbolUrl },
+}
+
+/**
+ * Header copy per catalog tab, keyed the same way the tabs are.
+ *
+ * This is a table rather than a conditional on purpose. `RegistryGroup` has
+ * grown past two members, and every place that branched on `group === 'bankr'`
+ * quietly filed Capminal under the community copy — the tab said "Partner
+ * catalog" while the panel said "Discover skills published by the wider AgentOS
+ * community". Adding the next partner should mean adding a row here, not
+ * finding four more ternaries.
+ *
+ * Robinhood is absent: its tab lists installed skills, not a catalog, so it
+ * renders its own intro rather than going through `RegistryPanel`.
+ */
+const REGISTRY_INTRO: Record<
+  Exclude<RegistryGroup, 'community'>,
+  { title: string; description: string; notice?: string }
+> = {
+  bankr: {
+    title: 'Bankr skill catalog',
+    description: 'Curated financial and on-chain capabilities maintained by the Bankr ecosystem.',
+    notice: "the 'bankr' skill is required for all skills in this catalog.",
+  },
+  capminal: {
+    title: 'Capminal skill catalog',
+    description:
+      'Wallet, token-launch, and on-chain execution skills maintained by the Capminal team.',
+    notice: "the 'capminal' skill is required for all skills in this catalog.",
+  },
+}
+
+/** The brand name for a catalog tab's search/loading copy ('community' has none). */
+function registryLabel(group: RegistryGroup): string {
+  return group === 'community' ? 'community' : PARTNER_BRANDS[group].label
 }
 
 /**
@@ -209,11 +248,86 @@ function LogoBadge({ item, cls }: { item: RegistryItem; cls: string }) {
 }
 
 // ── Installed skill card (skills.js:447-465) ──────────────────────────────────
+/**
+ * "Where this came from" for a hub install: the hub, plus the author the
+ * catalog credited.
+ *
+ * A community skill distributed through a partner's hub — a bankr.bot wallet
+ * skill, say — is deliberately NOT a partner skill: `publisher.id` never
+ * resolves for it, so it lands under "Installed from a hub" with no trace of
+ * where it actually came from. This chip restores that trace without restoring
+ * the brand. It is plain text on purpose: no partner logo, no partner styling.
+ * The author string passed no allowlist, so it must not be able to look like
+ * one that did.
+ *
+ * Renders nothing for shipped and local skills, which have no hub to name.
+ */
+/**
+ * The bundled brand mark for a skill, or `null` when it has no allowlisted one.
+ *
+ * Keyed off `publisher.id`, which the server resolved against
+ * `RECOGNIZED_PUBLISHERS` — the same field the Partners grouping uses, so a card
+ * can never wear a logo for a group it is not in. The artwork itself is a local
+ * import; nothing a `SKILL.md` carries can reach it.
+ */
+function partnerBrandOf(skill: RawSkill): PartnerBrand | null {
+  const id = skillPublisherId(skill)
+  return id in PARTNER_BRANDS ? (id as PartnerBrand) : null
+}
+
+/**
+ * Avatar for an installed skill: the publisher's mark when it has one.
+ *
+ * The Installed tab groups by provenance, so a partner skill sat under
+ * "Partners" wearing the same generic package glyph as everything else — the
+ * catalog tabs showed the brand and the installed list dropped it, which reads
+ * as two different skills.
+ */
+function SkillIcon({
+  skill,
+  iconClass,
+  brandClass,
+}: {
+  skill: RawSkill
+  iconClass: string
+  brandClass: string
+}) {
+  const brand = partnerBrandOf(skill)
+  if (brand) return <PartnerLogo brand={brand} className={brandClass} />
+  return (
+    <span className={iconClass} aria-hidden="true">
+      <PackageIcon />
+    </span>
+  )
+}
+
+function OriginChip({ skill }: { skill: RawSkill }) {
+  const acq = skill.acquisition
+  if (acq?.kind !== 'hub') return null
+  const source = acq.source_id || 'hub'
+  const author = (acq.author || '').trim()
+  // A partner card already names its publisher, so repeating the source id
+  // would be the same fact twice; the author credit is the part the brand does
+  // not carry. An unbranded hub install has nothing else saying where it came
+  // from, so it keeps the source.
+  const branded = isPartnerSkill(skill)
+  if (branded && !author) return null
+  return (
+    <span
+      className="sk-chip sk-chip--origin"
+      title={
+        author ? `Installed from ${source}, authored by ${author}` : `Installed from ${source}`
+      }
+    >
+      {branded ? null : source}
+      {author ? <span className="sk-chip__author">{branded ? author : ` · ${author}`}</span> : null}
+    </span>
+  )
+}
+
 function SkillCard({ skill, onOpen }: { skill: RawSkill; onOpen: () => void }) {
   const desc = skill.description || ''
-  const status = skillStatus(skill)
-  const statusLabel =
-    status === 'ready' ? 'Ready' : status === 'needs_setup' ? 'Setup required' : 'No manifest'
+  const statusLabel = SKILL_BUCKET_LABEL[skillBucket(skill)]
   return (
     <button
       type="button"
@@ -223,9 +337,7 @@ function SkillCard({ skill, onOpen }: { skill: RawSkill; onOpen: () => void }) {
       title={skill.name + (desc ? ': ' + desc : '')}
     >
       <div className="sk-card__head">
-        <span className="sk-card__icon" aria-hidden="true">
-          <PackageIcon />
-        </span>
+        <SkillIcon skill={skill} iconClass="sk-card__icon" brandClass="sk-card__brand" />
         <span className="sk-card__name">{skill.name}</span>
         <span className={`sk-card__status ${skillDotClass(skill)}`} title={skillDotTitle(skill)}>
           <span className="sk-card__dot" aria-hidden="true" />
@@ -239,6 +351,7 @@ function SkillCard({ skill, onOpen }: { skill: RawSkill; onOpen: () => void }) {
         <span className="sk-chip sk-chip--layer" title={layerHelp(skill.layer)}>
           {layerLabel(skill.layer)}
         </span>
+        <OriginChip skill={skill} />
         <AvailabilityChip skill={skill} />
       </span>
       <span className="sk-card__foot" aria-hidden="true">
@@ -310,13 +423,12 @@ function PartnerSkillCard({
   onOpen: () => void
 }) {
   const label = PARTNER_BRANDS[brand].label
-  const status = skillStatus(skill)
-  const statusLabel =
-    status === 'ready' ? 'Ready' : status === 'needs_setup' ? 'Setup required' : 'No manifest'
+  const bucket = skillBucket(skill)
+  const statusLabel = SKILL_BUCKET_LABEL[bucket]
   const statusClass =
-    status === 'ready'
+    bucket === 'ready'
       ? 'sk-chip--ok'
-      : status === 'needs_setup'
+      : bucket === 'needs-setup'
         ? 'sk-chip--warn'
         : 'sk-chip--unverified'
 
@@ -343,8 +455,8 @@ function PartnerSkillCard({
         <span className="sk-rcard__src sk-mono">{acquisitionSourceLabel(skill)}</span>
         <AvailabilityChip skill={skill} />
         <span className={`sk-chip ${statusClass}`} title={skillDotTitle(skill)}>
-          {status === 'ready' ? <CheckIcon aria-hidden="true" /> : null}
-          {status === 'needs_setup' ? <TriangleAlertIcon aria-hidden="true" /> : null}
+          {bucket === 'ready' ? <CheckIcon aria-hidden="true" /> : null}
+          {bucket === 'needs-setup' ? <TriangleAlertIcon aria-hidden="true" /> : null}
           {statusLabel}
         </span>
       </div>
@@ -888,12 +1000,17 @@ export function SkillsPage() {
               active={statusFilter === 'needs-setup'}
               onClick={() => setStatusFilter('needs-setup')}
             />
-            <MetricPill
-              label="No manifest"
-              value={stats.notDeclared}
-              active={statusFilter === 'not-declared'}
-              onClick={() => setStatusFilter('not-declared')}
-            />
+            {/* Only when there is something to show: an operator who has
+                disabled nothing should not be offered a permanently empty
+                filter next to the ones that matter. */}
+            {stats.disabled > 0 || statusFilter === 'disabled' ? (
+              <MetricPill
+                label="Disabled"
+                value={stats.disabled}
+                active={statusFilter === 'disabled'}
+                onClick={() => setStatusFilter('disabled')}
+              />
+            ) : null}
           </section>
         </div>
       ) : null}
@@ -1262,11 +1379,15 @@ function PartnerIntro({
   brand,
   title,
   description,
+  notice,
   count,
 }: {
   brand: PartnerBrand
   title: string
   description: string
+  /** Prerequisite the whole catalog depends on. Rendered as an alert so it is
+   *  read before the user installs anything it applies to. */
+  notice?: string
   count?: number
 }) {
   return (
@@ -1275,6 +1396,14 @@ function PartnerIntro({
       <div className="sk-partner__copy">
         <h2>{title}</h2>
         <p>{description}</p>
+        {notice ? (
+          <p className="sk-partner__notice" role="note">
+            <TriangleAlertIcon size={13} aria-hidden="true" />
+            <span>
+              <strong>IMPORTANT:</strong> {notice}
+            </span>
+          </p>
+        ) : null}
       </div>
       {typeof count === 'number' ? (
         <span className="sk-partner__count">
@@ -1311,7 +1440,7 @@ function RobinhoodPanel({
     { key: 'all' as const, label: 'All', count: stats.total },
     { key: 'ready' as const, label: 'Ready', count: stats.ready },
     { key: 'needs-setup' as const, label: 'Needs setup', count: stats.needs },
-    { key: 'not-declared' as const, label: 'No manifest', count: stats.notDeclared },
+    { key: 'disabled' as const, label: 'Disabled', count: stats.disabled },
   ].filter((item) => item.key === 'all' || item.count > 0 || item.key === statusFilter)
 
   return (
@@ -1442,13 +1571,8 @@ function RegistryPanel({
       aria-labelledby={`sk-tab-${group}`}
       className={`sk-panel sk-panel--source sk-panel--${group}`}
     >
-      {group === 'bankr' ? (
-        <PartnerIntro
-          brand="bankr"
-          title="Bankr skill catalog"
-          description="Curated financial and on-chain capabilities maintained by the Bankr ecosystem."
-          count={snapshot.length}
-        />
+      {group !== 'community' ? (
+        <PartnerIntro brand={group} {...REGISTRY_INTRO[group]} count={snapshot.length} />
       ) : (
         <div className="sk-community-intro">
           <span className="sk-community-intro__icon" aria-hidden="true">
@@ -1466,8 +1590,8 @@ function RegistryPanel({
           <input
             type="search"
             className="sk-search-input sk-search-input--lg"
-            placeholder={group === 'bankr' ? 'Search Bankr skills…' : 'Search community skills…'}
-            aria-label={group === 'bankr' ? 'Search Bankr skills' : 'Search community skills'}
+            placeholder={`Search ${registryLabel(group)} skills…`}
+            aria-label={`Search ${registryLabel(group)} skills`}
             autoComplete="off"
             value={query}
             onChange={(e) => onQuery(e.target.value)}
@@ -1496,9 +1620,7 @@ function RegistryPanel({
             <span className="sk-dim">Re-open the tab or press Refresh to retry.</span>
           </div>
         ) : loading ? (
-          <SkillsSkeleton
-            label={group === 'bankr' ? 'Loading Bankr catalog' : 'Loading community catalog'}
-          />
+          <SkillsSkeleton label={`Loading ${registryLabel(group)} catalog`} />
         ) : items.length === 0 ? (
           <div className="sk-registry__hint">{registryEmptyMessage(group, query)}</div>
         ) : (
@@ -1615,6 +1737,7 @@ function SkillDialog({
 }) {
   const titleId = useId()
   const status = skillStatus(skill)
+  const bucket = skillBucket(skill)
   const canUpdate = skillCanUpdate(skill)
   const canRemove = skillCanRemove(skill)
   const removeBlocked = skill.acquisition?.kind === 'hub' && !canRemove
@@ -1641,9 +1764,11 @@ function SkillDialog({
     >
       <header className="sk-dialog__head">
         <div className="sk-dialog__head-left">
-          <span className="sk-dialog__skill-icon" aria-hidden="true">
-            <PackageIcon />
-          </span>
+          <SkillIcon
+            skill={skill}
+            iconClass="sk-dialog__skill-icon"
+            brandClass="sk-dialog__brand"
+          />
           <h2 id={titleId} className="sk-dialog__name">
             {skill.name}
           </h2>
@@ -1651,10 +1776,11 @@ function SkillDialog({
             <span className="sk-chip" title={layerHelp(skill.layer)}>
               {layerLabel(skill.layer)}
             </span>
-            {status === 'ready' ? (
+            <OriginChip skill={skill} />
+            {bucket === 'ready' ? (
               <span className="sk-chip sk-chip--ok">✓ ready</span>
-            ) : status === 'not_declared' ? (
-              <span className="sk-chip sk-chip--unverified">no deps declared</span>
+            ) : bucket === 'disabled' ? (
+              <span className="sk-chip sk-chip--unverified">disabled</span>
             ) : (
               <span className="sk-chip sk-chip--warn">needs deps</span>
             )}
