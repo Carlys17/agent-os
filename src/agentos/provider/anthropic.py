@@ -12,6 +12,7 @@ import structlog
 from agentos.env import trust_env as _trust_env
 from agentos.execution_status import derive_is_error
 
+from .error_body import read_bounded_body, summarize_error_body
 from .request_proof import (
     ProviderRequestBudgetExceededError,
     prove_provider_payload_from_env,
@@ -454,14 +455,16 @@ class AnthropicProvider:
                     json=payload,
                 ) as response:
                     if response.status_code != 200:
-                        body = await response.aread()
+                        # The body is read bounded and summarised: this message
+                        # becomes an ErrorEvent, and an ErrorEvent reaches the
+                        # agent's context. A gateway's HTML block page there
+                        # costs tokens and tells the model nothing.
+                        body = await read_bounded_body(response)
                         if request_has_document:
                             _increment_document_block_rejected(str(response.status_code))
+                        detail = summarize_error_body(body) or "empty response body"
                         yield ErrorEvent(
-                            message=(
-                                f"HTTP {response.status_code}: "
-                                f"{body.decode('utf-8', errors='replace')}"
-                            ),
+                            message=f"HTTP {response.status_code}: {detail}",
                             code=str(response.status_code),
                         )
                         return

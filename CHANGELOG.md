@@ -15,6 +15,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   model. Per-task overrides live in `[auxiliary.tasks.<task>]` (`document` and
   `vision` today), because a text-only model cannot describe an image.
 
+- The system prompt now names the developer tools that actually exist on the
+  machine. An agent asked to run the tests reached for `pytest` and found out it
+  was missing by running it and reading a shell error, which cost a turn and
+  often started a repair for a problem that was never the task. The block is
+  probed once per process and lives in the cached part of the prompt, so it is
+  paid for once per session rather than once per turn. Only names are emitted,
+  never paths. Turn it off with `[prompt] env_probe_enabled = false`.
+
 ### Changed
 
 - `edit_file` no longer fails on text that differs from the file only in
@@ -24,6 +32,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   names the strategy that matched in its result. Text that appears more than
   once is still rejected rather than guessed, now with the line numbers of
   every match, and a failed edit reports the closest regions it found.
+
+- The progress watchdog now sees repeated *successful* calls, not only repeated
+  failures. An agent reading the same file over and over produced a clean result
+  every time, so by every measure the turn was making progress while burning
+  iterations and context on nothing. A call is counted as a repeat only when its
+  result is byte-identical to the previous one for the same tool and arguments —
+  re-reading a file that changed is real work, and its differing result resets
+  the count.
 
 ### Fixed
 
@@ -51,6 +67,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   variable to set. It now fails before the request with both. Local backends
   such as Ollama, which authenticate by reachability rather than by key, are
   unaffected.
+
+- A failing provider request read its error body whole. That body is written by
+  whatever sits in front of the provider — a WAF's HTML block page, a proxy's
+  stack trace — and has no size contract, so the read was unbounded; on the
+  Anthropic path the entire decoded body then became the `ErrorEvent` message
+  and flowed into the agent's context. Error bodies are now read to a bound and
+  summarised: JSON keeps its `error.message`, an HTML page collapses to its
+  title and size, and anything else is truncated with the cut made visible.
 
 ## [2026.7.31] - 2026-07-31
 

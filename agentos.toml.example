@@ -402,6 +402,13 @@ tool_result_store_max_bytes = 8388608
 tool_result_store_disk_budget_bytes = 268435456
 tool_result_store_retention_seconds = 604800
 
+[prompt]
+# Prompt-layer feature flags.
+# platform_hint_enabled = true   # channel-specific markdown rendering hints
+# env_probe_enabled = true       # tell the model which developer tools are on
+#                                # PATH, so it stops reaching for ones this
+#                                # machine does not have. Names only, no paths.
+
 [compaction]
 enabled = true
 # model = ""            # None = use session model

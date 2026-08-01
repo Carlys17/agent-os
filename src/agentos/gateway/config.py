@@ -440,6 +440,7 @@ class PromptConfig(BaseModel):
     """Prompt-layer feature flags."""
 
     platform_hint_enabled: bool = True
+    env_probe_enabled: bool = True
 
 
 MemoryEmbeddingProvider = Literal[

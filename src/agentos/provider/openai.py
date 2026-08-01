@@ -22,6 +22,7 @@ from agentos.execution_status import compact_provider_status, derive_is_error
 from agentos.secrets import clean_header_secret
 
 from .context_capabilities import supports_openrouter_explicit_prompt_cache
+from .error_body import read_bounded_body, summarize_error_body
 from .minimax_compat import contains_minimax_protocol, parse_minimax_tool_calls
 from .openrouter_attribution import openrouter_app_headers
 from .protocol import ProviderConnectionConfig, ProviderMetadata
@@ -91,23 +92,13 @@ def _provider_display_name(provider_kind: str) -> str:
 
 
 def _http_error_body_text(body: bytes | str) -> str:
-    text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
-    text = text.strip()
-    if not text:
-        return ""
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return text
-    error = payload.get("error") if isinstance(payload, dict) else None
-    if isinstance(error, dict):
-        message = error.get("message")
-        if isinstance(message, str) and message.strip():
-            return message.strip()
-    message = payload.get("message") if isinstance(payload, dict) else None
-    if isinstance(message, str) and message.strip():
-        return message.strip()
-    return text
+    """Extract the useful part of an error body, bounded.
+
+    Kept as a name because `openai_responses` imports it; the logic lives in
+    `provider.error_body` so the Anthropic path shares it.
+    """
+
+    return summarize_error_body(body)
 
 
 def _format_chat_http_error(provider_kind: str, status_code: int, body: bytes | str) -> str:
@@ -972,7 +963,7 @@ class OpenAIProvider:
                     json=payload,
                 ) as response:
                     if response.status_code != 200:
-                        body = await response.aread()
+                        body = await read_bounded_body(response)
                         message = _format_chat_http_error(
                             self._provider_kind,
                             response.status_code,
