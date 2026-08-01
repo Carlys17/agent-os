@@ -37,6 +37,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   profile is fixed for the session, narrowing it does not disturb the prompt
   cache.
 
+- A turn that edits code and then answers "done" without running anything is
+  now noticed. A passive ledger records which files a turn changed and whether
+  a test, build or lint command ran *after* the last change; when the model
+  stops on unverified edits the turn emits a warning naming the files and the
+  omission. Evidence gathered before an edit does not count for it. Prose,
+  data and config files are excluded — a README edit has nothing a test could
+  exercise — and messaging surfaces are exempt, since answering a person in
+  chat is not maintaining a checkout.
+
 ### Changed
 
 - `edit_file` no longer fails on text that differs from the file only in
