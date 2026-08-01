@@ -355,6 +355,50 @@ async def test_channel_user_cannot_use_tool_policy(fake_scheduler) -> None:
             )
 
 
+async def test_channel_user_cannot_set_elevated(fake_scheduler) -> None:
+    with _with_ctx(_channel_ctx("agent:main:feishu:user-1")):
+        with pytest.raises(Exception, match="tool_policy"):
+            await cron_tool(
+                action="add",
+                schedule={"kind": "every", "every_seconds": 300},
+                task="x",
+                job_kind="agent_turn",
+                tool_policy={"elevated": "bypass"},
+            )
+
+
+async def test_agent_caller_cannot_set_elevated(fake_scheduler) -> None:
+    """Elevation hands an unattended job a real shell — operator surfaces only."""
+    agent_ctx = ToolContext(
+        caller_kind=CallerKind.AGENT,
+        interaction_mode=InteractionMode.INTERACTIVE,
+        session_key="agent:main:webchat:abc",
+        agent_id="main",
+    )
+    with _with_ctx(agent_ctx):
+        with pytest.raises(Exception, match="elevated"):
+            await cron_tool(
+                action="add",
+                schedule={"kind": "every", "every_seconds": 300},
+                task="x",
+                job_kind="agent_turn",
+                tool_policy={"elevated": "bypass"},
+            )
+
+
+async def test_cli_caller_can_set_elevated(fake_scheduler) -> None:
+    with _with_ctx(_control_ctx()):
+        await cron_tool(
+            action="add",
+            schedule={"kind": "every", "every_seconds": 300},
+            task="x",
+            job_kind="agent_turn",
+            tool_policy={"elevated": "bypass"},
+        )
+
+    assert fake_scheduler.add_calls[-1]["tool_policy"] == {"elevated": "bypass"}
+
+
 # --- Snapshot fallback from ctx -----------------------------------------
 
 

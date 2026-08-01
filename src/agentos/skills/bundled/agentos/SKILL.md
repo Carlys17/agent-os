@@ -109,7 +109,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `models` | `list` |
 | `skills` | `list`, `search`, `view`, `install`, `uninstall`, `update`, `publish`, `tap add/list/remove` |
 | `sessions` | `list`, `show`, `resume`, `abort`, `delete`, `export` |
-| `cron` | `list`, `status`, `add`, `update`, `remove`, `run`, `runs` |
+| `cron` | `list`, `status`, `add`, `update` (both take `--elevated`, `--elevated-mode`, `--tool-policy`), `remove`, `run`, `runs` |
 | `channels` | `list`, `status`, `types`, `describe`, `native-commands`, `add`, `remove`, `enable`, `disable`, `edit`, `restart`, `logout`, `pairing …` |
 | `memory` | `status`, `index`, `list`, `search`, `show`, `embedding-download`, `raw-fallbacks …` |
 | `sandbox` | `status`, `on`, `bypass`, `full`, `reset` |
@@ -364,6 +364,10 @@ Bounding flags: `--timeout` (wall-clock seconds), `--max-iterations`,
 ```sh
 agentos sessions list / show <id> / export <id> <out>
 agentos cron list / add / run <id> / runs
+# Cron turns are read-only by default, so a job cannot run a shell-based skill.
+# --elevated opts one agent-turn job out of that: no approval, no sandbox, host
+# shell as the user. See docs/cli.md before suggesting it.
+agentos cron add --every 6h --agent main --elevated --name "LP check" --text "..."
 agentos cost                   # usage + estimated spend
 agentos diagnostics on         # runtime diagnostics logging
 agentos migrate hermes --source <dir> [--apply]   # dry-run first, then --apply

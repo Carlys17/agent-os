@@ -524,6 +524,83 @@ async def test_bypass_still_blocks_sensitive_shell_targets() -> None:
 
 
 @pytest.mark.asyncio
+async def test_elevated_bypass_cron_runs_a_warned_command_without_a_human() -> None:
+    """The whole point of the cron opt-in: no approver, so no approval step."""
+    ctx = current_tool_context.get()
+    assert ctx is not None
+    ctx.caller_kind = CallerKind.CRON
+    ctx.interaction_mode = InteractionMode.UNATTENDED
+    ctx.session_key = "cron:lp-check:run:1"
+    ctx.elevated = "bypass"
+    queue = get_approval_queue()
+
+    result = await shell._check_exec_approval(
+        "exec_command",
+        "rm target.txt",
+        None,
+        "command requires approval",
+        None,
+        True,
+    )
+
+    assert result is None
+    assert len(queue.list_pending("exec")) == 0
+
+
+@pytest.mark.asyncio
+async def test_elevated_bypass_cron_still_blocks_a_sensitive_path() -> None:
+    """bypass is not full: the sensitive-path floor survives the opt-in.
+
+    Note the scope — sensitive_target_in_command only inspects *destructive*
+    intents, so this floor stops an elevated job clobbering ~/.ssh, not one
+    reading it. Reads of secrets are not contained once exec_command is on.
+    """
+    ctx = current_tool_context.get()
+    assert ctx is not None
+    ctx.caller_kind = CallerKind.CRON
+    ctx.interaction_mode = InteractionMode.UNATTENDED
+    ctx.session_key = "cron:lp-check:run:1"
+    ctx.elevated = "bypass"
+
+    result = await shell._check_exec_approval(
+        "exec_command",
+        "rm ~/.ssh/id_rsa",
+        None,
+        "command requires approval",
+        None,
+        True,
+    )
+
+    assert result is not None
+    assert result["status"] == "blocked"
+    assert result["reason"] == "sensitive_path"
+
+
+@pytest.mark.asyncio
+async def test_unelevated_cron_still_fails_fast_on_a_warned_command() -> None:
+    """Without the opt-in, a cron turn cannot silently park on an approval
+    queue nobody is watching — it dies immediately instead."""
+    ctx = current_tool_context.get()
+    assert ctx is not None
+    ctx.caller_kind = CallerKind.CRON
+    ctx.interaction_mode = InteractionMode.UNATTENDED
+    ctx.session_key = "cron:lp-check:run:1"
+    queue = get_approval_queue()
+
+    with pytest.raises(UnsupportedSurfaceError):
+        await shell._check_exec_approval(
+            "exec_command",
+            "rm target.txt",
+            None,
+            "command requires approval",
+            None,
+            True,
+        )
+
+    assert len(queue.list_pending("exec")) == 0
+
+
+@pytest.mark.asyncio
 async def test_bypass_does_not_override_safe_bin_hard_denies() -> None:
     ctx = current_tool_context.get()
     assert ctx is not None

@@ -244,7 +244,9 @@ def _cron_job_agent_id(job: Any) -> str:
         "tool_policy": {
             "type": "object",
             "description": (
-                "Optional per-job cron tool policy with profile, allow, also_allow, and deny."
+                "Optional per-job cron tool policy with profile, allow, also_allow, and "
+                "deny. May also carry elevated: 'bypass' to let the job run shell-based "
+                "skills unattended, which only an interactive CLI or Web caller may set."
             ),
         },
         "tz": {
@@ -314,6 +316,16 @@ async def cron(
                 )
             if tool_policy:
                 raise ToolError("tool_policy is unavailable from a channel")
+
+    # Elevation hands an unattended job a real shell, so it stays an operator
+    # decision. Subagents and agent-kind callers already cannot reach `cron` at
+    # all — this makes the rule explicit rather than emergent from two denylists.
+    if tool_policy and isinstance(tool_policy, dict) and tool_policy.get("elevated"):
+        caller_kind = getattr(ctx, "caller_kind", None) if ctx is not None else None
+        if caller_kind not in (CallerKind.CLI, CallerKind.WEB):
+            raise ToolError(
+                "tool_policy.elevated requires an interactive CLI or Web caller"
+            )
 
     if action == "list":
         jobs = [

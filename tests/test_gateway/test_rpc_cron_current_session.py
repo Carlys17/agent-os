@@ -23,6 +23,7 @@ from agentos.scheduler.types import (
     CronJob,
     DeliveryConfig,
     DeliveryMode,
+    JobStatus,
     ReplyTargetSnapshot,
     SessionTarget,
 )
@@ -65,6 +66,16 @@ class _FakeScheduler:
         if self.job is not None and self.job.id == job_id:
             return self.job
         return None
+
+    async def pause_job(self, job_id) -> CronJob | None:
+        if self.job is not None:
+            self.job.status = JobStatus.PAUSED
+        return self.job
+
+    async def resume_job(self, job_id) -> CronJob | None:
+        if self.job is not None:
+            self.job.status = JobStatus.PENDING
+        return self.job
 
 
 class _FakeSessionManager:
@@ -314,6 +325,152 @@ async def test_rpc_update_job_round_trips_tool_policy() -> None:
     assert current_job.tool_policy == scheduler.updated["tool_policy"]
     assert result["toolPolicy"]["alsoAllow"] == ["memory_search"]
     assert result["toolPolicy"]["deny"] == ["web_fetch"]
+
+
+async def test_rpc_create_job_round_trips_elevated() -> None:
+    scheduler = _FakeScheduler()
+
+    result = await _handle_cron_add(
+        {
+            "name": "LP check",
+            "expression": "*/5 * * * *",
+            "payloadKind": AGENT_TURN_KIND,
+            "text": "check my LP",
+            "agentId": "main",
+            "elevated": True,
+        },
+        RpcContext(conn_id="test", cron_scheduler=scheduler),
+    )
+
+    assert scheduler.added["tool_policy"] == {"elevated": "bypass"}
+    assert result["elevated"] == "bypass"
+    assert result["toolPolicy"]["elevated"] == "bypass"
+
+
+async def test_rpc_unelevated_job_keeps_the_four_key_policy_shape() -> None:
+    """Existing clients read a fixed toolPolicy shape; elevation must not
+    appear in it unless the job actually has it."""
+    scheduler = _FakeScheduler()
+
+    result = await _handle_cron_add(
+        {
+            "name": "Drink",
+            "expression": "*/5 * * * *",
+            "payloadKind": AGENT_TURN_KIND,
+            "text": "drink water",
+            "agentId": "main",
+        },
+        RpcContext(conn_id="test", cron_scheduler=scheduler),
+    )
+
+    assert result["toolPolicy"] == {
+        "profile": None,
+        "allow": [],
+        "alsoAllow": [],
+        "deny": [],
+    }
+    assert result["elevated"] is None
+
+
+async def test_rpc_update_elevated_does_not_clobber_existing_tool_policy() -> None:
+    """Toggling elevation on its own must leave the allow/deny lists alone."""
+    current_job = CronJob(
+        id="drink",
+        name="Drink",
+        handler_key="agent_run",
+        payload={"kind": AGENT_TURN_KIND, "task": "drink water", "agent_id": "main"},
+        tool_policy={"profile": "minimal", "deny": ["web_fetch"]},
+    )
+    scheduler = _FakeScheduler(job=current_job)
+
+    await _handle_cron_update(
+        {"id": "drink", "elevated": True},
+        RpcContext(conn_id="test", cron_scheduler=scheduler),
+    )
+
+    assert scheduler.updated["tool_policy"] == {
+        "profile": "minimal",
+        "deny": ["web_fetch"],
+        "elevated": "bypass",
+    }
+
+
+async def test_rpc_update_can_clear_elevation_without_touching_the_lists() -> None:
+    current_job = CronJob(
+        id="drink",
+        name="Drink",
+        handler_key="agent_run",
+        payload={"kind": AGENT_TURN_KIND, "task": "drink water", "agent_id": "main"},
+        tool_policy={"deny": ["web_fetch"], "elevated": "bypass"},
+    )
+    scheduler = _FakeScheduler(job=current_job)
+
+    await _handle_cron_update(
+        {"id": "drink", "elevated": False},
+        RpcContext(conn_id="test", cron_scheduler=scheduler),
+    )
+
+    assert scheduler.updated["tool_policy"] == {"deny": ["web_fetch"]}
+
+
+async def test_rpc_update_applies_other_fields_to_a_paused_job() -> None:
+    """The WebUI's save always carries `enabled`, so a paused job used to hit
+    the pause/resume branch and return before any other field was applied."""
+    current_job = CronJob(
+        id="drink",
+        name="Drink",
+        handler_key="agent_run",
+        payload={"kind": AGENT_TURN_KIND, "task": "drink water", "agent_id": "main"},
+        status=JobStatus.PAUSED,
+    )
+    scheduler = _FakeScheduler(job=current_job)
+
+    await _handle_cron_update(
+        {"id": "drink", "enabled": False, "elevated": True, "name": "Drink more"},
+        RpcContext(conn_id="test", cron_scheduler=scheduler),
+    )
+
+    assert scheduler.updated is not None, "the patch was dropped by the pause branch"
+    assert scheduler.updated["tool_policy"] == {"elevated": "bypass"}
+    assert scheduler.updated["name"] == "Drink more"
+    assert scheduler.updated["enabled"] is False
+
+
+async def test_rpc_update_resumes_and_still_applies_the_rest_of_the_patch() -> None:
+    current_job = CronJob(
+        id="drink",
+        name="Drink",
+        handler_key="agent_run",
+        payload={"kind": AGENT_TURN_KIND, "task": "drink water", "agent_id": "main"},
+        status=JobStatus.PAUSED,
+    )
+    scheduler = _FakeScheduler(job=current_job)
+
+    await _handle_cron_update(
+        {"id": "drink", "enabled": True, "elevated": True},
+        RpcContext(conn_id="test", cron_scheduler=scheduler),
+    )
+
+    assert current_job.status is JobStatus.PENDING
+    assert scheduler.updated["tool_policy"] == {"elevated": "bypass"}
+    assert scheduler.updated["enabled"] is True
+
+
+async def test_rpc_rejects_elevated_on() -> None:
+    scheduler = _FakeScheduler()
+
+    with pytest.raises(ValueError, match="bypass"):
+        await _handle_cron_add(
+            {
+                "name": "LP check",
+                "expression": "*/5 * * * *",
+                "payloadKind": AGENT_TURN_KIND,
+                "text": "check my LP",
+                "agentId": "main",
+                "elevated": "on",
+            },
+            RpcContext(conn_id="test", cron_scheduler=scheduler),
+        )
 
 
 def test_rpc_keeps_system_event_main_only() -> None:

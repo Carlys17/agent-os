@@ -182,6 +182,30 @@ describe('CronPage', () => {
     expect(screen.getByText('Health check')).toBeInTheDocument()
   })
 
+  it('shows the elevated badge on the card, without opening the editor', async () => {
+    wireRpc({ jobs: [{ ...AGENT_JOB, elevated: 'bypass' }] })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Health check')).toBeInTheDocument())
+    const card = screen.getByLabelText('Cron job Health check')
+    expect(within(card).getByText('Elevated bypass')).toBeInTheDocument()
+  })
+
+  it('shows no elevated badge on a default read-only job', async () => {
+    wireRpc()
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Health check')).toBeInTheDocument())
+    const card = screen.getByLabelText('Cron job Health check')
+    expect(within(card).queryByText(/elevated/i)).toBeNull()
+  })
+
+  it('reads elevation out of the policy blob when the wire field is absent', async () => {
+    wireRpc({ jobs: [{ ...AGENT_JOB, toolPolicy: { elevated: 'full' } }] })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Health check')).toBeInTheDocument())
+    const card = screen.getByLabelText('Cron job Health check')
+    expect(within(card).getByText('Elevated full')).toBeInTheDocument()
+  })
+
   it('renders the stat row from the payload', async () => {
     wireRpc()
     renderPage()

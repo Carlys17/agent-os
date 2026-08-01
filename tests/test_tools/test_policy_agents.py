@@ -5,11 +5,23 @@ from agentos.gateway.routing import build_cron_route_envelope, tool_context_from
 from agentos.scheduler.types import CronJob
 from agentos.tools.policy import apply_tool_policy_from_config
 from agentos.tools.types import (
+    CRON_AGENT_ALLOW,
     CRON_AGENT_DENY,
     SUBAGENT_TOOL_DENY,
     CallerKind,
+    InteractionMode,
     ToolContext,
 )
+
+
+def _cron_ctx(tool_policy: dict | None = None, **kwargs):
+    job = CronJob(id="elev", name="Elevated", tool_policy=tool_policy or {})
+    envelope = build_cron_route_envelope(
+        job,
+        session_key="cron:elev:run:1",
+        agent_id="main",
+    )
+    return tool_context_from_envelope(envelope, **kwargs)
 
 
 def test_tool_policy_reads_direct_gateway_agents_list() -> None:
@@ -78,6 +90,72 @@ def test_cron_route_has_no_role_override() -> None:
     assert result.caller_kind is CallerKind.CRON
     assert result.allowed_tools == {"session_status"}
     assert result.tool_policy == job.tool_policy
+    assert "exec_command" in result.denied_tools
+
+
+def test_cron_route_elevated_job_gains_exec_and_write_tools() -> None:
+    result = _cron_ctx({"elevated": "bypass"})
+
+    assert result.elevated == "bypass"
+    assert {"exec_command", "write_file", "edit_file"} <= (result.allowed_tools or set())
+    # Elevation widens the tool surface; it does not make the turn interactive.
+    assert result.interaction_mode is InteractionMode.UNATTENDED
+    assert result.caller_kind is CallerKind.CRON
+
+
+def test_cron_route_elevated_keeps_the_hard_deny_floor() -> None:
+    result = _cron_ctx({"elevated": "bypass"})
+
+    floor = {
+        "cron",
+        "message",
+        "agents_list",
+        "subagents",
+        "background_process",
+        "execute_code",
+        "apply_patch",
+        "git_commit",
+    }
+    assert floor <= result.denied_tools
+    assert not (floor & (result.allowed_tools or set()))
+
+
+def test_cron_route_elevated_policy_can_still_only_narrow() -> None:
+    result = _cron_ctx({"elevated": "bypass", "deny": ["write_file"]})
+
+    assert "write_file" in result.denied_tools
+    assert "write_file" not in (result.allowed_tools or set())
+    assert "exec_command" in (result.allowed_tools or set())
+
+
+def test_cron_route_elevated_full_is_honoured_verbatim() -> None:
+    assert _cron_ctx({"elevated": "full"}).elevated == "full"
+
+
+def test_cron_route_ignores_an_unparseable_persisted_elevation() -> None:
+    """A hand-edited or pre-feature row must not be able to break routing."""
+
+    result = _cron_ctx({"elevated": "sudo-please"})
+
+    assert result.elevated is None
+    assert result.allowed_tools == set(CRON_AGENT_ALLOW)
+
+
+def test_default_cron_route_is_unchanged_by_the_elevation_feature() -> None:
+    result = _cron_ctx()
+
+    assert result.allowed_tools == set(CRON_AGENT_ALLOW)
+    assert result.denied_tools == set(CRON_AGENT_DENY)
+    assert result.elevated is None
+
+
+def test_global_default_elevated_still_cannot_reach_cron() -> None:
+    """permissions.default_mode must never elevate a cron turn on its own."""
+
+    result = _cron_ctx(default_elevated="full")
+
+    assert result.elevated is None
+    assert result.allowed_tools == set(CRON_AGENT_ALLOW)
     assert "exec_command" in result.denied_tools
 
 

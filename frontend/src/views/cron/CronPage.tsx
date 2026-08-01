@@ -31,6 +31,7 @@ import {
   isUpcomingRun,
   jobDotState,
   jobCreatedFrom,
+  jobElevated,
   jobKindClass,
   jobKindLabel,
   jobSchedule,
@@ -270,6 +271,7 @@ function JobCard({
   const kindClass = jobKindClass(job)
   const target = jobTarget(job)
   const createdFrom = jobCreatedFrom(job)
+  const elevated = jobElevated(job)
   const message = String(job.message || job.prompt || '').trim()
 
   return (
@@ -291,6 +293,17 @@ function JobCard({
           {name}
         </button>
         <span className={`cron-pill cron-pill--${kindClass}`}>{kind}</span>
+        {elevated ? (
+          <span
+            className="cron-pill cron-pill--elevated tone-danger"
+            title={
+              `This job runs shell commands on the host unattended (${elevated}) — ` +
+              'no approval prompt, no sandbox, with your environment variables.'
+            }
+          >
+            Elevated {elevated}
+          </span>
+        ) : null}
       </header>
 
       <div className="cron-card__schedule">

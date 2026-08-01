@@ -514,10 +514,58 @@ agentos cron status <job-id>
 agentos cron runs <job-id>
 ```
 
+### Letting a cron job run shell-based skills
+
+A cron turn runs under a read-only tool allowlist, so a job that is shown a
+skill can read `SKILL.md` and never carry it out — nearly every skill body is a
+block of shell. `--elevated` opts one job out of that:
+
+```sh
+agentos cron add --every 6h --agent main --elevated \
+  --name "LP check" --text "Use the senior-unilp-manager skill to review my LP positions"
+agentos cron list                       # the Elevated column shows the mode
+agentos cron update <job-id> --no-elevated
+```
+
+Related flags: `--elevated-mode {bypass,full}` (default `bypass`) and
+`--tool-policy '<json>'` (`profile`, `allow`, `alsoAllow`, `deny` — can only
+narrow the cron baseline). Elevation is only accepted on agent-turn jobs;
+reminders and system events never run an agent turn with the job's tool policy.
+
+**What you are accepting.** Every time the job fires, with nobody watching, an
+LLM decides which shell commands run on this host as you, and they run — no
+approval prompt, no sandbox, with your environment variables and API keys
+passed through to the child process. If the skill signs transactions, an
+unattended turn can sign and broadcast them. `write_file`, `git_commit`,
+`apply_patch` and `execute_code` stay off the offered tool surface, but
+`exec_command` reaches all of them, so treat that list as a default rather than
+containment. Most importantly, anything the job reads from the network
+(`web_fetch`, `web_search`, RPC responses, token metadata) is untrusted input
+one reasoning step away from that shell.
+
+Still enforced: the never-bypassable command denylist; the sensitive-path block
+on *destructive* operations against `~/.ssh`, `.env*` and private keys, which
+`bypass` keeps and `full` disables; workspace lockdown and write-deny globs; no
+private-memory reads (force-denied for every cron caller, and no tool policy can
+revive them); no `cron` tool, so the job cannot schedule or elevate another; and
+no `message` tool, so output goes only where you configured delivery. Note the
+sensitive-path block does not stop a *read* of a secret file — once
+`exec_command` is on, secrets on disk are reachable.
+
+A cron turn also never loads `USER.md`, so anything per-user the skill needs
+(wallet address, chain, thresholds) has to come from the task text or the
+environment.
+
+Practical shape: one skill and one narrow task per elevated job, a tight
+`--timeout`, `--session-target isolated`, delivery and a failure destination
+configured, and if the skill has a dry-run/confirm handshake, keep cron on the
+read half and leave broadcasts to an interactive session.
+
 Read:
 
 - [`agents.md`](agents.md)
 - [`scheduling.md`](scheduling.md)
+- [`approvals-and-permissions.md`](approvals-and-permissions.md)
 
 ## Cost, Diagnostics, and Replay
 

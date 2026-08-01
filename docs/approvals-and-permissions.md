@@ -29,6 +29,13 @@ Practical meaning:
 
 For automation, prefer the narrowest profile that can complete the task.
 
+These profiles apply to interactive CLI and Web turns. A cron turn is
+unattended, so none of them reach it — a scheduled job runs under a read-only
+tool allowlist regardless of `permissions.default_mode`, and the only way to
+give one a shell is the per-job `agentos cron add --elevated` opt-in described
+in [`cli.md`](cli.md#letting-a-cron-job-run-shell-based-skills). Read the
+consequences there before turning it on.
+
 ## Workspace Containment
 
 Set a workspace for file and shell work:

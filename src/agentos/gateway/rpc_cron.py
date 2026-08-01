@@ -6,6 +6,7 @@ from dataclasses import asdict
 from typing import Any, TypeGuard
 
 from agentos.gateway.rpc import RpcContext, RpcUnavailableError, get_dispatcher
+from agentos.permissions import cron_tool_policy_elevated, normalize_cron_elevated
 from agentos.scheduler.payloads import (
     REMINDER_KIND,
     SYSTEM_EVENT_KIND,
@@ -109,6 +110,9 @@ def _job_to_wire(j: Any) -> dict[str, Any]:
         "consecutive_errors": d.get("consecutive_errors", 0),
         "delivery": _delivery_to_wire(delivery),
         "toolPolicy": _tool_policy_to_wire(d.get("tool_policy")),
+        # Elevation lives inside tool_policy on the job, but it is toggled
+        # independently of allow/deny, so it gets its own top-level wire field.
+        "elevated": cron_tool_policy_elevated(d.get("tool_policy")),
     }
 
 
@@ -192,23 +196,47 @@ def _normalize_tool_policy(raw: Any) -> dict[str, Any]:
             result[key] = _as_string_list(raw.get(key))
     if "alsoAllow" in raw or "also_allow" in raw:
         result["also_allow"] = _as_string_list(raw.get("alsoAllow", raw.get("also_allow")))
+    if "elevated" in raw:
+        mode = normalize_cron_elevated(raw.get("elevated"))
+        if mode is not None:
+            result["elevated"] = mode
     return result
 
 
 def _tool_policy_from_params(params: dict[str, Any]) -> dict[str, Any]:
-    if "toolPolicy" not in params and "tool_policy" not in params:
-        return {}
-    return _normalize_tool_policy(params.get("toolPolicy", params.get("tool_policy")))
+    """Read the policy a caller sent, merging the top-level ``elevated`` field.
+
+    ``elevated`` is offered top-level as well as inside ``toolPolicy`` because
+    it is toggled on its own; a ``--elevated`` flag that had to send a whole
+    ``toolPolicy`` object would wipe any allow/deny list already on the job.
+    The top-level value wins when both are present.
+    """
+
+    policy: dict[str, Any] = {}
+    if "toolPolicy" in params or "tool_policy" in params:
+        policy = _normalize_tool_policy(params.get("toolPolicy", params.get("tool_policy")))
+    if "elevated" in params:
+        mode = normalize_cron_elevated(params.get("elevated"))
+        if mode is None:
+            policy.pop("elevated", None)
+        else:
+            policy["elevated"] = mode
+    return policy
 
 
 def _tool_policy_to_wire(policy: Any) -> dict[str, Any]:
     normalized = _normalize_tool_policy(policy or {})
-    return {
+    wire: dict[str, Any] = {
         "profile": normalized.get("profile"),
         "allow": normalized.get("allow", []),
         "alsoAllow": normalized.get("also_allow", []),
         "deny": normalized.get("deny", []),
     }
+    # Emitted only when set, so an unelevated job's policy keeps the exact
+    # four-key shape every existing client and test already expects.
+    if normalized.get("elevated"):
+        wire["elevated"] = normalized["elevated"]
+    return wire
 
 
 def _manual_run_to_wire(result: Any) -> dict[str, Any]:
@@ -671,18 +699,21 @@ async def _handle_cron_update(params: dict | None, ctx: RpcContext) -> dict[str,
         tz_value = params.get("tz") if "tz" in params else params.get("timezone")
         patch["tz"] = tz_value if isinstance(tz_value, str) else ""
 
+    # Pause/resume are their own scheduler ops because resuming recomputes
+    # next_run_at. They must not end the request, though: the WebUI's save
+    # always carries `enabled` alongside every other edited field, so returning
+    # here dropped the rest of the patch — silently — for any paused job.
+    toggled_job = None
     if "enabled" in params:
+        patch["enabled"] = bool(params["enabled"])
         if params["enabled"]:
-            # If currently paused, resume
             job = await scheduler.get_job(params["id"])
             if job and job.status.value == "paused":
-                job = await scheduler.resume_job(params["id"])
-                return _job_to_wire(job) if job else {}
+                toggled_job = await scheduler.resume_job(params["id"])
         else:
-            job = await scheduler.pause_job(params["id"])
-            return _job_to_wire(job) if job else {}
+            toggled_job = await scheduler.pause_job(params["id"])
 
-    current_job = await scheduler.get_job(params["id"])
+    current_job = toggled_job or await scheduler.get_job(params["id"])
     if current_job is None:
         raise KeyError(f"Cron job not found: {params['id']}")
 
@@ -822,6 +853,16 @@ async def _handle_cron_update(params: dict | None, ctx: RpcContext) -> dict[str,
 
     if "toolPolicy" in params or "tool_policy" in params:
         patch["tool_policy"] = _tool_policy_from_params(params)
+    elif "elevated" in params:
+        # Toggling elevation alone must not drop the allow/deny lists already on
+        # the job — merge into the stored policy instead of replacing it.
+        merged = dict(current_job.tool_policy or {})
+        mode = normalize_cron_elevated(params["elevated"])
+        if mode is None:
+            merged.pop("elevated", None)
+        else:
+            merged["elevated"] = mode
+        patch["tool_policy"] = merged
 
     if patch:
         job = await scheduler.update_job(params["id"], **patch)
