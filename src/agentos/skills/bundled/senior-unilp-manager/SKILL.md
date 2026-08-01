@@ -70,6 +70,11 @@ Read the **`self-check`** line under the range table: it compares liquidity summ
 ranges straddling the current tick against `StateView.getLiquidity`. If it does not say `OK`,
 the numbers are wrong — say so rather than reporting them.
 
+The last block is **`recommended pool`** — the deepest by TVL, with its id in full, whether
+it needs `--allow-hooked`, and the next command. A launched token routinely has dozens of
+pools of which one has real depth and the rest are dust at punitive fee tiers, so take the
+recommendation unless the user asked for a specific pool.
+
 **On Base, discovery goes through the launchpad registries, not logs.** Base cannot serve a
 wide `eth_getLogs` range. If no launchpad claims the token, the command probes for **hook-less
 pools** (see below) before giving up; only if that finds nothing does it exit 2 rather than
@@ -172,16 +177,74 @@ and confirmed with one `getSlot0` — no log scan, ~1–2 s.
 
 ```bash
 python3 "$S"/lp_read.py ticks --pool <poolId> --mcap-lower 2000000 --mcap-upper 3000000
+python3 "$S"/lp_read.py ticks --pool <poolId> --mcap-lower 156000 --mcap-upper 200000 --from-current
 ```
 
 Snaps outward to `tickSpacing` and reports whether the range is single-sided. Feed the
 printed `--tick-lower` / `--tick-upper` straight into `mint`.
+
+The two `--mcap` flags may be given in either order — which one is the larger number
+depends on whether the target sits above or below where the token trades now.
+
+**`--from-current` when one end of the band is today's price.** Outward snapping would push
+that end across the current tick, and the range comes back `two-sided: needs both
+currencies` — not what "from this price to X" means. `--from-current` pulls the near edge
+back to the correct side of the current tick, keeping the larger part of the band you asked
+for, so the result is genuinely single-sided.
+
+The `position type` line names the currency the range takes. **Read it rather than working
+the direction out yourself** — it is the same rule `mint` enforces, so if they disagree the
+mint is what is wrong. USD columns need a price for the quote currency; if the indexer is
+rate-limiting, the error says so and the fix is to wait, not to change pool (§ Error
+handling).
 
 ---
 
 # Part B — Write
 
 **IMPORTANT: do NOT broadcast any transaction until the user explicitly confirms.**
+
+## Recipe — add a single-sided LP position
+
+The common request: *"add N of my token as LP, from the current price to a market cap of
+X"*. Run these five commands in order. Do not design your own sequence, and do not go
+looking for a different pool between steps — every deviation below cost a real run ten
+minutes of wandering.
+
+```bash
+# 1. Which pool? Take the one it prints as "recommended pool" — deepest TVL.
+python3 "$S"/lp_read.py pools --token <addr>
+
+# 2. Ticks for the band. --from-current keeps it single-sided; the two --mcap flags go in
+#    either order, so "from here to 200k" is the same whether 200k is above or below.
+python3 "$S"/lp_read.py ticks --pool <poolId> \
+  --mcap-lower <current mcap> --mcap-upper <target mcap> --from-current
+
+# 3. Dry run. Read `position type` from step 2: it names the currency, so use --amount0 for
+#    currency0 and --amount1 for currency1. Add --allow-hooked if step 1 said to.
+python3 "$S"/lp_write.py mint --pool <poolId> \
+  --tick-lower <t> --tick-upper <t> --amount1 <n> [--allow-hooked]
+
+# 4. If step 3 exits 2 with "blocked on approvals" — approve, then repeat step 3.
+python3 "$S"/lp_write.py approve --token <addr>
+
+# 5. Show the user the table from step 3, ask, and only then:
+python3 "$S"/lp_write.py mint ...same flags... --broadcast --confirm <PLAN_HASH>
+```
+
+Things that turn this into a loop, all of them seen in practice:
+
+- **Choosing the side yourself.** Step 2 prints `position type: single-sided: 100% SYM
+  (currencyN)`. Use that. Deriving it from whether the target mcap is higher or lower gets
+  it backwards half the time (§8).
+- **Abandoning a pool because it has a hook.** Check the hook's flags first (§8) — a
+  Doppler pool takes third-party LPs, and it is usually the only pool with real depth.
+- **Skipping `approve`.** `mint` exiting 2 on approvals is not a reason to try another
+  pool; it means the parameters were fine and the allowance was not.
+- **Omitting `--from-current`** when one end of the band is today's price. Without it the
+  ticks snap outward across the current tick and the position comes back two-sided.
+- **Recomputing ticks by hand in Python.** `ticks` already does it, against the same math
+  the mint uses.
 
 ## The protocol — follow it exactly
 
@@ -227,16 +290,43 @@ python3 "$S"/lp_write.py mint --pool <poolId> --tick-lower <t> --tick-upper <t> 
 ```
 
 Size with exactly one of `--amount0`, `--amount1`, or `--liquidity` (give both for a
-two-sided position). Ticks snap outward to `tickSpacing`. A range entirely above the current
-tick takes **currency1 only**; entirely below takes **currency0 only** — the wrong side is
+two-sided position). Ticks snap outward to `tickSpacing`.
+
+**Which currency a single-sided range takes.** A range entirely **above** the current price
+takes **currency0 only**; entirely **below** takes **currency1 only**. The wrong side is
 rejected with an explanation rather than minting nothing.
+
+Do not reason about this from the market cap — the mapping flips with which currency the
+token is. When the token is `currency1`, a *higher* market cap is a *lower* tick, so "from
+here up to a higher mcap" is a range **below** the current tick and takes the token itself.
+When it is `currency0` it is the other way round. `ticks` (§6) prints the side outright on
+its `position type` line: trust that line and pass its `--tick-lower` / `--tick-upper`
+straight through, rather than deriving the direction yourself.
 
 **Hook policy: this skill mints into hook-less pools by default.** A pool whose `hooks` is not
 the zero address is refused outright unless you pass `--allow-hooked`, because a hook can
 revert the add or take a delta out of it. So plain `mint` is already the "add LP with no hook"
-path — the parameter table prints `hooks: none` when that is what you got. Note that some
-launchpad hooks (Clanker / Liquid, flags `0x28cc`) set `BEFORE_ADD_LIQUIDITY` and reject
-third-party LPs entirely; `--allow-hooked` lets the attempt through, it does not make it work.
+path — the parameter table prints `hooks: none` when that is what you got.
+
+**A hook is not by itself a reason to walk away from a pool.** Which one it is decides that:
+
+| hook | flags | third-party LP adds |
+|---|---|---|
+| Doppler / Bankr | `0x2544` | **accepted** — no `BEFORE_ADD_LIQUIDITY` gate, so nothing turns the add away up front. Use `--allow-hooked` |
+| Clanker / Liquid | `0x28cc` | rejected — `BEFORE_ADD_LIQUIDITY` turns them away |
+| anything else | — | unknown; the dry run is the cheap way to find out |
+
+Read the `hook flags` line that `pool` prints rather than the hook address: `BEFORE_ADD_LIQUIDITY`
+in the decoded list is the one that refuses outsiders. `AFTER_ADD_LIQUIDITY` — which Doppler
+does set — runs after the add and can still revert it, which is exactly what the dry run
+catches.
+
+`--allow-hooked` lets the attempt through, it does not make it work — but the dry run costs
+one call and never broadcasts, so on a Doppler pool run it rather than going off to hunt for
+a hook-less alternative. The deepest pool for a launched token is usually the launch pool,
+and on Robinhood Chain that is normally a Doppler pool; the hook-less pools that also exist
+for the same token are frequently dust with punitive fee tiers. Compare `TVL` before
+switching pools, and prefer the one `pools` marks as recommended (§1).
 
 **Targeting the pool.** `mint` takes a `--pool <poolId>` that must already exist — this skill
 **never creates a pool**; there is no `initialize` path in it. Find one first with
@@ -283,7 +373,9 @@ a `WARNING` above 0.5% divergence. Causes and how to read a revert:
 | `poolId recompute … MISMATCH` | PoolKey does not hash to the id — usually the live `lpFee` was used instead of the `0x800000` dynamic flag |
 | `self-check … MISMATCH` | Log decode or tick math is off. Do not report the reserves |
 | `pool has hook 0x…` | Intentional gate. Re-run with `--allow-hooked` after telling the user what the hook can do |
-| `range is entirely above/below the current price` | Wrong currency for a single-sided range; swap `--amount0` / `--amount1` |
+| `range is entirely above/below the current price` | Wrong currency for a single-sided range; swap `--amount0` / `--amount1`. Above takes currency0, below takes currency1 — or just re-read `position type` from `ticks` |
+| `the price indexer is rate-limiting us …` | Temporary, not a property of the token. Wait ~60s and re-run the same command; a successful fetch is cached for 60s and shared across commands. Do not switch pools over it |
+| `the band is narrower than one tickSpacing …` | `--from-current` had no room on either side of the current tick. Widen the mcap band, or pass `--tick-lower` / `--tick-upper` |
 | `AllowanceExpired` / `InsufficientAllowance` | Run `approve` first — the pool accepted the add |
 | `MaximumAmountExceeded` / `MinimumAmountInsufficient` | Raise `--slippage-bps` |
 | `--confirm mismatch` | Parameters changed after approval. Re-plan — never force it |
@@ -293,13 +385,13 @@ a `WARNING` above 0.5% divergence. Causes and how to read a revert:
 ## Verifying a change
 
 ```bash
-python3 {baseDir}/scripts/selftest.py     # 444 offline assertions, no network
+python3 {baseDir}/scripts/selftest.py     # 463 offline assertions, no network
 ```
 
 Covers the keccak / EIP-55 / ABI-codec primitives, secp256k1 signing, TickMath, the AGENTOS
-reserve figures, market-cap bands, the three Base launchpad poolIds, and every `unlockData`
-blob. Run it after touching anything in `scripts/unilp/`; the live fixtures it pins are
-listed in its module docstring.
+reserve figures, market-cap bands, the three Base launchpad poolIds, every `unlockData`
+blob, and the planning helpers `--from-current` leans on. Run it after touching anything in
+`scripts/unilp/`; the live fixtures it pins are listed in its module docstring.
 
 Deeper background — the v4 Actions table, hook permission bits, and the Clanker / Liquid /
 Doppler registry architecture: `{baseDir}/assets/v4-reference.md`.

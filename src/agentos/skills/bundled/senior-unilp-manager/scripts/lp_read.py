@@ -59,7 +59,7 @@ from unilp.launchers import (  # noqa: E402
     queryable_launchers,
     resolve_launcher,
 )
-from unilp.prices import fetch_usd_prices  # noqa: E402
+from unilp.prices import fetch_usd_prices, price_unavailable_message  # noqa: E402
 from unilp.rpc import RpcClient  # noqa: E402
 from unilp.v4_math import (  # noqa: E402
     get_amounts_for_liquidity_at_ticks,
@@ -109,6 +109,11 @@ senior-unilp-manager — read-only Uniswap V4 LP inspection
   launcher  --token <addr>            which launchpad deployed it, its pool, who holds the LP
   ticks     --pool <poolId>
             (--mcap-lower <usd> --mcap-upper <usd> | --tick-lower <t> --tick-upper <t>)
+            --from-current  keep the range off the current tick so it stays single-sided.
+                            Use it whenever one end of the band is "the price right now":
+                            snapping outward would otherwise straddle the tick and the
+                            position would come back needing both currencies.
+                            The two --mcap flags may be given in either order.
   price     --tokens <addr,addr,...>
 
 Global: --chain <key|id>  (default robinhood)   --rpc <url>   --json
@@ -178,6 +183,42 @@ def mcap_context(pool_key: dict, token: str, meta0: dict, meta1: dict, prices: d
         "tickSpacing": pool_key["tickSpacing"],
         "hasSupply": supply is not None and supply > 0,
     }
+
+
+def _pull_off_current_tick(
+    current: int, tick_lower: int, tick_upper: int, spacing: int
+) -> tuple[int, int]:
+    """Move a range that straddles ``current`` fully onto one side of it.
+
+    A band with one end at "where it trades right now" is the normal way to ask for a
+    single-sided add, but snapping outward pushes that end across the current tick and the
+    range comes back two-sided — the caller then has to guess a tick by hand. Keep whichever
+    side holds more of the band they asked for and pull the near edge past ``current``.
+
+    A range is single-sided below the current price when ``tickUpper <= current``, and above
+    it when ``tickLower > current``; that is the same boundary ``range_status`` uses.
+    """
+    if not (tick_lower <= current < tick_upper):
+        return tick_lower, tick_upper  # already one-sided, leave it alone
+
+    below = snap_tick(current, spacing, "down")
+    above = below + spacing
+    keep_below = (current - tick_lower) >= (tick_upper - current)
+
+    if keep_below and below > tick_lower:
+        return tick_lower, below
+    if not keep_below and above < tick_upper:
+        return above, tick_upper
+    # The band is thinner than one spacing on the side we wanted, so that side cannot hold a
+    # range at all. Fall back to the other one rather than returning a straddle.
+    if below > tick_lower:
+        return tick_lower, below
+    if above < tick_upper:
+        return above, tick_upper
+    raise RuntimeError(
+        f"the band is narrower than one tickSpacing ({spacing}) either side of the current "
+        f"tick {current} — widen it, or give --tick-lower/--tick-upper directly"
+    )
 
 
 def _math_kwargs(ctx: dict, **overrides) -> dict:
@@ -736,9 +777,42 @@ def cmd_pools(client, chain: dict, args: dict) -> None:
     if top:
         print(heading(f"ranges in the deepest pool {short_id(top['init']['poolId'])}"))
         print_ranges(top["res"], top["m0"], top["m1"], top["ctx"], chain)
+        print_recommendation(top, chain, len(detailed))
 
     if args.get("include-v3"):
         report_v3(client, chain, token)
+
+
+def print_recommendation(top: dict, chain: dict, total: int) -> None:
+    """Name the pool to work in and spell out the next command.
+
+    A launched token has dozens of pools and all but one are dust — picking among them by
+    eye is how a caller ends up sizing a position in a $60 pool at an 85% fee. Deepest TVL
+    is the answer often enough to be worth stating outright, with the id in full so the
+    next command is a copy rather than a lookup.
+    """
+    pool_id = top["init"]["poolId"]
+    hooks = top["pool"]["poolKey"]["hooks"]
+    hooked = hooks != NATIVE
+    label = label_address(chain, hooks) if hooked else None
+    pair = f"{top['m0']['symbol']}/{top['m1']['symbol']}"
+
+    print(f"\n  recommended pool : {pool_id}")
+    print(f"                     {pair}, TVL {fmt_usd(top['tvl'])}, deepest of "
+          f"{total} pool(s) holding this token")
+    if hooked:
+        print(f"                     hook {hooks}"
+              f"{f' ({label})' if label else ''} — mint needs --allow-hooked (see §8)")
+    else:
+        print("                     no hook — mint takes it without --allow-hooked")
+    print("\n  next: turn a market-cap target into ticks, then dry-run the mint")
+    print(f"    lp_read.py  ticks --pool {short_id(pool_id)} "
+          "--mcap-lower <usd> --mcap-upper <usd> --from-current")
+    print(f"    lp_write.py mint  --pool {short_id(pool_id)} "
+          "--tick-lower <t> --tick-upper <t> (--amount0 <n> | --amount1 <n>)"
+          f"{' --allow-hooked' if hooked else ''}")
+    print("  Use the poolId in full above; --from-current keeps a range that starts at "
+          "today's price single-sided.")
 
 
 def pool_band_ticks(d: dict) -> tuple[int, int]:
@@ -1213,13 +1287,20 @@ def cmd_ticks(client, chain: dict, args: dict) -> None:
     else:
         lo = float(require_arg(args, "mcap-lower", "lower market cap in USD"))
         hi = float(require_arg(args, "mcap-upper", "upper market cap in USD"))
-        if not (lo > 0 and hi > lo):
-            raise ValueError("--mcap-upper must be greater than --mcap-lower, both > 0")
+        if not (lo > 0 and hi > 0):
+            raise ValueError("--mcap-lower and --mcap-upper must both be > 0")
+        # Given the two ends of a band in either order, take the band. Which one is the
+        # bigger number depends on whether the target sits above or below where the token
+        # trades now, and refusing the reversed pair only sends the caller round again.
+        if hi < lo:
+            lo, hi = hi, lo
+        if hi == lo:
+            raise ValueError("--mcap-lower and --mcap-upper describe a zero-width band")
         if not ctx["hasSupply"]:
             raise RuntimeError(f"cannot read totalSupply for {token_meta_ref['symbol']}")
         if ctx["quoteUsd"] is None:
-            raise RuntimeError("no USD price for the quote currency — cannot convert "
-                               "market cap to ticks")
+            raise RuntimeError(price_unavailable_message(chain, quote_symbol=(
+                m0["symbol"] if ctx["tokenIsCurrency1"] else m1["symbol"])))
 
         t_lo = tick_at_mcap(lo, **_math_kwargs(ctx))
         t_hi = tick_at_mcap(hi, **_math_kwargs(ctx))
@@ -1227,6 +1308,10 @@ def cmd_ticks(client, chain: dict, args: dict) -> None:
         a, b = (t_lo, t_hi) if t_lo <= t_hi else (t_hi, t_lo)
         tick_lower = snap_tick(a, spacing, "down")
         tick_upper = snap_tick(b, spacing, "up")
+        if args.get("from-current"):
+            tick_lower, tick_upper = _pull_off_current_tick(
+                pool["tick"], tick_lower, tick_upper, spacing
+            )
 
     band = mcap_band_for_range(tick_lower, tick_upper, tick_spacing=ctx["tickSpacing"],
                                **_math_kwargs(ctx))

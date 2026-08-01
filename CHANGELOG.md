@@ -108,6 +108,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- `senior-unilp-manager` sent an agent round in circles on "add N of my token as LP
+  from the current price up to a market cap of X" — one real run spent twelve minutes
+  and forty commands without reaching a mint. Several things compounded, all fixed
+  here. **§8 documented the single-sided rule backwards** (it claimed a range above the
+  current price takes `currency1`; it takes `currency0`), so the agent picked the wrong
+  side, was refused, assumed it had the wrong pool, and went looking for another one.
+  **A hook was treated as disqualifying**: the docs only noted that Clanker/Liquid
+  reject third-party LPs, so the Doppler pool — the only one with real depth — was
+  abandoned for dust pools at 85% fee tiers; §8 now gives the per-hook policy and says
+  to read the decoded `BEFORE_ADD_LIQUIDITY` flag. **`ticks` snapped outward
+  unconditionally**, so a band starting at today's price always straddled the current
+  tick and came back two-sided; `--from-current` now pulls the near edge onto one side,
+  keeping the larger part of the band. `--mcap-lower` / `--mcap-upper` may be given in
+  either order rather than erroring, since which is larger depends on where the target
+  sits. `pools` ends with a `recommended pool` block — deepest by TVL, id in full,
+  whether `--allow-hooked` is needed, and the next command. Part B opens with a
+  five-command recipe covering the `approve` step, which the agent kept skipping.
+
+- `senior-unilp-manager` lost USD prices to rate limiting far too easily, and `ticks`
+  turned that into a hard failure. GeckoTerminal's free endpoint refuses after a couple
+  of calls in quick succession, and since every command is a fresh process the
+  in-memory cache never helped — running `pools` and then `ticks` on what it found was
+  enough to trip it. Prices are now cached to a short-lived file shared across
+  processes, and a throttled lookup says it is temporary and worth retrying instead of
+  reporting "no USD price", which read as a property of the token and sent callers off
+  to look at other pools.
+
 - A turn could die with `TypeError: 'NoneType' object is not iterable` partway
   through a streaming reply, taking the whole answer with it. The OpenAI-compat
   stream reader read `choices`, `delta`, `tool_calls` and each tool call's

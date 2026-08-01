@@ -66,7 +66,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
+import tempfile
+import time
 import traceback
 from pathlib import Path
 
@@ -691,6 +694,113 @@ def tier4(g: dict, r: Results) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tier 5 — planning ergonomics
+# ---------------------------------------------------------------------------
+
+def tier5(g: dict, r: Results) -> None:
+    """The parts that decide whether a caller reaches a mint or goes in circles.
+
+    None of this is arithmetic the chain checks — it is the difference between one
+    ``ticks`` call answering the question and a dozen commands guessing at it.
+    """
+    try:
+        import lp_read
+        from unilp import prices as prices_mod
+    except ImportError:
+        r.skip("tier5/planning", "lp_read or unilp.prices not importable")
+        return
+
+    pull = lp_read._pull_off_current_tick
+
+    # The live case this was written for: AGENTOS at tick 209056, band asked for as
+    # "from here up to $200K mcap", snapped outward to 206400..209200 — one spacing past
+    # the current tick, so mint came back wanting both currencies.
+    r.check("pullOffCurrent: the AGENTOS straddle becomes AGENTOS-only",
+            pull(209056, 206400, 209200, 200), (206400, 209000))
+
+    # Both sides have room here, so which one survives is a real choice rather than the
+    # only option left — these two pin the rule that the bigger part of the band wins.
+    r.check("pullOffCurrent: keeps the below side when the band sits below",
+            pull(209056, 200000, 209400, 200), (200000, 209000))
+    r.check("pullOffCurrent: keeps the above side when the band sits above",
+            pull(209056, 206400, 220000, 200), (209200, 220000))
+    # tickUpper == current is already single-sided (range_status calls it "above").
+    r.check("pullOffCurrent: leaves a below-range alone",
+            pull(209056, 206400, 209000, 200), (206400, 209000))
+    r.check("pullOffCurrent: leaves an above-range alone",
+            pull(209056, 209200, 212000, 200), (209200, 212000))
+    r.check("pullOffCurrent: keeps the above side of a narrow straddle",
+            pull(209056, 209000, 209400, 200), (209200, 209400))
+    # Ticks that did not come from snapping — the preferred side turns out to have no
+    # room, so take the other one rather than hand back a straddle.
+    r.check("pullOffCurrent: falls back when the preferred side has no room",
+            pull(209190, 209010, 209300, 200), (209200, 209300))
+    threw = False
+    try:
+        pull(209100, 209000, 209200, 200)  # one spacing wide, current tick inside it
+    except RuntimeError:
+        threw = True
+    r.check("pullOffCurrent: refuses a band thinner than one spacing", threw, True)
+
+    # Reversed mcap bounds describe the same band. "From here to 200k" is written with
+    # the larger number first whenever the target is below where the token trades.
+    lo, hi = 200000.0, 156200.0
+    if hi < lo:
+        lo, hi = hi, lo
+    r.check("mcap bounds normalise regardless of order", (lo, hi), (156200.0, 200000.0))
+
+    # -- price cache, shared across processes ------------------------------
+    with tempfile.TemporaryDirectory() as tmp:
+        previous = os.environ.get("UNILP_CACHE_DIR")
+        os.environ["UNILP_CACHE_DIR"] = tmp
+        try:
+            prices_mod._disk_write({"robinhood:0xaaa": 1869.01, "robinhood:0xbbb": None})
+            got = prices_mod._disk_read(["robinhood:0xaaa", "robinhood:0xbbb"])
+            r.check("price cache round-trips a value", got.get("robinhood:0xaaa"), 1869.01)
+            r.check("price cache round-trips a null", got.get("robinhood:0xbbb"), None)
+            r.check("price cache ignores keys not asked for",
+                    prices_mod._disk_read(["robinhood:0xccc"]), {})
+
+            # An entry older than the TTL must not be served: a price minutes stale is
+            # worse than one refetch.
+            path = prices_mod._cache_path()
+            stale = time.time() - prices_mod._DISK_TTL - 1
+            path.write_text(json.dumps({"robinhood:0xaaa": [stale, 1.0]}), encoding="utf-8")
+            r.check("price cache drops an expired entry",
+                    prices_mod._disk_read(["robinhood:0xaaa"]), {})
+
+            # Half-written or hand-edited file: refetching is always safe, raising is not.
+            path.write_text("{not json", encoding="utf-8")
+            r.check("price cache survives a corrupt file",
+                    prices_mod._disk_read(["robinhood:0xaaa"]), {})
+            path.unlink()
+            r.check("price cache survives a missing file",
+                    prices_mod._disk_read(["robinhood:0xaaa"]), {})
+        finally:
+            if previous is None:
+                os.environ.pop("UNILP_CACHE_DIR", None)
+            else:
+                os.environ["UNILP_CACHE_DIR"] = previous
+
+    # A throttled lookup and an unindexed token both surface as "no price", but only one
+    # of them is worth waiting out — the message has to tell them apart.
+    chain = {"geckoNetwork": "robinhood"}
+    was = prices_mod._last_failure
+    try:
+        prices_mod._last_failure = prices_mod.RATE_LIMITED
+        throttled = prices_mod.price_unavailable_message(chain, "WETH")
+        prices_mod._last_failure = None
+        unknown = prices_mod.price_unavailable_message(chain, "WETH")
+    finally:
+        prices_mod._last_failure = was
+    r.check("rate-limited message says it is temporary", "rate-limiting" in throttled, True)
+    r.check("rate-limited message says to retry", "again" in throttled, True)
+    r.check("unindexed message names the network", "robinhood" in unknown, True)
+    r.check("unindexed message is not the rate-limit one",
+            "rate-limiting" in unknown, False)
+
+
+# ---------------------------------------------------------------------------
 
 TIERS = (
     ("Tier 0 — primitives (keccak, EIP-55, fixed point, JS arithmetic)", tier0),
@@ -698,6 +808,7 @@ TIERS = (
     ("Tier 2 — signing and PLAN_HASH", tier2),
     ("Tier 3 — pool math and poolId", tier3),
     ("Tier 4 — domain layer (PositionInfo, hooks, ranges, display)", tier4),
+    ("Tier 5 — planning ergonomics (tick pull-off, price cache, messages)", tier5),
 )
 
 
