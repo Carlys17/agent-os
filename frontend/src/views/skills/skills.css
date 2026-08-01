@@ -656,6 +656,26 @@
   font-size: 0.8125rem;
   color: var(--muted-foreground);
 }
+/* Env-var value field in the "Set <VAR>" dialog. Without this the input falls
+   back to UA styling, which on the dark panel is indistinguishable from its
+   background — the field looks like it isn't there. */
+.sk-dialog__input {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  padding: 8px 10px;
+  background: var(--input, var(--card));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--foreground);
+}
+.sk-dialog__input::placeholder {
+  color: var(--muted-foreground);
+}
+.sk-dialog__input:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+}
 .sk-dialog__section-title {
   font-family: var(--font-mono);
   font-size: 0.625rem;
