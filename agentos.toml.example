@@ -393,6 +393,21 @@ thinking_level = "medium"
 # calls. When false, AgentOS sends no tool definitions and executes no tools.
 enabled = true
 
+# Base allowlist. Tool schemas are the fixed overhead on every provider call in
+# every turn — on a stock install roughly 7,300 tokens — so this is usually the
+# largest thing you can change. Run `agentos context` to see the current cost
+# and what each profile would cost on your install.
+#
+#   full         every registered tool (default)
+#   coding       filesystem, runtime, sessions, memory
+#   messaging    message + session inspection
+#   memory_only  memory tools only
+#   minimal      session_status only
+#
+# The set is fixed for the session, so narrowing it does not disturb the prompt
+# cache. `allow` / `also_allow` / `deny` refine it further.
+# profile = "coding"
+
 [agent_token_saving]
 # Project fresh tool results with the built-in tokenjuice reducer before they
 # are fed back into the model. Raw tool responses remain available through the
