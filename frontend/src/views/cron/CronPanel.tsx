@@ -361,6 +361,26 @@ export function CronPanel({
             />
           </label>
 
+          {form.payloadKind === 'agent_turn' ? (
+            <div className="cron-field cron-elevated tone-danger">
+              <label className="cron-elevated__toggle">
+                <input
+                  type="checkbox"
+                  checked={form.elevated}
+                  onChange={(e) => set('elevated', e.target.checked)}
+                />
+                <span className="t-label">Let this job run shell-based skills</span>
+              </label>
+              <p className="cron-elevated__warning">
+                Every time this job fires, with nobody watching, the agent&apos;s shell commands run
+                on this host as you — no approval prompt, no sandbox, with your environment
+                variables and API keys. Anything the job reads from the network is one reasoning
+                step away from that shell. Only turn this on for a job scoped to one skill and one
+                narrow task.
+              </p>
+            </div>
+          ) : null}
+
           <details className="cron-advanced">
             <summary className="cron-advanced__summary">Advanced delivery &amp; wake</summary>
             <div className="cron-advanced__body">

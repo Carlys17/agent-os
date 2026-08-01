@@ -10,6 +10,7 @@ import {
   isUpcomingRun,
   jobCreatedFrom,
   jobDotState,
+  jobElevated,
   jobKindClass,
   jobKindLabel,
   jobSchedule,
@@ -631,6 +632,33 @@ describe('buildSavePayload', () => {
     })
     expect(res.payload).not.toHaveProperty('id')
   })
+  it('elevation off sends a clearing false, so the toggle is authoritative on edit', () => {
+    const res = buildSavePayload(form({ name: 'X', cron: '* * * * *' }), null, '')
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.payload.elevated).toBe(false)
+  })
+  it('elevation on an agent turn sends bypass', () => {
+    const res = buildSavePayload(
+      form({ name: 'X', cron: '* * * * *', payloadKind: 'agent_turn', elevated: true }),
+      null,
+      '',
+    )
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.payload.elevated).toBe('bypass')
+  })
+  it('rejects elevation on a job kind that never runs an agent turn', () => {
+    const res = buildSavePayload(
+      form({ name: 'X', cron: '* * * * *', payloadKind: 'reminder', elevated: true }),
+      null,
+      '',
+    )
+    expect(res).toEqual({
+      ok: false,
+      error: 'Elevated tools require an agent turn — reminder and system-event jobs never run one',
+    })
+  })
   it('edit: carries {id} and switches to cron.update', () => {
     const res = buildSavePayload(form({ name: 'X', cron: '* * * * *' }), { id: 'job-9' }, '')
     expect(res.ok).toBe(true)
@@ -734,5 +762,21 @@ describe('buildSavePayload', () => {
     expect(
       buildSavePayload(form({ name: 'X', cron: '* * * * *', deliveryMode: 'webhook' }), null, ''),
     ).toEqual({ ok: false, error: 'Webhook URL is required for webhook delivery' })
+  })
+})
+
+describe('jobElevated', () => {
+  it('returns empty for a default read-only job', () => {
+    expect(jobElevated({ id: 'x' })).toBe('')
+    expect(jobElevated(null)).toBe('')
+  })
+  it('reads the top-level wire field', () => {
+    expect(jobElevated({ id: 'x', elevated: 'bypass' })).toBe('bypass')
+  })
+  it('falls back to the policy blob the mode is stored in', () => {
+    expect(jobElevated({ id: 'x', toolPolicy: { elevated: 'full' } })).toBe('full')
+  })
+  it('ignores a null wire field rather than reporting it as a mode', () => {
+    expect(jobElevated({ id: 'x', elevated: null })).toBe('')
   })
 })

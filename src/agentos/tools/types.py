@@ -147,6 +147,28 @@ CRON_AGENT_DENY: frozenset[str] = frozenset(
     }
 )
 
+# What a cron job gains when it opts in to elevation. Almost every skill body is
+# a block of shell, so a cron turn that is shown a skill and denied exec_command
+# can read the instructions and never carry them out. These three are what the
+# script skills need: run the script, and stage its inputs/outputs.
+CRON_ELEVATED_EXTRA_ALLOW: frozenset[str] = frozenset(
+    {"exec_command", "write_file", "edit_file"}
+)
+
+CRON_ELEVATED_ALLOW: frozenset[str] = CRON_AGENT_ALLOW | CRON_ELEVATED_EXTRA_ALLOW
+
+# Read this as a *default surface*, not as containment. Once exec_command is on,
+# git_commit / apply_patch / execute_code are all a shell command away, so
+# keeping them off the list only decides what the agent is offered — the real
+# boundaries are shell_policy.check_safe_bin, the sensitive-path block, and
+# workspace lockdown, none of which "bypass" elevation turns off.
+#
+# The pair stays derived from CRON_AGENT_DENY so the two surfaces cannot drift,
+# and CRON_ELEVATED_ALLOW stays an explicit allowlist so that `gateway`,
+# `sessions_spawn`, `publish_artifact`, `memory_*` — and any tool added later —
+# are never granted to an elevated cron turn by omission.
+CRON_ELEVATED_DENY: frozenset[str] = CRON_AGENT_DENY - CRON_ELEVATED_EXTRA_ALLOW
+
 
 # Internal tool spec
 @dataclass

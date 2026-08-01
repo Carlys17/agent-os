@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -19,6 +20,15 @@ cron_app = typer.Typer(help="Inspect and manage scheduled AgentOS runs.")
 _SESSION_TARGETS = {"isolated", "main", "current", "session"}
 _JOB_KINDS = {"auto", "reminder", "agent_turn", "system_event"}
 _WAKE_MODES = {"now", "next-heartbeat"}
+_ELEVATED_MODES = {"bypass", "full"}
+
+_ELEVATED_HELP = (
+    "Let this job run shell-based skills unattended. Every time it fires, with "
+    "nobody watching, the agent's shell commands run on this host as you, with "
+    "no approval prompt and no sandbox. Anything the job reads from the network "
+    "is one reasoning step away from that shell. Only use it for a job scoped to "
+    "one skill and one narrow task."
+)
 
 
 def _validate_session_target(value: str) -> str:
@@ -39,6 +49,40 @@ def _validate_job_kind(value: Any) -> str:
             "--job-kind must be one of auto, reminder, agent_turn, system_event"
         )
     return normalized
+
+
+def _resolve_elevated(
+    elevated: bool | None,
+    elevated_mode: str | None,
+) -> str | bool | None:
+    """Turn the --elevated / --elevated-mode pair into one wire value.
+
+    Returns ``None`` when neither flag was passed, so the key stays out of the
+    params dict entirely and an update leaves the stored setting alone.
+    """
+
+    if elevated_mode is not None:
+        mode = elevated_mode.strip().lower()
+        if mode not in _ELEVATED_MODES:
+            raise typer.BadParameter("--elevated-mode must be bypass or full")
+        if elevated is False:
+            raise typer.BadParameter("--no-elevated cannot be combined with --elevated-mode")
+        return mode
+    if elevated is None:
+        return None
+    return "bypass" if elevated else False
+
+
+def _parse_tool_policy(raw: str | None) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"--tool-policy must be valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise typer.BadParameter("--tool-policy must be a JSON object")
+    return parsed
 
 
 _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(s|m|h|sec|secs|min|mins|hr|hrs)?\s*$")
@@ -337,6 +381,7 @@ def _render_jobs(rows: list[dict[str, Any]], *, title: str = "Cron jobs") -> Non
     table.add_column("Enabled")
     table.add_column("Expression")
     table.add_column("Agent")
+    table.add_column("Elevated")
     table.add_column("Next run")
     table.add_column("Last run")
     table.add_column("Errors", justify="right")
@@ -347,6 +392,7 @@ def _render_jobs(rows: list[dict[str, Any]], *, title: str = "Cron jobs") -> Non
             str(row.get("enabled") or False),
             str(row.get("expression") or row.get("schedule_raw") or ""),
             str(row.get("agentId") or row.get("agent_id") or ""),
+            str(row.get("elevated") or ""),
             str(row.get("next_run") or ""),
             str(row.get("last_run") or ""),
             str(row.get("error_count") or row.get("consecutive_errors") or 0),
@@ -582,6 +628,27 @@ def cron_add(
         "--failure-webhook-token-file",
         help="Read failure-destination webhook token from this file (trimmed).",
     ),
+    elevated: bool | None = typer.Option(
+        None,
+        "--elevated/--no-elevated",
+        help=_ELEVATED_HELP,
+    ),
+    elevated_mode: str | None = typer.Option(
+        None,
+        "--elevated-mode",
+        help=(
+            "Elevation mode: bypass (default, keeps the sensitive-path block) or "
+            "full (also disables it — only with a specific reason)."
+        ),
+    ),
+    tool_policy: str | None = typer.Option(
+        None,
+        "--tool-policy",
+        help=(
+            "Per-job tool policy as JSON, e.g. '{\"deny\": [\"web_fetch\"]}'. "
+            "Keys: profile, allow, alsoAllow, deny. Can only narrow the cron baseline."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
 ) -> None:
     """Add a scheduled cron job."""
@@ -664,6 +731,13 @@ def cron_add(
     )
     if delivery is not None:
         params["delivery"] = delivery
+
+    parsed_tool_policy = _parse_tool_policy(tool_policy)
+    if parsed_tool_policy is not None:
+        params["toolPolicy"] = parsed_tool_policy
+    resolved_elevated = _resolve_elevated(elevated, elevated_mode)
+    if resolved_elevated is not None:
+        params["elevated"] = resolved_elevated
 
     async def _run(client):
         return await client.call("cron.add", params)
@@ -751,6 +825,28 @@ def cron_update(
         "--failure-webhook-token-file",
         help="Read failure-destination webhook token from this file (trimmed).",
     ),
+    elevated: bool | None = typer.Option(
+        None,
+        "--elevated/--no-elevated",
+        help=_ELEVATED_HELP,
+    ),
+    elevated_mode: str | None = typer.Option(
+        None,
+        "--elevated-mode",
+        help=(
+            "Elevation mode: bypass (default, keeps the sensitive-path block) or "
+            "full (also disables it — only with a specific reason)."
+        ),
+    ),
+    tool_policy: str | None = typer.Option(
+        None,
+        "--tool-policy",
+        help=(
+            "Replace the per-job tool policy with this JSON object. Keys: profile, "
+            "allow, alsoAllow, deny. Use --elevated on its own to toggle elevation "
+            "without touching the lists."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
 ) -> None:
     """Update a scheduled cron job.
@@ -801,6 +897,13 @@ def cron_update(
     )
     if failure_destination is not None:
         params["delivery"] = {"failureDestination": failure_destination}
+
+    parsed_tool_policy = _parse_tool_policy(tool_policy)
+    if parsed_tool_policy is not None:
+        params["toolPolicy"] = parsed_tool_policy
+    resolved_elevated = _resolve_elevated(elevated, elevated_mode)
+    if resolved_elevated is not None:
+        params["elevated"] = resolved_elevated
 
     if len(params) == 1:
         raise typer.BadParameter("provide at least one field to update")

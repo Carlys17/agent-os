@@ -42,6 +42,8 @@ export interface RawJob {
   creator_session_key?: string
   createdFrom?: string
   created_from?: string
+  /** 'bypass' | 'full' when the job may run shell-based skills unattended. */
+  elevated?: string | null
   [key: string]: unknown
 }
 
@@ -84,6 +86,20 @@ export function jobKindLabel(job: RawJob): string {
 export function jobKindClass(job: RawJob): 'is-reminder' | 'is-agent' {
   const kind = job.payloadKind || job.payload_kind
   return kind === 'reminder' ? 'is-reminder' : 'is-agent'
+}
+
+/**
+ * The job's elevation mode, or '' when it runs under the default read-only
+ * cron tool surface. Read from the top-level wire field with a fallback to the
+ * policy blob it is stored in, so a card renders correctly against either.
+ */
+export function jobElevated(job: RawJob | null | undefined): string {
+  if (!job) return ''
+  const direct = job.elevated
+  if (typeof direct === 'string' && direct) return direct
+  const policy = job.toolPolicy as { elevated?: unknown } | undefined
+  const nested = policy?.elevated
+  return typeof nested === 'string' ? nested : ''
 }
 
 /** cron.js:622 — the session-target display (camel|snake|—). */
@@ -569,6 +585,8 @@ export interface CronForm {
   at: string
   tz: string
   wakeMode: string
+  /** Opt-in: let this job run shell-based skills unattended. */
+  elevated: boolean
   // delivery
   deliveryMode: DeliveryMode
   deliveryChannel: string
@@ -601,6 +619,7 @@ export const EMPTY_CRON_FORM: CronForm = {
   at: '',
   tz: '',
   wakeMode: 'now',
+  elevated: false,
   deliveryMode: '',
   deliveryChannel: '',
   deliveryTo: '',
@@ -706,6 +725,9 @@ export function seedForm(
     at: scheduleKind === 'at' ? (job ? str(job.scheduleRaw || job.schedule_raw) : str(tpl.at)) : '',
     tz: job ? str(job.tz) : str(tpl.tz),
     wakeMode: job ? str(job.wakeMode || job.wake_mode) || 'now' : str(tpl.wakeMode) || 'now',
+    // Never seeded from a template: elevation is always a deliberate choice on
+    // the job in front of you, not something a preset can hand you silently.
+    elevated: job ? !!job.elevated : false,
     ...delivery,
   }
 }
@@ -962,6 +984,16 @@ export function buildSavePayload(
 
   const wakeMode = form.wakeMode
   if (wakeMode && wakeMode !== 'now') payload.wakeMode = wakeMode
+
+  if (form.elevated && payloadKind !== 'agent_turn') {
+    return {
+      ok: false,
+      error: 'Elevated tools require an agent turn — reminder and system-event jobs never run one',
+    }
+  }
+  // Always sent, so the toggle is authoritative on edit: the backend merges this
+  // one key and leaves any allow/deny list on the job alone. `false` clears it.
+  payload.elevated = form.elevated ? 'bypass' : false
 
   const deliveryResult = buildDelivery(form)
   if (!deliveryResult.ok) return deliveryResult

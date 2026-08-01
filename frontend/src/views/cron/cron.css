@@ -159,6 +159,13 @@
   color: var(--muted-foreground);
   flex: none;
 }
+/* Elevation is the one property of a job you should never have to open the
+   editor to discover, so it reads as a status badge on the card itself. */
+.cron-pill--elevated {
+  border-color: var(--tone, var(--danger));
+  color: var(--tone, var(--danger));
+  background: color-mix(in srgb, var(--tone, var(--danger)) 10%, transparent);
+}
 .cron-card__schedule {
   display: flex;
   flex-wrap: wrap;
@@ -476,6 +483,28 @@
 }
 .cron-advanced--nested {
   background: color-mix(in srgb, var(--muted) 40%, transparent);
+}
+
+/* Deliberately not inside .cron-advanced: handing an unattended job a real
+   shell is not an "advanced option" to be skimmed past. */
+.cron-elevated {
+  gap: 0.4rem;
+  border: 1px solid var(--tone, var(--border));
+  border-radius: var(--radius-surface);
+  padding: 0.65rem 0.75rem;
+  background: color-mix(in srgb, var(--tone, var(--muted)) 8%, transparent);
+}
+.cron-elevated__toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+.cron-elevated__warning {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--muted-foreground);
 }
 
 .cron-toggle {

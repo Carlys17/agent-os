@@ -1147,3 +1147,59 @@ async def test_task_runtime_turn_keeps_cron_tool_boundary() -> None:
     assert tool_context.allowed_tools == {"session_status"}
     assert tool_context.tool_policy == job.tool_policy
     assert "exec_command" in tool_context.denied_tools
+
+
+@pytest.mark.asyncio
+async def test_task_runtime_turn_honours_cron_job_elevation() -> None:
+    """The task-runtime path — not just the legacy fallback — must carry the
+    opt-in through to the ToolContext the turn actually runs with."""
+
+    class RecordingTurnRunner:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def run(self, message: str, session_key: str, **kwargs: Any):
+            self.calls.append(kwargs)
+            yield DoneEvent()
+
+    async def emit(session_key: str, event_name: str, payload: dict[str, Any]) -> None:
+        return None
+
+    job = CronJob(
+        id="cron-elevated",
+        name="Elevated",
+        payload={"kind": "agent_turn", "agent_id": "ops"},
+        tool_policy={"elevated": "bypass"},
+    )
+    run = SimpleNamespace(
+        agent_id="ops",
+        task_id="task-1",
+        session_key="cron:cron-elevated:run:1",
+        message="hello",
+        envelope=build_cron_route_envelope(
+            job,
+            session_key="cron:cron-elevated:run:1",
+            agent_id="ops",
+        ),
+        attachments=[],
+        input_provenance={},
+        run_kind="cron_turn",
+        no_memory_capture=False,
+        ingress_pipeline_steps=[],
+        semantic_message=None,
+        stream_event_sink=None,
+    )
+    runner = RecordingTurnRunner()
+
+    await dispatch_task_runtime_turn(
+        run,
+        config=GatewayConfig(),
+        session_manager=None,
+        turn_runner=runner,
+        event_emitter=emit,
+    )
+
+    tool_context = runner.calls[0]["tool_context"]
+    assert tool_context.elevated == "bypass"
+    assert "exec_command" in (tool_context.allowed_tools or set())
+    assert "cron" in tool_context.denied_tools

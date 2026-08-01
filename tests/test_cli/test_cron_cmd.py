@@ -379,6 +379,9 @@ def test_cron_add_with_announce_and_channel(stub_gateway) -> None:
         failure_webhook_token=None,
         failure_webhook_token_env=None,
         failure_webhook_token_file=None,
+        elevated=None,
+        elevated_mode=None,
+        tool_policy=None,
         json_output=False,
     )
     assert stub_gateway.calls, "no RPC call was issued"
@@ -422,6 +425,9 @@ def test_cron_add_rejects_current_target_without_session_binding(stub_gateway) -
             failure_webhook_token=None,
             failure_webhook_token_env=None,
             failure_webhook_token_file=None,
+            elevated=None,
+            elevated_mode=None,
+            tool_policy=None,
             json_output=False,
         )
 
@@ -459,6 +465,9 @@ def test_cron_add_with_webhook(stub_gateway, monkeypatch) -> None:
         failure_webhook_token=None,
         failure_webhook_token_env=None,
         failure_webhook_token_file=None,
+        elevated=None,
+        elevated_mode=None,
+        tool_policy=None,
         json_output=False,
     )
     method, params = stub_gateway.calls[-1]
@@ -500,6 +509,9 @@ def test_cron_add_with_failure_destination(stub_gateway) -> None:
         failure_webhook_token=None,
         failure_webhook_token_env=None,
         failure_webhook_token_file=None,
+        elevated=None,
+        elevated_mode=None,
+        tool_policy=None,
         json_output=False,
     )
     method, params = stub_gateway.calls[-1]
@@ -545,6 +557,9 @@ def test_cron_add_with_wake_and_jitter_duration(stub_gateway) -> None:
         failure_webhook_token=None,
         failure_webhook_token_env=None,
         failure_webhook_token_file=None,
+        elevated=None,
+        elevated_mode=None,
+        tool_policy=None,
         json_output=False,
     )
     method, params = stub_gateway.calls[-1]
@@ -586,6 +601,9 @@ def test_cron_add_with_every_builds_canonical_schedule(stub_gateway) -> None:
         failure_webhook_token=None,
         failure_webhook_token_env=None,
         failure_webhook_token_file=None,
+        elevated=None,
+        elevated_mode=None,
+        tool_policy=None,
         json_output=False,
     )
 
@@ -630,6 +648,9 @@ def test_cron_add_rejects_multiple_schedule_sources(stub_gateway) -> None:
             failure_webhook_token=None,
             failure_webhook_token_env=None,
             failure_webhook_token_file=None,
+            elevated=None,
+            elevated_mode=None,
+            tool_policy=None,
             json_output=False,
         )
 
@@ -668,6 +689,9 @@ def test_cron_add_rejects_fractional_every(stub_gateway) -> None:
             failure_webhook_token=None,
             failure_webhook_token_env=None,
             failure_webhook_token_file=None,
+            elevated=None,
+            elevated_mode=None,
+            tool_policy=None,
             json_output=False,
         )
 
@@ -697,6 +721,9 @@ def test_cron_add_rejects_invalid_wake(stub_gateway) -> None:
             webhook_token=None,
             webhook_token_env=None,
             webhook_token_file=None,
+            elevated=None,
+            elevated_mode=None,
+            tool_policy=None,
             json_output=False,
         )
 
@@ -722,6 +749,9 @@ def test_cron_update_with_wake(stub_gateway) -> None:
         failure_webhook_token=None,
         failure_webhook_token_env=None,
         failure_webhook_token_file=None,
+        elevated=None,
+        elevated_mode=None,
+        tool_policy=None,
         json_output=False,
     )
     method, params = stub_gateway.calls[-1]
@@ -751,6 +781,9 @@ def test_cron_update_with_every_builds_canonical_schedule(stub_gateway) -> None:
         failure_webhook_token=None,
         failure_webhook_token_env=None,
         failure_webhook_token_file=None,
+        elevated=None,
+        elevated_mode=None,
+        tool_policy=None,
         json_output=False,
     )
 
@@ -781,6 +814,9 @@ def test_cron_update_with_tz_only_sends_timezone_patch(stub_gateway) -> None:
         failure_webhook_token=None,
         failure_webhook_token_env=None,
         failure_webhook_token_file=None,
+        elevated=None,
+        elevated_mode=None,
+        tool_policy=None,
         json_output=False,
     )
 
@@ -811,6 +847,9 @@ def test_cron_update_rejects_multiple_schedule_sources(stub_gateway) -> None:
             failure_webhook_token=None,
             failure_webhook_token_env=None,
             failure_webhook_token_file=None,
+            elevated=None,
+            elevated_mode=None,
+            tool_policy=None,
             json_output=False,
         )
 
@@ -834,6 +873,9 @@ def test_cron_update_requires_at_least_one_field(stub_gateway) -> None:
             failure_webhook_token=None,
             failure_webhook_token_env=None,
             failure_webhook_token_file=None,
+            elevated=None,
+            elevated_mode=None,
+            tool_policy=None,
             json_output=False,
         )
 
@@ -856,6 +898,9 @@ def test_cron_update_with_failure_destination_webhook(stub_gateway) -> None:
         failure_webhook_token=None,
         failure_webhook_token_env=None,
         failure_webhook_token_file=None,
+        elevated=None,
+        elevated_mode=None,
+        tool_policy=None,
         json_output=False,
     )
     method, params = stub_gateway.calls[-1]
@@ -886,6 +931,9 @@ def test_cron_update_with_failure_destination_channel(stub_gateway) -> None:
         failure_webhook_token=None,
         failure_webhook_token_env=None,
         failure_webhook_token_file=None,
+        elevated=None,
+        elevated_mode=None,
+        tool_policy=None,
         json_output=False,
     )
     method, params = stub_gateway.calls[-1]
@@ -917,5 +965,128 @@ def test_cron_update_failure_webhook_missing_url(stub_gateway) -> None:
             failure_webhook_token=None,
             failure_webhook_token_env=None,
             failure_webhook_token_file=None,
+            elevated=None,
+            elevated_mode=None,
+            tool_policy=None,
             json_output=False,
         )
+
+
+# --- elevation flags ------------------------------------------------------
+
+
+def _add_kwargs(**overrides: Any) -> dict[str, Any]:
+    """Every cron_add param at its no-op value; override only what a test needs."""
+    base: dict[str, Any] = {
+        "expression": "0 9 * * *",
+        "text": "x",
+        "name": None,
+        "agent": None,
+        "session_target": "isolated",
+        "timeout": None,
+        "tz": None,
+        "wake": None,
+        "exact": False,
+        "jitter": None,
+        "announce": False,
+        "no_deliver": False,
+        "channel": None,
+        "to": None,
+        "account": None,
+        "best_effort_deliver": False,
+        "webhook_url": None,
+        "webhook_token": None,
+        "webhook_token_env": None,
+        "webhook_token_file": None,
+        "failure_mode": None,
+        "failure_channel": None,
+        "failure_to": None,
+        "failure_account": None,
+        "failure_webhook_url": None,
+        "failure_webhook_token": None,
+        "failure_webhook_token_env": None,
+        "failure_webhook_token_file": None,
+        "elevated": None,
+        "elevated_mode": None,
+        "tool_policy": None,
+        "json_output": False,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_cron_add_without_elevation_flags_omits_the_key(stub_gateway) -> None:
+    """No flag must mean no key — an absent field is what keeps today's jobs
+    byte-for-byte unchanged."""
+    cron_cmd.cron_add(**_add_kwargs())
+
+    _method, params = stub_gateway.calls[-1]
+    assert "elevated" not in params
+    assert "toolPolicy" not in params
+
+
+def test_cron_add_elevated_sends_bypass(stub_gateway) -> None:
+    cron_cmd.cron_add(**_add_kwargs(elevated=True))
+
+    _method, params = stub_gateway.calls[-1]
+    assert params["elevated"] == "bypass"
+
+
+def test_cron_add_elevated_mode_full_is_sent_verbatim(stub_gateway) -> None:
+    cron_cmd.cron_add(**_add_kwargs(elevated_mode="full"))
+
+    _method, params = stub_gateway.calls[-1]
+    assert params["elevated"] == "full"
+
+
+def test_cron_add_rejects_an_unknown_elevated_mode(stub_gateway) -> None:
+    with pytest.raises(typer.BadParameter, match="bypass or full"):
+        cron_cmd.cron_add(**_add_kwargs(elevated_mode="sudo"))
+
+
+def test_cron_add_rejects_no_elevated_with_an_explicit_mode(stub_gateway) -> None:
+    with pytest.raises(typer.BadParameter, match="--no-elevated"):
+        cron_cmd.cron_add(**_add_kwargs(elevated=False, elevated_mode="full"))
+
+
+def test_cron_add_parses_tool_policy_json(stub_gateway) -> None:
+    cron_cmd.cron_add(**_add_kwargs(tool_policy='{"deny": ["web_fetch"]}'))
+
+    _method, params = stub_gateway.calls[-1]
+    assert params["toolPolicy"] == {"deny": ["web_fetch"]}
+
+
+def test_cron_add_rejects_malformed_tool_policy_json(stub_gateway) -> None:
+    with pytest.raises(typer.BadParameter, match="valid JSON"):
+        cron_cmd.cron_add(**_add_kwargs(tool_policy="{nope"))
+
+
+def test_cron_update_no_elevated_sends_a_clearing_false(stub_gateway) -> None:
+    cron_cmd.cron_update(
+        job_id="job-1",
+        expression=None,
+        cron=None,
+        every=None,
+        at=None,
+        text=None,
+        name=None,
+        enabled=None,
+        timeout=None,
+        tz=None,
+        wake=None,
+        failure_mode=None,
+        failure_channel=None,
+        failure_to=None,
+        failure_account=None,
+        failure_webhook_url=None,
+        failure_webhook_token=None,
+        failure_webhook_token_env=None,
+        failure_webhook_token_file=None,
+        elevated=False,
+        elevated_mode=None,
+        tool_policy=None,
+        json_output=False,
+    )
+
+    _method, params = stub_gateway.calls[-1]
+    assert params["elevated"] is False

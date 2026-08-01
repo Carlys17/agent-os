@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from agentos.permissions import normalize_cron_elevated
 from agentos.session.keys import normalize_agent_id
 
 from .delivery import validate_webhook_url
@@ -24,6 +25,39 @@ from .types import (
     ScheduleKind,
     SessionTarget,
 )
+
+
+def _normalized_tool_policy(
+    tool_policy: dict[str, Any] | None,
+    *,
+    handler_key: str,
+) -> dict[str, Any]:
+    """Canonicalise ``tool_policy["elevated"]`` and gate it to agent turns.
+
+    This runs here, not only at the RPC boundary, because the ``cron`` builtin
+    tool hands its ``tool_policy`` argument straight to ``add`` — validating
+    only on the wire would leave that path open.
+
+    Only ``agent_run`` jobs are allowed to carry elevation. A ``system_event``
+    job may be serviced by HeartbeatLoop, which builds its own read-only
+    ToolContext and never sees ``job.tool_policy``, so elevation would be
+    honoured on one path and silently dropped on the other.
+    """
+
+    policy = dict(tool_policy or {})
+    if "elevated" not in policy:
+        return policy
+    mode = normalize_cron_elevated(policy["elevated"])
+    if mode is None:
+        policy.pop("elevated")
+        return policy
+    if handler_key != "agent_run":
+        raise ValueError(
+            "cron elevation is only supported for agent_turn jobs; reminder and "
+            "system_event jobs never run an agent turn with the job's tool policy"
+        )
+    policy["elevated"] = mode
+    return policy
 
 
 def _validate_structured_schedule(
@@ -193,6 +227,9 @@ class SchedulerOps:
             strict=True,
         )
         _validate_main_agent(normalized_payload, session_target)
+        # After normalize_contract, so the elevation gate sees the resolved
+        # handler_key rather than whatever the caller passed in.
+        normalized_tool_policy = _normalized_tool_policy(tool_policy, handler_key=handler_key)
         delivery = _normalize_delivery_for_target(
             session_target=session_target,
             delivery=delivery or DeliveryConfig(),
@@ -215,7 +252,7 @@ class SchedulerOps:
             jitter_seconds=jitter,
             delivery=delivery,
             origin_session_key=origin_session_key,
-            tool_policy=dict(tool_policy or {}),
+            tool_policy=normalized_tool_policy,
             creator_session_key=creator_session_key or "",
             creator_sender_id=creator_sender_id or "",
         )
@@ -282,7 +319,10 @@ class SchedulerOps:
             if field in patch:
                 setattr(job, field, patch.pop(field))
         if "tool_policy" in patch:
-            job.tool_policy = dict(patch.pop("tool_policy") or {})
+            job.tool_policy = _normalized_tool_policy(
+                patch.pop("tool_policy"),
+                handler_key=job.handler_key,
+            )
         if "wake_mode" in patch:
             raw_wake_mode = patch.pop("wake_mode")
             job.wake_mode = _coerce_wake_mode(raw_wake_mode)

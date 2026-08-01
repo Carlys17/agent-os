@@ -7,18 +7,25 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+import structlog
+
 from agentos.channel_pairing import ChannelAdmission
 from agentos.channels.types import IncomingMessage
+from agentos.permissions import cron_tool_policy_elevated
 from agentos.session.keys import normalize_agent_id, parse_agent_id
 from agentos.tools.policy import apply_tool_policy_layer
 from agentos.tools.types import (
     CRON_AGENT_ALLOW,
     CRON_AGENT_DENY,
+    CRON_ELEVATED_ALLOW,
+    CRON_ELEVATED_DENY,
     SUBAGENT_TOOL_DENY,
     CallerKind,
     InteractionMode,
     ToolContext,
 )
+
+log = structlog.get_logger(__name__)
 
 
 class SourceKind(StrEnum):
@@ -356,9 +363,26 @@ def tool_context_from_envelope(
     allowed_tools: set[str] | None = None
     denied_tools: set[str] = set()
     interaction_mode = _interaction_mode(envelope.interaction_mode)
+    cron_elevated: str | None = None
+    cron_baseline_allow = CRON_AGENT_ALLOW
+    cron_baseline_deny = CRON_AGENT_DENY
     if caller_kind is CallerKind.CRON:
-        allowed_tools = set(CRON_AGENT_ALLOW)
-        denied_tools = set(CRON_AGENT_DENY)
+        cron_elevated = cron_tool_policy_elevated(envelope.metadata.get("tool_policy"))
+        if cron_elevated is not None:
+            cron_baseline_allow = CRON_ELEVATED_ALLOW
+            cron_baseline_deny = CRON_ELEVATED_DENY
+            # An unattended turn is about to get a real shell. Logged here
+            # rather than in the scheduler because both the task-runtime and
+            # the legacy turn-runner path funnel through this one function.
+            log.warning(
+                "cron_elevated_tool_surface",
+                job_id=envelope.metadata.get("job_id"),
+                job_name=envelope.metadata.get("job_name"),
+                agent_id=envelope.agent_id,
+                mode=cron_elevated,
+            )
+        allowed_tools = set(cron_baseline_allow)
+        denied_tools = set(cron_baseline_deny)
     elif caller_kind is CallerKind.SUBAGENT:
         denied_tools = set(SUBAGENT_TOOL_DENY)
     source_kind = envelope.metadata.get("tool_source_kind") or envelope.source_kind.value
@@ -371,7 +395,12 @@ def tool_context_from_envelope(
     if not callable(channel_admission_validator):
         channel_admission_validator = None
     elevated = envelope.metadata.get("elevated") or default_elevated
-    if (
+    if cron_elevated is not None:
+        # A per-job opt-in is the only way a cron turn is ever elevated. The
+        # clamp below stays intact so the global permissions.default_mode still
+        # cannot reach cron on its own.
+        elevated = cron_elevated
+    elif (
         elevated not in ("on", "bypass", "full")
         or caller_kind not in {CallerKind.CLI, CallerKind.WEB}
         or interaction_mode is not InteractionMode.INTERACTIVE
@@ -401,8 +430,8 @@ def tool_context_from_envelope(
         ctx = apply_tool_policy_layer(
             ctx,
             envelope.metadata.get("tool_policy"),
-            available_tools=CRON_AGENT_ALLOW | CRON_AGENT_DENY,
-            hard_denied=CRON_AGENT_DENY,
+            available_tools=cron_baseline_allow | cron_baseline_deny,
+            hard_denied=cron_baseline_deny,
         )
     return ctx
 
