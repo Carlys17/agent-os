@@ -150,7 +150,10 @@ def test_skill_docs_do_not_link_to_files_the_wheel_strips() -> None:
 
     stranded = set()
     for path in bundled.glob("*/references/*.md"):
-        rel = str(path.relative_to(PYPROJECT.parent))
+        # as_posix, not str: pyproject spells these paths with forward slashes, and on
+        # Windows str() would emit backslashes that match neither `forced` nor the
+        # allowlist below — every file would look newly stranded.
+        rel = path.relative_to(PYPROJECT.parent).as_posix()
         if rel in forced:
             continue
         skill_md = (path.parents[1] / "SKILL.md").read_text(encoding="utf-8")
