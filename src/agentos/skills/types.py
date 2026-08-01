@@ -265,6 +265,13 @@ class SkillAcquisition:
     kind: AcquisitionKind = AcquisitionKind.LOCAL
     #: Hub source that served it — ``clawhub`` | ``bankr`` | ``github`` | ``""``.
     source_id: str = ""
+    #: Who the catalog row credited, e.g. ``@igoryuzo``. Free text a publisher
+    #: chose, **not** a brand: unlike :class:`SkillPublisher` it passes through
+    #: no allowlist, so a surface must render it as an attribution string and
+    #: never as identity — no logo, no partner styling, no trust signal. It
+    #: exists so a community skill distributed through a partner's hub keeps a
+    #: visible author instead of looking anonymous.
+    author: str = ""
     #: Lockfile identifier — the join key back to a catalog row.
     identifier: str = ""
     version: str = ""

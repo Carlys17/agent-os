@@ -42,11 +42,19 @@ def _has_bin(name: str, ctx: EligibilityContext) -> bool:
 
 
 def _has_env(name: str, ctx: EligibilityContext) -> bool:
+    """Return whether a required environment variable is usably set.
+
+    An empty or whitespace-only value counts as missing. Declaring a variable
+    under ``requires.env`` says the skill cannot run without it — an API key, a
+    token, a path — and none of those work when blank. Accepting a bare
+    ``export FOO=`` reported the skill as Ready right up until it failed at
+    runtime, which is the one place the check exists to prevent.
+    """
     if name in ctx.env_cache:
-        return ctx.env_cache[name] is not None
+        return bool((ctx.env_cache[name] or "").strip())
     val = os.environ.get(name)
     ctx.env_cache[name] = val
-    return val is not None
+    return bool((val or "").strip())
 
 
 def check_eligibility(spec: SkillSpec, ctx: EligibilityContext) -> bool:

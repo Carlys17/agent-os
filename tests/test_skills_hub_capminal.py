@@ -129,7 +129,27 @@ async def test_search_empty_query_lists_all_capminal_skills(monkeypatch) -> None
     assert names == {"capminal", "contract-interaction", "morse-launch-b20"}
     assert all(r.source_id == "capminal" for r in results)
     assert all(r.trust_level == "community" for r in results)
-    assert all(r.category == "crypto" for r in results)
+
+
+@pytest.mark.asyncio
+async def test_search_derives_a_distinct_category_per_skill(monkeypatch) -> None:
+    """Categories come from slug+tags, not one hard-coded bucket for the catalog.
+
+    A single category for every row makes the browse chip row a no-op filter,
+    which is what shipping ``category="crypto"`` unconditionally did.
+    """
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
+
+    results = await _source().search("")
+    by_name = {r.name: r.category for r in results}
+
+    assert by_name["capminal"] == "wallet"  # tags: capminal, crypto, wallet
+    assert by_name["contract-interaction"] == "dev"  # tags: contract, crypto
+    # tags: morse, launch — nothing matches, so the house fallback applies.
+    assert by_name["morse-launch-b20"] == "crypto"
+    assert len(set(by_name.values())) > 1
 
 
 @pytest.mark.asyncio
@@ -195,4 +215,3 @@ async def test_inspect_and_fetch_enforce_allowlist(monkeypatch) -> None:
 
     assert await src.fetch(disallowed_slug) is None
     assert fetched_id is None
-

@@ -110,6 +110,42 @@ const BANKR_HUB_SKILL = {
   publisher: { id: 'bankr', name: 'Bankr', url: 'https://bankr.bot', logo: '' },
   status: 'ready',
 }
+// A hub install whose catalog row named a publisher the allowlist does not
+// know: it resolves to no brand and must not wear one, so the hub id and the
+// author handle are all the provenance the card has left.
+const COMMUNITY_HUB_SKILL = {
+  name: 'stranger-skill',
+  description: 'Published by someone the allowlist has never heard of.',
+  layer: 'managed',
+  acquisition: {
+    kind: 'hub',
+    source_id: 'clawhub',
+    author: '@somebody',
+    identifier: 'https://clawhub.example/skills/stranger-skill',
+    removable: true,
+    updatable: true,
+  },
+  publisher: { id: '', name: '', url: '', logo: '' },
+  status: 'ready',
+}
+// Published from a wallet on Bankr's hub, but named in the wheel's user-skill
+// allowlist — so it is Bankr-distributed and groups with Bankr, while the
+// wallet handle stays a credit rather than a second brand.
+const WALLET_PARTNER_SKILL = {
+  name: 'stock-premium-lp-manager',
+  description: 'Manage range liquidity in tokenized-equity pools.',
+  layer: 'managed',
+  acquisition: {
+    kind: 'hub',
+    source_id: 'bankr',
+    author: '@igoryuzo',
+    identifier: 'https://bankr.bot/skills/0xdead/stock-premium-lp-manager',
+    removable: true,
+    updatable: true,
+  },
+  publisher: { id: 'bankr', name: 'Bankr', url: 'https://bankr.bot', logo: '' },
+  status: 'ready',
+}
 // Ready, eligible, and still never reaching the model.
 const WITHHELD_SKILL = {
   name: 'quiet',
@@ -197,6 +233,19 @@ const ROBINHOOD_UNDECLARED = {
   acquisition: { kind: 'shipped' },
   publisher: { id: 'robinhood', name: 'Robinhood', url: 'https://robinhood.com', logo: '' },
   status: 'not_declared',
+}
+
+// The status filters need a skill that genuinely is not ready. `not_declared`
+// no longer qualifies: a skill that declared no requirements runs, so the UI
+// counts it as Ready.
+const ROBINHOOD_NEEDS = {
+  name: 'robinhood-options',
+  description: 'Options chains, if the CLI is installed.',
+  layer: 'bundled',
+  acquisition: { kind: 'shipped' },
+  publisher: { id: 'robinhood', name: 'Robinhood', url: 'https://robinhood.com', logo: '' },
+  status: 'needs_setup',
+  missing_bins: ['rh'],
 }
 
 // A catalog row the empty-query browse does NOT return — the case where the
@@ -466,6 +515,51 @@ describe('SkillsPage', () => {
     expect(within(card).getByRole('presentation')).toHaveAttribute('src', capminalSymbolUrl)
   })
 
+  // ── Catalog panel intro copy (one heading per tab, no cross-contamination) ─
+  // RegistryPanel used to branch on `group === 'bankr'`, so Capminal fell into
+  // the community `else` and advertised itself as a community catalog. Pin the
+  // heading of every catalog tab so a fourth source cannot repeat that.
+  it.each([
+    ['Bankr', 'Bankr skill catalog'],
+    ['Capminal', 'Capminal skill catalog'],
+  ])('the %s tab shows its own catalog heading, not the community one', async (tab, heading) => {
+    wireRpc()
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: tab }))
+
+    expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Community catalog' })).not.toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: `Search ${tab} skills` })).toBeInTheDocument()
+  })
+
+  // The base skill is a prerequisite for everything else in its catalog, so the
+  // warning has to be on the panel itself — a user who reads only the card they
+  // are installing would otherwise never see it.
+  it.each([
+    ['Bankr', "the 'bankr' skill is required for all skills in this catalog."],
+    ['Capminal', "the 'capminal' skill is required for all skills in this catalog."],
+  ])('the %s tab warns that its base skill is required', async (tab, notice) => {
+    wireRpc()
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: tab }))
+
+    const note = await screen.findByRole('note')
+    expect(note).toHaveTextContent('IMPORTANT:')
+    expect(note).toHaveTextContent(notice)
+  })
+
+  it('the Community tab keeps the community heading', async () => {
+    wireRpc()
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: /^Community$/i }))
+
+    expect(await screen.findByRole('heading', { name: 'Community catalog' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /skill catalog$/ })).not.toBeInTheDocument()
+  })
+
   // ── Install (per-item busy, correct RPC + params + invalidation) ─────────
   it('installing a catalog skill calls skills.install with identifier/source/force and reloads', async () => {
     wireRpc()
@@ -617,7 +711,9 @@ describe('SkillsPage', () => {
     // 'bundled' — a partner hub install lands in this same tab.
     expect(within(readyCard).getByText('shipped')).toBeInTheDocument()
     expect(within(readyCard).getByText('Ready')).toBeInTheDocument()
-    expect(within(tradingCard).getByText('No manifest')).toBeInTheDocument()
+    // Declares no requirements, and runs — the card says so rather than
+    // parking it in a bucket of its own.
+    expect(within(tradingCard).getByText('Ready')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Install$/i })).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('Search Robinhood skills'), {
@@ -650,7 +746,7 @@ describe('SkillsPage', () => {
   })
 
   it('filters Robinhood status locally without changing the partner catalog contract', async () => {
-    wireRpc({ skills: [ROBINHOOD_UNDECLARED, ROBINHOOD_READY] })
+    wireRpc({ skills: [ROBINHOOD_NEEDS, ROBINHOOD_READY] })
     renderPage()
     fireEvent.click(screen.getByRole('tab', { name: /Robinhood/i }))
     await screen.findByLabelText('Robinhood skill robinhood-rwa-addresses')
@@ -658,16 +754,14 @@ describe('SkillsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Filter Robinhood skills: Ready' }))
     expect(screen.getByLabelText('Robinhood skill robinhood-rwa-addresses')).toBeInTheDocument()
     await waitFor(() =>
-      expect(
-        screen.queryByLabelText('Robinhood skill robinhood-agentic-trading'),
-      ).not.toBeInTheDocument(),
+      expect(screen.queryByLabelText('Robinhood skill robinhood-options')).not.toBeInTheDocument(),
     )
     expect(callsFor('skills.search')).toHaveLength(0)
   })
 
   it('keeps an active zero-count Robinhood status visible after refresh', async () => {
     wireRpc({
-      skillsSequence: [[ROBINHOOD_UNDECLARED, ROBINHOOD_READY], [ROBINHOOD_UNDECLARED]],
+      skillsSequence: [[ROBINHOOD_NEEDS, ROBINHOOD_READY], [ROBINHOOD_NEEDS]],
     })
     renderPage()
     fireEvent.click(screen.getByRole('tab', { name: /Robinhood/i }))
@@ -818,6 +912,72 @@ describe('SkillsPage', () => {
     renderPage()
     const card = await screen.findByLabelText('Skill trader')
     expect(within(card).getByText('Managed')).toBeInTheDocument()
+  })
+
+  // ── A community skill served by a partner's hub keeps its origin ─────────
+  it('credits the hub and the author of an unbranded hub install', async () => {
+    wireRpc({ skills: [COMMUNITY_HUB_SKILL] })
+    renderPage()
+    const card = await screen.findByLabelText('Skill stranger-skill')
+
+    // It stays out of Partners — the credit must not smuggle a brand in.
+    expect(
+      within(groupNamed('Installed from a hub')).getByLabelText('Skill stranger-skill'),
+    ).toBeInTheDocument()
+    const origin = within(card).getByTitle('Installed from clawhub, authored by @somebody')
+    expect(origin).toHaveTextContent('clawhub')
+    expect(origin).toHaveTextContent('@somebody')
+    // Attribution only: no partner artwork anywhere on the card.
+    expect(within(card).queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  // The catalog tabs render the brand mark, so an installed partner skill that
+  // fell back to the generic package glyph read as a different skill entirely.
+  it('shows the publisher brand mark on an installed partner skill', async () => {
+    wireRpc({ skills: [WALLET_PARTNER_SKILL] })
+    renderPage()
+    const card = await screen.findByLabelText('Skill stock-premium-lp-manager')
+    expect(within(card).getByRole('img', { name: 'Bankr logo' })).toBeInTheDocument()
+
+    fireEvent.click(card)
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('img', { name: 'Bankr logo' })).toBeInTheDocument()
+  })
+
+  it('leaves a skill with no allowlisted publisher on the generic glyph', async () => {
+    wireRpc({ skills: [COMMUNITY_HUB_SKILL] })
+    renderPage()
+    const card = await screen.findByLabelText('Skill stranger-skill')
+    expect(within(card).queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('files an allowlisted wallet skill under its partner and still credits the author', async () => {
+    wireRpc({ skills: [WALLET_PARTNER_SKILL] })
+    renderPage()
+    const card = await screen.findByLabelText('Skill stock-premium-lp-manager')
+
+    expect(
+      within(groupNamed('Partners')).getByLabelText('Skill stock-premium-lp-manager'),
+    ).toBeInTheDocument()
+    // The brand already says "bankr", so the chip drops the source id and keeps
+    // only the part the publisher record cannot carry.
+    const origin = within(card).getByTitle('Installed from bankr, authored by @igoryuzo')
+    expect(origin).toHaveTextContent('@igoryuzo')
+    expect(origin).not.toHaveTextContent(/bankr/i)
+  })
+
+  it('names the hub but no author when the catalog credited none', async () => {
+    wireRpc({ skills: [READY_MANAGED] })
+    renderPage()
+    const card = await screen.findByLabelText('Skill trader')
+    expect(within(card).getByTitle('Installed from clawhub')).toHaveTextContent('clawhub')
+  })
+
+  it('shows no origin chip for a skill that shipped with AgentOS', async () => {
+    wireRpc({ skills: [NEEDS_BUNDLED] })
+    renderPage()
+    const card = await screen.findByLabelText('Skill weather')
+    expect(within(card).queryByTitle(/^Installed from/)).not.toBeInTheDocument()
   })
 
   // ── #130: Update/Remove come off the payload, not off the layer ──────────

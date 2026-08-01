@@ -194,7 +194,13 @@ class SkillInstaller:
                 license=bundle_meta.license if bundle_meta else "",
                 upstream_url=bundle_meta.homepage if bundle_meta else "",
                 publisher_id=_publisher_slug(bundle_meta, source_id),
-                publisher_name=bundle_meta.provider if bundle_meta else "",
+                # The row's author credit when it has one, else the brand it
+                # named. Both are untrusted free text and neither is resolved as
+                # identity — only ``publisher_id`` is (see
+                # ``agentos.skills.publishers``) — so recording the more
+                # specific of the two costs nothing and keeps the human who
+                # wrote a brand-distributed skill visible after install.
+                publisher_name=(bundle_meta.author or bundle_meta.provider) if bundle_meta else "",
                 source_trust=bundle_meta.trust_level if bundle_meta else "",
                 scan_verdict=scan_result.verdict,
                 scan_strategy=scan_result.strategy,

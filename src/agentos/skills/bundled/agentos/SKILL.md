@@ -288,8 +288,10 @@ same name.
 **Acquisition — how it got there.** `shipped` (ships with the wheel),
 `hub` (fetched by `agentos skills install`, has a lockfile entry), or `local`
 (a directory someone put there). `agentos skills list --json` reports it under
-`acquisition`, together with `source_id`, `identifier`, `version`,
-`installed_at`, and two booleans: `removable` and `updatable`. Trust those
+`acquisition`, together with `source_id`, `author`, `identifier`, `version`,
+`installed_at`, and two booleans: `removable` and `updatable`. `author` is the
+credit the catalog row carried (e.g. `@igoryuzo`) — untrusted free text, not a
+brand, and empty only when it would merely repeat the resolved publisher. Trust those
 booleans rather than inferring from the layer — a hub install whose recorded
 path no longer matches the configured `skills.managed_dir` reports
 `removable: false` (AgentOS will not delete files it cannot prove it owns)
@@ -309,6 +311,16 @@ fact — where the text came from and under what licence. A skill can be
 AgentOS-original text published by a partner, or upstream text with no
 publisher at all.
 
+**Status — can it run.** `skills.list` reports `status` as `ready`,
+`needs_setup`, or `not_declared`, plus a `disabled` boolean and a
+`status_detail` line. `ready` and `not_declared` both mean the skill runs —
+the first declared requirements and meets them, the second declared none to
+check — so the Web UI counts them together as **Ready**. `needs_setup` covers
+a missing binary, a missing or **blank** required env var (`export KEY=` does
+not count as configured), a wrong OS, and a config-disabled skill; read
+`disabled` to tell the last one apart, because it is the only one no install
+will fix.
+
 **Availability — whether the agent is being offered it right now.** This is
 not the same as installed or eligible. `skills.list` over the gateway, and the
 agent's own `skill_list` tool, report `availability: {offered, reason, detail}`
@@ -318,7 +330,7 @@ with `reason` one of:
 | --- | --- |
 | `""` | offered (`offered: true`) |
 | `model_invocation_disabled` | the manifest sets `disable-model-invocation`; only a person can run it |
-| `ineligible` | a required binary, env var, or OS is missing |
+| `ineligible` | a required binary, env var, or OS is missing, or the skill is disabled in config |
 | `tool_gate` | its `requires_tools` are not enabled in this session |
 | `fallback_superseded` | it is a fallback for a tool the session already has natively |
 | `not_retrieved` | `skills.filter_enabled` is on and this message did not match |
