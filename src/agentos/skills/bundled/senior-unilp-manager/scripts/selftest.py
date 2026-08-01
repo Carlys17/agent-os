@@ -516,6 +516,66 @@ def tier3(g: dict, r: Results) -> None:
         r.check(f"{c['name']}: poolId", derived[0]["poolId"] if derived else None,
                 c["poolId"])
 
+    # A hook-less pool is invisible to every launchpad registry, so it is reached by
+    # deriving the same id with hooks = 0 across the conventional fee tiers. These ids
+    # were confirmed live with getSlot0; losing them means `mint` can no longer find a
+    # plain pool on a chain that cannot serve a wide log scan.
+    try:
+        from unilp.v4_pool import derive_vanilla_candidates
+    except ImportError:
+        r.skip("tier3/vanilla", "derive_vanilla_candidates not written yet")
+        return
+    for c in g["vanilla_pools"]["cases"]:
+        derived = derive_vanilla_candidates(CHAINS[c["chain"]], c["token"])
+        hit = next((x for x in derived if x["poolId"] == c["poolId"]), None)
+        r.check(f"{c['name']}: derived", hit["poolId"] if hit else None, c["poolId"])
+        if hit:
+            r.check(f"{c['name']}: poolKey", [
+                hit["poolKey"]["currency0"], hit["poolKey"]["currency1"],
+                hit["poolKey"]["fee"], hit["poolKey"]["tickSpacing"],
+                hit["poolKey"]["hooks"],
+            ], [c["currency0"], c["currency1"], c["fee"], c["tickSpacing"],
+                "0x0000000000000000000000000000000000000000"])
+
+    # A currency cannot be paired with itself. WETH is both a known quote and a token
+    # someone will ask about, so this is the case that actually bites.
+    weth = CHAINS["base"]["wrappedNative"]
+    self_paired = [x for x in derive_vanilla_candidates(CHAINS["base"], weth)
+                   if x["poolKey"]["currency0"].lower() == x["poolKey"]["currency1"].lower()]
+    r.check("vanilla: no self-paired candidate", self_paired, [])
+
+    # The explicit-PoolKey escape hatch must never address a pool the caller did not
+    # name: it is only safe because the poolId is recomputed and compared.
+    try:
+        from lp_read import pool_key_from_args
+    except ImportError:
+        r.skip("tier3/poolkey-args", "lp_read.pool_key_from_args not written yet")
+        return
+    case = g["vanilla_pools"]["cases"][0]
+    explicit = pool_key_from_args({
+        "currency0": case["currency0"], "currency1": case["currency1"],
+        "fee": str(case["fee"]), "tick-spacing": str(case["tickSpacing"]),
+    })
+    r.check("poolKeyFromArgs: recompute", compute_pool_id(explicit), case["poolId"])
+    r.check("poolKeyFromArgs: hooks default to none", explicit["hooks"],
+            "0x0000000000000000000000000000000000000000")
+    r.check("poolKeyFromArgs: hex fee accepted", pool_key_from_args({
+        "currency0": case["currency0"], "currency1": case["currency1"],
+        "fee": "0x800000", "tick-spacing": "200"})["fee"], 0x800000)
+    r.check("poolKeyFromArgs: absent -> None", pool_key_from_args({"id": "0xabc"}), None)
+    # A wrong fee must produce a different id rather than a plausible-looking match.
+    wrong = pool_key_from_args({
+        "currency0": case["currency0"], "currency1": case["currency1"],
+        "fee": "500", "tick-spacing": str(case["tickSpacing"]),
+    })
+    r.check("poolKeyFromArgs: wrong fee -> different id",
+            compute_pool_id(wrong) != case["poolId"], True)
+    try:
+        pool_key_from_args({"currency0": case["currency0"], "fee": "3000"})
+        r.check("poolKeyFromArgs: partial rejected", "no error", "RuntimeError")
+    except RuntimeError:
+        r.check("poolKeyFromArgs: partial rejected", "RuntimeError", "RuntimeError")
+
     _ = get_amounts_for_liquidity_at_ticks  # exercised by the read-path diff in phase 5
 
 

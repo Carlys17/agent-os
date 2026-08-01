@@ -83,6 +83,53 @@ def sort_currencies(a: str, b: str) -> tuple[str, str]:
     return checksum_address(b), checksum_address(a)
 
 
+# The (fee, tickSpacing) pairs a hook-less pool is conventionally opened with — the
+# tiers v4 inherited from v3. v4 itself permits any combination, so this is a search
+# space, not a rule: every candidate is confirmed against slot0 before it is reported,
+# and --fee-tiers widens it when a pool used something unusual.
+VANILLA_FEE_TIERS: tuple[tuple[int, int], ...] = (
+    (100, 1), (500, 10), (3000, 60), (10000, 200),
+)
+
+
+def derive_vanilla_candidates(chain: dict, token: str, quotes: list[str] | None = None,
+                              fee_tiers: tuple[tuple[int, int], ...] | None = None
+                              ) -> list[dict]:
+    """Candidate poolIds for hook-less pools holding ``token``.
+
+    A poolId is a keccak hash and cannot be inverted, but with ``hooks`` pinned to the
+    zero address and the pair fixed, only ``fee`` and ``tickSpacing`` are free — so the
+    whole plausible space is a few dozen hashes and no RPC at all. The caller confirms
+    which ids are real with one getSlot0 multicall.
+
+    This is the counterpart to ``launchers.derive_pool_candidates``, which needs a hook
+    from a launchpad registry and returns nothing without one.
+    """
+    if quotes is None:
+        quotes = list(chain.get("knownQuotes") or {})
+    tiers = fee_tiers or VANILLA_FEE_TIERS
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for quote in quotes:
+        # A pool cannot pair a currency with itself, and NATIVE doubles as the ETH
+        # marker here, so a native-quoted token would otherwise collide.
+        if quote.lower() == token.lower():
+            continue
+        currency0, currency1 = sort_currencies(token, quote)
+        for fee, tick_spacing in tiers:
+            pool_key = normalize_pool_key({
+                "currency0": currency0, "currency1": currency1, "fee": fee,
+                "tickSpacing": tick_spacing, "hooks": NATIVE,
+            })
+            pool_id = compute_pool_id(pool_key)
+            if pool_id in seen:
+                continue
+            seen.add(pool_id)
+            out.append({"poolId": pool_id, "poolKey": pool_key})
+    return out
+
+
 # ---------------------------------------------------------------------------
 # PositionInfo (packed uint256 returned by getPoolAndPositionInfo)
 #

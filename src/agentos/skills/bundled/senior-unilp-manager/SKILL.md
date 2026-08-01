@@ -71,8 +71,28 @@ ranges straddling the current tick against `StateView.getLiquidity`. If it does 
 the numbers are wrong — say so rather than reporting them.
 
 **On Base, discovery goes through the launchpad registries, not logs.** Base cannot serve a
-wide `eth_getLogs` range, so a token nobody launched cannot be swept — the command says so
-and exits 2 rather than hanging for an hour. Use `pool --id`, or `--scan-logs` to force it.
+wide `eth_getLogs` range. If no launchpad claims the token, the command probes for **hook-less
+pools** (see below) before giving up; only if that finds nothing does it exit 2 rather than
+hanging for an hour. Use `pool --id`, or `--scan-logs` to force a full scan.
+
+### Finding pools with **no hook**
+
+```bash
+python3 "$S"/lp_read.py pools --token <addr> --no-hook
+python3 "$S"/lp_read.py pools --token <addr> --no-hook --quote <addr> --chain base
+```
+
+A hook-less pool has no registry to look it up in — but with `hooks` pinned to the zero
+address only `fee` and `tickSpacing` are free, so its poolId is derived directly at the
+conventional tiers (0.01%/1, 0.05%/10, 0.30%/60, 1.00%/200) and confirmed with **one
+multicall**. No log scan, same speed on every chain.
+
+This is the fastest way to answer "does a plain, hook-free pool exist for this token?" — the
+question to ask before minting, since a hooked pool is refused by default (§8). It covers
+only pools paired with a **known quote currency** at a **conventional tier**; `--quote <addr>`
+probes a different pairing currency. It is a fast probe, not an exhaustive index, so a
+negative result means "not found at the usual shapes", not "does not exist" — drop `--no-hook`
+for full discovery.
 
 ## 2. One pool in depth
 
@@ -85,9 +105,21 @@ Prints the full PoolKey, dynamic-fee status, decoded hook permissions (labelled 
 launchpad when known), a `poolId recompute` line that must say `OK`, and every liquidity
 range with its market-cap band and owner.
 
-**`--token` is required on Base.** A poolId is a keccak hash and cannot be inverted, so the
-PoolKey normally comes from the pool's `Initialize` log — which Base will not serve.
-`--token` derives it from the launchpad registry in one multicall instead.
+**On Base the PoolKey must be recoverable some other way.** A poolId is a keccak hash and
+cannot be inverted, so it normally comes from the pool's `Initialize` log — which Base will
+not serve. Three routes, cheapest first:
+
+| flag | what it does | cost |
+|---|---|---|
+| `--currency0 --currency1 --fee --tick-spacing [--hooks]` | give the PoolKey outright — works for **any** pool on any chain | free |
+| `--token <addr>` | derive it from the launchpad registry, or from the hook-less fee tiers | 1 multicall |
+| `--scan-logs` | scan `Initialize` logs anyway | very slow on Base |
+
+The explicit PoolKey is checked by recomputing the poolId and requiring it to match `--id`, so
+a typo errors out instead of silently addressing the wrong pool. `--hooks` is optional and
+**defaults to the zero address** — spelling out a PoolKey is the general escape hatch for a
+hook-less pool that discovery cannot reach. Pass `--fee 0x800000` for a dynamic-fee pool (hex
+is accepted); note that is the PoolKey fee, not the live `lpFee` from slot0.
 
 | `--mode` | `logs` (default on Robinhood) | `ticks` (default on Base) |
 |---|---|---|
@@ -197,8 +229,20 @@ python3 "$S"/lp_write.py mint --pool <poolId> --tick-lower <t> --tick-upper <t> 
 Size with exactly one of `--amount0`, `--amount1`, or `--liquidity` (give both for a
 two-sided position). Ticks snap outward to `tickSpacing`. A range entirely above the current
 tick takes **currency1 only**; entirely below takes **currency0 only** — the wrong side is
-rejected with an explanation rather than minting nothing. Hooked pools are refused unless you
-pass `--allow-hooked`.
+rejected with an explanation rather than minting nothing.
+
+**Hook policy: this skill mints into hook-less pools by default.** A pool whose `hooks` is not
+the zero address is refused outright unless you pass `--allow-hooked`, because a hook can
+revert the add or take a delta out of it. So plain `mint` is already the "add LP with no hook"
+path — the parameter table prints `hooks: none` when that is what you got. Note that some
+launchpad hooks (Clanker / Liquid, flags `0x28cc`) set `BEFORE_ADD_LIQUIDITY` and reject
+third-party LPs entirely; `--allow-hooked` lets the attempt through, it does not make it work.
+
+**Targeting the pool.** `mint` takes a `--pool <poolId>` that must already exist — this skill
+**never creates a pool**; there is no `initialize` path in it. Find one first with
+`pools --token <addr> --no-hook` (§1). On Base the PoolKey behind that id still has to be
+recovered, so pass `--token <addr>`, or spell the key out with
+`--currency0 --currency1 --fee --tick-spacing` (§2) — those flags work here too.
 
 ## 9. Increase / decrease / collect / burn
 
@@ -231,8 +275,10 @@ a `WARNING` above 0.5% divergence. Causes and how to read a revert:
 |---|---|
 | `no RPC url for …` | Set `RPC_ROBINHOOD_URL` / `RPC_BASE_URL`, or pass `--rpc <url>` |
 | `env var UNIV4_LP_PRIVATE_KEY is not set` | Set it in the agent environment — never as a flag |
-| `Base cannot serve a wide eth_getLogs range …` | Pass `--token <addr>` to derive the PoolKey from the registry, or `--scan-logs` |
-| `No known launchpad on Base deployed …` | Token predates the registries or used another launcher |
+| `Base cannot serve a wide eth_getLogs range …` | Give the PoolKey directly (`--currency0 --currency1 --fee --tick-spacing`), or `--token <addr>` to derive it, or `--scan-logs` |
+| `could not derive the PoolKey for … from token …` | Not a launch pool, and not a hook-less pool at a conventional tier. Spell the PoolKey out, or `--scan-logs` |
+| `the PoolKey given on the command line does not describe …` | Recompute guard did its job. Check fee (`0x800000` for dynamic), tickSpacing, `--hooks`, and that `currency0 < currency1` |
+| `No known launchpad on Base deployed …, no hook-less pool …` | Token predates the registries, used another launcher, or its pool pairs with an unlisted currency — try `--quote <addr>` |
 | `NOTE: scanned N of M bitmap words` | A `--mode ticks` read was truncated — the totals are incomplete |
 | `poolId recompute … MISMATCH` | PoolKey does not hash to the id — usually the live `lpFee` was used instead of the `0x800000` dynamic flag |
 | `self-check … MISMATCH` | Log decode or tick math is off. Do not report the reserves |
@@ -247,7 +293,7 @@ a `WARNING` above 0.5% divergence. Causes and how to read a revert:
 ## Verifying a change
 
 ```bash
-python3 {baseDir}/scripts/selftest.py     # 429 offline assertions, no network
+python3 {baseDir}/scripts/selftest.py     # 444 offline assertions, no network
 ```
 
 Covers the keccak / EIP-55 / ABI-codec primitives, secp256k1 signing, TickMath, the AGENTOS

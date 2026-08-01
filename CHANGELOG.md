@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- The `senior-unilp-manager` skill can now find and mint into Uniswap v4 pools
+  that have **no hook**. It only ever LPs into pools that already exist, and it
+  refuses hooked pools unless `--allow-hooked` — so hook-less was always the
+  intended default, but on Base it was effectively unreachable: the only fast
+  discovery path derived poolIds from a launchpad registry, which by
+  construction requires a hook, and Base cannot serve the log scan that would
+  find anything else. `pools --token <addr> --no-hook` now derives the poolId
+  with `hooks` pinned to the zero address across the conventional fee tiers and
+  confirms it in one multicall, so the question "does a plain pool exist for
+  this token?" is answered the same way on every chain. `pool`/`mint` accept the
+  PoolKey spelled out (`--currency0 --currency1 --fee --tick-spacing`,
+  `--hooks` defaulting to none), which skips discovery altogether for any pool
+  anywhere; the poolId is recomputed and must match, so a typo errors instead of
+  addressing the wrong pool. The skill still never creates a pool.
+
 - `[auxiliary]` configures the model for work AgentOS runs on its own behalf
   rather than as part of a turn — analysing an attached document, describing an
   image. Empty values reuse `[llm]`, so an install that never sets it is

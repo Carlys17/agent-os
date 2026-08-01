@@ -1300,5 +1300,50 @@
     "out": "0x0000000000000000000000000000000000000000000000000000000000800000"
    }
   ]
+ },
+ "vanilla_pools": {
+  "note": "Hook-less poolIds confirmed live via StateView.getSlot0 on Base and Robinhood - ground truth, not derived. These are the pools a plain `mint` targets, so if derive_vanilla_candidates stops reproducing them, no-hook discovery is silently broken.",
+  "cases": [
+   {
+    "name": "Base WETH/USDC 0.30%",
+    "chain": "base",
+    "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "currency0": "0x4200000000000000000000000000000000000006",
+    "currency1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "fee": 3000,
+    "tickSpacing": 60,
+    "poolId": "0x1d8c55f347727c0fb4f5e1b65cdb93639e0c7102580a7d345e1144cd5a718f54"
+   },
+   {
+    "name": "Base ETH/USDC 0.05% (native currency0)",
+    "chain": "base",
+    "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "currency0": "0x0000000000000000000000000000000000000000",
+    "currency1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "fee": 500,
+    "tickSpacing": 10,
+    "poolId": "0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a"
+   },
+   {
+    "name": "Robinhood WETH/USDG 0.05%",
+    "chain": "robinhood",
+    "token": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    "currency0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "currency1": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    "fee": 500,
+    "tickSpacing": 10,
+    "poolId": "0xfcfae8fa0bd6da961bcf5d990f27690932deac4f093e99bf3e871691c6586593"
+   },
+   {
+    "name": "Robinhood ETH/USDG 0.01% (native currency0)",
+    "chain": "robinhood",
+    "token": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    "currency0": "0x0000000000000000000000000000000000000000",
+    "currency1": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    "fee": 100,
+    "tickSpacing": 1,
+    "poolId": "0x24107d152f14a76d292123265ae3f3c71f863fc2f4ef7ba49d64e78d28ea379e"
+   }
+  ]
  }
 }

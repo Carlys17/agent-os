@@ -246,6 +246,41 @@ determined once the registry gives up the hook. `derive_pool_candidates` builds 
 and `getSlot0` confirms which candidates are real (an uninitialized pool reads back
 `sqrtPriceX96 = 0` rather than reverting).
 
+## Pools with no hook
+
+A pool nobody launched has no registry entry, so the trick above has nothing to start from —
+but it needs nothing, because `hooks` is known: the zero address. That leaves only `fee` and
+`tickSpacing` free, and vanilla pools use the tiers v4 inherited from v3:
+
+| fee | tickSpacing |
+|---|---|
+| `100` (0.01%) | `1` |
+| `500` (0.05%) | `10` |
+| `3000` (0.30%) | `60` |
+| `10000` (1.00%) | `200` |
+
+`derive_vanilla_candidates` (in `unilp/v4_pool.py`, not `launchers.py` — this has nothing to
+do with launchpads) crosses those four tiers with every currency in `chain["knownQuotes"]`,
+giving ~12 ids for a few keccaks and **zero** RPC calls; the same `getSlot0` multicall then
+says which exist. `pools --token <addr> --no-hook` is that probe, and it runs identically on
+Base and Robinhood since it never touches a log.
+
+v4 permits any `(fee, tickSpacing)` pair, so this is a search space rather than a rule — a
+pool opened at an unusual shape, or paired with a currency outside `knownQuotes`, will not be
+found. For those, `pool --id <poolId> --currency0 … --currency1 … --fee … --tick-spacing …`
+skips discovery entirely; the poolId is recomputed from the given key and must match the id,
+which is what keeps a hand-typed PoolKey from addressing the wrong pool.
+
+Two things worth remembering when reading these ids:
+
+- **Native ETH is the zero address too.** `NATIVE` is both the ETH currency marker and the
+  "no hook" sentinel, so an ETH-quoted hook-less pool has the zero address in two of the five
+  PoolKey fields. That is correct, not a bug — but it is why the derivation skips any
+  candidate that would pair a currency with itself.
+- **A hook-less pool cannot have a meaningful dynamic fee.** Only the hook can call
+  `updateDynamicLPFee`, so `0x800000` with `hooks = 0` would freeze the fee at zero. The
+  vanilla tiers are therefore all static.
+
 ## Clanker v4 / v4.1
 
 `Clanker.tokenDeploymentInfo(address token)` → `{token, hook, locker, extensions[]}`. Returns

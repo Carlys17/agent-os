@@ -76,6 +76,7 @@ from unilp.v4_pool import (  # noqa: E402
     aggregate_ranges,
     compute_pool_id,
     decode_position_info,
+    derive_vanilla_candidates,
     find_pools_for_token,
     format_fee,
     format_hook_flags,
@@ -93,10 +94,16 @@ USAGE = """
 senior-unilp-manager — read-only Uniswap V4 LP inspection
 
   pools     --token <addr> [--quote <addr>] [--min-tvl <usd>] [--max-pools 60] [--all-pools]
-            [--include-v3] [--scan-logs]
+            [--include-v3] [--scan-logs] [--no-hook]
+            --no-hook only looks for pools with no hook, by deriving their poolIds at the
+            conventional fee tiers. One multicall, no log scan, same speed on every chain.
   pool      --id <poolId> [--token <addr>] [--ranges <n>]
-            --token lets the PoolKey be derived from the launchpad registry instead of an
-            Initialize log scan — required on chains that cap eth_getLogs ranges (Base).
+            --token lets the PoolKey be derived from the launchpad registry — or, for a
+            hook-less pool, from the conventional fee tiers — instead of an Initialize log
+            scan, which chains that cap eth_getLogs ranges (Base) cannot serve.
+            --currency0 <addr> --currency1 <addr> --fee <n> --tick-spacing <n> [--hooks <addr>]
+            gives the PoolKey outright: no lookup at all, works for any pool on any chain.
+            It is checked by recomputing the poolId. --hooks defaults to no hook.
   position  --token-id <id> [--no-fees]
   positions --owner <addr> [--include-empty]
   launcher  --token <addr>            which launchpad deployed it, its pool, who holds the LP
@@ -203,16 +210,75 @@ def band_for(tick_lower: int, tick_upper: int, ctx: dict | None) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
+_POOL_KEY_ARGS = ("currency0", "currency1", "fee", "tick-spacing")
+
+
+def pool_key_from_args(args: dict) -> dict | None:
+    """A PoolKey spelled out on the command line, or None if it was not.
+
+    The escape hatch for a pool no discovery path can reach: it needs no RPC and no
+    registry, and the caller verifies it by recomputing the poolId — so a typo cannot
+    silently address the wrong pool. ``--hooks`` defaults to the zero address, which is
+    the whole point: a hook-less pool is exactly the case registries cannot describe.
+    """
+    present = [name for name in _POOL_KEY_ARGS if args.get(name) is not None]
+    if not present:
+        return None
+    if len(present) != len(_POOL_KEY_ARGS):
+        missing = ", ".join(f"--{name}" for name in _POOL_KEY_ARGS if name not in present)
+        raise RuntimeError(
+            f"an explicit PoolKey needs all of --currency0 --currency1 --fee "
+            f"--tick-spacing (missing: {missing}). --hooks is optional and defaults to "
+            f"the zero address (no hook)."
+        )
+    # base 0 so a dynamic-fee pool can be given as 0x800000 as well as 8388608.
+    try:
+        fee = int(str(args["fee"]), 0)
+        tick_spacing = int(str(args["tick-spacing"]), 0)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"--fee and --tick-spacing must be integers (hex accepted with an 0x "
+            f"prefix): {exc}"
+        ) from exc
+    return normalize_pool_key({
+        "currency0": args["currency0"],
+        "currency1": args["currency1"],
+        "fee": fee,
+        "tickSpacing": tick_spacing,
+        "hooks": args.get("hooks") or NATIVE,
+    })
+
+
 def pool_key_for_id(client, chain: dict, pool_id: str, args: dict | None = None) -> dict | None:
     """Recover the PoolKey behind a poolId.
 
     A poolId is a keccak hash, so it cannot be inverted — the PoolKey normally comes
     from the pool's Initialize log. On a chain that will not serve a wide eth_getLogs
-    range that scan is thousands of requests, so ``--token`` is offered instead: the
-    launcher registry gives the hook, and the derived candidate whose id matches is the
-    answer. Costs one multicall.
+    range that scan is thousands of requests, so cheaper routes are tried first:
+    a PoolKey spelled out on the command line (free, and works for any pool anywhere),
+    then ``--token``, which derives candidates from the launchpad registry and — for a
+    hook-less pool, which no registry knows about — from the conventional fee tiers.
+    Both derivations are keccak-only; confirming them costs at most one multicall.
     """
     args = args or {}
+
+    explicit = pool_key_from_args(args)
+    if explicit:
+        derived_id = compute_pool_id(explicit)
+        if derived_id.lower() != pool_id.lower():
+            raise RuntimeError(
+                f"the PoolKey given on the command line does not describe {pool_id}.\n"
+                f"  given PoolKey hashes to {derived_id}\n"
+                f"  currency0={explicit['currency0']} currency1={explicit['currency1']} "
+                f"fee={explicit['fee']} tickSpacing={explicit['tickSpacing']} "
+                f"hooks={explicit['hooks']}\n"
+                "  Check the fee (a dynamic-fee pool is 0x800000, not the live lpFee), "
+                "the tickSpacing,\n"
+                "  --hooks, and that currency0 < currency1 by address — a PoolKey is "
+                "order-sensitive."
+            )
+        return explicit
+
     if chain["logScan"].get("supportsFullRange") is not False:
         init = get_pool_init(client, chain, pool_id)
         return init["poolKey"] if init else None
@@ -229,11 +295,26 @@ def pool_key_for_id(client, chain: dict, pool_id: str, args: dict | None = None)
             )
             if hit:
                 return hit["poolKey"]
+        # No launcher, or none of its pools is this one — the pool may simply have no
+        # hook, which puts it outside every registry. That candidate set is pure keccak,
+        # so trying it costs nothing but a few hashes.
+        hit = next(
+            (c for c in derive_vanilla_candidates(chain, token)
+             if c["poolId"].lower() == pool_id.lower()),
+            None,
+        )
+        if hit:
+            return hit["poolKey"]
         raise RuntimeError(
             f"could not derive the PoolKey for {pool_id} from token {token} on "
-            f"{chain['name']}. Either the token was not launched by a known launchpad, "
-            f"or this pool is not its launch pool. Pass --scan-logs to fall back to an "
-            f"Initialize log scan (very slow on this chain)."
+            f"{chain['name']}. It is not a launch pool of any known launchpad, and it "
+            f"is not a hook-less pool pairing this token with a known quote currency at "
+            f"a conventional fee tier.\n"
+            f"  Spell the PoolKey out to skip discovery entirely:\n"
+            f"    --currency0 <addr> --currency1 <addr> --fee <n> --tick-spacing <n> "
+            f"[--hooks <addr>]\n"
+            f"  Or pass --scan-logs to fall back to an Initialize log scan (very slow "
+            f"on this chain)."
         )
 
     if args.get("scan-logs"):
@@ -242,9 +323,13 @@ def pool_key_for_id(client, chain: dict, pool_id: str, args: dict | None = None)
 
     raise RuntimeError(
         f"{chain['name']} cannot serve a wide eth_getLogs range, so the PoolKey for "
-        f"{pool_id} cannot be looked up directly.\n"
-        f"  Pass --token <address> to derive it from the launchpad registry (fast), "
-        f"or --scan-logs to scan anyway (very slow)."
+        f"{pool_id} cannot be looked up directly. Any of these works:\n"
+        f"  --currency0 <addr> --currency1 <addr> --fee <n> --tick-spacing <n> "
+        f"[--hooks <addr>]\n"
+        f"                          give the PoolKey directly — no lookup, any pool\n"
+        f"  --token <address>       derive it from the launchpad registry, or from the\n"
+        f"                          hook-less fee tiers (fast)\n"
+        f"  --scan-logs             scan anyway (very slow)"
     )
 
 
@@ -371,6 +456,40 @@ def discover_via_launcher(client, chain: dict, token: str) -> dict | None:
     return {"launcher": found, "inits": inits}
 
 
+def _confirm_candidates(client, chain: dict, candidates: list[dict]) -> list[dict]:
+    """Keep the candidate poolIds that are actually initialized on chain.
+
+    One multicall regardless of how many candidates there are. An uninitialized pool
+    reads back as sqrtPriceX96 = 0 rather than reverting.
+    """
+    if not candidates:
+        return []
+    slot0s = client.multicall([
+        {"address": chain["stateView"], "abi": STATE_VIEW_ABI,
+         "functionName": "getSlot0", "args": [c["poolId"]]}
+        for c in candidates
+    ])
+    out = []
+    for candidate, slot0 in zip(candidates, slot0s):
+        if slot0["status"] != "success" or int(slot0["result"][0]) == 0:
+            continue
+        out.append({**candidate, "blockNumber": 0, "transactionHash": None})
+    return out
+
+
+def discover_vanilla_pools(client, chain: dict, token: str,
+                           quotes: list[str] | None = None) -> list[dict]:
+    """Hook-less pools holding ``token``, without touching a single log.
+
+    Same trick as ``discover_via_launcher``, but the hook is pinned to the zero address
+    instead of coming from a registry, so it needs no launchpad and works identically on
+    every chain. Only finds pools paired with a known quote currency at a conventional
+    fee tier — it is a fast probe, not an exhaustive index.
+    """
+    candidates = derive_vanilla_candidates(chain, token, quotes=quotes)
+    return _confirm_candidates(client, chain, candidates)
+
+
 def cmd_pools(client, chain: dict, args: dict) -> None:
     token = checksum_address(require_arg(args, "token", "token address"))
     min_tvl = -1.0 if args.get("all-pools") else float(args.get("min-tvl", 1))
@@ -378,41 +497,71 @@ def cmd_pools(client, chain: dict, args: dict) -> None:
 
     inits: list = []
     launcher = None
-    if not args.get("scan-logs"):
-        via_launcher = discover_via_launcher(client, chain, token)
-        if via_launcher:
-            launcher = via_launcher["launcher"]
-            inits = via_launcher["inits"]
+    no_hook_only = bool(args.get("no-hook"))
+    used_vanilla = False
+    # --quote lets the hook-less probe reach a pairing currency this chain's registry
+    # does not list; without it every known quote is tried.
+    vanilla_quotes = [checksum_address(args["quote"])] if args.get("quote") else None
+
+    if no_hook_only:
+        # Deliberately skips both the registry and the log scan: this asks one narrow
+        # question — does a hook-less pool exist — and answers it in a single multicall
+        # on any chain, whatever its eth_getLogs limits.
+        used_vanilla = True
+        inits = discover_vanilla_pools(client, chain, token, quotes=vanilla_quotes)
+    else:
+        if not args.get("scan-logs"):
+            via_launcher = discover_via_launcher(client, chain, token)
+            if via_launcher:
+                launcher = via_launcher["launcher"]
+                inits = via_launcher["inits"]
 
     used_registry = launcher is not None
-    if not used_registry:
+    if not used_registry and not no_hook_only:
         # No launcher claims this token, so fall back to the Initialize log scan. On a
-        # chain that cannot serve wide ranges this is very slow, so say so instead of
-        # hanging.
+        # chain that cannot serve wide ranges that is thousands of sequential requests,
+        # so probe for a hook-less pool first — a poolId with no hook is only a few
+        # keccaks away, and one multicall settles it.
         if chain["logScan"].get("supportsFullRange") is False and not args.get("scan-logs"):
-            chunks = math.ceil(24_000_000 / chain["logScan"].get("chunkBlocks", 9_000))
-            print(f"\nNo known launchpad on {chain['name']} deployed {token}, and this "
-                  "chain cannot serve a wide eth_getLogs range.")
-            print(f"A full Initialize scan here is ~{chunks} sequential requests and "
-                  "will take a very long time.")
-            print("\nOptions:")
-            print("  --scan-logs           do it anyway")
-            print("  pool --id <poolId>    inspect a pool directly if you know its id")
-            print("  launcher --token <a>  check which launchpad deployed a token")
-            if launchers_for(chain):
-                names = ", ".join(entry["name"] for entry in launchers_for(chain))
-                print(f"\nKnown launchpads on {chain['name']}: {names}")
-            if args.get("include-v3"):
-                report_v3(client, chain, token)
-            sys.exit(2)
-        inits = find_pools_for_token(client, chain, token)
+            used_vanilla = True
+            inits = discover_vanilla_pools(client, chain, token, quotes=vanilla_quotes)
+            if not inits:
+                chunks = math.ceil(24_000_000 / chain["logScan"].get("chunkBlocks", 9_000))
+                print(f"\nNo known launchpad on {chain['name']} deployed {token}, no "
+                      "hook-less pool pairs it with a known quote currency, and this "
+                      "chain cannot serve a wide eth_getLogs range.")
+                print(f"A full Initialize scan here is ~{chunks} sequential requests and "
+                      "will take a very long time.")
+                print("\nOptions:")
+                print("  --quote <address>     probe a hook-less pool against this "
+                      "pairing currency")
+                print("  --scan-logs           do the full scan anyway")
+                print("  pool --id <poolId>    inspect a pool directly if you know its id")
+                print("  launcher --token <a>  check which launchpad deployed a token")
+                if launchers_for(chain):
+                    names = ", ".join(entry["name"] for entry in launchers_for(chain))
+                    print(f"\nKnown launchpads on {chain['name']}: {names}")
+                if args.get("include-v3"):
+                    report_v3(client, chain, token)
+                sys.exit(2)
+        else:
+            inits = find_pools_for_token(client, chain, token)
 
     if not inits:
-        print(f"\nNo Uniswap v4 pools found for {token} on {chain['name']}.")
+        kind = "hook-less Uniswap v4 pools" if no_hook_only else "Uniswap v4 pools"
+        print(f"\nNo {kind} found for {token} on {chain['name']}.")
         if used_registry:
             print(f"  {launcher['name']} lists this token (hook {launcher['hook']}) but "
                   "no derived pool is initialized.")
             print("  Pass --scan-logs to fall back to a full log scan.")
+        elif no_hook_only:
+            print("  Probed every known quote currency at the conventional fee tiers "
+                  "(0.01% / 0.05% / 0.30% / 1.00%).")
+            print("  A pool paired with something else, or opened at an unusual fee or "
+                  "tickSpacing,")
+            print("  will not show up here. Options:")
+            print("    --quote <address>   probe against a specific pairing currency")
+            print("    (drop --no-hook)    full discovery via launchpad registry / logs")
         if args.get("include-v3"):
             report_v3(client, chain, token)
         return
@@ -558,6 +707,11 @@ def cmd_pools(client, chain: dict, args: dict) -> None:
     if used_registry:
         print(f"  launched by {launcher['name']} — pool(s) derived from its registry, "
               f"no log scan. hook {launcher['hook']}")
+    elif used_vanilla:
+        print("  hook-less probe — poolIds derived with hooks = 0 across the "
+              "conventional fee tiers, no log scan.")
+        print("  Only pools paired with a known quote currency are covered; this is "
+              "not an exhaustive index.")
     print(render_table([
         {"key": "pool", "label": "poolId"},
         {"key": "pair", "label": "pair"},
