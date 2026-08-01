@@ -393,6 +393,21 @@ thinking_level = "medium"
 # calls. When false, AgentOS sends no tool definitions and executes no tools.
 enabled = true
 
+# Base allowlist. Tool schemas are the fixed overhead on every provider call in
+# every turn — on a stock install roughly 7,300 tokens — so this is usually the
+# largest thing you can change. Run `agentos context` to see the current cost
+# and what each profile would cost on your install.
+#
+#   full         every registered tool (default)
+#   coding       filesystem, runtime, sessions, memory
+#   messaging    message + session inspection
+#   memory_only  memory tools only
+#   minimal      session_status only
+#
+# The set is fixed for the session, so narrowing it does not disturb the prompt
+# cache. `allow` / `also_allow` / `deny` refine it further.
+# profile = "coding"
+
 [agent_token_saving]
 # Project fresh tool results with the built-in tokenjuice reducer before they
 # are fed back into the model. Raw tool responses remain available through the
@@ -402,10 +417,35 @@ tool_result_store_max_bytes = 8388608
 tool_result_store_disk_budget_bytes = 268435456
 tool_result_store_retention_seconds = 604800
 
+[prompt]
+# Prompt-layer feature flags.
+# platform_hint_enabled = true   # channel-specific markdown rendering hints
+# env_probe_enabled = true       # tell the model which developer tools are on
+#                                # PATH, so it stops reaching for ones this
+#                                # machine does not have. Names only, no paths.
+
 [compaction]
 enabled = true
 # model = ""            # None = use session model
 # timeout_seconds = 30.0
+
+[auxiliary]
+# The model for work AgentOS does on its own behalf rather than as part of a
+# turn: analysing an attached document, describing an image. These calls are
+# billed to the session but tracked separately, so `agentos cost` can show what
+# the agent spent answering versus what the runtime spent on its own.
+#
+# Leave empty to reuse the [llm] provider and model. Point it at something
+# cheap if these tasks do not need your main model.
+# provider = ""
+# model = ""
+# timeout_seconds = 120.0
+
+# Per-task overrides. Tasks in use: "document" (analysing an attached file) and
+# "vision" (describing an image). A task with a capability requirement wants its
+# own entry — vision needs a model that can actually see an image.
+# [auxiliary.tasks.vision]
+# model = "openai/gpt-4o-mini"
 
 [sandbox]
 # Per-command ephemeral sandbox + security grading.

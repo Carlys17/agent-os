@@ -31,6 +31,25 @@ def _clear_vision_provider_env(monkeypatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
+def _use_auxiliary(monkeypatch, *, llm_config=None, config=None, factory=None):
+    """Point the shared auxiliary client at test doubles.
+
+    The vision and document paths resolve and run their provider through this
+    client, so a test intercepts it by replacing its provider factory rather
+    than whatever the client uses internally.
+    """
+
+    from agentos.provider import auxiliary
+
+    client = auxiliary.AuxiliaryClient(
+        config=config,
+        llm_config=llm_config,
+        provider_factory=factory if factory is not None else auxiliary.build_provider,
+    )
+    monkeypatch.setattr(auxiliary, "_client", client)
+    return client
+
+
 @pytest.mark.asyncio
 async def test_openrouter_image_provider_adds_app_attribution_headers(monkeypatch) -> None:
     captured: dict[str, object] = {}
@@ -309,6 +328,7 @@ def test_vision_provider_uses_configured_router_image_tier(monkeypatch) -> None:
         llm_config=llm_config,
         agentos_router_config=router_config,
     )
+    _use_auxiliary(monkeypatch, llm_config=llm_config)
     try:
         cfg = media._resolve_vision_provider_config(default_model="openai/gpt-4o-mini")
     finally:
@@ -411,14 +431,12 @@ async def test_image_tool_uses_configured_router_vision_provider_for_local_file(
             captured["messages"] = messages
             yield SimpleNamespace(text="a generated image")
 
-    class FakeSelector:
-        def __init__(self, selector_config):
-            captured["primary"] = selector_config.primary
+    def fake_factory(*, provider, model, api_key="", base_url="", **_kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        return FakeProvider()
 
-        def resolve(self):
-            return FakeProvider()
-
-    monkeypatch.setattr("agentos.provider.selector.ModelSelector", FakeSelector)
+    _use_auxiliary(monkeypatch, llm_config=llm_config, factory=fake_factory)
 
     try:
         result = await media.image(str(png_path), prompt="Describe this image")
@@ -428,7 +446,7 @@ async def test_image_tool_uses_configured_router_vision_provider_for_local_file(
     payload = json.loads(result)
     assert payload["description"] == "a generated image"
     assert payload["model"] == "provider"
-    assert captured["primary"].model == "moonshotai/kimi-k2.6"
+    assert captured["model"] == "moonshotai/kimi-k2.6"
     messages = captured["messages"]
     assert isinstance(messages, list)
     message = messages[0]
@@ -455,14 +473,7 @@ async def test_vision_provider_sends_provider_native_multimodal_message(monkeypa
             captured["config"] = config
             yield SimpleNamespace(text="described")
 
-    class FakeSelector:
-        def __init__(self, selector_config):
-            captured["primary"] = selector_config.primary
-
-        def resolve(self):
-            return FakeProvider()
-
-    monkeypatch.setattr("agentos.provider.selector.ModelSelector", FakeSelector)
+    _use_auxiliary(monkeypatch, factory=lambda **_kwargs: FakeProvider())
 
     result = await media._call_vision_provider(
         b64_data="aW1hZ2UtYnl0ZXM=",
@@ -497,16 +508,11 @@ async def test_vision_provider_error_event_is_not_empty_success(monkeypatch) -> 
         async def chat(self, *, messages, config=None):
             yield ErrorEvent(message="Request timed out", code="timeout")
 
-    class FakeSelector:
-        def __init__(self, selector_config):
-            return None
+    _use_auxiliary(monkeypatch, factory=lambda **_kwargs: FakeProvider())
 
-        def resolve(self):
-            return FakeProvider()
-
-    monkeypatch.setattr("agentos.provider.selector.ModelSelector", FakeSelector)
-
-    with pytest.raises(RuntimeError, match="Provider stream error.*timeout"):
+    # An error event must surface as a failure, never as an empty description.
+    # The message now names the failing task as well as the provider code.
+    with pytest.raises(RuntimeError, match="vision.*timeout"):
         await media._call_vision_provider(
             b64_data="aW1hZ2UtYnl0ZXM=",
             media_type="image/png",
@@ -529,14 +535,7 @@ async def test_text_media_llm_uses_provider_native_message(monkeypatch) -> None:
             captured["config"] = config
             yield SimpleNamespace(text="analyzed")
 
-    class FakeSelector:
-        def __init__(self, selector_config):
-            captured["primary"] = selector_config.primary
-
-        def resolve(self):
-            return FakeProvider()
-
-    monkeypatch.setattr("agentos.provider.selector.ModelSelector", FakeSelector)
+    _use_auxiliary(monkeypatch, factory=lambda **_kwargs: FakeProvider())
 
     result = await media._call_llm_with_text("Extracted text", "Analyze this")
 

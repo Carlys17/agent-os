@@ -8,6 +8,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- `[auxiliary]` configures the model for work AgentOS runs on its own behalf
+  rather than as part of a turn — analysing an attached document, describing an
+  image. Empty values reuse `[llm]`, so an install that never sets it is
+  unchanged; point it at something cheap when those tasks do not need your main
+  model. Per-task overrides live in `[auxiliary.tasks.<task>]` (`document` and
+  `vision` today), because a text-only model cannot describe an image.
+
+- The system prompt now names the developer tools that actually exist on the
+  machine. An agent asked to run the tests reached for `pytest` and found out it
+  was missing by running it and reading a shell error, which cost a turn and
+  often started a repair for a problem that was never the task. The block is
+  probed once per process and lives in the cached part of the prompt, so it is
+  paid for once per session rather than once per turn. Only names are emitted,
+  never paths. Turn it off with `[prompt] env_probe_enabled = false`.
+
+- `agentos context` shows what every provider request carries before the
+  conversation starts. Tool schemas dominate that overhead — about 7,300 tokens
+  on a stock install, charged on every call in every turn — and nothing
+  surfaced the number, so the only way to learn it was to write a script
+  against the registry. The command breaks the cost down, lists the largest
+  schemas, and prices each `[tools] profile` against the current one.
+
+- `[tools] profile` is now documented. It already narrowed the tool surface
+  sharply — `coding` costs 77% less than `full`, `messaging` 92% less — but it
+  appeared in no example config, no doc page and no operator guide, so the
+  largest available lever on per-request cost was undiscoverable. Because a
+  profile is fixed for the session, narrowing it does not disturb the prompt
+  cache.
+
+- A turn that edits code and then answers "done" without running anything is
+  now noticed. A passive ledger records which files a turn changed and whether
+  a test, build or lint command ran *after* the last change; when the model
+  stops on unverified edits the turn emits a warning naming the files and the
+  omission. Evidence gathered before an edit does not count for it. Prose,
+  data and config files are excluded — a README edit has nothing a test could
+  exercise — and messaging surfaces are exempt, since answering a person in
+  chat is not maintaining a checkout.
+
 - New bundled skill `senior-unilp-manager`: read and manage Uniswap V4 liquidity
   on Base (8453) and Robinhood Chain (4663). Reads a token's pools with exact
   reserves and per-range market-cap bands, resolves which launchpad deployed a
@@ -30,6 +68,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- `edit_file` no longer fails on text that differs from the file only in
+  formatting. It still tries an exact match first, then falls back through a
+  chain of increasingly permissive strategies — indentation, whitespace runs,
+  unescaped `\n` literals, smart quotes, and finally block similarity — and
+  names the strategy that matched in its result. Text that appears more than
+  once is still rejected rather than guessed, now with the line numbers of
+  every match, and a failed edit reports the closest regions it found.
+
+- The progress watchdog now sees repeated *successful* calls, not only repeated
+  failures. An agent reading the same file over and over produced a clean result
+  every time, so by every measure the turn was making progress while burning
+  iterations and context on nothing. A call is counted as a repeat only when its
+  result is byte-identical to the previous one for the same tool and arguments —
+  re-reading a file that changed is real work, and its differing result resets
+  the count.
+
 - The Skills page renames two group headings and adds one: `Partners` →
   **Partner Skills**, `Shipped with AgentOS` → **AgentOS Normal Skills**, and a
   new **AgentOS Crypto Skills** between them for bundled skills declaring
@@ -38,6 +92,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   heading by declaring the category.
 
 ### Fixed
+
+- Tool schemas from MCP servers went to the provider exactly as the server
+  emitted them, so one malformed tool could fail the whole request and take
+  every other tool down with it. Schemas are now normalized once at discovery:
+  `$ref` into `$defs` is inlined, `anyOf`/`oneOf` unions that exist only to
+  permit `null` collapse to their concrete branch, `"type": ["string", "null"]`
+  becomes `"string"`, objects without `properties` gain an empty one, and
+  values that are not schemas at all are dropped along with any `required`
+  entry naming them.
+
+- Side-task LLM calls spent tokens that nothing recorded. Analysing a document
+  and describing an image each built their own provider client, so the cost
+  appeared on the provider bill but never in `agentos cost`. Those calls now run
+  through one auxiliary client that bills the session that triggered them and
+  additionally records them under an `aux:<task>` scope, keeping runtime cost
+  separable from turn cost. Two copies of the provider-to-credential mapping in
+  `tools/builtin/media.py` collapse into one — the document path had only ever
+  read the environment, so it ignored a key configured in `[llm]` for the same
+  provider and now finds it.
+
+- A side task with no reachable API key sent the request anyway and failed on
+  `Illegal header value b'Bearer '`, which named neither the provider nor the
+  variable to set. It now fails before the request with both. Local backends
+  such as Ollama, which authenticate by reachability rather than by key, are
+  unaffected.
+
+- A failing provider request read its error body whole. That body is written by
+  whatever sits in front of the provider — a WAF's HTML block page, a proxy's
+  stack trace — and has no size contract, so the read was unbounded; on the
+  Anthropic path the entire decoded body then became the `ErrorEvent` message
+  and flowed into the agent's context. Error bodies are now read to a bound and
+  summarised: JSON keeps its `error.message`, an HTML page collapses to its
+  title and size, and anything else is truncated with the cut made visible.
 
 - `skill_view` now resolves `{baseDir}` to the skill's install directory and
   opens every read with a `[Skill directory: ...]` line. The placeholder is how
@@ -53,7 +140,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   variable. `_requirements_item` put `SkillRequires.env` on the wire, which is a
   list of `SkillEnvVar` dataclasses, instead of `env_names`. No bundled skill had
   declared `requires.env` before now, so nothing had hit it.
-
 
 ## [2026.7.31] - 2026-07-31
 

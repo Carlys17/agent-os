@@ -440,6 +440,7 @@ class PromptConfig(BaseModel):
     """Prompt-layer feature flags."""
 
     platform_hint_enabled: bool = True
+    env_probe_enabled: bool = True
 
 
 MemoryEmbeddingProvider = Literal[
@@ -1235,6 +1236,32 @@ class CompactionLlmConfig(BaseSettings):
     enabled: bool = True
 
 
+class AuxiliaryTaskConfig(BaseModel):
+    """Per-task override for a side-task LLM call."""
+
+    provider: str = ""
+    model: str = ""
+
+
+class AuxiliaryConfig(BaseSettings):
+    """Model used for work AgentOS initiates itself, not for the agent's turn.
+
+    Document analysis and image description run here today. Empty values fall
+    back to the configured ``[llm]`` section, so an install that never sets
+    this keeps working exactly as before.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AGENTOS_AUXILIARY_",
+        env_nested_delimiter="__",
+    )
+
+    provider: str = ""
+    model: str = ""
+    timeout_seconds: float = 120.0
+    tasks: dict[str, AuxiliaryTaskConfig] = Field(default_factory=dict)
+
+
 class MCPServerEntry(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENTOS_MCP_SERVER_")
 
@@ -1666,6 +1693,7 @@ class GatewayConfig(BaseSettings):
     agentos_router: AgentOSRouterConfig = Field(default_factory=AgentOSRouterConfig)
     agent_token_saving: AgentTokenSavingConfig = Field(default_factory=AgentTokenSavingConfig)
     compaction: CompactionLlmConfig = Field(default_factory=CompactionLlmConfig)
+    auxiliary: AuxiliaryConfig = Field(default_factory=AuxiliaryConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     image_generation: ImageGenerationConfig = Field(default_factory=ImageGenerationConfig)

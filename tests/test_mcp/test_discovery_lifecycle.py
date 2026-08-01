@@ -147,3 +147,84 @@ async def test_cancelled_mcp_discovery_closes_client_without_leaking(
 
     assert client.closed is True
     assert discovery.active_clients_snapshot() == ()
+
+
+@pytest.mark.asyncio
+async def test_server_schema_is_sanitized_before_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A server's raw schema reaches the provider, so it is repaired on the way in."""
+
+    from agentos.mcp import discovery
+
+    config = MCPServerConfig(name="pydantic-ish", transport="stdio", command="mock-mcp")
+    client = FakeMCPClient(
+        config,
+        tools=[
+            MCPToolDef(
+                name="search",
+                description="Search things",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        # The shape Pydantic emits for every Optional[...] field.
+                        "limit": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+                        "mode": {"type": ["string", "null"]},
+                        "target": {"$ref": "#/$defs/Target"},
+                        "broken": "object",
+                    },
+                    "required": ["limit", "broken"],
+                    "$defs": {
+                        "Target": {"type": "object", "properties": {"id": {"type": "string"}}}
+                    },
+                },
+            )
+        ],
+    )
+    monkeypatch.setattr(discovery, "create_client", lambda _config: client)
+
+    registry = ToolRegistry()
+    await discovery.discover_and_register(config, registry, owner="gateway")
+
+    registered = registry.get("mcp_search")
+    assert registered is not None
+    parameters = registered.spec.parameters
+
+    assert parameters["limit"] == {"type": "integer"}
+    assert parameters["mode"] == {"type": "string"}
+    assert parameters["target"] == {"type": "object", "properties": {"id": {"type": "string"}}}
+    assert "broken" not in parameters
+    # required must not name a property that no longer exists.
+    assert registered.spec.required == ["limit"]
+
+
+@pytest.mark.asyncio
+async def test_clean_server_schema_is_registered_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agentos.mcp import discovery
+
+    config = MCPServerConfig(name="tidy", transport="stdio", command="mock-mcp")
+    client = FakeMCPClient(
+        config,
+        tools=[
+            MCPToolDef(
+                name="lookup",
+                description="Lookup",
+                input_schema={
+                    "type": "object",
+                    "properties": {"q": {"type": "string", "description": "Query."}},
+                    "required": ["q"],
+                },
+            )
+        ],
+    )
+    monkeypatch.setattr(discovery, "create_client", lambda _config: client)
+
+    registry = ToolRegistry()
+    await discovery.discover_and_register(config, registry, owner="gateway")
+
+    registered = registry.get("mcp_lookup")
+    assert registered is not None
+    assert registered.spec.parameters == {"q": {"type": "string", "description": "Query."}}
+    assert registered.spec.required == ["q"]
