@@ -146,6 +146,18 @@ const WALLET_PARTNER_SKILL = {
   publisher: { id: 'bankr', name: 'Bankr', url: 'https://bankr.bot', logo: '' },
   status: 'ready',
 }
+// An AgentOS-authored crypto skill: no publisher, so no partner brand, but it
+// lands in the "AgentOS Crypto Skills" group and wears the AgentOS mark. The
+// group is gated on shipped/bundled, so a local drop-in cannot claim the mark.
+const AGENTOS_CRYPTO_SKILL = {
+  name: 'senior-unilp-manager',
+  description: 'Query and manage Uniswap V4 liquidity.',
+  layer: 'bundled',
+  acquisition: { kind: 'shipped', removable: false, updatable: false },
+  publisher: { id: '', name: '', url: '', logo: '' },
+  category: 'crypto',
+  status: 'ready',
+}
 // Ready, eligible, and still never reaching the model.
 const WITHHELD_SKILL = {
   name: 'quiet',
@@ -369,7 +381,7 @@ describe('SkillsPage', () => {
     await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
     expect(screen.getByLabelText('Skill weather')).toBeInTheDocument()
     // Provenance groups: shipped before hub (SKILL_GROUP_ORDER), not layers.
-    expect(screen.getByText('Shipped with AgentOS')).toBeInTheDocument()
+    expect(screen.getByText('AgentOS Normal Skills')).toBeInTheDocument()
     expect(screen.getByText('Installed from a hub')).toBeInTheDocument()
   })
 
@@ -696,6 +708,24 @@ describe('SkillsPage', () => {
     expect(screen.getByLabelText('Search Robinhood skills')).toBeInTheDocument()
   })
 
+  // The Agentic account is provisioned by Robinhood, not by the skill, so the
+  // warning belongs on the panel: a user who installs and runs the skill first
+  // only learns about it when the first tool call fails.
+  it('the Robinhood tab describes the catalog and warns about the Agentic account', async () => {
+    wireRpc({ skills: [ROBINHOOD_UNDECLARED, ROBINHOOD_READY] })
+    renderPage()
+    fireEvent.click(screen.getByRole('tab', { name: /Robinhood/i }))
+
+    expect(await screen.findByRole('heading', { name: 'Robinhood skills' })).toBeInTheDocument()
+    expect(screen.getByText(/Robinhood Trading MCP/i)).toBeInTheDocument()
+    const note = screen.getByRole('note')
+    expect(note).toHaveTextContent('IMPORTANT:')
+    expect(note).toHaveTextContent(
+      "the 'robinhood-agentic-trading' skill trades from a dedicated Robinhood Agentic account",
+    )
+    expect(note).toHaveTextContent(/create that account in Robinhood/i)
+  })
+
   it('gives Robinhood the Bankr catalog shell while preserving installed-skill actions', async () => {
     wireRpc({ skills: [ROBINHOOD_UNDECLARED, ROBINHOOD_READY] })
     renderPage()
@@ -839,6 +869,14 @@ describe('SkillsPage', () => {
       (c) => c.textContent,
     )
     expect(missingCodes).toEqual(['jq', 'ORACLE_KEY'])
+
+    // Each entry is its own separated row — the bin and the env var alike — and
+    // the env row's action carries the variable name as its accessible name even
+    // though the visible label is just "Set".
+    expect(dialog.querySelectorAll('.sk-dialog__missing-row')).toHaveLength(2)
+    const setButton = within(dialog).getByRole('button', { name: 'Set ORACLE_KEY' })
+    expect(setButton).toHaveTextContent('Set')
+    expect(setButton.closest('.sk-dialog__missing-row')).not.toBeNull()
   })
 
   // ── SK2: category badge on the registry card + detail dialog ──────────────
@@ -874,7 +912,7 @@ describe('SkillsPage', () => {
   })
 
   // ── #130: the Installed tab groups on provenance, not on the layer ───────
-  it('groups the Installed tab into Partners / Shipped / Hub / Local', async () => {
+  it('groups the Installed tab into Partner / Normal / Hub / Local', async () => {
     wireRpc({
       skills: [READY_MANAGED, NEEDS_BUNDLED, LOCAL_IN_MANAGED, BANKR_HUB_SKILL, ROBINHOOD_READY],
     })
@@ -883,15 +921,15 @@ describe('SkillsPage', () => {
 
     expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual(
       expect.arrayContaining([
-        'Partners',
-        'Shipped with AgentOS',
+        'Partner Skills',
+        'AgentOS Normal Skills',
         'Installed from a hub',
         'Your local skills',
       ]),
     )
     // The issue's stated criterion: Bankr and Robinhood under ONE heading,
     // even though one is a hub install and the other ships with AgentOS.
-    const partners = groupNamed('Partners')
+    const partners = groupNamed('Partner Skills')
     expect(within(partners).getByLabelText('Skill bankr-swaps')).toBeInTheDocument()
     expect(within(partners).getByLabelText('Skill robinhood-rwa-addresses')).toBeInTheDocument()
 
@@ -899,7 +937,7 @@ describe('SkillsPage', () => {
       within(groupNamed('Installed from a hub')).getByLabelText('Skill trader'),
     ).toBeInTheDocument()
     expect(
-      within(groupNamed('Shipped with AgentOS')).getByLabelText('Skill weather'),
+      within(groupNamed('AgentOS Normal Skills')).getByLabelText('Skill weather'),
     ).toBeInTheDocument()
     // layer 'managed' with no lockfile entry is a local skill, not a hub one.
     expect(
@@ -920,7 +958,7 @@ describe('SkillsPage', () => {
     renderPage()
     const card = await screen.findByLabelText('Skill stranger-skill')
 
-    // It stays out of Partners — the credit must not smuggle a brand in.
+    // It stays out of Partner Skills — the credit must not smuggle a brand in.
     expect(
       within(groupNamed('Installed from a hub')).getByLabelText('Skill stranger-skill'),
     ).toBeInTheDocument()
@@ -951,13 +989,32 @@ describe('SkillsPage', () => {
     expect(within(card).queryByRole('img')).not.toBeInTheDocument()
   })
 
+  // The group heading already carries the AgentOS name; the card wearing the
+  // generic package glyph made an AgentOS-authored skill look anonymous next to
+  // the branded partner rows.
+  it('shows the AgentOS mark on an AgentOS crypto skill without making it a partner', async () => {
+    wireRpc({ skills: [AGENTOS_CRYPTO_SKILL] })
+    renderPage()
+    const card = await screen.findByLabelText('Skill senior-unilp-manager')
+    expect(within(card).getByRole('img', { name: 'AgentOS logo' })).toBeInTheDocument()
+
+    // It stays under its own heading — the mark must not smuggle it into Partners.
+    expect(
+      within(groupNamed('AgentOS Crypto Skills')).getByLabelText('Skill senior-unilp-manager'),
+    ).toBeInTheDocument()
+
+    fireEvent.click(card)
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('img', { name: 'AgentOS logo' })).toBeInTheDocument()
+  })
+
   it('files an allowlisted wallet skill under its partner and still credits the author', async () => {
     wireRpc({ skills: [WALLET_PARTNER_SKILL] })
     renderPage()
     const card = await screen.findByLabelText('Skill stock-premium-lp-manager')
 
     expect(
-      within(groupNamed('Partners')).getByLabelText('Skill stock-premium-lp-manager'),
+      within(groupNamed('Partner Skills')).getByLabelText('Skill stock-premium-lp-manager'),
     ).toBeInTheDocument()
     // The brand already says "bankr", so the chip drops the source id and keeps
     // only the part the publisher record cannot carry.

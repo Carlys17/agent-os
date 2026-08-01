@@ -317,6 +317,21 @@ def _skill_setup_note(skill: Any) -> str:
     return f"\n\n[Skill setup note: {body}]"
 
 
+def _skill_dir_note(skill: Any) -> str:
+    """Return a leading ``[Skill directory: ...]`` line, or ``""``.
+
+    A skill body says where its own scripts are; nothing else in a session
+    does. Without this the model reads ``python3 .../scripts/lp_read.py``,
+    looks for that path under the workspace, finds nothing, and concludes the
+    skill is not installed — so state the directory outright, whether or not
+    the body happened to name it.
+    """
+    base_dir = str(getattr(skill, "base_dir", "") or "")
+    if not base_dir:
+        return ""
+    return f"[Skill directory: {base_dir}]\n\n"
+
+
 def _skill_config_block(skill: Any) -> str:
     """Return the skill's configured settings as a trailing block, or ``""``.
 
@@ -687,10 +702,14 @@ def create_skill_tools(loader: SkillLoader) -> None:
 
         _register_skill_env_passthrough(skill)
 
+        from agentos.skills.resources import expand_skill_placeholders
+
         if file_path:
             normalized_path = file_path.strip().lstrip("./")
             if normalized_path in {"", "SKILL.md"}:
-                return skill.content or f"(Skill '{name}' has no body content)"
+                if not skill.content:
+                    return f"(Skill '{name}' has no body content)"
+                return expand_skill_placeholders(skill.content, skill.base_dir)
 
             from pathlib import Path
 
@@ -700,11 +719,16 @@ def create_skill_tools(loader: SkillLoader) -> None:
             content = resources.read_resource(normalized_path)
             if content is None:
                 return f"File not found in skill '{name}': {file_path}"
+            # Scripts and references come back verbatim: they are source, not a
+            # playbook, and a placeholder inside one is that file's own business.
             return content
 
-        raw = skill.content or ""
+        # Expand before slicing or budgeting, so an outline's character offsets
+        # and a section lookup both run over the exact text the model receives.
+        raw = expand_skill_placeholders(skill.content or "", skill.base_dir)
+        note = _skill_dir_note(skill)
         if section:
-            return _skill_section(skill, raw, section)
+            return note + _skill_section(skill, raw, section)
 
         body = raw or f"(Skill '{name}' has no body content)"
         if raw:
@@ -714,7 +738,7 @@ def create_skill_tools(loader: SkillLoader) -> None:
         # starts from the values in effect rather than asking the user or
         # going to read the config file itself. Skills that declare no
         # settings pay nothing for this.
-        return body + _skill_config_block(skill)
+        return note + body + _skill_config_block(skill)
 
     @tool(
         name="skill_search_community",

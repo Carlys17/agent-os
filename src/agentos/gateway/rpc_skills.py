@@ -162,7 +162,9 @@ def _requirements_item(
         "status": _status_from_report(report),
         "requires_bins": list(requires.bins) if requires else [],
         "requires_any_bins": list(requires.any_bins) if requires else [],
-        "requires_env": list(requires.env) if requires else [],
+        # env_names, not env: the latter is a list of SkillEnvVar dataclasses, which the
+        # UI would render as "[object Object]". Only the names cross the wire here.
+        "requires_env": list(requires.env_names) if requires else [],
         "missing_bins": list(report.missing_bins),
         "missing_env": list(report.missing_env),
     }
@@ -246,6 +248,7 @@ def _skill_to_dict(
         "triggers": spec.triggers,
         "eligible": report.eligible,
         "emoji": meta.emoji if meta else "",
+        "category": meta.category if meta else "",
         "primary_env": meta.primary_env if meta else "",
         "homepage": meta.homepage if meta else getattr(spec, "homepage", ""),
         "file_path": getattr(spec, "file_path", ""),

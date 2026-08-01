@@ -116,3 +116,51 @@ def test_readme_points_at_user_facing_file(project_table: dict) -> None:
     assert project_table["readme"] == "README.md", (
         "readme should point at the canonical README.md after the 0.1.0 refactor"
     )
+
+
+# Bundled skills whose SKILL.md already links to a `references/` file the wheel drops.
+# Pre-existing at the time this check was written; listed rather than silently tolerated
+# so the count can only go down. Fixing one means moving its files into `assets/` and
+# repointing SKILL.md.
+KNOWN_STRANDED_REFERENCES = {
+    "src/agentos/skills/bundled/deep-research/references/methodology.md",
+    "src/agentos/skills/bundled/deep-research/references/sources.md",
+    "src/agentos/skills/bundled/docx/references/python_docx.md",
+    "src/agentos/skills/bundled/pdf-toolkit/references/reportlab.md",
+    "src/agentos/skills/bundled/seedance-2-prompt/references/camera-and-styles.md",
+    "src/agentos/skills/bundled/seedance-2-prompt/references/modes-and-recipes.md",
+    "src/agentos/skills/bundled/seedance-2-prompt/references/recipes.md",
+    "src/agentos/skills/bundled/xlsx/references/openpyxl.md",
+}
+
+
+def test_skill_docs_do_not_link_to_files_the_wheel_strips() -> None:
+    """A SKILL.md must not point at a `references/` file that never reaches an install.
+
+    `[tool.hatch.build.targets.wheel].exclude` drops
+    `src/agentos/skills/bundled/**/references/*.md` wholesale, and `force-include` adds
+    back exactly two `pptx` files. A skill that puts load-bearing documentation there
+    ships instructions pointing at a file that is not on disk, and nothing fails at build
+    time to say so. Put such files in `assets/`, which is shipped.
+    """
+
+    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    forced = set(data["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"])
+    bundled = PYPROJECT.parent / "src" / "agentos" / "skills" / "bundled"
+
+    stranded = set()
+    for path in bundled.glob("*/references/*.md"):
+        rel = str(path.relative_to(PYPROJECT.parent))
+        if rel in forced:
+            continue
+        skill_md = (path.parents[1] / "SKILL.md").read_text(encoding="utf-8")
+        if f"references/{path.name}" in skill_md:
+            stranded.add(rel)
+
+    new = sorted(stranded - KNOWN_STRANDED_REFERENCES)
+    assert not new, (
+        "these files are excluded from the wheel but referenced by their SKILL.md — "
+        f"move them to the skill's assets/ directory: {new}"
+    )
+    fixed = sorted(KNOWN_STRANDED_REFERENCES - stranded)
+    assert not fixed, f"these are fixed — drop them from KNOWN_STRANDED_REFERENCES: {fixed}"

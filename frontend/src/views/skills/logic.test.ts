@@ -153,6 +153,21 @@ describe('skillRank / skillGroupKey / groupSkills', () => {
     expect(skillGroupKey(skill({}))).toBe('local')
   })
 
+  it('splits crypto out of shipped, and only for shipped skills', () => {
+    expect(skillGroupKey(acquired('shipped', { category: 'crypto' }))).toBe('crypto')
+    expect(skillGroupKey(skill({ layer: 'bundled', category: 'crypto' }))).toBe('crypto')
+    // A user-supplied directory cannot claim an AgentOS-branded heading.
+    expect(skillGroupKey(acquired('local', { category: 'crypto' }))).toBe('local')
+    expect(skillGroupKey(acquired('hub', { category: 'crypto' }))).toBe('hub')
+    // A partner's crypto skill still belongs to that partner.
+    expect(
+      skillGroupKey(acquired('shipped', { category: 'crypto', publisher: { id: 'robinhood' } })),
+    ).toBe('partners')
+    // Anything else stays exactly where it was.
+    expect(skillGroupKey(acquired('shipped', { category: '' }))).toBe('shipped')
+    expect(skillGroupKey(acquired('shipped', { category: 'CRYPTO ' }))).toBe('crypto')
+  })
+
   it('groups partners → shipped → hub → local, ready-first then name, dropping empties', () => {
     const list = [
       acquired('hub', { name: 'z-ready', status: 'ready' }),
@@ -166,7 +181,7 @@ describe('skillRank / skillGroupKey / groupSkills', () => {
     ]
     const groups = groupSkills(list)
     expect(groups.map((g) => g.key)).toEqual(['partners', 'shipped', 'hub'])
-    expect(groups[0]!.label).toBe('Partners')
+    expect(groups[0]!.label).toBe('Partner Skills')
     expect(groups[0]!.skills.map((s) => s.name)).toEqual(['bankr-swap', 'rh'])
     expect(groups[0]!.help).toContain('partner')
     const hub = groups.find((g) => g.key === 'hub')!
@@ -180,12 +195,14 @@ describe('skillRank / skillGroupKey / groupSkills', () => {
       acquired('local', { name: 'l' }),
       acquired('hub', { name: 'h' }),
       acquired('shipped', { name: 's' }),
+      acquired('shipped', { name: 'c', category: 'crypto' }),
       acquired('shipped', { name: 'p', publisher: { id: 'bankr' } }),
     ])
-    expect(groups.map((g) => g.key)).toEqual(['partners', 'shipped', 'hub', 'local'])
+    expect(groups.map((g) => g.key)).toEqual(['partners', 'crypto', 'shipped', 'hub', 'local'])
     expect(groups.map((g) => g.label)).toEqual([
-      'Partners',
-      'Shipped with AgentOS',
+      'Partner Skills',
+      'AgentOS Crypto Skills',
+      'AgentOS Normal Skills',
       'Installed from a hub',
       'Your local skills',
     ])

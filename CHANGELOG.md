@@ -6,6 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- New bundled skill `senior-unilp-manager`: read and manage Uniswap V4 liquidity
+  on Base (8453) and Robinhood Chain (4663). Reads a token's pools with exact
+  reserves and per-range market-cap bands, resolves which launchpad deployed a
+  token and whether its LP is locked (Clanker v4/v4.1, Liquid Protocol,
+  Bankr/Doppler), inspects positions, and mints / increases / decreases /
+  collects / burns. Pure Python 3 stdlib over direct JSON-RPC — keccak256, the
+  ABI codec, Multicall3, secp256k1 and EIP-1559 assembly are all in-tree, so the
+  skill has no dependency beyond a `python3` binary. Every write is a dry run
+  that prints a `PLAN_HASH`; broadcasting requires echoing that hash back with
+  `--broadcast --confirm`, and the signature is recovered and checked against the
+  signer before the transaction is sent. The signing key is read from
+  `UNIV4_LP_PRIVATE_KEY` in the environment and never from a command line.
+  `python3 scripts/selftest.py` runs 429 offline assertions pinned to golden
+  vectors harvested from the reference implementation.
+
+- Skill manifests may declare `metadata.agentos.category`, a subject-matter tag
+  distinct from `capabilities` (which describes risk surface, not topic). The
+  Skills page uses it to split shipped skills into their own headings, so a new
+  crypto skill only has to edit its own frontmatter.
+
+### Changed
+
+- The Skills page renames two group headings and adds one: `Partners` →
+  **Partner Skills**, `Shipped with AgentOS` → **AgentOS Normal Skills**, and a
+  new **AgentOS Crypto Skills** between them for bundled skills declaring
+  `category: crypto`. Partner skills still win over every other grouping, and a
+  local or hub-installed skill cannot move itself under an AgentOS-branded
+  heading by declaring the category.
+
+### Fixed
+
+- `skill_view` now resolves `{baseDir}` to the skill's install directory and
+  opens every read with a `[Skill directory: ...]` line. The placeholder is how
+  every bundled skill names its own scripts, but nothing had ever expanded it and
+  nothing else in a session revealed where a skill lived — so an agent handed
+  `python3 {baseDir}/scripts/lp_read.py` looked for that path under the
+  workspace, found nothing, and reported the skill as not installed. Expansion
+  happens at render time, not at load: `skill_edit` writes `SkillSpec.content`
+  back to disk, and expanding earlier would bake one machine's absolute path
+  into a shipped `SKILL.md`.
+
+- The Skill dialog rendered `[object Object]` for every declared environment
+  variable. `_requirements_item` put `SkillRequires.env` on the wire, which is a
+  list of `SkillEnvVar` dataclasses, instead of `env_names`. No bundled skill had
+  declared `requires.env` before now, so nothing had hit it.
+
+
 ## [2026.7.31] - 2026-07-31
 
 ### Changed
