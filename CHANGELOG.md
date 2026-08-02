@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.2.post1] - 2026-08-02
+
+### Fixed
+
+- The release wheel guard allowed markdown only at a bundled skill's `SKILL.md`
+  plus two force-included pptx references, so `senior-unilp-manager`'s
+  `assets/v4-reference.md` read as a forbidden entry and the tagged Windows
+  release job failed for v2026.8.2 — after the tag had already been pushed.
+  `assets/` is where that documentation is supposed to live, and `SKILL.md`
+  links it by `{baseDir}`, so stripping it shipped instructions pointing at a
+  file that is not on disk. `agentos/skills/bundled/<skill>/assets/**` is now
+  allowed; `references/` and stray top-level markdown stay forbidden. A
+  real-tree test over the bundled skills fails PR CI instead of the tagged
+  release job.
+- Cron prompt safety rejected legitimate text: Unicode combining marks (used by
+  Vietnamese and many other scripts) were treated as invisible characters and
+  blocked. Combining marks are allowed again, while genuinely invisible marks
+  stay blocked.
+
 ## [2026.8.2] - 2026-08-02
 
 ### Added
