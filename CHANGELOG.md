@@ -6,7 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.2] - 2026-08-02
+
 ### Added
+
+- A cron job may opt in to running shell-based skills. A cron turn runs under a
+  read-only allowlist with `exec_command` hard-denied, so a job that was shown a
+  skill could read its `SKILL.md` and never carry it out — nearly every skill
+  body is a block of shell. Per-job `tool_policy` could not help, because the
+  policy layer re-ORs the hard-denied set at the end and the elevated clamp
+  excluded cron outright. The opt-in is stored as `tool_policy["elevated"] =
+  "bypass" | "full"` on the column that already persists, so there is no
+  migration and it inherits the "channel callers cannot set tool_policy"
+  invariant. An opted-in job additionally gets `exec_command`, `write_file` and
+  `edit_file`; `cron`, `message`, `agents_list`, subagents,
+  `background_process`, `execute_code`, `apply_patch` and `git_commit` stay
+  denied, and `"on"` is rejected because it skips the sandbox with no branch in
+  the exec approval path. Elevation is refused on non-`agent_run` jobs, since
+  the heartbeat loop builds its own read-only context and would silently drop
+  it. Surfaced on RPC (top-level `elevated`), the CLI (`--elevated`,
+  `--elevated-mode`, `--tool-policy`, plus a list column) and the Web UI (a
+  warned toggle and a badge on the job card). Default cron routing is unchanged
+  (#184).
 
 - The `senior-unilp-manager` skill can now find and mint into Uniswap v4 pools
   that have **no hook**. It only ever LPs into pools that already exist, and it
@@ -107,6 +128,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   heading by declaring the category.
 
 ### Fixed
+
+- `senior-unilp-manager`'s confirm gate could be passed with calldata the
+  reviewer never saw. The gate spans two processes — a dry run prints a
+  `PLAN_HASH`, a human approves it, a second invocation broadcasts with
+  `--confirm` — so any flag that reaches the calldata without reaching the hash
+  could be swapped in between. Four did: `increase --recipient` fed the sweep
+  action while being neither hashed nor displayed, `approve --expiration-days`
+  set the Permit2 expiration outside a hash that covered only token and amount,
+  `mint --max-tick-drift` could be widened at broadcast to disable the
+  re-validation it was approved with, and the deadline *offset* was free to
+  change. Every calldata-affecting flag is now bound into the hash. The
+  absolute deadline stays out on purpose, so a re-run minutes later still
+  matches. New tests mutate one flag at a time across all six subcommands and
+  require a different hash, and hold each command to a frozen field set.
+
+- A cron `update` that changed `enabled` alongside other fields discarded the
+  rest of the patch. The enabled branch returned right after pause/resume, and
+  the Web UI's save always carries `enabled` — so saving a paused job dropped
+  its name, text, schedule, timezone and delivery with no error. The transition
+  now applies and processing continues, and `enabled` enters the patch so
+  `job.enabled` tracks the status, which is what Resume on an auto-disabled job
+  needs to take effect.
+
+- The "Set &lt;VAR&gt;" dialog on the Skills page rendered its value field with a
+  class that was never defined, so the input fell back to user-agent styling and
+  was indistinguishable from the dark panel behind it — the field looked absent.
+
+- Six fixes to the `/control/skills` surface. A wallet-published skill reaches
+  the Bankr source only by being named in a wheel-shipped allowlist reviewed in
+  this repo, which is the same review path a catalog entry gets, so it now
+  groups with Bankr and shows the brand mark on the Installed tab; the provider
+  is hardcoded rather than read from the payload, so a hostile registry row
+  cannot mint a brand for itself, and the author handle rides along as credit
+  and stays searchable. The Bankr and Capminal panels name the prerequisite
+  skill each catalog needs, and Capminal infers its category from tags instead
+  of hardcoding `crypto`. On status: "No requirements" is gone, since a skill
+  with no declared dependencies runs exactly like one whose dependencies are
+  satisfied — both are Ready, with the nuance in the tooltip — and Disabled gets
+  its own grey bucket instead of showing as "Needs setup" and sending operators
+  hunting a dependency that was never missing. A payload without an explicit
+  status no longer vanishes from every filter, and a blank or whitespace-only
+  env var counts as missing rather than reporting Ready until it fails at
+  runtime.
+
+- The packaging test that checks skill docs for links the wheel strips built its
+  paths with `str()`, which emits backslashes on Windows, while both things it
+  compares against spell those paths with forward slashes. Nothing matched on
+  `windows-latest`: force-included files were never skipped and every known
+  stranded reference read as newly stranded. Paths are compared as posix now.
 
 - `senior-unilp-manager` sent an agent round in circles on "add N of my token as LP
   from the current price up to a market cap of X" — one real run spent twelve minutes
