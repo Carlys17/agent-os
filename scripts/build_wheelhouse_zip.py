@@ -230,6 +230,16 @@ def _is_dist_info_license_file(name: str) -> bool:
     return len(parts) >= 3 and parts[0].endswith(".dist-info") and parts[1] == "licenses"
 
 
+def _is_bundled_skill_asset(name: str) -> bool:
+    """A bundled skill's shipped data files: skills/bundled/<skill>/assets/**."""
+    parts = name.split("/")
+    return (
+        len(parts) > 5
+        and parts[:3] == ["agentos", "skills", "bundled"]
+        and parts[4] == "assets"
+    )
+
+
 def _is_allowed_runtime_markdown(path: str) -> bool:
     name = _release_name(path)
     if _is_dist_info_license_file(name):
@@ -239,6 +249,13 @@ def _is_allowed_runtime_markdown(path: str) -> bool:
     if name in ALLOWED_SKILL_REFERENCE_WHEEL_PATHS:
         return True
     if name.startswith("agentos/skills/bundled/") and name.endswith("/SKILL.md"):
+        return True
+    # assets/ is the one place a skill's documentation may live and still reach an
+    # install: the wheel excludes references/*.md wholesale, so
+    # test_skill_docs_do_not_link_to_files_the_wheel_strips tells skills to put
+    # load-bearing docs under assets/. SKILL.md links them by {baseDir}, and
+    # dropping them would ship instructions pointing at a file that is not there.
+    if _is_bundled_skill_asset(name):
         return True
     # Router model bundles ship their PROVENANCE.md: the weights are derived
     # from OpenSquilla (Apache-2.0), so their attribution must travel with them
