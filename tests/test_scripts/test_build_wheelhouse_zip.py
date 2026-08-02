@@ -289,6 +289,59 @@ def test_real_router_bundle_markdown_passes_release_guard() -> None:
     assert module.forbidden_release_wheel_entries(wheel_names) == []
 
 
+def test_release_wheel_allows_bundled_skill_assets_markdown() -> None:
+    """A skill's assets/ docs ship; references/ docs still do not.
+
+    The wheel excludes `references/*.md` wholesale, so load-bearing skill
+    documentation belongs in `assets/` and is linked from SKILL.md by
+    `{baseDir}`. Dropping it would ship instructions pointing at a file that
+    is not on disk.
+    """
+
+    module = load_script()
+    asset_doc = "agentos/skills/bundled/senior-unilp-manager/assets/v4-reference.md"
+    nested_asset_doc = "agentos/skills/bundled/demo/assets/nested/notes.md"
+    reference_doc = "agentos/skills/bundled/demo/references/notes.md"
+    top_level_doc = "agentos/skills/bundled/demo/NOTES.md"
+
+    violations = module.forbidden_release_wheel_entries(
+        (asset_doc, nested_asset_doc, reference_doc, top_level_doc)
+    )
+
+    assert asset_doc not in violations
+    assert nested_asset_doc not in violations
+    assert reference_doc in violations
+    assert top_level_doc in violations
+
+
+def test_real_bundled_skill_markdown_passes_release_guard() -> None:
+    """Guard the real bundled-skill tree, not just synthetic names.
+
+    The wheel-path guard runs against a built wheel only in the tagged release
+    job, so a new .md dropped into a bundled skill passes PR CI and fails after
+    the tag is pushed — which is how `senior-unilp-manager` broke the 2026.8.2
+    release build.
+    """
+
+    module = load_script()
+    bundled = REPO_ROOT / "src" / "agentos" / "skills" / "bundled"
+    if not bundled.is_dir():
+        pytest.skip("bundled skills not present in this checkout")
+
+    relative_paths = sorted(
+        path.relative_to(bundled).as_posix() for path in bundled.rglob("*.md")
+    )
+    wheel_names = tuple(
+        f"agentos/skills/bundled/{rel}"
+        for rel in relative_paths
+        # Mirror the pyproject wheel excludes: these never reach the wheel, so
+        # the guard is never asked about them.
+        if not rel.endswith("/THIRD_PARTY_NOTICES.md") and "/references/" not in f"/{rel}"
+    )
+
+    assert module.forbidden_release_wheel_entries(wheel_names) == []
+
+
 def test_release_wheel_allows_dist_info_license_files() -> None:
     module = load_script()
     license_md = "use_agent_os-2026.7.15.dist-info/licenses/THIRD_PARTY_NOTICES.md"
