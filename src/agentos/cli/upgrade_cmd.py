@@ -21,12 +21,17 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import typer
 
 from agentos import __version__
-from agentos.cli.install_method import build_upgrade_plan, hardened_path_env
-from agentos.cli.ui import console
+from agentos.cli.install_method import (
+    build_upgrade_plan,
+    hardened_path_env,
+    installed_from_directory,
+)
+from agentos.cli.ui import console, markup_escape
 
 # Default upgrade-subprocess timeout (seconds). Overridable via --timeout.
 _DEFAULT_TIMEOUT_S = 600.0
@@ -192,6 +197,25 @@ def _restart_and_verify(
     return False
 
 
+def _emit_source_install_notice(source_dir: Path) -> None:
+    """Tell a source installer that this command installs the RELEASE instead.
+
+    ``agentos upgrade`` deliberately does not build from a checkout — only
+    ``scripts/install_source.sh`` rebuilds the Control UI before installing. A
+    source installer who is not told that would find their local code replaced
+    with no idea how to get it back, so name the way back explicitly. Purely
+    informational: it never blocks, prompts, or changes the exit code.
+    """
+
+    path = markup_escape(str(source_dir))
+    console.print(
+        f"[dim]This install was built from {path}.\n"
+        "'agentos upgrade' installs the published PyPI release instead.\n"
+        f"To install that checkout again: cd {path} && "
+        "bash scripts/install_source.sh[/dim]"
+    )
+
+
 def _emit_no_restart_warning(new_version: str) -> None:
     old = __version__
     print(
@@ -217,11 +241,15 @@ def upgrade_command(
     config_path: str | None = typer.Option(None, "--config", help="Override config path."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
-    """Upgrade AgentOS and restart the managed gateway to match.
+    """Upgrade AgentOS to the published release and restart the gateway to match.
 
     Detects the install method (uv-tool / pipx / pip / editable) and delegates
-    to the right upgrade command. Config migrations (with an automatic
-    timestamped backup) run at gateway start.
+    to the right installer, always targeting the PyPI release of
+    ``use-agent-os[recommended]`` — including when the current install was built
+    from a local checkout. To install a checkout instead, run
+    ``bash scripts/install_source.sh``, which rebuilds the Control UI first.
+    Config migrations (with an automatic timestamped backup) run at gateway
+    start.
     """
 
     from agentos.cli.output import print_json
@@ -259,9 +287,13 @@ def upgrade_command(
 
     # Non-delegated installs: print the exact manual command, exit 3.
     if not plan.delegated:
+        # The hint carries a ``dist[extras]`` spec, whose brackets Rich would
+        # otherwise eat as markup — printing a command that silently drops the
+        # extras is exactly the failure this whole change is about.
         message = (
             f"AgentOS was installed via {plan.method.value}; automatic upgrade is not "
-            f"available for this method.\nRun this to upgrade:\n    {plan.manual_hint}"
+            f"available for this method.\nRun this to upgrade:\n    "
+            f"{markup_escape(plan.manual_hint)}"
         )
         if json_output:
             print_json(
@@ -275,6 +307,10 @@ def upgrade_command(
             console.print(message)
         raise typer.Exit(3)
 
+    # This command always installs the published release. When the current
+    # install was built from a local checkout, say so before touching anything.
+    source_dir = installed_from_directory()
+
     # --dry-run: print what would run, touch nothing.
     if dry_run:
         printable = " ".join(plan.command)
@@ -285,10 +321,13 @@ def upgrade_command(
                     "command": plan.command,
                     "wouldRestart": not no_restart,
                     "dryRun": True,
+                    "sourceDirectory": str(source_dir) if source_dir else None,
                 }
             )
         else:
-            console.print(f"Would run: {printable}")
+            if source_dir is not None:
+                _emit_source_install_notice(source_dir)
+            console.print(f"Would run: {markup_escape(printable)}")
             console.print(
                 "Would then restart and verify the managed gateway."
                 if not no_restart
@@ -297,24 +336,26 @@ def upgrade_command(
         raise typer.Exit(0)
 
     # Execute the delegated upgrade under a bounded timeout.
+    if source_dir is not None:
+        _emit_source_install_notice(source_dir)
     console.print(f"Upgrading use-agent-os via {plan.method.value}…")
     result = _run_upgrade_subprocess(plan.command, env=env, timeout=timeout)
     if result.stdout.strip():
-        console.print(result.stdout.strip())
+        console.print(markup_escape(result.stdout.strip()))
 
     if result.timed_out:
         console.print(
             f"[red]Upgrade timed out after {timeout:.0f}s and was terminated.[/red]\n"
             "The upgrade tool was killed (process group), so no half-finished child "
             "is left running.\nRecovery: re-run 'agentos upgrade' (optionally with a "
-            f"larger --timeout), or run '{plan.manual_hint}' manually.",
+            f"larger --timeout), or run '{markup_escape(plan.manual_hint)}' manually.",
         )
         raise typer.Exit(1)
 
     if not result.ok:
         console.print(
             f"[red]Upgrade failed (exit {result.returncode}).[/red]\n"
-            f"{result.stderr.strip()}"
+            f"{markup_escape(result.stderr.strip())}"
         )
         raise typer.Exit(1)
 
@@ -336,6 +377,7 @@ def upgrade_command(
                     "new": new_version,
                     "restarted": False,
                     "gatewayVersionApplied": False,
+                    "sourceDirectory": str(source_dir) if source_dir else None,
                 }
             )
         raise typer.Exit(0)
@@ -352,6 +394,7 @@ def upgrade_command(
                 "new": new_version,
                 "restarted": True,
                 "verified": verified,
+                "sourceDirectory": str(source_dir) if source_dir else None,
             }
         )
     if not verified:

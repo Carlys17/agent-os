@@ -185,18 +185,24 @@ agentos gateway restart
 
 ## Upgrade
 
-Upgrade a `uv tool` install to the latest release, then restart the
-gateway so it runs the new code:
+Upgrade to the latest release. `agentos upgrade` also restarts the
+gateway and verifies it reports the new version, so it is preferred
+over calling `uv tool` yourself:
 
 ```sh
-uv tool upgrade use-agent-os
-agentos gateway restart
+agentos upgrade
 ```
 
-The upgrade keeps the extras from the original install, and your
-configuration and data in `~/.agentos/` are not touched. To check
-the installed version, run `uv tool list`. For source installs, see
-the [README upgrade section](../README.md#upgrade).
+It installs the published release of `use-agent-os[recommended]` — the
+same extras profile `install_source.sh` uses — pinned to the Python
+version already running AgentOS. Your configuration and data in
+`~/.agentos/` are not touched. To check the installed version, run
+`uv tool list`.
+
+`agentos upgrade` never installs from a local checkout: only
+`bash scripts/install_source.sh` rebuilds the React control UI before
+installing. If you installed from source, re-run that script. See the
+[README upgrade section](../README.md#upgrade).
 
 ## Next Steps
 

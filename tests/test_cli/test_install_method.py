@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -197,12 +198,38 @@ def test_resolve_tool_falls_back_to_which(monkeypatch: pytest.MonkeyPatch) -> No
     assert "/base" in seen["path"] or "\\base" in seen["path"]
 
 
-def test_build_plan_uv_tool_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_plan_uv_tool_installs_the_published_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ``install``, not ``upgrade``: ``uv tool upgrade`` takes a bare NAME and
+    # re-resolves uv's receipt, so an install laid down from a local checkout
+    # would keep rebuilding from the working tree and re-package its stale
+    # Control UI bundle instead of fetching the CI-built wheel.
     monkeypatch.setattr(im, "resolve_tool", lambda tool, env=None: "/abs/uv")
-    plan = im.build_upgrade_plan(method=InstallMethod.UV_TOOL)
+    plan = im.build_upgrade_plan(method=InstallMethod.UV_TOOL, python_tag="3.12")
     assert plan.delegated is True
     assert plan.tool == "/abs/uv"
-    assert plan.command == ["/abs/uv", "tool", "upgrade", "use-agent-os", "--reinstall"]
+    assert plan.command == [
+        "/abs/uv",
+        "tool",
+        "install",
+        "--force",
+        "--python",
+        "3.12",
+        "use-agent-os[recommended]",
+    ]
+
+
+def test_build_plan_pins_the_running_python(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A forced reinstall must not silently move the tool venv onto another
+    # interpreter, so the pin follows whatever is running the CLI.
+    monkeypatch.setattr(im, "resolve_tool", lambda tool, env=None: "/abs/uv")
+    pinned = im.build_upgrade_plan(method=InstallMethod.UV_TOOL, python_tag="3.13")
+    assert pinned.command[pinned.command.index("--python") + 1] == "3.13"
+
+    default = im.build_upgrade_plan(method=InstallMethod.UV_TOOL)
+    assert default.command[default.command.index("--python") + 1] == im.runtime_python_tag()
+    assert im.runtime_python_tag() == f"{sys.version_info.major}.{sys.version_info.minor}"
 
 
 def test_build_plan_uv_tool_missing_uv_not_delegated(
@@ -212,26 +239,31 @@ def test_build_plan_uv_tool_missing_uv_not_delegated(
     plan = im.build_upgrade_plan(method=InstallMethod.UV_TOOL)
     assert plan.delegated is False
     assert plan.tool is None
-    assert "uv tool upgrade" in plan.manual_hint
+    assert "uv tool install --force" in plan.manual_hint
+    assert "use-agent-os[recommended]" in plan.manual_hint
 
 
 def test_build_plan_pipx_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(im, "resolve_tool", lambda tool, env=None: "/abs/pipx")
     plan = im.build_upgrade_plan(method=InstallMethod.PIPX)
     assert plan.delegated is True
-    assert plan.command == ["/abs/pipx", "upgrade", "use-agent-os", "--force"]
+    assert plan.command == ["/abs/pipx", "install", "--force", "use-agent-os[recommended]"]
 
 
 def test_build_plan_pip_never_delegates() -> None:
     plan = im.build_upgrade_plan(method=InstallMethod.PIP)
     assert plan.delegated is False
-    assert "pip install --upgrade use-agent-os" in plan.manual_hint
+    assert "pip install --upgrade" in plan.manual_hint
+    assert "use-agent-os[recommended]" in plan.manual_hint
 
 
-def test_build_plan_editable_never_delegates() -> None:
+def test_build_plan_editable_points_at_the_source_installer() -> None:
+    # An editable install serves the Control UI out of the checkout, and only
+    # install_source.sh rebuilds that bundle before installing.
     plan = im.build_upgrade_plan(method=InstallMethod.EDITABLE)
     assert plan.delegated is False
     assert "git pull" in plan.manual_hint
+    assert "scripts/install_source.sh" in plan.manual_hint
 
 
 def test_build_plan_unknown_lists_all_installers() -> None:
@@ -239,6 +271,112 @@ def test_build_plan_unknown_lists_all_installers() -> None:
     # no pip); list all three installers instead.
     plan = im.build_upgrade_plan(method=InstallMethod.UNKNOWN)
     assert plan.delegated is False
-    assert "uv tool install use-agent-os" in plan.manual_hint
-    assert "pipx install use-agent-os" in plan.manual_hint
-    assert "pip install --upgrade use-agent-os" in plan.manual_hint
+    assert "uv tool install --force" in plan.manual_hint
+    assert "pipx install --force" in plan.manual_hint
+    assert "pip install --upgrade" in plan.manual_hint
+    assert plan.manual_hint.count("use-agent-os[recommended]") == 3
+
+
+def test_every_delegated_plan_carries_the_recommended_extras(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Dropping the extras is silent: the ONNX embedding models and the pilot
+    # router degrade at runtime, not at install time.
+    monkeypatch.setattr(im, "resolve_tool", lambda tool, env=None: f"/abs/{tool}")
+    for method in (InstallMethod.UV_TOOL, InstallMethod.PIPX):
+        plan = im.build_upgrade_plan(method=method)
+        assert plan.delegated is True
+        assert plan.command[-1] == "use-agent-os[recommended]"
+
+
+# --- installed_from_directory (PEP 610) ------------------------------------
+
+
+def _direct_url(monkeypatch: pytest.MonkeyPatch, payload: str | None) -> None:
+    parsed = json.loads(payload) if payload else None
+    monkeypatch.setattr(im, "_direct_url_payload", lambda dist: parsed)
+
+
+def test_installed_from_directory_reads_a_file_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    _direct_url(
+        monkeypatch,
+        '{"url": "file:///w/checkouts/agent-os", "dir_info": {"editable": false}}',
+    )
+    assert im.installed_from_directory() == Path("/w/checkouts/agent-os")
+
+
+def test_installed_from_directory_decodes_percent_escapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Slicing the URL instead of url2pathname would leave the %20 in the path.
+    _direct_url(monkeypatch, '{"url": "file:///tmp/a%20b/repo", "dir_info": {}}')
+    assert im.installed_from_directory() == Path("/tmp/a b/repo")
+
+
+def test_installed_from_directory_reports_editable_checkouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _direct_url(monkeypatch, '{"url": "file:///w/agent-os", "dir_info": {"editable": true}}')
+    assert im.installed_from_directory() == Path("/w/agent-os")
+
+
+@pytest.mark.parametrize(
+    ("payload", "why"),
+    [
+        ('{"url": "file:///tmp/x.whl", "archive_info": {}}', "a local wheel is not a checkout"),
+        (
+            '{"url": "git+https://example.com/a.git", "vcs_info": {"vcs": "git"}}',
+            "uv's VCS clone is a cache artifact, not an editable tree",
+        ),
+        ('{"url": "https://pypi.org/x.whl", "dir_info": {}}', "not a file:// URL"),
+        ("{}", "no direct-URL kind at all"),
+    ],
+)
+def test_installed_from_directory_rejects_non_checkouts(
+    monkeypatch: pytest.MonkeyPatch, payload: str, why: str
+) -> None:
+    _direct_url(monkeypatch, payload)
+    # site-packages layout: the editable fallback must not fire either.
+    pkg_dir = Path("/venv/lib/python3.12/site-packages/agentos")
+    assert im.installed_from_directory(package_dir=pkg_dir) is None, why
+
+
+def test_installed_from_directory_falls_back_to_the_src_layout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # An editable install laid down without usable metadata still has the
+    # ``src/agentos`` tell that _looks_editable keys on.
+    _direct_url(monkeypatch, None)
+    assert im.installed_from_directory(package_dir=tmp_path / "src" / "agentos") == tmp_path
+
+
+def test_installed_from_directory_handles_a_shallow_package_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The src-layout fallback indexes parents[1]; a root-level path must not
+    # blow up a command whose real job is upgrading.
+    _direct_url(monkeypatch, None)
+    assert im.installed_from_directory(package_dir=Path("/agentos")) is None
+
+
+def test_direct_url_payload_swallows_unreadable_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib.metadata
+
+    def _raise(dist: str) -> None:
+        raise importlib.metadata.PackageNotFoundError(dist)
+
+    monkeypatch.setattr(importlib.metadata, "distribution", _raise)
+    assert im._direct_url_payload("use-agent-os") is None
+
+
+def test_direct_url_payload_swallows_malformed_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib.metadata
+
+    class _Dist:
+        def read_text(self, name: str) -> str:
+            return "{not json"
+
+    monkeypatch.setattr(importlib.metadata, "distribution", lambda dist: _Dist())
+    assert im._direct_url_payload("use-agent-os") is None

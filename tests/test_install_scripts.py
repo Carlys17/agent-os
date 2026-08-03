@@ -19,6 +19,31 @@ def test_source_install_scripts_force_refresh_local_uv_tool_package() -> None:
     assert "--force --reinstall-package use-agent-os" in sh
 
 
+def test_cli_upgrade_targets_the_release_not_the_checkout() -> None:
+    """`agentos upgrade` and install_source.sh must stay deliberately different.
+
+    They diverged silently once already: install_source.sh builds the Control UI
+    and installs the checkout, while `agentos upgrade` delegated to `uv tool
+    upgrade`, which re-resolved uv's DIRECTORY receipt and re-packaged whatever
+    stale `static/dist/` was on disk. Upgrade now installs the published wheel
+    (whose UI is built in CI); the checkout path stays with the shell script.
+    """
+
+    from agentos.cli.install_method import InstallMethod, build_upgrade_plan
+
+    sh = SOURCE_SH.read_text(encoding="utf-8")
+    assert 'install_target=".' in sh, "install_source.sh must install the local checkout"
+
+    plan = build_upgrade_plan(
+        method=InstallMethod.UV_TOOL,
+        env={"PATH": "/usr/bin"},
+        python_tag="3.12",
+    )
+    assert plan.command[-1] == "use-agent-os[recommended]"
+    assert "." not in plan.command, "upgrade must never install a local path"
+    assert "upgrade" not in plan.command, "`uv tool upgrade` re-resolves the receipt"
+
+
 def test_source_installers_build_control_ui_before_python_package_install() -> None:
     ps1 = SOURCE_PS1.read_text(encoding="utf-8")
     sh = SOURCE_SH.read_text(encoding="utf-8")

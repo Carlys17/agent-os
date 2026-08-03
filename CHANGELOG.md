@@ -37,6 +37,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   documents skills at length — the material sat under bold labels, which
   `parse_sections` does not index. The six operation groups under **Common
   operations** are real headings now, so each can be read on its own.
+- `agentos upgrade` shipped a stale React control UI on any install laid down
+  from a local checkout. `scripts/install_source.sh` installs the directory
+  itself, so uv's tool receipt records a *directory* requirement; `uv tool
+  upgrade` then re-resolved that requirement and rebuilt the wheel from the
+  working tree. The wheel bundles `src/agentos/gateway/static/dist/**`, but
+  nothing in the upgrade path runs `npm run build` — so every upgrade
+  re-packaged whatever browser bundle happened to be on disk. Python code moved
+  forward, the web UI did not. `agentos upgrade` now installs the published
+  release (`uv tool install --force --python <running> "use-agent-os[recommended]"`
+  / `pipx install --force …`), whose wheel carries a control UI built and
+  verified in CI. Installing a checkout stays with `scripts/install_source.sh`,
+  the only path that rebuilds the bundle first; the command names it when it
+  detects a checkout-backed install.
+- `agentos upgrade` printed upgrade commands with the extras silently removed —
+  Rich parsed the `[recommended]` in `use-agent-os[recommended]` as a markup
+  tag and dropped it, so copying the printed command produced an install
+  missing the ONNX embedding models and the pilot router.
 
 ## [2026.8.2.post1] - 2026-08-02
 
