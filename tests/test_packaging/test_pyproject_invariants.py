@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -23,6 +24,18 @@ def lock_package() -> dict:
     return next(package for package in data["package"] if package["name"] == "use-agent-os")
 
 
+@pytest.fixture(scope="module")
+def locked_versions() -> dict[str, str]:
+    """Every version uv.lock resolves, keyed by package name.
+
+    The bounds policy is expressed relative to what we actually lock and test, so the
+    expected cap is computed from here rather than restated in the test.
+    """
+
+    data = tomllib.loads(UV_LOCK.read_text(encoding="utf-8"))
+    return {package["name"]: package["version"] for package in data["package"]}
+
+
 def _dep_name(spec: str) -> str:
     """Extract the canonical (lowercased) package name from one PEP 508 spec."""
 
@@ -39,7 +52,7 @@ def _dep_names(specs: list[str]) -> set[str]:
 
 
 # Dependencies that ship to consumers without an upper bound, on purpose (#153).
-# Two classes only:
+# Two classes only, and both are >=1.0 — see `test_no_zerover_dependency_is_exempt`:
 #   - CalVer projects, where a cap expires by the calendar rather than by a break.
 #   - packages whose surface we call has been stable for years, where a cap buys
 #     nothing and costs co-installability.
@@ -49,13 +62,10 @@ INTENTIONALLY_UNCAPPED = {
     # CalVer — the version number tracks the year, not the API.
     "structlog",
     "html2text",
-    # Stable, narrow surface: `safe_load`, `Template.render`, a TTLCache, a form
-    # parser, a `dumps`, a DB-API wrapper.
-    "python-multipart",
+    # Stable, narrow surface: `safe_load`, `Template.render`, a TTLCache, a `dumps`.
     "brotli",
     "jinja2",
     "pyyaml",
-    "aiosqlite",
     "cachetools",
     "tomli-w",
 }
@@ -66,44 +76,125 @@ INTENTIONALLY_UNCAPPED = {
 UNBOUNDED_EXTRAS = {"dev"}
 
 
-def test_declared_dependencies_carry_upper_bounds(project_table: dict) -> None:
-    """Every consumer-facing dependency is capped, or explicitly exempt.
-
-    `uv.lock` makes contributor and CI installs reproducible, but a downstream
-    `pip install use-agent-os` resolves fresh against PyPI and takes whatever each
-    package published most recently — including a breaking major released after our
-    last release. Without a cap, a dependency we never touched can break new installs,
-    and the resulting bug report has no resolvable dependency set to reproduce from.
-
-    The policy (pyproject.toml, above `dependencies`, and CONTRIBUTING.md) is a cap at
-    the next major above the version uv.lock pins, with a short exemption list rather
-    than a blanket cap on all of them — capping uniformly makes AgentOS painful to
-    co-install with anything else.
-    """
+def _consumer_specs(project_table: dict) -> list[str]:
+    """Every spec a downstream `pip install` resolves — base plus non-dev extras."""
 
     specs = list(project_table["dependencies"])
     for extra, extra_specs in project_table.get("optional-dependencies", {}).items():
         if extra not in UNBOUNDED_EXTRAS:
             specs.extend(extra_specs)
+    return specs
 
-    uncapped = set()
-    for spec in specs:
-        # Split the environment marker off first: a marker like `python_version < "3.13"`
-        # carries a `<` that says nothing about the version bound.
-        version_part = spec.split(";", 1)[0]
-        if "<" not in version_part:
-            uncapped.add(_dep_name(spec))
+
+def _release_series(version: str) -> tuple[int, ...]:
+    """The (major, minor) a version belongs to, as leading integers."""
+
+    parts = tuple(int(part) for part in re.findall(r"\d+", version)[:2])
+    return parts + (0,) * (2 - len(parts))
+
+
+def _expected_cap(locked: str) -> tuple[int, int]:
+    """The first release upstream is free to break in, given what uv.lock pins.
+
+    Semver reserves breaking changes for the major bump — except below 1.0, where the
+    minor is the breaking unit. `typer<1.0` against a locked 0.24.1 is therefore not a
+    cap at all: it waves through every 0.x release upstream cares to make.
+    """
+
+    major, minor = _release_series(locked)
+    return (0, minor + 1) if major == 0 else (major + 1, 0)
+
+
+def _declared_cap(spec: str) -> tuple[int, int] | None:
+    """The `<` bound in a PEP 508 spec, as (major, minor)."""
+
+    # Split the environment marker off first: a marker like `python_version < "3.13"`
+    # carries a `<` that says nothing about the version bound.
+    match = re.search(r"<\s*([0-9][0-9.]*)", spec.split(";", 1)[0])
+    if match is None:
+        return None
+    major, minor = _release_series(match.group(1))
+    return (major, minor)
+
+
+def test_declared_dependencies_carry_upper_bounds(project_table: dict) -> None:
+    """Every consumer-facing dependency is capped, or explicitly exempt.
+
+    `uv.lock` makes contributor and CI installs reproducible, but a downstream
+    `pip install use-agent-os` resolves fresh against PyPI and takes whatever each
+    package published most recently — including a breaking release published after
+    ours. Without a cap, a dependency we never touched can break new installs, and the
+    resulting bug report has no resolvable dependency set to reproduce from.
+
+    The policy lives above `dependencies` in pyproject.toml and in CONTRIBUTING.md:
+    cap at the next breaking release, with a short exemption list rather than a blanket
+    cap on all of them, because capping uniformly makes AgentOS painful to co-install.
+    """
+
+    uncapped = {
+        _dep_name(spec) for spec in _consumer_specs(project_table) if _declared_cap(spec) is None
+    }
 
     missing = sorted(uncapped - INTENTIONALLY_UNCAPPED)
     assert not missing, (
         "these ship to `pip install` consumers with no upper bound — cap them at the "
-        "next major above the version uv.lock pins, or add them to "
+        "next breaking release above what uv.lock pins, or add them to "
         f"INTENTIONALLY_UNCAPPED with a reason: {missing}"
     )
 
     now_capped = sorted(INTENTIONALLY_UNCAPPED - uncapped)
     assert not now_capped, (
         f"these are capped now — drop them from INTENTIONALLY_UNCAPPED: {now_capped}"
+    )
+
+
+def test_upper_bounds_sit_at_the_next_breaking_release(
+    project_table: dict, locked_versions: dict[str, str]
+) -> None:
+    """A cap must land on the next release upstream may break in, not further out.
+
+    Checking only that *a* `<` exists lets the bound drift off the policy silently: a
+    0.x dependency capped at `<1.0` reads as bounded and is not, and a `<70.0` against a
+    locked 68.1 lets an untested 69.0 straight into a fresh install. Both had happened
+    here before this test existed. The boundary is recomputed from uv.lock rather than
+    hardcoded, so bumping a locked version tells you to move its cap.
+    """
+
+    drifted = []
+    for spec in _consumer_specs(project_table):
+        name = _dep_name(spec)
+        declared = _declared_cap(spec)
+        if declared is None or name not in locked_versions:
+            continue
+        expected = _expected_cap(locked_versions[name])
+        if declared != expected:
+            drifted.append(
+                f"{name}: locked {locked_versions[name]}, capped <{declared[0]}.{declared[1]}, "
+                f"expected <{expected[0]}.{expected[1]}"
+            )
+
+    assert not drifted, (
+        "these caps do not sit at the next breaking release — a 0.x dependency caps at "
+        "the next minor, everything else at the next major:\n  " + "\n  ".join(sorted(drifted))
+    )
+
+
+def test_no_zerover_dependency_is_exempt(locked_versions: dict[str, str]) -> None:
+    """Exemptions are for >=1.0 packages only.
+
+    The exemption rationales — CalVer, or a surface stable for years — are claims about
+    projects that have committed to a stable line. A package still numbered below 1.0
+    has not, whatever its actual release cadence, so it does not get to skip the cap.
+    """
+
+    zerover = sorted(
+        f"{name} ({locked_versions[name]})"
+        for name in INTENTIONALLY_UNCAPPED
+        if name in locked_versions and _release_series(locked_versions[name])[0] == 0
+    )
+    assert not zerover, (
+        "these are exempt from capping but are still 0.x, where the minor is the "
+        f"breaking unit — cap them at the next minor instead: {zerover}"
     )
 
 
