@@ -1,6 +1,6 @@
 [project]
 name = "use-agent-os"
-version = "2026.8.2.post1"
+version = "2026.8.3"
 description = "Token-Efficient AI agent with on-device Pilot Router"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
