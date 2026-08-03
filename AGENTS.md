@@ -134,8 +134,12 @@ Docs live in `docs/` (`docs/README.md` is the index); helper scripts in `scripts
   `feat(provider)!: …`, `fix(gateway): …`, `docs(...)`, `chore(...)`,
   `refactor(...)`. Use `!` for breaking changes.
 - Commit or push **only when asked**. If on `main`, branch first.
-- PRs go against `main`; reference issues with `Fixes #123` / `Refs #123`.
-  Preserve co-authorship with `Co-authored-by:` trailers on squash/rebase.
+- PRs go against `main` and **must** link their issue: `Fixes #123` /
+  `Closes #123` when the PR fully resolves it, `Refs #123` when it does not.
+  Open an issue first if none exists. Preserve co-authorship with
+  `Co-authored-by:` trailers on squash/rebase.
+- Issue labeling, claiming, assignment, and the 3-day unassignment policy live
+  in [`CONTRIBUTING.md`](CONTRIBUTING.md) — follow it before starting work.
 - This repo is **public** — never commit secrets, tokens, real provider
   transcripts, local paths, or scratch/editor artifacts. `.gitignore` is
   hardened and `tests/test_public_release_hygiene.py` guards it.
