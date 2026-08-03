@@ -210,7 +210,8 @@ async def test_memory_save_redacts_secrets_before_disk_and_index(tmp_path):
     assert "sk-or-v1-abcdefghijklmnopqrstuvwxyz" not in disk_text
     assert "plain-secret" not in indexed_text
     assert "sk-or-v1-abcdefghijklmnopqrstuvwxyz" not in indexed_text
-    assert "[REDACTED]" in disk_text
+    assert "***" in disk_text
+    assert "sk-or-***" in disk_text
 
 
 @pytest.mark.asyncio
