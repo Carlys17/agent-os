@@ -69,6 +69,54 @@ Default tests must be offline, deterministic, credential-free, and safe for
 forks. Do not add network, provider, browser, or channel requirements to the
 default pull request path.
 
+## Dependency Bounds
+
+`uv.lock` is committed and CI syncs `--frozen`, so contributor and CI installs
+are reproducible. Downstream `pip install use-agent-os` is not: it resolves
+fresh against PyPI and takes whatever each package published most recently,
+including a breaking major released after our last release.
+
+So every dependency in `[project.dependencies]` and in every extra except `dev`
+carries an upper bound at **the first release its upstream is free to break
+in**, measured from the version `uv.lock` pins:
+
+| upstream version | cap at | example |
+| --- | --- | --- |
+| `>=1.0` | next **major** | locked `rich` 14.3.3 → `rich>=13.0,<15.0` |
+| `0.x` | next **minor** | locked `typer` 0.24.1 → `typer>=0.12,<0.25` |
+
+The 0.x row matters more than it looks. Under semver the minor is the breaking
+unit below 1.0, so `typer<1.0` is not a cap — it waves through every release
+upstream cares to make. There is no 0.x exemption: a package numbered below 1.0
+gets a minor cap even where we only touch it indirectly.
+
+Exemptions are for `>=1.0` packages only, listed in `INTENTIONALLY_UNCAPPED` in
+`tests/test_packaging/test_pyproject_invariants.py`:
+
+- **CalVer projects** (`structlog`, `html2text`) — the version tracks the year,
+  so a cap expires by the calendar rather than by an actual break.
+- **Long-stable narrow surfaces** (`pyyaml`, `jinja2`, `cachetools`, and
+  similar) — we call `safe_load`, `Template.render`, a `TTLCache`. A cap buys
+  nothing and costs co-installability.
+
+Bounds are deliberately not applied uniformly to everything: capping all of
+them makes AgentOS painful to install alongside other packages. `dev` is
+contributor tooling pinned by the lockfile, never a consumer surface, and stays
+uncapped.
+
+When you add, remove, or re-bound a dependency:
+
+```sh
+uv lock                                  # commit the result with your change
+uv run pytest tests/test_packaging -q    # enforces the policy above
+```
+
+The test recomputes both boundaries from `uv.lock` rather than hardcoding them,
+so bumping a locked version tells you to move its cap in the same change.
+
+Raising an existing cap is a normal change — bump the locked version, widen the
+cap, and say in the pull request what you tested against.
+
 ## Test Expectations
 
 Add or update public regression tests for behavior changes and bug fixes.
