@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,6 +14,18 @@ from agentos.cli import upgrade_cmd
 from agentos.cli.install_method import InstallMethod, UpgradePlan
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _no_source_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Quarantine the PEP 610 probe from the developer's own machine.
+
+    A maintainer's checkout really is installed from a directory, so without
+    this the source-install notice would fire in every test and its text would
+    embed a machine-dependent path. Tests that want the notice opt in.
+    """
+
+    monkeypatch.setattr(upgrade_cmd, "installed_from_directory", lambda *a, **k: None)
 
 
 def _app() -> typer.Typer:
@@ -30,8 +44,16 @@ def _delegated_plan() -> UpgradePlan:
         method=InstallMethod.UV_TOOL,
         delegated=True,
         tool="/abs/uv",
-        command=["/abs/uv", "tool", "upgrade", "use-agent-os", "--reinstall"],
-        manual_hint="uv tool upgrade use-agent-os --reinstall",
+        command=[
+            "/abs/uv",
+            "tool",
+            "install",
+            "--force",
+            "--python",
+            "3.12",
+            "use-agent-os[recommended]",
+        ],
+        manual_hint='uv tool install --force --python 3.12 "use-agent-os[recommended]"',
     )
 
 
@@ -49,6 +71,15 @@ def _ok_run(*_: Any, **__: Any) -> upgrade_cmd.UpgradeRunResult:
     return upgrade_cmd.UpgradeRunResult(
         ok=True, timed_out=False, returncode=0, stdout="upgraded", stderr=""
     )
+
+
+def _json_payload(stdout: str) -> dict[str, Any]:
+    """The `--json` object, which progress prose may precede on stdout."""
+
+    start = stdout.index("{")
+    payload = json.loads(stdout[start:])
+    assert isinstance(payload, dict)
+    return payload
 
 
 # --- --check ---------------------------------------------------------------
@@ -104,8 +135,90 @@ def test_dry_run_touches_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     result = runner.invoke(_app(), ["upgrade", "--dry-run"])
     assert result.exit_code == 0
-    assert "Would run: /abs/uv tool upgrade use-agent-os --reinstall" in result.stdout
+    assert (
+        "Would run: /abs/uv tool install --force --python 3.12 use-agent-os[recommended]"
+        in result.stdout
+    )
     assert ran["run"] is False
+
+
+# --- source-install notice (PEP 610 directory install) ---------------------
+
+
+def test_source_install_notice_names_the_way_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A checkout-backed install is exactly the case this command replaces, so
+    # it must say so and name install_source.sh — but never block.
+    monkeypatch.setattr(upgrade_cmd, "build_upgrade_plan", _delegated_plan)
+    monkeypatch.setattr(
+        upgrade_cmd, "installed_from_directory", lambda *a, **k: Path("/w/agent-os")
+    )
+    monkeypatch.setattr(upgrade_cmd, "_run_upgrade_subprocess", _ok_run)
+    monkeypatch.setattr(upgrade_cmd, "_installed_version_via", lambda *a, **k: "9.9.9")
+    monkeypatch.setattr(upgrade_cmd, "_restart_and_verify", lambda **k: True)
+
+    result = runner.invoke(_app(), ["upgrade"])
+    assert result.exit_code == 0
+    assert "/w/agent-os" in result.stdout
+    assert "scripts/install_source.sh" in result.stdout
+    assert "Upgraded" in result.stdout
+
+
+def test_no_source_install_notice_for_a_release_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(upgrade_cmd, "build_upgrade_plan", _delegated_plan)
+    monkeypatch.setattr(upgrade_cmd, "_run_upgrade_subprocess", _ok_run)
+    monkeypatch.setattr(upgrade_cmd, "_installed_version_via", lambda *a, **k: "9.9.9")
+    monkeypatch.setattr(upgrade_cmd, "_restart_and_verify", lambda **k: True)
+
+    result = runner.invoke(_app(), ["upgrade"])
+    assert result.exit_code == 0
+    assert "install_source.sh" not in result.stdout
+
+
+def test_dry_run_reports_the_source_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    ran = {"run": False}
+    monkeypatch.setattr(upgrade_cmd, "build_upgrade_plan", _delegated_plan)
+    monkeypatch.setattr(
+        upgrade_cmd, "installed_from_directory", lambda *a, **k: Path("/w/agent-os")
+    )
+    monkeypatch.setattr(
+        upgrade_cmd, "_run_upgrade_subprocess", lambda *a, **k: ran.__setitem__("run", True)
+    )
+
+    result = runner.invoke(_app(), ["upgrade", "--dry-run", "--json"])
+    assert result.exit_code == 0
+    assert _json_payload(result.stdout)["sourceDirectory"] == "/w/agent-os"
+    assert ran["run"] is False
+
+
+def test_success_json_reports_the_source_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(upgrade_cmd, "build_upgrade_plan", _delegated_plan)
+    monkeypatch.setattr(
+        upgrade_cmd, "installed_from_directory", lambda *a, **k: Path("/w/agent-os")
+    )
+    monkeypatch.setattr(upgrade_cmd, "_run_upgrade_subprocess", _ok_run)
+    monkeypatch.setattr(upgrade_cmd, "_installed_version_via", lambda *a, **k: "9.9.9")
+    monkeypatch.setattr(upgrade_cmd, "_restart_and_verify", lambda **k: True)
+
+    result = runner.invoke(_app(), ["upgrade", "--json"])
+    assert result.exit_code == 0
+    payload = _json_payload(result.stdout)
+    assert payload["sourceDirectory"] == "/w/agent-os"
+    assert payload["new"] == "9.9.9"
+
+
+def test_release_install_json_reports_null_source_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(upgrade_cmd, "build_upgrade_plan", _delegated_plan)
+    monkeypatch.setattr(upgrade_cmd, "_run_upgrade_subprocess", _ok_run)
+    monkeypatch.setattr(upgrade_cmd, "_installed_version_via", lambda *a, **k: "9.9.9")
+    monkeypatch.setattr(upgrade_cmd, "_restart_and_verify", lambda **k: True)
+
+    result = runner.invoke(_app(), ["upgrade", "--json"])
+    assert result.exit_code == 0
+    assert _json_payload(result.stdout)["sourceDirectory"] is None
 
 
 # --- successful delegate + restart+verify ----------------------------------

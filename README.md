@@ -247,10 +247,17 @@ the #1 documented upgrade regret):
 agentos upgrade
 ```
 
-On a `uv tool` or `pipx` install this runs the matching upgrade command for
-you, then restarts the managed gateway and **verifies** the running gateway
-reports the new version before printing `Gateway: restarted and verified
+On a `uv tool` or `pipx` install this installs the published PyPI release of
+`use-agent-os[recommended]` for you (`uv tool install --force --python
+<running> …`), then restarts the managed gateway and **verifies** the running
+gateway reports the new version before printing `Gateway: restarted and verified
 (<version>)`. It prints the `old → new` versions on success.
+
+`agentos upgrade` always installs the release, never a local checkout — the PyPI
+wheel ships a control UI built in CI, while reinstalling a checkout would
+re-package whatever browser bundle happens to be on disk. If you installed from
+source, run `bash scripts/install_source.sh` again instead; it rebuilds the
+control UI first. The command says so when it detects a checkout-backed install.
 
 Flags:
 
@@ -262,8 +269,8 @@ Flags:
 | `--timeout <s>` | Upgrade-subprocess timeout (default 600s). On timeout the tool's process group is killed and recovery guidance is printed — never a half-state. |
 | `--json` | Machine-readable output. |
 
-For a plain-`pip` or editable / source install, `agentos upgrade` will **not**
-fake it — it prints the exact manual command and exits non-zero. Run it
+For a plain-`pip`, editable, or unclassifiable install, `agentos upgrade` will
+**not** fake it — it prints the exact manual command and exits non-zero. Run it
 yourself:
 
 ```sh

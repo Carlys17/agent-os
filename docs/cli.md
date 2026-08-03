@@ -205,10 +205,15 @@ Useful automation flags:
 ## Upgrade
 
 `agentos upgrade` is the primary upgrade path. It detects how AgentOS was
-installed, upgrades it, and — by default — restarts the managed gateway and
+installed, installs the **published PyPI release** of
+`use-agent-os[recommended]`, and — by default — restarts the managed gateway and
 **verifies** the running gateway reports the new version before declaring
 success (a "successful" upgrade that leaves the daemon on old code is the
 common upgrade regret).
+
+It always targets the release, never a local checkout. To install a checkout,
+run `bash scripts/install_source.sh` — that script is the only path that
+rebuilds the React control UI (`npm ci && npm run build`) before installing.
 
 ```sh
 agentos upgrade                 # upgrade, restart the gateway, verify
@@ -229,16 +234,35 @@ agentos upgrade --timeout 900   # bound the upgrade subprocess (default 600s)
 
 Per install method:
 
-- **uv tool / pipx** — delegated automatically (`uv tool upgrade use-agent-os
-  --reinstall` / `pipx upgrade use-agent-os --force`), resolving the tool to an
-  absolute path over a hardened PATH. Both rebuild the managed venv rather than
-  bumping it in place — `--reinstall` (uv, implies `--refresh`) and `--force`
-  (pipx) self-heal a stale cache or an orphaned interpreter (e.g. after the base
-  Python moves) that would otherwise force a manual reinstall. Extras recorded
-  in the tool receipt are preserved.
-- **pip / editable / source checkout** — not faked: prints the exact manual
-  command (e.g. `python -m pip install --upgrade "use-agent-os"`) and exits
-  with a distinct code.
+- **uv tool** — delegated automatically as `uv tool install --force --python
+  <running major.minor> "use-agent-os[recommended]"`, resolving `uv` to an
+  absolute path over a hardened PATH. `install` rather than `upgrade` is
+  load-bearing: `uv tool upgrade` takes only a bare tool name and re-resolves
+  whatever uv's receipt recorded, so an install laid down from a checkout
+  (`install_source.sh` passes `.`) keeps rebuilding the wheel from the working
+  tree — re-packaging whatever `src/agentos/gateway/static/dist/` is on disk,
+  because nothing in the upgrade path runs `npm run build`. `--force` is
+  required so an already-installed tool is genuinely rebuilt instead of
+  no-op'ing, and it also self-heals a stale cache or an orphaned interpreter
+  (e.g. after the base Python moves). `--python` pins the rebuilt venv to the
+  interpreter already in use, so a forced reinstall never moves a 3.13 install
+  onto another version.
+- **pipx** — the same shape: `pipx install --force "use-agent-os[recommended]"`.
+- **pip / editable / unknown** — not faked: prints the exact manual command
+  (e.g. `python -m pip install --upgrade "use-agent-os[recommended]"`) and exits
+  with a distinct code. The editable hint points at
+  `git pull && bash scripts/install_source.sh`, since an editable install serves
+  the control UI straight out of the checkout.
+
+Extras are always `[recommended]` — the same profile `install_source.sh`
+installs by default. Without them the ONNX embedding models and the pilot router
+degrade silently at runtime.
+
+When the current install was built from a local directory (detected via PEP 610
+`direct_url.json`), the command prints a note naming that directory and
+`scripts/install_source.sh` before proceeding. It is informational only: it
+never prompts, blocks, or changes the exit code. `--json` reports the same as
+`sourceDirectory` (`null` for a release install).
 
 Exit codes: **0** success (upgraded + verified, or `--check`/`--dry-run`);
 **3** this install method needs a manual command (printed); **1** the upgrade

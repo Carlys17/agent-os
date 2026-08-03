@@ -228,12 +228,18 @@ agentos upgrade --no-restart   # upgrade only; gateway keeps running OLD code
 ```
 
 `agentos upgrade` is the primary path: it detects the install method and
-delegates (`uv tool upgrade` / `pipx upgrade`), then by default restarts the
-managed gateway and verifies it reports the new version before declaring
-success. For pip / editable / source installs it prints the exact manual
-command and exits non-zero (**exit 3**) rather than faking it; a failed or
-unverifiable upgrade is **exit 1**. Flags: `--timeout` (subprocess bound,
-default 600s; kills the process group on timeout), `--config`, `--json`.
+installs the **published PyPI release** of `use-agent-os[recommended]` (`uv tool
+install --force --python <running> …` / `pipx install --force …`), then by
+default restarts the managed gateway and verifies it reports the new version
+before declaring success. It never installs from a local checkout — even when
+the current install came from one — because only `bash scripts/install_source.sh`
+rebuilds the React control UI before installing, and a PyPI wheel already ships
+a CI-built one. A checkout-backed install gets an informational note naming that
+directory and the script; it never blocks. For pip / editable / unknown installs
+it prints the exact manual command and exits non-zero (**exit 3**) rather than
+faking it; a failed or unverifiable upgrade is **exit 1**. Flags: `--timeout`
+(subprocess bound, default 600s; kills the process group on timeout),
+`--config`, `--json` (adds `sourceDirectory`).
 
 Commands that reach the gateway compare CLI and gateway versions: a gateway
 **older** than the CLI warns (post-upgrade, before restart); a gateway
