@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.3] - 2026-08-03
+
 ### Changed
 
 - A `pip install use-agent-os` no longer resolves dependencies open-ended.
@@ -101,6 +103,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Rich parsed the `[recommended]` in `use-agent-os[recommended]` as a markup
   tag and dropped it, so copying the printed command produced an install
   missing the ONNX embedding models and the pilot router.
+
+### Security
+
+- Durable memory ran its own three-pattern redaction rather than the shared
+  scanner, so anything the small list missed was written to disk verbatim.
+  `redact_memory_text` now goes through `redact_sensitive_text` — the full
+  provider-prefix set — and does so with `force=True`, because
+  `AGENTOS_REDACT_SECRETS=0` is an *egress* escape hatch and must not unmask
+  what lands in durable storage. The keyword rule (`api_key`, `secret`,
+  `token`, `password`) handles quoted values and leaves already-masked text
+  alone instead of double-redacting it. The shared scanner also learned the
+  remaining AWS key-id prefixes (`ASIA` temporary credentials, `ABIA`, `ACCA`)
+  and now matches `Authorization` and `x-api-key`-family headers when the name
+  or value is quoted — the JSON and dict spellings a tool result actually
+  arrives in, which the bare `name: value` patterns walked past.
 
 ## [2026.8.2.post1] - 2026-08-02
 
