@@ -15,6 +15,12 @@ from agentos.cli.install_method import InstallMethod, UpgradePlan
 
 runner = CliRunner()
 
+# A fake checkout root. Assert against SOURCE_DIR_TEXT, never the literal, so the
+# expectation matches what the command actually prints: Path renders this as
+# "\w\agent-os" on Windows and "/w/agent-os" elsewhere.
+SOURCE_DIR = Path("/w/agent-os")
+SOURCE_DIR_TEXT = str(SOURCE_DIR)
+
 
 @pytest.fixture(autouse=True)
 def _no_source_install(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -149,16 +155,14 @@ def test_source_install_notice_names_the_way_back(monkeypatch: pytest.MonkeyPatc
     # A checkout-backed install is exactly the case this command replaces, so
     # it must say so and name install_source.sh — but never block.
     monkeypatch.setattr(upgrade_cmd, "build_upgrade_plan", _delegated_plan)
-    monkeypatch.setattr(
-        upgrade_cmd, "installed_from_directory", lambda *a, **k: Path("/w/agent-os")
-    )
+    monkeypatch.setattr(upgrade_cmd, "installed_from_directory", lambda *a, **k: SOURCE_DIR)
     monkeypatch.setattr(upgrade_cmd, "_run_upgrade_subprocess", _ok_run)
     monkeypatch.setattr(upgrade_cmd, "_installed_version_via", lambda *a, **k: "9.9.9")
     monkeypatch.setattr(upgrade_cmd, "_restart_and_verify", lambda **k: True)
 
     result = runner.invoke(_app(), ["upgrade"])
     assert result.exit_code == 0
-    assert "/w/agent-os" in result.stdout
+    assert SOURCE_DIR_TEXT in result.stdout
     assert "scripts/install_source.sh" in result.stdout
     assert "Upgraded" in result.stdout
 
@@ -179,24 +183,20 @@ def test_no_source_install_notice_for_a_release_install(
 def test_dry_run_reports_the_source_directory(monkeypatch: pytest.MonkeyPatch) -> None:
     ran = {"run": False}
     monkeypatch.setattr(upgrade_cmd, "build_upgrade_plan", _delegated_plan)
-    monkeypatch.setattr(
-        upgrade_cmd, "installed_from_directory", lambda *a, **k: Path("/w/agent-os")
-    )
+    monkeypatch.setattr(upgrade_cmd, "installed_from_directory", lambda *a, **k: SOURCE_DIR)
     monkeypatch.setattr(
         upgrade_cmd, "_run_upgrade_subprocess", lambda *a, **k: ran.__setitem__("run", True)
     )
 
     result = runner.invoke(_app(), ["upgrade", "--dry-run", "--json"])
     assert result.exit_code == 0
-    assert _json_payload(result.stdout)["sourceDirectory"] == "/w/agent-os"
+    assert _json_payload(result.stdout)["sourceDirectory"] == SOURCE_DIR_TEXT
     assert ran["run"] is False
 
 
 def test_success_json_reports_the_source_directory(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(upgrade_cmd, "build_upgrade_plan", _delegated_plan)
-    monkeypatch.setattr(
-        upgrade_cmd, "installed_from_directory", lambda *a, **k: Path("/w/agent-os")
-    )
+    monkeypatch.setattr(upgrade_cmd, "installed_from_directory", lambda *a, **k: SOURCE_DIR)
     monkeypatch.setattr(upgrade_cmd, "_run_upgrade_subprocess", _ok_run)
     monkeypatch.setattr(upgrade_cmd, "_installed_version_via", lambda *a, **k: "9.9.9")
     monkeypatch.setattr(upgrade_cmd, "_restart_and_verify", lambda **k: True)
@@ -204,7 +204,7 @@ def test_success_json_reports_the_source_directory(monkeypatch: pytest.MonkeyPat
     result = runner.invoke(_app(), ["upgrade", "--json"])
     assert result.exit_code == 0
     payload = _json_payload(result.stdout)
-    assert payload["sourceDirectory"] == "/w/agent-os"
+    assert payload["sourceDirectory"] == SOURCE_DIR_TEXT
     assert payload["new"] == "9.9.9"
 
 
