@@ -171,6 +171,70 @@ def _community_result_to_dict(
     }
 
 
+def _local_match(loader: SkillLoader, query: str) -> dict[str, Any] | None:
+    """What an installed skill named like ``query`` already offers, or ``None``.
+
+    A skill that declares ``requires`` disappears from the prompt until its
+    binary and variables are present, so from the model's side an unconfigured
+    bundled skill and a skill that was never installed look identical. Asked to
+    install one, it goes shopping on a hub — and a same-named catalog row
+    installs over it, because managed outranks bundled. Answering the search
+    with the local truth is what stops that, so this runs before the network
+    call and its result is emitted ahead of the results list.
+    """
+    from agentos.skills.inventory import build_skill_inventory
+    from agentos.tools.registry import get_default_registry
+
+    wanted = query.strip().casefold()
+    if not wanted:
+        return None
+    try:
+        rows = build_skill_inventory(
+            loader,
+            available_tools=set(get_default_registry().list_names()),
+        )
+    except Exception:  # pragma: no cover — a hint is never worth failing the search on
+        logger.debug("skill_search_community.local_probe_failed", exc_info=True)
+        return None
+
+    row = next((r for r in rows if r.spec.name.casefold() == wanted), None)
+    if row is None:
+        near = [r.spec.name for r in rows if wanted in r.spec.name.casefold()][:3]
+        return {"similar_installed": near} if near else None
+
+    report = row.eligibility
+    payload: dict[str, Any] = {
+        "name": row.spec.name,
+        "layer": str(row.spec.layer),
+        "eligible": report.eligible,
+    }
+    if report.eligible:
+        payload["note"] = (
+            f"'{row.spec.name}' is already installed and ready to use. Read it with "
+            f"skill_view instead of installing anything."
+        )
+        return payload
+
+    missing = [f"{b} (binary)" for b in report.missing_bins]
+    missing += [f"{e} (env var)" for e in report.missing_env]
+    if missing:
+        payload["missing"] = missing
+    if report.install_hints:
+        payload["install_hints"] = [hint.command for hint in report.install_hints]
+    if report.missing_env_detail:
+        payload["needs_env"] = [
+            {"name": d.name, "description": d.description, "url": d.url}
+            for d in report.missing_env_detail
+        ]
+    payload["note"] = (
+        f"'{row.spec.name}' is already installed at the {row.spec.layer} layer — it is "
+        f"not missing, it is unconfigured. Fix what 'missing' lists rather than "
+        f"installing a hub skill. A hub skill of the same name lands in the managed "
+        f"layer, which outranks this one, and would replace it for every session."
+    )
+    return payload
+
+
 async def _run_install_argv(argv: list[str]) -> tuple[int, str, str, bool]:
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -744,7 +808,11 @@ def create_skill_tools(loader: SkillLoader) -> None:
         name="skill_search_community",
         description=(
             "Search Community skill sources such as ClawHub. Use this when the user asks to "
-            "find, search, browse, or locate installable skills from the community marketplace."
+            "find, search, browse, or locate installable skills from the community marketplace. "
+            "A skill that needs setup is hidden from your skill list but is still installed, so "
+            "check skill_list before concluding one is missing. When the reply carries "
+            "installed_match, that skill is already on this machine: report what it needs and "
+            "stop, rather than installing a catalog row of the same name over it."
         ),
         params={
             "query": {
@@ -782,20 +850,24 @@ def create_skill_tools(loader: SkillLoader) -> None:
         source_id: str | None = str(source or "clawhub").strip() or "clawhub"
         if source_id in {"all", "*"}:
             source_id = None
+        local = _local_match(_loader, clean_query) if _loader is not None else None
         router = get_default_skill_router()
         results = await router.search(clean_query, limit=result_limit, source_id=source_id)
         installed = installed_skill_names()
         identifiers = installed_skill_identifiers()
-        return json.dumps(
-            {
-                "status": "ok",
-                "query": clean_query,
-                "source": source_id or "all",
-                "results": [
-                    _community_result_to_dict(row, installed, identifiers) for row in results
-                ],
-            }
-        )
+        payload: dict[str, Any] = {
+            "status": "ok",
+            "query": clean_query,
+            "source": source_id or "all",
+        }
+        # Ahead of the results: whatever the catalog says, the machine's own
+        # answer comes first. Browsing still works — nothing is withheld.
+        if local is not None:
+            payload["installed_match"] = local
+        payload["results"] = [
+            _community_result_to_dict(row, installed, identifiers) for row in results
+        ]
+        return json.dumps(payload)
 
     @tool(
         name="skill_install_community",
@@ -803,7 +875,8 @@ def create_skill_tools(loader: SkillLoader) -> None:
             "Install a Community skill from ClawHub or another configured source. "
             "Use only when the user clearly asked to install a specific skill identifier "
             "or chose one exact result from skill_search_community. Do not use skill_create "
-            "for Community installs."
+            "for Community installs. Installing a skill whose name matches one AgentOS "
+            "already ships is refused, because it would outrank and replace the built-in."
         ),
         params={
             "identifier": {
@@ -820,7 +893,8 @@ def create_skill_tools(loader: SkillLoader) -> None:
             "force": {
                 "type": "boolean",
                 "description": (
-                    "Override a dangerous security scan only after the user explicitly asks."
+                    "Override a dangerous security scan, or a refusal to shadow a bundled "
+                    "skill, only after the user explicitly asks."
                 ),
                 "default": False,
             },

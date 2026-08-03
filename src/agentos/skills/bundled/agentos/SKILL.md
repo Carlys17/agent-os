@@ -194,7 +194,7 @@ otherwise export them with `agentos channels native-commands slack --request-url
 
 ## Common operations (verified recipes)
 
-**Change the model/provider (persistently):**
+### Change the model/provider (persistently)
 
 ```sh
 agentos providers configure openrouter -m anthropic/claude-sonnet-4   # provider + model in one step
@@ -203,7 +203,7 @@ agentos configure                                                     # interact
 agentos gateway restart                                               # apply to a running gateway
 ```
 
-**Gateway lifecycle:**
+### Gateway lifecycle
 
 ```sh
 agentos gateway start          # background; `run` = foreground
@@ -218,7 +218,7 @@ the installed CLI version (`cliVersion`) and the running gateway's version
 (`gatewayVersion`); a `versionMismatch` diagnostic means the gateway is running
 old code — restart it.
 
-**Upgrading AgentOS:**
+### Upgrading AgentOS
 
 ```sh
 agentos upgrade                # upgrade, then restart + verify the gateway
@@ -256,7 +256,7 @@ Unauthenticated non-loopback Control is unsupported. A reverse proxy, VPN, or
 firewall does not replace the AgentOS Control token. Behind a reverse proxy on
 another browser origin, also set `control_ui.allowed_origins`.
 
-**Skills:**
+### Skills
 
 ```sh
 agentos skills list                    # installed, per layer
@@ -269,6 +269,22 @@ agentos skills tap list
 agentos skills update
 agentos skills uninstall <name>
 ```
+
+**Before concluding a skill is missing, run `skill_list`.** A skill that
+declares `requires` is dropped from your prompt until its binary and variables
+are present, so an installed-but-unconfigured skill and a skill that was never
+installed look identical from inside a turn. `skill_list` shows both, and marks
+the first `[unavailable]` with what it is missing and the command that fixes
+it. Reporting that is the answer to "install X" when X is already here — an
+install would not have helped.
+
+**Never install a hub skill over a bundled one.** Layer precedence means the
+managed copy wins, so the built-in stops running everywhere while its files sit
+untouched on disk — nothing in the session would show the swap. The installer
+refuses this and says so; only pass `force` after the operator has confirmed
+they want the hub version instead of the shipped one. `skill_search_community`
+answers with an `installed_match` block when the query names a skill this
+machine already has, for the same reason.
 
 Three separate facts describe a skill; do not use one to answer another.
 
@@ -346,7 +362,7 @@ operator to look for it on the Skills page — read it from the decision log.
 no chat session and no tool surface, so it cannot answer. An absent key means
 "not computed", never "not offered".
 
-**One-shot automation:**
+### One-shot automation
 
 ```sh
 agentos agent -m "summarize README.md" --model gpt-5.4-mini --timeout 120
@@ -359,7 +375,7 @@ Bounding flags: `--timeout` (wall-clock seconds), `--max-iterations`,
 `--workspace-strict` (reads), `--workspace-lockdown` (writes),
 `--scratch-dir`.
 
-**Day-two operations:**
+### Day-two operations
 
 ```sh
 agentos sessions list / show <id> / export <id> <out>
