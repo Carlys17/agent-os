@@ -33,6 +33,12 @@ def test_direct_profile_static_fallbacks_cover_context_windows() -> None:
         "moonshot-v1-128k": 131_072,
         "kimi-k2.5": 262_144,
         "kimi-k2.6": 262_144,
+        "gemini-2.5-pro": 1_048_576,
+        "qwen3.6-flash": 1_000_000,
+        "doubao-seed-2-0-mini-260215": 256_000,
+        "doubao-seed-2-0-lite-260215": 256_000,
+        "doubao-seed-2-0-pro-260215": 256_000,
+        "doubao-seed-2-0-code-preview-260215": 256_000,
     }
 
     for model_id, context_window in expected_windows.items():
@@ -40,6 +46,24 @@ def test_direct_profile_static_fallbacks_cover_context_windows() -> None:
         max_tokens = catalog.resolve_max_tokens(model_id)
         assert max_tokens > 0
         assert max_tokens <= context_window
+
+
+def test_namespaced_opus_5_resolves_like_its_bare_gateway_spelling() -> None:
+    """The openrouter c3 default must not fall through to the generic limits.
+
+    ``resolve_context_window``/``resolve_max_tokens`` are exact-key lookups, so
+    a namespaced spelling with no entry silently gets DEFAULT_CONTEXT_WINDOW and
+    DEFAULT_MAX_TOKENS instead of the model's real 1M/128K windows.
+    """
+    catalog = ModelCatalog()
+
+    assert catalog.resolve_context_window("anthropic/claude-opus-5") == 1_000_000
+    assert catalog.resolve_context_window("anthropic/claude-opus-5") == (
+        catalog.resolve_context_window("claude-opus-5")
+    )
+    assert catalog.resolve_max_tokens("anthropic/claude-opus-5") == (
+        catalog.resolve_max_tokens("claude-opus-5")
+    )
 
 
 def test_openrouter_near_context_completion_window_uses_safe_default() -> None:
