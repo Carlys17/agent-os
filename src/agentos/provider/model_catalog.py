@@ -60,9 +60,11 @@ _STATIC_FALLBACK: dict[str, tuple[int, int]] = {
     "oc-uncensored-1.0": (DEFAULT_MAX_TOKENS, 262_144),
     "glm-5.2": (131_072, 1_048_576),
     "minimax-m3": (131_072, 1_048_576),
+    "qwen3.6-flash": (65_536, 1_000_000),
     "qwen3.7-max": (32_768, 256_000),
     "qwen3.7-plus": (32_768, 256_000),
     "claude-opus-5": (128_000, 1_000_000),
+    "anthropic/claude-opus-5": (128_000, 1_000_000),
     "claude-opus-4.8": (128_000, 1_000_000),
     "claude-sonnet-5": (64_000, 1_000_000),
     "claude-sonnet-4.6": (64_000, 1_000_000),
@@ -71,6 +73,7 @@ _STATIC_FALLBACK: dict[str, tuple[int, int]] = {
     "gemini-3.1-flash-lite": (65_536, 1_000_000),
     "gemini-3.5-flash": (65_536, 1_000_000),
     "gemini-3.1-pro-preview": (32_768, 1_000_000),
+    "gemini-2.5-pro": (65_536, 1_048_576),
     "grok-4.3": (128_000, 1_000_000),
     "grok-4.5": (DEFAULT_MAX_TOKENS, 500_000),
     "kimi-k2.7-code": (262_144, 262_144),
@@ -80,6 +83,15 @@ _STATIC_FALLBACK: dict[str, tuple[int, int]] = {
     "gpt-5.6-luna-pro": (128_000, 1_050_000),
     "gpt-5.6-terra-pro": (128_000, 1_050_000),
     "gpt-5.6-sol-pro": (128_000, 1_050_000),
+    # Volcengine Ark Seed 2.0, the volcengine profile tier defaults. Ark serves
+    # the family with a 256K context. Published max output disagrees across
+    # sources (32K vs 128K), so the conservative value is used: boot.py fetches
+    # no live catalog for volcengine, so nothing corrects an over-ask here and
+    # too high a max_tokens fails the request outright.
+    "doubao-seed-2-0-mini-260215": (32_768, 256_000),
+    "doubao-seed-2-0-lite-260215": (32_768, 256_000),
+    "doubao-seed-2-0-pro-260215": (32_768, 256_000),
+    "doubao-seed-2-0-code-preview-260215": (32_768, 256_000),
 }
 
 # Per-provider overrides for ids whose shared _STATIC_FALLBACK entry carries a

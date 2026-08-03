@@ -372,3 +372,164 @@ def test_direct_openai_zhipu_kimi_and_minimax_prices_do_not_fall_back_to_default
 
     assert price.input_per_m == pytest.approx(input_per_m)
     assert price.output_per_m == pytest.approx(output_per_m)
+
+
+def test_zhipu_c0_default_is_priced_instead_of_hitting_the_generic_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTOS_OPENROUTER_LIVE_PRICING", "0")
+
+    price = lookup_price("glm-4.7-flashx")
+
+    assert price.input_per_m == pytest.approx(0.07)
+    assert price.output_per_m == pytest.approx(0.40)
+    assert price != pricing._DEFAULT_PRICING
+
+
+def test_every_router_tier_default_has_explicit_price_and_catalog_entries() -> None:
+    """No shipped tier default may rely on a prefix match or a generic default.
+
+    Both tables fail open: pricing falls through a ``startswith`` scan to an
+    older model or ``_DEFAULT_PRICING``, and the catalog falls through an
+    exact-key miss to ``DEFAULT_CONTEXT_WINDOW``/``DEFAULT_MAX_TOKENS``. Neither
+    logs, so a miss only shows up as a plausible-looking wrong number.
+    """
+    from agentos.gateway.config import (
+        ROUTER_TIER_PROFILE_IDS,
+        _router_tier_profile_defaults,
+    )
+    from agentos.provider.model_catalog import _STATIC_FALLBACK
+
+    priced_ids = {prefix for prefix, _ in pricing._PRICING_TABLE}
+    catalog_ids = {model_id.lower() for model_id in _STATIC_FALLBACK}
+
+    tier_models = {
+        str(tier["model"]).lower()
+        for profile in ROUTER_TIER_PROFILE_IDS
+        for tier in _router_tier_profile_defaults(profile).values()
+        if tier.get("model")
+    }
+
+    assert tier_models, "expected at least one tier default to audit"
+    assert not tier_models - priced_ids, (
+        f"tier defaults missing an exact _PRICING_TABLE entry: "
+        f"{sorted(tier_models - priced_ids)}"
+    )
+    assert not tier_models - catalog_ids, (
+        f"tier defaults missing an exact _STATIC_FALLBACK entry: "
+        f"{sorted(tier_models - catalog_ids)}"
+    )
+
+
+def _opencap_catalog_payload() -> dict[str, object]:
+    return {
+        "data": [
+            {
+                "id": "claude-opus-5",
+                "pricing": {"input": 4.305, "output": 21.525, "cachedInput": 0.4305},
+            }
+        ]
+    }
+
+
+def test_opencap_cold_cache_refreshes_instead_of_using_another_gateways_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed boot seed must not pin OpenCAP to Bankr rates for the process."""
+    monkeypatch.setenv("AGENTOS_OPENCAP_LIVE_PRICING", "1")
+    calls: list[int] = []
+
+    def fake_fetch() -> dict[str, object]:
+        calls.append(1)
+        return _opencap_catalog_payload()
+
+    monkeypatch.setattr(pricing, "_fetch_opencap_catalog_sync", fake_fetch)
+
+    price = lookup_price("claude-opus-5", provider_id="opencap")
+
+    assert len(calls) == 1
+    assert price.input_per_m == pytest.approx(4.305)
+    assert price.output_per_m == pytest.approx(21.525)
+    # The Bankr static entry for the same bare id is ~3x lower.
+    assert lookup_price("claude-opus-5").input_per_m == pytest.approx(1.375)
+
+
+def test_opencap_cache_is_not_refetched_while_still_within_its_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTOS_OPENCAP_LIVE_PRICING", "1")
+    calls: list[int] = []
+
+    def fake_fetch() -> dict[str, object]:
+        calls.append(1)
+        return _opencap_catalog_payload()
+
+    monkeypatch.setattr(pricing, "_fetch_opencap_catalog_sync", fake_fetch)
+
+    lookup_price("claude-opus-5", provider_id="opencap")
+    lookup_price("claude-opus-5", provider_id="opencap")
+    lookup_price("claude-opus-5", provider_id="opencap")
+
+    assert len(calls) == 1
+
+
+def test_opencap_boot_seed_counts_toward_the_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTOS_OPENCAP_LIVE_PRICING", "1")
+    monkeypatch.setattr(
+        pricing,
+        "_fetch_opencap_catalog_sync",
+        lambda: pytest.fail("a fresh boot seed must not trigger a refresh"),
+    )
+
+    seed_opencap_price_cache(_opencap_catalog_payload())
+    price = lookup_price("claude-opus-5", provider_id="opencap")
+
+    assert price.input_per_m == pytest.approx(4.305)
+
+
+def test_opencap_unreachable_catalog_is_negative_cached_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTOS_OPENCAP_LIVE_PRICING", "1")
+    calls: list[int] = []
+
+    def failing_fetch() -> None:
+        calls.append(1)
+        return None
+
+    monkeypatch.setattr(pricing, "_fetch_opencap_catalog_sync", failing_fetch)
+
+    first = lookup_price("claude-opus-5", provider_id="opencap")
+    second = lookup_price("claude-opus-5", provider_id="opencap")
+
+    assert len(calls) == 1, "a failed fetch must be negative cached, not retried per lookup"
+    assert first == second == PriceEntry(1.375, 6.875)
+
+
+def test_opencap_static_fallback_is_reported_once_per_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warnings: list[tuple[str, dict[str, object]]] = []
+
+    class RecordingLog:
+        def warning(self, event: str, **kwargs: object) -> None:
+            warnings.append((event, kwargs))
+
+        def info(self, event: str, **kwargs: object) -> None: ...
+
+        def debug(self, event: str, **kwargs: object) -> None: ...
+
+    monkeypatch.setattr(pricing, "log", RecordingLog())
+
+    lookup_price("minimax-m3", provider_id="opencap")
+    lookup_price("minimax-m3", provider_id="opencap")
+    lookup_price("glm-5.2", provider_id="opencap")
+
+    events = [
+        kwargs["model"]
+        for event, kwargs in warnings
+        if event == "pricing.opencap_static_fallback"
+    ]
+    assert events == ["minimax-m3", "glm-5.2"]

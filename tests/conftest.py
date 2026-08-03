@@ -14,3 +14,7 @@ _PYTEST_STATE_ROOT = Path(tempfile.gettempdir()) / f"agentos-pytest-{os.getpid()
 os.environ.setdefault("AGENTOS_STATE_DIR", str(_PYTEST_STATE_ROOT / "state"))
 os.environ.setdefault("AGENTOS_LOG_DIR", str(_PYTEST_STATE_ROOT / "logs"))
 os.environ.setdefault("AGENTOS_TURN_CALL_LOG", "0")
+# OpenCAP price lookups refresh their catalog over the network when the cache
+# is cold. Default tests must stay offline; tests that exercise the refresh
+# opt back in with monkeypatch.setenv.
+os.environ.setdefault("AGENTOS_OPENCAP_LIVE_PRICING", "0")

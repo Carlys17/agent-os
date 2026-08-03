@@ -21,6 +21,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Shipped Pilot Router tier defaults resolved against static tables that had no
+  entry for them, and both tables fail open without logging: pricing falls
+  through a `startswith` scan to whatever shorter prefix matches first (or a
+  generic $3/$15), the catalog falls through an exact-key miss to a generic
+  200K context / 16K output. `glm-4.7-flashx` was estimating at the generic
+  default, and seven ids — including `anthropic/claude-opus-5`, the OpenRouter
+  c3 default, whose bare spelling was listed at 1M/128K — were sizing turns
+  against generic limits. Every tier default now carries an explicit entry in
+  both tables, enforced by a test that walks all router tier profiles.
+- OpenCAP cost estimates silently used a different gateway's rate sheet after a
+  single failed boot fetch. The price cache was seeded exactly once, only when
+  the configured provider was OpenCAP, and never refreshed — so one timeout
+  meant every estimate for the life of the process came from the shared static
+  table, which carries Bankr rates running 3-5x below OpenCAP's own. The cache
+  now refreshes on a TTL and refetches when it is cold, mirroring the existing
+  OpenRouter live-pricing path, with a shorter negative cache so an unreachable
+  catalog costs one bounded attempt rather than one per lookup. When an
+  estimate does fall back to the static table it is logged once per model, so a
+  substituted number is no longer indistinguishable from a catalog-backed one.
+  Set `AGENTOS_OPENCAP_LIVE_PRICING=0` to disable the refresh.
 - Asked to install a bundled skill that was only unconfigured, the agent
   searched a community hub instead. A skill declaring `requires` is dropped
   from the prompt until its binary and variables are present, so from inside a

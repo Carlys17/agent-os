@@ -14,6 +14,7 @@ import structlog
 
 from agentos.env import trust_env as _trust_env
 from agentos.provider.openrouter_attribution import openrouter_app_headers
+from agentos.provider.registry import get_provider_spec
 from agentos.secrets import clean_header_secret
 
 log = structlog.get_logger(__name__)
@@ -146,6 +147,13 @@ _LIVE_PRICE_CACHE: dict[str, PriceEntry] = {}
 _LIVE_PRICE_FETCHED_AT: dict[str, float] = {}
 _LIVE_PRICE_MISS_AT: dict[str, float] = {}
 _OPENCAP_PRICE_CACHE: dict[str, PriceEntry] = {}
+# OpenCAP publishes one catalog covering every model, so a single pair of
+# timestamps replaces the per-key dicts the OpenRouter path needs.
+_OPENCAP_FETCHED_AT = 0.0
+_OPENCAP_MISS_AT = 0.0
+# Model IDs already reported as falling back to the shared static table. The
+# warning is worth emitting once per model, not once per turn.
+_OPENCAP_FALLBACK_LOGGED: set[str] = set()
 
 
 def _lookup_price_override(model_id: str) -> PriceEntry | None:
@@ -165,6 +173,11 @@ def _model_price_from_entry(entry: PriceEntry) -> ModelPrice:
 
 def _live_pricing_enabled() -> bool:
     raw = os.environ.get("AGENTOS_OPENROUTER_LIVE_PRICING", "1").strip().lower()
+    return raw not in {"0", "false", "off", "no"}
+
+
+def _opencap_live_pricing_enabled() -> bool:
+    raw = os.environ.get("AGENTOS_OPENCAP_LIVE_PRICING", "1").strip().lower()
     return raw not in {"0", "false", "off", "no"}
 
 
@@ -228,9 +241,12 @@ def _store_opencap_prices(prices: dict[str, PriceEntry]) -> int:
     """Atomically replace the OpenCAP pricing cache with validated entries."""
     if not prices:
         return 0
+    global _OPENCAP_FETCHED_AT, _OPENCAP_MISS_AT
     with _PRICE_LOCK:
         _OPENCAP_PRICE_CACHE.clear()
         _OPENCAP_PRICE_CACHE.update(prices)
+        _OPENCAP_FETCHED_AT = time.monotonic()
+        _OPENCAP_MISS_AT = 0.0
     log.info("pricing.opencap_refreshed", models=len(prices))
     return len(prices)
 
@@ -240,8 +256,55 @@ def seed_opencap_price_cache(data: dict[str, Any]) -> int:
     return _store_opencap_prices(_parse_opencap_prices(data))
 
 
+def _fetch_opencap_catalog_sync() -> dict[str, Any] | None:
+    """Fetch OpenCAP's public catalog, returning None when it is unreachable."""
+    url = get_provider_spec("opencap").model_catalog_url
+    if not url:
+        return None
+    try:
+        with httpx.Client(timeout=_HTTP_TIMEOUT, trust_env=_trust_env()) as client:
+            resp = client.get(url, headers={"Accept": "application/json"})
+            resp.raise_for_status()
+            payload = resp.json()
+    except Exception as exc:
+        log.debug("pricing.opencap_fetch_failed", error=str(exc))
+        return None
+    if not isinstance(payload, dict):
+        log.debug("pricing.opencap_fetch_failed", error="catalog response is not an object")
+        return None
+    return cast(dict[str, Any], payload)
+
+
+def _refresh_opencap_prices_if_needed() -> None:
+    """Refresh the OpenCAP price cache when it is empty or past its TTL.
+
+    The cache used to be seeded exactly once at boot, so a single timeout left
+    every OpenCAP estimate on the shared static table — another gateway's rate
+    sheet — for the life of the process. This mirrors the OpenRouter live path:
+    a TTL on success and a shorter negative cache on failure, so an unreachable
+    catalog costs one bounded attempt rather than one per lookup.
+    """
+    global _OPENCAP_FETCHED_AT, _OPENCAP_MISS_AT
+    if not _opencap_live_pricing_enabled():
+        return
+    now = time.monotonic()
+    with _PRICE_LOCK:
+        if _OPENCAP_PRICE_CACHE and now - _OPENCAP_FETCHED_AT <= _CACHE_TTL:
+            return
+        if _OPENCAP_MISS_AT and now - _OPENCAP_MISS_AT <= _LIVE_PRICE_MISS_TTL:
+            return
+
+    data = _fetch_opencap_catalog_sync()
+    prices = _parse_opencap_prices(data) if data is not None else {}
+    if prices:
+        _store_opencap_prices(prices)
+        return
+    with _PRICE_LOCK:
+        _OPENCAP_MISS_AT = time.monotonic()
+
+
 def _lookup_opencap_price(model_id: str) -> PriceEntry | None:
-    """Return a boot-seeded OpenCAP price without performing outbound I/O."""
+    """Return a cached OpenCAP price without performing outbound I/O."""
     key = str(model_id or "").strip().lower()
     if not key:
         return None
@@ -382,11 +445,15 @@ def refresh_live_prices(
 
 
 def reset_live_price_cache_for_tests() -> None:
+    global _OPENCAP_FETCHED_AT, _OPENCAP_MISS_AT
     with _PRICE_LOCK:
         _LIVE_PRICE_CACHE.clear()
         _LIVE_PRICE_FETCHED_AT.clear()
         _LIVE_PRICE_MISS_AT.clear()
         _OPENCAP_PRICE_CACHE.clear()
+        _OPENCAP_FALLBACK_LOGGED.clear()
+        _OPENCAP_FETCHED_AT = 0.0
+        _OPENCAP_MISS_AT = 0.0
 
 
 def seed_live_price_cache_for_tests(model_id: str, price: PriceEntry) -> None:
@@ -430,6 +497,10 @@ _PRICING_TABLE: list[tuple[str, PriceEntry]] = [
     ("gpt-5.6-luna", PriceEntry(0.20, 1.25)),
     ("gpt-5.6-terra", PriceEntry(0.75, 4.50)),
     ("gpt-5.6-sol", PriceEntry(5.0, 30.0)),
+    # Zhipu GLM-4.7-FlashX, the zhipu profile c0 default. Source: published
+    # GLM-4.7-FlashX API rates, checked 2026-08-03. Must precede any shorter
+    # "glm-4.7" prefix added later: the scan below takes the first match.
+    ("glm-4.7-flashx", PriceEntry(0.07, 0.40)),
     ("glm-5.1", PriceEntry(1.40, 4.40)),
     ("glm-5", PriceEntry(0.72, 2.30)),
     ("kimi-k2.5", PriceEntry(0.3827, 1.72)),
@@ -540,6 +611,23 @@ def _lookup_static_price(model_id: str) -> PriceEntry:
     return _DEFAULT_PRICING
 
 
+def _log_opencap_static_fallback(model_id: str) -> None:
+    """Warn once per model when an OpenCAP estimate comes from the static table.
+
+    The shared table holds Bankr gateway rates for these bare IDs, which run
+    several times below OpenCAP's own. Without this the substituted number is
+    indistinguishable from a catalog-backed one.
+    """
+    key = str(model_id or "").strip().lower()
+    if not key:
+        return
+    with _PRICE_LOCK:
+        if key in _OPENCAP_FALLBACK_LOGGED:
+            return
+        _OPENCAP_FALLBACK_LOGGED.add(key)
+    log.warning("pricing.opencap_static_fallback", model=model_id)
+
+
 def _should_fetch_live_price(model_id: str) -> bool:
     model_lower = model_id.lower().strip()
     if not _live_pricing_enabled():
@@ -564,9 +652,13 @@ def lookup_price(model_id: str, provider_id: str = "") -> PriceEntry:
     if str(provider_id or "").strip().lower() == "opencap":
         # OpenCAP's public catalog is canonical for this provider. Shared bare
         # IDs intentionally bypass the Bankr/static override entries below.
+        # Refreshing first is a no-op while the cache is fresh; it only fetches
+        # when the boot seed never landed or has aged past the TTL.
+        _refresh_opencap_prices_if_needed()
         opencap_price = _lookup_opencap_price(model_id)
         if opencap_price is not None:
             return opencap_price
+        _log_opencap_static_fallback(model_id)
         return _lookup_static_price(model_id)
     override = _lookup_price_override(model_id)
     if override is not None:
