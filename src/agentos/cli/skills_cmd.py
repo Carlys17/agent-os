@@ -337,7 +337,12 @@ def skills_install(
             "or GitHub URLs. Bankr accepts a BankrBot/skills URL or a bankr.bot skill URL."
         ),
     ),
-    force: bool = typer.Option(False, "--force", "-f", help="Force install (skip security block)"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force install (skip the security block and the bundled-shadow refusal)",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
 ) -> None:
     """Install a skill from a Community source."""

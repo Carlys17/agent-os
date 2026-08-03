@@ -19,6 +19,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   operator installs the CLI and supplies their own key. Gated out of the model
   prompt until then, exactly like `senior-unilp-manager`.
 
+### Fixed
+
+- Asked to install a bundled skill that was only unconfigured, the agent
+  searched a community hub instead. A skill declaring `requires` is dropped
+  from the prompt until its binary and variables are present, so from inside a
+  turn an installed-but-unconfigured skill is indistinguishable from one that
+  was never installed — and a same-named catalog row installs into the managed
+  layer, which outranks bundled and would have silently replaced the shipped
+  skill for every session. Three changes close that path: the installer now
+  refuses a first install that would shadow a bundled skill (overridable with
+  `force`, and never blocking a reinstall or `agentos skills update` of an
+  existing one); `skill_search_community` answers with an `installed_match`
+  block, carrying what the local skill is missing and how to fix it, ahead of
+  the catalog results; and the `agentos` skill documents both rules.
+- `skill_view(name="agentos", section="Skills")` failed even though the skill
+  documents skills at length — the material sat under bold labels, which
+  `parse_sections` does not index. The six operation groups under **Common
+  operations** are real headings now, so each can be read on its own.
+
 ## [2026.8.2.post1] - 2026-08-02
 
 ### Fixed

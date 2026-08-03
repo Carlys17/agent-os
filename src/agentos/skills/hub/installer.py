@@ -20,7 +20,7 @@ from agentos.skills.hub.lockfile import (
 from agentos.skills.hub.router import SourceRouter
 from agentos.skills.hub.scanner import ScanResult, scan_skill_bundle
 from agentos.skills.hub.source import SkillMeta
-from agentos.skills.paths import default_managed_skills_dir
+from agentos.skills.paths import default_bundled_skills_dir, default_managed_skills_dir
 
 log = structlog.get_logger(__name__)
 
@@ -40,6 +40,26 @@ def _default_quarantine_dir() -> Path:
 
 def _default_lockfile() -> Path:
     return default_lockfile_path()
+
+
+def bundled_skill_names() -> set[str]:
+    """Names of the skills that ship with AgentOS.
+
+    Read off disk rather than through :class:`~agentos.skills.loader.SkillLoader`
+    so the installer stays usable from the CLI, where no loader has been built.
+    Only directory names are needed — a shadow is decided by name, and the
+    loader resolves layers by name too.
+    """
+    try:
+        bundled = default_bundled_skills_dir()
+        return {
+            path.name
+            for path in bundled.iterdir()
+            if path.is_dir() and (path / "SKILL.md").is_file()
+        }
+    except OSError:  # pragma: no cover — a missing bundled dir must not block installs
+        log.debug("installer.bundled_names_unavailable", exc_info=True)
+        return set()
 
 
 def _publisher_slug(meta: SkillMeta | None, source_id: str) -> str:
@@ -115,6 +135,25 @@ class SkillInstaller:
         name = bundle.name
         if not _SAFE_NAME_RE.match(name):
             return InstallResult(success=False, name=name, message=f"Invalid skill name: {name}")
+
+        # A managed install outranks a bundled one (SkillLayer precedence), so a
+        # same-named community skill replaces the shipped one for every session
+        # without touching it on disk — nothing in the old flow said so. Refuse
+        # the *first* such install; a reinstall or update of an already-shadowing
+        # skill is not a new decision and passes through.
+        if not force and name in bundled_skill_names() and not (self._managed_dir / name).is_dir():
+            return InstallResult(
+                success=False,
+                name=name,
+                message=(
+                    f"'{name}' already ships with AgentOS. Installing this one writes to "
+                    f"the managed layer, which outranks bundled, so it would silently "
+                    f"replace the built-in skill everywhere. If the built-in shows as "
+                    f"unavailable it is missing a binary or an environment variable, not "
+                    f"an install — run 'agentos skills list' to see which. Re-run with "
+                    f"force once the user has confirmed they want this one instead."
+                ),
+            )
 
         skill_md = bundle.skill_md
         if not skill_md:
