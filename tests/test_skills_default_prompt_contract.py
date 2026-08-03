@@ -21,43 +21,57 @@ AUDIO_DEFAULTS = {
     "voice-conversion-studio",
     "voiceover-studio",
 }
-DEFAULTS = {
-    "agentos",
-    "ai-video-script",
-    "cron",
-    "deep-research",
-    "docx",
-    "git-diff",
-    "github",
-    "history-explorer",
-    "html-to-pdf",
-    "http-fetch",
-    "memory",
-    "multi-search-engine",
-    "nano-banana-pro",
-    "nano-pdf",
-    "pdf-toolkit",
-    "pptx",
-    "robinhood-agentic-trading",
-    "robinhood-rwa-addresses",
-    "seedance-2-prompt",
-    "senior-unilp-manager",
-    "srt-from-script",
-    "sub-agent",
-    "subtitle-burner",
-    "summarize",
-    "text-file-read",
-    "title-card-image",
-    "tmux",
-    "video-merger",
-    "video-still-animator",
-    "weather",
-    "xlsx",
-} | AUDIO_DEFAULTS
-# Bundled but gated out of the prompt until its environment is configured: it declares
-# `requires.env`, so `gate_skills` drops it while any of those variables is unset. That is
-# the intended "Needs setup" behaviour, not a regression.
-ENV_GATED_DEFAULTS = {"senior-unilp-manager"}
+GMGN_DEFAULTS = {
+    "gmgn-cooking",
+    "gmgn-holder-analysis",
+    "gmgn-market",
+    "gmgn-portfolio",
+    "gmgn-swap",
+    "gmgn-token",
+    "gmgn-track",
+}
+DEFAULTS = (
+    {
+        "agentos",
+        "ai-video-script",
+        "cron",
+        "deep-research",
+        "docx",
+        "git-diff",
+        "github",
+        "history-explorer",
+        "html-to-pdf",
+        "http-fetch",
+        "memory",
+        "multi-search-engine",
+        "nano-banana-pro",
+        "nano-pdf",
+        "pdf-toolkit",
+        "pptx",
+        "robinhood-agentic-trading",
+        "robinhood-rwa-addresses",
+        "seedance-2-prompt",
+        "senior-unilp-manager",
+        "srt-from-script",
+        "sub-agent",
+        "subtitle-burner",
+        "summarize",
+        "text-file-read",
+        "title-card-image",
+        "tmux",
+        "video-merger",
+        "video-still-animator",
+        "weather",
+        "xlsx",
+    }
+    | AUDIO_DEFAULTS
+    | GMGN_DEFAULTS
+)
+# Bundled but gated out of the prompt until their environment is configured: they declare
+# `requires.env`, so `gate_skills` drops them while any of those variables is unset. That is
+# the intended "Needs setup" behaviour, not a regression. The gmgn-* skills additionally
+# require the third-party `gmgn-cli` binary, which AgentOS does not ship.
+ENV_GATED_DEFAULTS = {"senior-unilp-manager"} | GMGN_DEFAULTS
 PROMPT_DEFAULTS_WITHOUT_AUDIO_TOOLS = DEFAULTS - AUDIO_DEFAULTS - ENV_GATED_DEFAULTS
 INTERNAL_HELPERS = {
     "stack-trace-generic-probe",
@@ -162,7 +176,13 @@ async def test_default_prompt_only_injects_retained_bundled_skills(
     )
     # A developer who happens to have these exported would otherwise see a different
     # prompt than CI does.
-    for name in ("RPC_BASE_URL", "RPC_ROBINHOOD_URL", "UNIV4_LP_PRIVATE_KEY"):
+    for name in (
+        "RPC_BASE_URL",
+        "RPC_ROBINHOOD_URL",
+        "UNIV4_LP_PRIVATE_KEY",
+        "GMGN_API_KEY",
+        "GMGN_PRIVATE_KEY",
+    ):
         monkeypatch.delenv(name, raising=False)
     loader = SkillLoader(bundled_dir=BUNDLED, snapshot_path=tmp_path / "snapshot.json")
 

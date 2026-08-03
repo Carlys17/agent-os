@@ -63,6 +63,7 @@ def test_all_bundled_skills_have_complete_provenance(tmp_path: Path) -> None:
             "bundled-derived",
             "openclaw-derived",
             "clawhub-mit0",
+            "gmgn-mit",
         }, skill.name
         assert provenance.maintained_by == "AgentOS", skill.name
         if provenance.origin == "bundled-derived":
@@ -70,6 +71,9 @@ def test_all_bundled_skills_have_complete_provenance(tmp_path: Path) -> None:
             assert provenance.license == "MIT", skill.name
         elif provenance.origin == "openclaw-derived":
             assert provenance.upstream_url == "https://github.com/openclaw/openclaw", skill.name
+            assert provenance.license == "MIT", skill.name
+        elif provenance.origin == "gmgn-mit":
+            assert provenance.upstream_url == "https://github.com/GMGNAI/gmgn-skills", skill.name
             assert provenance.license == "MIT", skill.name
         elif provenance.origin == "clawhub-mit0":
             assert provenance.upstream_url.startswith("https://clawhub.ai/"), skill.name
@@ -89,11 +93,15 @@ def test_third_party_notices_match_bundled_provenance(tmp_path: Path) -> None:
         name for name, origin in skills.items() if origin == "openclaw-derived"
     )
     clawhub_derived = sorted(name for name, origin in skills.items() if origin == "clawhub-mit0")
+    gmgn_derived = sorted(name for name, origin in skills.items() if origin == "gmgn-mit")
 
     assert "## OpenClaw-derived bundled skill descriptors" in text
     assert "## AgentOS-original bundled skills" in text
     if clawhub_derived:
         assert "## ClawHub-derived bundled skill descriptors" in text
+    if gmgn_derived:
+        assert "## GMGN-derived bundled skill descriptors" in text
+        assert "Copyright (c) 2025 GMGN" in text
     for name in derived:
         assert f"- `{name}`" in text
     for name in originals:
@@ -101,6 +109,8 @@ def test_third_party_notices_match_bundled_provenance(tmp_path: Path) -> None:
     for name in openclaw_derived:
         assert f"- `{name}`" in text
     for name in clawhub_derived:
+        assert f"- `{name}`" in text
+    for name in gmgn_derived:
         assert f"- `{name}`" in text
 
     listed = {

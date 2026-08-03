@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Seven GMGN trading skills ship bundled under the **Trading** category on the
+  Skills page: `gmgn-token`, `gmgn-market`, `gmgn-portfolio`, `gmgn-track`,
+  `gmgn-holder-analysis` (read-only) plus `gmgn-swap` and `gmgn-cooking`
+  (financial execution, `risk: high`). They are vendored from
+  https://github.com/GMGNAI/gmgn-skills under MIT and drive the third-party
+  `gmgn-cli` npm package, which AgentOS does **not** redistribute: each skill
+  declares `requires.bins: [gmgn-cli]` and `requires.env: GMGN_API_KEY`, so
+  they list as "Needs setup" with an `npm install -g gmgn-cli` hint until an
+  operator installs the CLI and supplies their own key. Gated out of the model
+  prompt until then, exactly like `senior-unilp-manager`.
+
 ## [2026.8.2.post1] - 2026-08-02
 
 ### Fixed
