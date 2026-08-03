@@ -3,10 +3,40 @@
 Thanks for improving AgentOS. Keep pull requests small, focused, and covered
 by tests that outside contributors can run without private access.
 
+## Issues
+
+Before opening a new issue, search the existing open and closed issues. If one
+already covers your report, comment there instead of opening a duplicate.
+
+Open an issue before opening a pull request for a bug fix or a new feature.
+Maintainers confirm the change is needed and can assign the issue to you.
+
+Give every issue the labels that match it: one `type:` label, the relevant
+`area:` label, and a `priority:` label when you can judge it. List the labels
+this repository defines with `gh label list` (or the Labels page on GitHub)
+and pick from those rather than inventing new ones.
+
+To claim an issue, comment on it. A maintainer will assign it to you and add
+`status: claimed`. Check the assignee before you start work — do not fix an
+issue that is already assigned to someone else, because it duplicates their
+effort.
+
+If an assigned contributor posts no progress within three days, maintainers
+may unassign the issue so someone else can take it over.
+
 ## Pull Requests
 
-Open pull requests against `main`. Reference related issues in the
-description with GitHub keywords (`Fixes #123`, `Refs #123`) when one exists.
+Open pull requests against `main`. Every pull request must link its issue in
+the description with a GitHub keyword: `Fixes #123` or `Closes #123` when the
+pull request fully resolves the issue, or `Refs #123` when it does not.
+
+A pull request that closes an issue should solve that issue completely. If it
+covers only part of the issue, use `Refs #123` and say in the description what
+still remains.
+
+You do not have to wait to be assigned. Opening a pull request that links the
+issue is enough to claim the work — just check the assignee first so you do not
+duplicate someone else's effort.
 
 When a squash or rebase collapses commits from several people, keep the final
 commit attributable with `Co-authored-by:` trailers for every contributor

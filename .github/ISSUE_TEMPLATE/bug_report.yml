@@ -1,12 +1,23 @@
 name: Bug report
 description: Report a reproducible AgentOS defect
 title: "[Bug]: "
-labels: ["bug"]
+labels: ["type: bug", "status: needs triage"]
 body:
   - type: markdown
     attributes:
       value: |
         Do not include credentials, provider tokens, account identifiers, local paths, or vulnerability details. Use SECURITY.md for suspected vulnerabilities.
+  - type: checkboxes
+    id: duplicates
+    attributes:
+      label: Duplicate check
+      options:
+        - label: I searched the existing open and closed issues and this is not a duplicate.
+          required: true
+  - type: markdown
+    attributes:
+      value: |
+        A maintainer will add the matching `area:` and `priority:` labels after triage. Comment on the issue if you want to work on it and you will be assigned; see CONTRIBUTING.md for the full issue and pull request workflow.
   - type: input
     id: version
     attributes:
