@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- A `pip install use-agent-os` no longer resolves dependencies open-ended.
+  Bounds now cover the rest of the base runtime list — `anyio`, `typer`,
+  `rich`, `websockets`, `apscheduler`, `prompt-toolkit`, `questionary`,
+  `pillow`, the document stack (`pdfplumber`, `pypdf`, `python-docx`,
+  `python-pptx`, `openpyxl`, `reportlab`), the extraction stack
+  (`beautifulsoup4`, `readability-lxml`), `yoyo-migrations`, `sqlite-vec`,
+  `croniter`, `python-telegram-bot` — and the consumer-facing extras
+  (`numpy`, `onnxruntime`, `tokenizers`, `tiktoken`, `jieba`, `mem0ai`,
+  `weasyprint`), completing the first seven caps from 2026.7.30. A breaking
+  major published in any of them can no longer reach a fresh install on its
+  own. Bounds are targeted rather than blanket: `structlog` and `html2text`
+  are CalVer, and `pyyaml`/`jinja2`/`cachetools` and peers have long-stable
+  surfaces, so capping those would only make AgentOS harder to co-install.
+  The rule and its exemptions are written down in CONTRIBUTING.md and enforced
+  by `tests/test_packaging/test_pyproject_invariants.py`, so a new dependency
+  cannot ship unbounded by accident. `dev` stays uncapped — it is contributor
+  tooling pinned by `uv.lock`, not a consumer surface. (#153)
+
 ### Added
 
 - Seven GMGN trading skills ship bundled under the **Trading** category on the

@@ -23,17 +23,88 @@ def lock_package() -> dict:
     return next(package for package in data["package"] if package["name"] == "use-agent-os")
 
 
+def _dep_name(spec: str) -> str:
+    """Extract the canonical (lowercased) package name from one PEP 508 spec."""
+
+    head = spec.strip()
+    for sep in ("[", " ", ";", "=", ">", "<", "~", "!"):
+        head = head.split(sep, 1)[0]
+    return head.lower()
+
+
 def _dep_names(specs: list[str]) -> set[str]:
     """Extract canonical (lowercased) package names from a list of PEP 508 specs."""
 
-    names: set[str] = set()
+    return {name for spec in specs if (name := _dep_name(spec))}
+
+
+# Dependencies that ship to consumers without an upper bound, on purpose (#153).
+# Two classes only:
+#   - CalVer projects, where a cap expires by the calendar rather than by a break.
+#   - packages whose surface we call has been stable for years, where a cap buys
+#     nothing and costs co-installability.
+# Anything else needs a cap. This list is checked in both directions: adding a cap
+# to something listed here fails until the name is removed.
+INTENTIONALLY_UNCAPPED = {
+    # CalVer — the version number tracks the year, not the API.
+    "structlog",
+    "html2text",
+    # Stable, narrow surface: `safe_load`, `Template.render`, a TTLCache, a form
+    # parser, a `dumps`, a DB-API wrapper.
+    "python-multipart",
+    "brotli",
+    "jinja2",
+    "pyyaml",
+    "aiosqlite",
+    "cachetools",
+    "tomli-w",
+}
+
+# `dev` is contributor tooling pinned by uv.lock, not something a downstream
+# `pip install use-agent-os[...]` resolves fresh. Every other extra is a consumer
+# surface and is held to the same bar as the base list.
+UNBOUNDED_EXTRAS = {"dev"}
+
+
+def test_declared_dependencies_carry_upper_bounds(project_table: dict) -> None:
+    """Every consumer-facing dependency is capped, or explicitly exempt.
+
+    `uv.lock` makes contributor and CI installs reproducible, but a downstream
+    `pip install use-agent-os` resolves fresh against PyPI and takes whatever each
+    package published most recently — including a breaking major released after our
+    last release. Without a cap, a dependency we never touched can break new installs,
+    and the resulting bug report has no resolvable dependency set to reproduce from.
+
+    The policy (pyproject.toml, above `dependencies`, and CONTRIBUTING.md) is a cap at
+    the next major above the version uv.lock pins, with a short exemption list rather
+    than a blanket cap on all of them — capping uniformly makes AgentOS painful to
+    co-install with anything else.
+    """
+
+    specs = list(project_table["dependencies"])
+    for extra, extra_specs in project_table.get("optional-dependencies", {}).items():
+        if extra not in UNBOUNDED_EXTRAS:
+            specs.extend(extra_specs)
+
+    uncapped = set()
     for spec in specs:
-        head = spec.strip()
-        for sep in ("[", " ", ";", "=", ">", "<", "~", "!"):
-            head = head.split(sep, 1)[0]
-        if head:
-            names.add(head.lower())
-    return names
+        # Split the environment marker off first: a marker like `python_version < "3.13"`
+        # carries a `<` that says nothing about the version bound.
+        version_part = spec.split(";", 1)[0]
+        if "<" not in version_part:
+            uncapped.add(_dep_name(spec))
+
+    missing = sorted(uncapped - INTENTIONALLY_UNCAPPED)
+    assert not missing, (
+        "these ship to `pip install` consumers with no upper bound — cap them at the "
+        "next major above the version uv.lock pins, or add them to "
+        f"INTENTIONALLY_UNCAPPED with a reason: {missing}"
+    )
+
+    now_capped = sorted(INTENTIONALLY_UNCAPPED - uncapped)
+    assert not now_capped, (
+        f"these are capped now — drop them from INTENTIONALLY_UNCAPPED: {now_capped}"
+    )
 
 
 def test_supported_channel_sdk_is_in_base(project_table: dict) -> None:
