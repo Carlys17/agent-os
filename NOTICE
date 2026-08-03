@@ -15,3 +15,9 @@ This product includes code adapted from hermes-agent
 (https://github.com/NousResearch/hermes-agent), Copyright (c) 2025
 Nous Research, licensed under the MIT License. Adapted components:
 curated memory store, memory tool schema, memory provider lifecycle.
+
+This product includes bundled skill descriptors vendored from gmgn-skills
+(https://github.com/GMGNAI/gmgn-skills), Copyright (c) 2025 GMGN,
+licensed under the MIT License. Vendored components: the gmgn-* bundled
+skills and the holder-analysis helper script. The gmgn-cli npm package
+those descriptors drive is not redistributed here.

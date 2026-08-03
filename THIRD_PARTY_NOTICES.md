@@ -152,6 +152,54 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## GMGN-derived bundled skill descriptors
+
+- Component: SKILL.md instruction text for these bundled skills, plus
+  `gmgn-holder-analysis/scripts/analyze.py`:
+  - `gmgn-cooking`
+  - `gmgn-holder-analysis`
+  - `gmgn-market`
+  - `gmgn-portfolio`
+  - `gmgn-swap`
+  - `gmgn-token`
+  - `gmgn-track`
+- Upstream project: https://github.com/GMGNAI/gmgn-skills
+- License: MIT
+- Copyright notice: Copyright (c) 2025 GMGN
+
+These descriptors drive the third-party `gmgn-cli` npm package, which AgentOS
+does **not** redistribute — an operator installs it themselves and supplies
+their own `GMGN_API_KEY`. Only the descriptor text and the holder-analysis
+helper script are vendored here; AgentOS added the `provenance` and
+`metadata.agentos` frontmatter blocks and re-pointed the helper-script path at
+`{baseDir}`. Per the MIT license, the upstream copyright and permission notice
+are reproduced below in their entirety and apply to the GMGN-derived bundled
+files.
+
+```
+MIT License
+
+Copyright (c) 2025 GMGN
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## AgentOS-original bundled skills
 
 These bundled skill descriptors are authored and maintained by AgentOS and

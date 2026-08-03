@@ -234,6 +234,17 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # video-merger src/ is vendored from upstream MIT-0 clawhub package; keep
 # its Chinese docstrings + ffmpeg argv lines unwrapped.
 "src/agentos/skills/bundled/video-merger/src/*.py" = ["E501", "F401"]
+# gmgn-holder-analysis ships GMGN's upstream MIT analyzer verbatim; reformatting
+# it would fork the file away from https://github.com/GMGNAI/gmgn-skills for no
+# runtime gain.
+"src/agentos/skills/bundled/gmgn-holder-analysis/scripts/*.py" = [
+    "E401",
+    "E501",
+    "E701",
+    "E702",
+    "F541",
+    "I001",
+]
 "src/agentos/skills/bundled/video-still-animator/scripts/*.py" = ["E501"]
 
 [tool.mypy]
