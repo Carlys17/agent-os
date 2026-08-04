@@ -52,13 +52,24 @@ def validate_webhook_url(url: str) -> None:
         raise ValueError(f"webhook URL is missing a hostname: {url!r}")
 
 
+# The origin webchat session a job was born in no longer exists. Deliberately
+# distinct from both "delivered" and the failure statuses: there was nothing to
+# deliver into, and that is not the job's fault. ``_required_delivery_error``
+# fails a run on "delivery_failed", "forward_failed", and a "skipped" channel
+# under an explicit delivery mode — this status matches none of them, so the run
+# stands. Only ever produced for webchat origins, whose session *is* the
+# conversation; a real channel chat (telegram, discord, slack) outlives the
+# session and never reaches these branches.
+ORIGIN_SESSION_GONE = "origin_gone"
+
+
 @dataclass
 class DeliveryReport:
     """Result of the delivery pipeline."""
 
-    channel_status: str = "skipped"  # "delivered" | "delivery_failed" | "skipped"
+    channel_status: str = "skipped"  # "delivered" | "delivery_failed" | "skipped" | "origin_gone"
     ws_status: str = "skipped"  # "delivered" | "no_subscribers" | "skipped"
-    session_status: str = "skipped"  # "delivered" | "forward_failed" | "skipped"
+    session_status: str = "skipped"  # "delivered" | "forward_failed" | "skipped" | "origin_gone"
 
 
 class DeliveryChain:
@@ -72,7 +83,7 @@ class DeliveryChain:
         self,
         channel_manager_ref: Callable[[], Any] | None = None,
         ws_emitter: Callable[[str, str, dict], Awaitable[int]] | None = None,
-        session_forwarder: Callable[..., Awaitable[None]] | None = None,
+        session_forwarder: Callable[..., Awaitable[bool | None]] | None = None,
     ) -> None:
         self._channel_manager_ref = channel_manager_ref
         self._ws_emitter = ws_emitter
@@ -237,7 +248,7 @@ class DeliveryChain:
         if not text or not text.strip():
             return "delivery_failed"
         try:
-            await self._session_forwarder(
+            forwarded = await self._session_forwarder(
                 origin_session_key=job.origin_session_key,
                 text=text,
                 provenance={
@@ -246,7 +257,6 @@ class DeliveryChain:
                     "source_tool": f"cron:{job.id}",
                 },
             )
-            return "delivered"
         except Exception:
             log.warning(
                 "delivery.webchat_forward_failed",
@@ -255,6 +265,21 @@ class DeliveryChain:
                 exc_info=True,
             )
             return "delivery_failed"
+        # ``False`` means the origin webchat session is gone. This target was
+        # *inferred* from the ambient turn, not chosen by the operator: the cron
+        # tool synthesises ``mode=ORIGIN`` + ``channel=webchat`` from the live
+        # ToolContext (tools/builtin/control.py:424-445) whenever the agent
+        # schedules something from a webchat turn. So a vanished origin is the
+        # same "nothing to mirror into" as the mode=NONE path, not an operator
+        # misconfiguration. Forwarders returning ``None`` stay "delivered".
+        if forwarded is False:
+            log.info(
+                "delivery.webchat_origin_session_missing",
+                job_id=job.id,
+                origin_session_key=job.origin_session_key,
+            )
+            return ORIGIN_SESSION_GONE
+        return "delivered"
 
     async def _post_to_channel(
         self,
@@ -445,7 +470,7 @@ class DeliveryChain:
         if not text or not text.strip():
             return "skipped"
         try:
-            await self._session_forwarder(
+            forwarded = await self._session_forwarder(
                 origin_session_key=job.origin_session_key,
                 text=text,
                 provenance={
@@ -454,7 +479,6 @@ class DeliveryChain:
                     "source_tool": f"cron:{job.id}",
                 },
             )
-            return "delivered"
         except Exception:
             log.warning(
                 "delivery.session_forward_failed",
@@ -463,6 +487,20 @@ class DeliveryChain:
                 exc_info=True,
             )
             return "forward_failed"
+        # ``False`` means the origin session is gone — the user started a new
+        # chat after the job was created. This mirror is opportunistic (the run
+        # itself happened elsewhere and already succeeded), so a missing origin
+        # is "nothing to do", not a failed run. Reporting ``forward_failed``
+        # here made every default web-UI reminder fail once the originating
+        # chat was replaced. Forwarders returning ``None`` stay "delivered".
+        if forwarded is False:
+            log.info(
+                "delivery.origin_session_missing",
+                job_id=job.id,
+                origin_session_key=job.origin_session_key,
+            )
+            return ORIGIN_SESSION_GONE
+        return "delivered"
 
 
 def build_reply_rendezvous_envelope(job: CronJob, session_key: str) -> Any:

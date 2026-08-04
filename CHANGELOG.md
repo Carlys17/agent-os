@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A cron job no longer fails forever once the chat it was created from is
+  replaced. The web UI stamps `originSessionKey` onto every reminder job while
+  forcing its target to `isolated`, and reminder is the default payload kind for
+  a new job — so jobs that never asked to be bound to a session still carried
+  one. At fire time the delivery chain mirrors the result into that session, and
+  the mirror called `append_message`, which raises `KeyError: Session not found`
+  for a session that no longer exists. That surfaced as `forward_failed`, and
+  because `best_effort` defaults to off — and its checkbox is only rendered for
+  channel and webhook delivery, never for the `none` mode this path runs under —
+  the run was marked failed with no way to opt out. Both webchat paths are
+  covered: the `none`-mode mirror above, and the `mode=ORIGIN` +
+  `channel=webchat` config the cron tool synthesises from the live ToolContext
+  whenever the agent schedules something mid-conversation — neither destination
+  was picked by the operator, so neither should fail a run that already
+  succeeded in its own isolated session. They now report a distinct
+  `origin_gone` delivery status. The gateway forwarder looks the session up
+  before appending and returns `False` when it is gone; forwarders returning
+  `None` keep the previous "delivered" contract, and genuine channel delivery
+  failures still fail the run. Channel-created jobs (telegram, discord, slack)
+  were never affected: their delivery resolves to the chat, which outlives any
+  session.
+
 ## [2026.8.3] - 2026-08-03
 
 ### Changed
