@@ -7,6 +7,7 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CalendarClockIcon,
+  CopyIcon,
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -18,6 +19,7 @@ import {
 import { toast } from 'sonner'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
+import { copyWithFallback } from '@/lib/clipboard'
 import { MotionListItem } from '@/lib/motion'
 import { useRpc } from '@/app/providers'
 import { relTime } from '@/views/overview/logic'
@@ -39,6 +41,7 @@ import {
   nextRunAbs,
   nextRunText,
   runRow,
+  shortCronId,
   sortJobs,
   type CronDot,
   type RawJob,
@@ -247,6 +250,7 @@ function JobCard({
   onRun,
   onEdit,
   onDelete,
+  onCopyId,
 }: {
   job: RawJob
   busy: boolean
@@ -256,6 +260,7 @@ function JobCard({
   onRun: (id: string) => void
   onEdit: (job: RawJob) => void
   onDelete: (job: RawJob) => void
+  onCopyId: (id: string) => void
 }) {
   const id = String(job.id ?? '')
   const name = String(job.name || job.id || '')
@@ -312,14 +317,36 @@ function JobCard({
       </div>
 
       <dl className="cron-card__meta">
+        {id ? (
+          <div className="cron-card__id">
+            <dt className="t-label">Cron ID</dt>
+            <dd className="t-data cron-mono" title={id}>
+              <span className="cron-card__id-value">{shortCronId(id)}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                title="Copy cron ID"
+                aria-label={`Copy cron ID ${id}`}
+                onClick={() => onCopyId(id)}
+              >
+                <CopyIcon />
+              </Button>
+            </dd>
+          </div>
+        ) : null}
         <div>
           <dt className="t-label">Target</dt>
-          <dd className="t-data">{target}</dd>
+          <dd className="t-data" title={target}>
+            {target}
+          </dd>
         </div>
         {createdFrom ? (
           <div>
             <dt className="t-label">Created from</dt>
-            <dd className="t-data cron-mono">{createdFrom}</dd>
+            <dd className="t-data cron-mono" title={createdFrom}>
+              {createdFrom}
+            </dd>
           </div>
         ) : null}
         <div>
@@ -589,6 +616,18 @@ export function CronPage() {
     },
   })
 
+  // The job id is the handle every `agentos cron …` command takes, so the card
+  // exposes it with a one-click copy rather than making you go find it.
+  async function copyId(id: string) {
+    try {
+      await copyWithFallback(id)
+      toast.success('Copied cron ID', { id: 'cron-copy-ok', duration: 1600 })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      toast.warning('Copy failed: ' + message, { id: 'cron-copy-err', duration: 2500 })
+    }
+  }
+
   const jobs = jobsQuery.data ?? []
   const busy = toggleMutation.isPending || runMutation.isPending || removeMutation.isPending
 
@@ -762,7 +801,7 @@ export function CronPage() {
           <div className="cron-cards">
             <AnimatePresence initial={false}>
               {visible.map((job, i) => (
-                <MotionListItem key={String(job.id ?? i)}>
+                <MotionListItem key={String(job.id ?? i)} className="cron-cards__item">
                   <JobCard
                     job={job}
                     busy={busy}
@@ -772,6 +811,7 @@ export function CronPage() {
                     onRun={(id) => runMutation.mutate(id)}
                     onEdit={(j) => setPanel({ kind: 'edit', job: j })}
                     onDelete={(j) => setPendingDelete(j)}
+                    onCopyId={(id) => void copyId(id)}
                   />
                 </MotionListItem>
               ))}

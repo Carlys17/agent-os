@@ -15,6 +15,7 @@ import {
   Trash2Icon,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { copyWithFallback } from '@/lib/clipboard'
 import { listItemVariants, SUBTLE_EASE } from '@/lib/motion'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
@@ -52,27 +53,6 @@ interface RpcError {
 }
 
 const PAGE_SIZES = [10, 25, 50, 100]
-
-// Copy with a non-secure-context fallback, mirroring the shared CommandLine
-// copy contract (clipboard API, else a hidden-textarea execCommand). Legacy
-// sessions used a bare navigator.clipboard call with no fallback, so this is a
-// deliberate uplift (recorded as ported(uplift) in the parity matrix) that lets
-// the copy work when the page isn't served from a secure context.
-function copyWithFallback(text: string): Promise<void> {
-  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-    return navigator.clipboard.writeText(text)
-  }
-  const ta = document.createElement('textarea')
-  ta.value = text
-  ta.setAttribute('readonly', '')
-  ta.style.position = 'fixed'
-  ta.style.left = '-9999px'
-  document.body.appendChild(ta)
-  ta.select()
-  const ok = document.execCommand('copy')
-  document.body.removeChild(ta)
-  return ok ? Promise.resolve() : Promise.reject(new Error('Copy command failed'))
-}
 
 // ── Reusable destructive confirmation (alertdialog) ──────────────────────────
 function ConfirmDialog({
