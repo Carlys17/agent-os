@@ -469,6 +469,34 @@ def _ensure_configured_agent_workspaces(
         )
 
 
+async def mirror_cron_result_to_session(
+    session_manager: Any,
+    origin_session_key: str,
+    text: str,
+    provenance: dict,
+) -> Any | None:
+    """Append a cron result to the session the job was created from.
+
+    Returns the transcript entry, or ``None`` when there is nothing to mirror
+    into — no session manager, or the origin session no longer exists.
+
+    The existence check is the point: ``append_message`` raises ``KeyError``
+    for a missing session, and a cron job routinely outlives the chat it was
+    created from (the web UI stamps ``originSessionKey`` onto every reminder).
+    Without it, replacing that chat made the job fail on every subsequent run.
+    """
+    if session_manager is None:
+        return None
+    if await session_manager.get_session(origin_session_key) is None:
+        return None
+    return await session_manager.append_message(
+        origin_session_key,
+        role="assistant",
+        content=text,
+        provenance=provenance,
+    )
+
+
 def _state_path(config: GatewayConfig, filename: str) -> Path:
     state_root = Path(config.state_dir or default_agentos_home() / "state")
     return state_root / filename
@@ -2067,20 +2095,25 @@ async def start_gateway_server(
             origin_session_key: str,
             text: str,
             provenance: dict,
-        ) -> None:
-            if svc.session_manager is None:
-                return
+        ) -> bool:
+            """Mirror a cron result into the originating session's transcript.
 
-            entry = await svc.session_manager.append_message(
+            Returns ``False`` when the origin session no longer exists so the
+            delivery chain can treat it as "nothing to mirror" instead of a
+            failed run. See :func:`mirror_cron_result_to_session`.
+            """
+            entry = await mirror_cron_result_to_session(
+                svc.session_manager,
                 origin_session_key,
-                role="assistant",
-                content=text,
-                provenance=provenance,
+                text,
+                provenance,
             )
+            if entry is None:
+                return False
 
             _sub_mgr = subscription_manager
             if _sub_mgr is None:
-                return
+                return True
 
             payload = build_cron_result_payload(origin_session_key, text, entry)
 
@@ -2111,6 +2144,8 @@ async def start_gateway_server(
                         await conn.send_event("sessions.changed", sessions_changed_payload)
                     except Exception:
                         pass
+
+            return True
 
         async def _emit_session_event(
             session_key: str,
