@@ -112,6 +112,33 @@ _TOOL_PROFILES: Mapping[str, frozenset[str] | None] = {
 _SENDER_SCOPED_TOOL_GROUPS: frozenset[str] = frozenset({"channel:perm"})
 _SENDER_SCOPED_TOOL_NAMES: frozenset[str] = _TOOL_GROUPS["channel:perm"]
 
+KNOWN_TOOL_PROFILES: tuple[str, ...] = tuple(sorted(_TOOL_PROFILES))
+
+
+def normalize_tool_profile(value: object) -> str | None:
+    """Canonicalise a profile name, or raise naming the ones that exist.
+
+    ``profile_allowlist`` resolves the name during a *run*. That is the right
+    place to fail closed but the wrong place to fail first: a caller who typos a
+    profile when scheduling work gets a job that stores fine and then dies on
+    every firing, with the error going to the run record instead of to them.
+    This is the write-boundary half, and it is deliberately shaped like
+    ``normalize_cron_elevated`` — canonicalise, or raise listing the valid set.
+
+    ``None`` and the empty string mean "no profile", which is how every layer
+    below spells "inherit whatever the caller already had".
+    """
+
+    if value is None:
+        return None
+    key = str(value).strip().lower()
+    if not key:
+        return None
+    if key not in _TOOL_PROFILES:
+        allowed = ", ".join(KNOWN_TOOL_PROFILES)
+        raise ValueError(f"unknown cron tool profile: {value!r} (expected one of: {allowed})")
+    return key
+
 
 @dataclass(frozen=True)
 class ToolPolicy:

@@ -8,6 +8,7 @@ from typing import Any
 
 from agentos.permissions import normalize_cron_elevated
 from agentos.session.keys import normalize_agent_id
+from agentos.tools.policy_config import normalize_tool_profile
 
 from .delivery import validate_webhook_url
 from .jobs import _next_run
@@ -32,11 +33,16 @@ def _normalized_tool_policy(
     *,
     handler_key: str,
 ) -> dict[str, Any]:
-    """Canonicalise ``tool_policy["elevated"]`` and gate it to agent turns.
+    """Canonicalise ``tool_policy["profile"]`` and ``["elevated"]``, and gate
+    elevation to agent turns.
 
     This runs here, not only at the RPC boundary, because the ``cron`` builtin
     tool hands its ``tool_policy`` argument straight to ``add`` — validating
     only on the wire would leave that path open.
+
+    ``profile`` is checked for the same reason it is checked at all: the name is
+    otherwise resolved for the first time inside the run, so an unknown one
+    creates a job that stores cleanly and then fails on every firing.
 
     Only ``agent_run`` jobs are allowed to carry elevation. A ``system_event``
     job may be serviced by HeartbeatLoop, which builds its own read-only
@@ -45,6 +51,8 @@ def _normalized_tool_policy(
     """
 
     policy = dict(tool_policy or {})
+    if "profile" in policy:
+        policy["profile"] = normalize_tool_profile(policy["profile"])
     if "elevated" not in policy:
         return policy
     mode = normalize_cron_elevated(policy["elevated"])

@@ -29,6 +29,7 @@ from agentos.scheduler.types import (
     ScheduleKind,
     SessionTarget,
 )
+from agentos.tools.policy_config import normalize_tool_profile
 
 _d = get_dispatcher()
 
@@ -182,7 +183,15 @@ def _as_string_list(value: Any) -> list[str]:
     raise ValueError("toolPolicy list fields must be strings or arrays")
 
 
-def _normalize_tool_policy(raw: Any) -> dict[str, Any]:
+def _normalize_tool_policy(raw: Any, *, strict: bool = False) -> dict[str, Any]:
+    """Shape a tool policy for storage (``strict``) or for display.
+
+    Only the write direction rejects an unknown ``profile``. Rows carrying one
+    already exist — that is what this validation was added to stop — and the
+    read direction has to render them, or ``cron list`` would die on the bad job
+    and leave no way to find the id and delete it.
+    """
+
     if raw is None:
         return {}
     if not isinstance(raw, dict):
@@ -190,7 +199,10 @@ def _normalize_tool_policy(raw: Any) -> dict[str, Any]:
     result: dict[str, Any] = {}
     if "profile" in raw:
         profile = raw.get("profile")
-        result["profile"] = None if profile is None else str(profile)
+        if strict:
+            result["profile"] = normalize_tool_profile(profile)
+        else:
+            result["profile"] = None if profile is None else str(profile)
     for key in ("allow", "deny"):
         if key in raw:
             result[key] = _as_string_list(raw.get(key))
@@ -214,7 +226,9 @@ def _tool_policy_from_params(params: dict[str, Any]) -> dict[str, Any]:
 
     policy: dict[str, Any] = {}
     if "toolPolicy" in params or "tool_policy" in params:
-        policy = _normalize_tool_policy(params.get("toolPolicy", params.get("tool_policy")))
+        policy = _normalize_tool_policy(
+            params.get("toolPolicy", params.get("tool_policy")), strict=True
+        )
     if "elevated" in params:
         mode = normalize_cron_elevated(params.get("elevated"))
         if mode is None:
