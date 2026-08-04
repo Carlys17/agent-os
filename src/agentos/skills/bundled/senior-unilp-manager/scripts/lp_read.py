@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Read-only Uniswap V4 LP inspection.
 
-This file NEVER reads a private key and never imports a signing path — that is what
-makes it safe to allowlist wholesale. All writes live in ``lp_write.py``.
+This file NEVER signs and never imports a signing path — that is what makes it safe to
+allowlist wholesale. All writes live in ``lp_write.py``.
+
+It touches ``UNIV4_LP_PRIVATE_KEY`` in exactly one place, ``resolve_owner``, and only to
+answer "which wallet is mine" when ``positions`` is run without ``--owner``. That import
+is ``unilp.account``, which holds curve arithmetic and address derivation and has no
+``sign_digest`` in it, so no argument to this script can reach a signature.
 
     python3 scripts/lp_read.py pools     --token <addr> [--include-v3] [--all-pools]
     python3 scripts/lp_read.py pool      --id <poolId>
     python3 scripts/lp_read.py position  --token-id <id>
-    python3 scripts/lp_read.py positions --owner <addr>
+    python3 scripts/lp_read.py positions [--owner <addr>]   omit = the configured wallet
     python3 scripts/lp_read.py launcher  --token <addr>
     python3 scripts/lp_read.py ticks     --pool <poolId> --mcap-lower <usd> --mcap-upper <usd>
     python3 scripts/lp_read.py price     --tokens <a,b,...>
@@ -34,7 +39,7 @@ from unilp.abi_defs import (  # noqa: E402
     V3_FACTORY_ABI,
     V3_POOL_ABI,
 )
-from unilp.chains import resolve_chain  # noqa: E402
+from unilp.chains import ENV_SIGNER, resolve_chain, resolve_signer_address  # noqa: E402
 from unilp.fmt import (  # noqa: E402
     die,
     fmt_band,
@@ -66,6 +71,7 @@ from unilp.v4_math import (  # noqa: E402
     get_sqrt_ratio_at_tick,
     mcap_at_tick,
     mcap_band_for_range,
+    pull_off_current_tick,
     range_status,
     snap_tick,
     tick_at_mcap,
@@ -105,7 +111,10 @@ senior-unilp-manager — read-only Uniswap V4 LP inspection
             gives the PoolKey outright: no lookup at all, works for any pool on any chain.
             It is checked by recomputing the poolId. --hooks defaults to no hook.
   position  --token-id <id> [--no-fees]
-  positions --owner <addr> [--include-empty]
+  positions [--owner <addr>] [--include-empty]
+            Leave --owner off for the wallet UNIV4_LP_PRIVATE_KEY derives; --signer-env
+            <VAR> reads a different variable. The key is only ever used to derive that
+            address — this script has no signing path to reach.
   launcher  --token <addr>            which launchpad deployed it, its pool, who holds the LP
   ticks     --pool <poolId>
             (--mcap-lower <usd> --mcap-upper <usd> | --tick-lower <t> --tick-upper <t>)
@@ -183,42 +192,6 @@ def mcap_context(pool_key: dict, token: str, meta0: dict, meta1: dict, prices: d
         "tickSpacing": pool_key["tickSpacing"],
         "hasSupply": supply is not None and supply > 0,
     }
-
-
-def _pull_off_current_tick(
-    current: int, tick_lower: int, tick_upper: int, spacing: int
-) -> tuple[int, int]:
-    """Move a range that straddles ``current`` fully onto one side of it.
-
-    A band with one end at "where it trades right now" is the normal way to ask for a
-    single-sided add, but snapping outward pushes that end across the current tick and the
-    range comes back two-sided — the caller then has to guess a tick by hand. Keep whichever
-    side holds more of the band they asked for and pull the near edge past ``current``.
-
-    A range is single-sided below the current price when ``tickUpper <= current``, and above
-    it when ``tickLower > current``; that is the same boundary ``range_status`` uses.
-    """
-    if not (tick_lower <= current < tick_upper):
-        return tick_lower, tick_upper  # already one-sided, leave it alone
-
-    below = snap_tick(current, spacing, "down")
-    above = below + spacing
-    keep_below = (current - tick_lower) >= (tick_upper - current)
-
-    if keep_below and below > tick_lower:
-        return tick_lower, below
-    if not keep_below and above < tick_upper:
-        return above, tick_upper
-    # The band is thinner than one spacing on the side we wanted, so that side cannot hold a
-    # range at all. Fall back to the other one rather than returning a straddle.
-    if below > tick_lower:
-        return tick_lower, below
-    if above < tick_upper:
-        return above, tick_upper
-    raise RuntimeError(
-        f"the band is narrower than one tickSpacing ({spacing}) either side of the current "
-        f"tick {current} — widen it, or give --tick-lower/--tick-upper directly"
-    )
 
 
 def _math_kwargs(ctx: dict, **overrides) -> dict:
@@ -1052,8 +1025,27 @@ def cmd_position(client, chain: dict, args: dict) -> None:
     ]))
 
 
+def resolve_owner(args: dict) -> str:
+    """``--owner``, or the wallet the signing key derives when it is left off.
+
+    "Show my positions" should not require the user to recite their own address, and the
+    address is already implied by the key the skill is configured with. This is the one
+    place in this file that touches ``UNIV4_LP_PRIVATE_KEY``, it reads it only to derive
+    the address, and the key never enters a variable here — see
+    ``chains.resolve_signer_address`` for why that stays incapable of signing.
+    """
+    given = args.get("owner")
+    if given:
+        return str(given)
+    signer_env = args.get("signer-env") or ENV_SIGNER
+    try:
+        return resolve_signer_address(signer_env)
+    except RuntimeError as exc:
+        die(f"{exc}\n\nOr name the wallet directly: positions --owner <address>")
+
+
 def cmd_positions(client, chain: dict, args: dict) -> None:
-    owner = checksum_address(require_arg(args, "owner", "wallet address"))
+    owner = checksum_address(resolve_owner(args))
 
     # This command has no registry shortcut: finding a wallet's NFTs means scanning
     # ERC-721 Transfer logs, which a chain with a hard getLogs range cap cannot serve in
@@ -1309,7 +1301,7 @@ def cmd_ticks(client, chain: dict, args: dict) -> None:
         tick_lower = snap_tick(a, spacing, "down")
         tick_upper = snap_tick(b, spacing, "up")
         if args.get("from-current"):
-            tick_lower, tick_upper = _pull_off_current_tick(
+            tick_lower, tick_upper = pull_off_current_tick(
                 pool["tick"], tick_lower, tick_upper, spacing
             )
 

@@ -242,6 +242,79 @@ def snap_tick(tick: int, tick_spacing: int, mode: str = "nearest") -> int:
     return min(max(snapped, min_usable_tick(spacing)), max_usable_tick(spacing))
 
 
+def pull_off_current_tick(
+    current: int, tick_lower: int, tick_upper: int, spacing: int,
+    force_principal: str | None = None,
+) -> tuple[int, int]:
+    """Move a range that straddles ``current`` fully onto one side of it.
+
+    A band with one end at "where it trades right now" is the normal way to ask for a
+    single-sided add, but snapping outward pushes that end across the current tick and the
+    range comes back two-sided — the caller then has to guess a tick by hand. Keep whichever
+    side holds more of the band they asked for and pull the near edge past ``current``.
+
+    A range is single-sided below the current price when ``tickUpper <= current``, and above
+    it when ``tickLower > current``; that is the same boundary ``range_status`` uses.
+
+    ``force_principal`` names the currency the resulting range must take, and is how the
+    ratchet asks for a specific side instead of the "bigger half" heuristic:
+
+    * ``"currency0"`` — the range must sit entirely ABOVE the current price. Note this edge
+      is **strict** (``range_status`` needs ``current < tickLower``), which is why the near
+      edge is ``snap_down(current) + spacing`` and never ``current`` itself.
+    * ``"currency1"`` — entirely BELOW. That edge is **non-strict** (``current >=
+      tickUpper``), so landing exactly on ``current`` is fine.
+
+    Naming the side by its currency rather than by "above"/"below" is deliberate: this
+    module already uses "below" for *the current tick relative to the range*, which is the
+    opposite of "the range below the price", and mixing the two is how the sell/buy
+    directions get silently swapped.
+
+    Raises when the side that was asked for cannot hold a range at least one spacing wide.
+    A forced side never falls back to the other one — for the ratchet that situation means
+    "this is the final milestone", and quietly flipping sides would re-arm backwards.
+    """
+    if force_principal not in (None, "currency0", "currency1"):
+        raise ValueError(f'force_principal must be "currency0", "currency1" or None, '
+                         f"got {force_principal!r}")
+    if not (tick_lower <= current < tick_upper):
+        return tick_lower, tick_upper  # already one-sided, leave it alone
+
+    below = snap_tick(current, spacing, "down")
+    above = below + spacing
+
+    if force_principal == "currency0":
+        if above < tick_upper:
+            return above, tick_upper
+        raise RuntimeError(
+            f"no room for a currency0-only range above the current tick {current}: the band "
+            f"ends at {tick_upper}, less than one tickSpacing ({spacing}) away"
+        )
+    if force_principal == "currency1":
+        if below > tick_lower:
+            return tick_lower, below
+        raise RuntimeError(
+            f"no room for a currency1-only range below the current tick {current}: the band "
+            f"starts at {tick_lower}, less than one tickSpacing ({spacing}) away"
+        )
+
+    keep_below = (current - tick_lower) >= (tick_upper - current)
+    if keep_below and below > tick_lower:
+        return tick_lower, below
+    if not keep_below and above < tick_upper:
+        return above, tick_upper
+    # The band is thinner than one spacing on the side we wanted, so that side cannot hold a
+    # range at all. Fall back to the other one rather than returning a straddle.
+    if below > tick_lower:
+        return tick_lower, below
+    if above < tick_upper:
+        return above, tick_upper
+    raise RuntimeError(
+        f"the band is narrower than one tickSpacing ({spacing}) either side of the current "
+        f"tick {current} — widen it, or give --tick-lower/--tick-upper directly"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Price / market cap — the display path, floats allowed from here down
 # ---------------------------------------------------------------------------
