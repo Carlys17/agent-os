@@ -1,5 +1,6 @@
 import './skills.css'
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence } from 'motion/react'
 import {
@@ -52,6 +53,7 @@ import {
   skillAvailabilityTone,
   skillCanRemove,
   skillCanUpdate,
+  skillChatPromptPath,
   skillDotClass,
   skillDotTitle,
   skillGroupKey,
@@ -358,40 +360,69 @@ function OriginChip({ skill }: { skill: RawSkill }) {
   )
 }
 
-function SkillCard({ skill, onOpen }: { skill: RawSkill; onOpen: () => void }) {
+function SkillCard({
+  skill,
+  onOpen,
+  onUse,
+}: {
+  skill: RawSkill
+  onOpen: () => void
+  onUse: () => void
+}) {
   const desc = skill.description || ''
   const statusLabel = SKILL_BUCKET_LABEL[skillBucket(skill)]
+  // The card used to be one big <button>. "Use" is a second action, and a
+  // button cannot nest inside a button, so the shell splits the same way
+  // RegistryCard/PartnerSkillCard already do: an <article> wrapper, a details
+  // button covering the body, and an action row. The `Skill <name>` label stays
+  // on the details button so it remains the one thing that opens the dialog.
   return (
-    <button
-      type="button"
-      className="sk-card"
-      onClick={onOpen}
-      aria-label={`Skill ${skill.name}`}
-      title={skill.name + (desc ? ': ' + desc : '')}
-    >
-      <div className="sk-card__head">
-        <SkillIcon skill={skill} iconClass="sk-card__icon" brandClass="sk-card__brand" />
-        <span className="sk-card__name">{skill.name}</span>
-        <span className={`sk-card__status ${skillDotClass(skill)}`} title={skillDotTitle(skill)}>
-          <span className="sk-card__dot" aria-hidden="true" />
-          {statusLabel}
+    <article className="sk-card">
+      <button
+        type="button"
+        className="sk-card__details"
+        onClick={onOpen}
+        aria-label={`Skill ${skill.name}`}
+        title={skill.name + (desc ? ': ' + desc : '')}
+      >
+        <div className="sk-card__head">
+          <SkillIcon skill={skill} iconClass="sk-card__icon" brandClass="sk-card__brand" />
+          <span className="sk-card__name">{skill.name}</span>
+          <span className={`sk-card__status ${skillDotClass(skill)}`} title={skillDotTitle(skill)}>
+            <span className="sk-card__dot" aria-hidden="true" />
+            {statusLabel}
+          </span>
+        </div>
+        <p className="sk-card__desc">{desc}</p>
+        {/* The Installed tab groups on provenance now, so the loading layer moves
+            to the card — precedence still has to be debuggable at a glance. */}
+        <span className="sk-card__meta">
+          <span className="sk-chip sk-chip--layer" title={layerHelp(skill.layer)}>
+            {layerLabel(skill.layer)}
+          </span>
+          <OriginChip skill={skill} />
+          <AvailabilityChip skill={skill} />
         </span>
+      </button>
+      <div className="sk-card__foot">
+        {/* Still clickable, still out of the a11y tree: the details button above
+            already carries the accessible name, so a second focusable "View
+            details" here would only duplicate it. */}
+        <button
+          type="button"
+          className="sk-card__foot-link"
+          onClick={onOpen}
+          tabIndex={-1}
+          aria-hidden="true"
+        >
+          View details
+          <ChevronRightIcon />
+        </button>
+        <Button type="button" variant="outline" size="sm" onClick={onUse}>
+          Use
+        </Button>
       </div>
-      <p className="sk-card__desc">{desc}</p>
-      {/* The Installed tab groups on provenance now, so the loading layer moves
-          to the card — precedence still has to be debuggable at a glance. */}
-      <span className="sk-card__meta">
-        <span className="sk-chip sk-chip--layer" title={layerHelp(skill.layer)}>
-          {layerLabel(skill.layer)}
-        </span>
-        <OriginChip skill={skill} />
-        <AvailabilityChip skill={skill} />
-      </span>
-      <span className="sk-card__foot" aria-hidden="true">
-        View details
-        <ChevronRightIcon />
-      </span>
-    </button>
+    </article>
   )
 }
 
@@ -554,6 +585,7 @@ type Dialog =
 export function SkillsPage() {
   const rpc = useRpc()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
 
   const [tab, setTab] = useState<Tab>('installed')
   const [filterText, setFilterText] = useState('')
@@ -565,6 +597,18 @@ export function SkillsPage() {
   const [envPrompt, setEnvPrompt] = useState<{ skill: string; name: string } | null>(null)
   const [envValue, setEnvValue] = useState('')
   const [envSaving, setEnvSaving] = useState(false)
+
+  // "Use" hands the skill name to chat as a composer prefill rather than running
+  // anything here — the same cross-screen hop AgentsPage/SessionsPage make with
+  // `?agent=` / `?session=`. Closing the dialog first keeps the modal from
+  // lingering over the chat view during the route change.
+  const openSkillInChat = useCallback(
+    (name: string) => {
+      setDialog({ kind: 'none' })
+      navigate(skillChatPromptPath(name))
+    },
+    [navigate],
+  )
 
   // Registry (bankr/community) query text + debounced community query.
   const [bankrQuery, setBankrQuery] = useState('')
@@ -1056,6 +1100,7 @@ export function SkillsPage() {
           empty={filtered.length === 0}
           emptyMessage={installedEmptyMessage(filterText, statusFilter)}
           onOpen={(name) => setDialog({ kind: 'skill', name })}
+          onUse={openSkillInChat}
         />
       ) : null}
 
@@ -1200,6 +1245,7 @@ export function SkillsPage() {
                     depsMutation.mutate({ name: skill.name!, installId })
                   }
                   onSetEnv={(name) => setEnvPrompt({ skill: skill.name!, name })}
+                  onUse={() => openSkillInChat(skill.name!)}
                 />
               )
             })()
@@ -1343,6 +1389,7 @@ function InstalledPanel({
   empty,
   emptyMessage,
   onOpen,
+  onUse,
 }: {
   loading: boolean
   error: string
@@ -1350,6 +1397,7 @@ function InstalledPanel({
   empty: boolean
   emptyMessage: string
   onOpen: (name: string) => void
+  onUse: (name: string) => void
 }) {
   if (error)
     return (
@@ -1383,7 +1431,11 @@ function InstalledPanel({
             <AnimatePresence initial={false}>
               {g.skills.map((s) => (
                 <MotionListItem key={s.name}>
-                  <SkillCard skill={s} onOpen={() => onOpen(s.name!)} />
+                  <SkillCard
+                    skill={s}
+                    onOpen={() => onOpen(s.name!)}
+                    onUse={() => onUse(s.name!)}
+                  />
                 </MotionListItem>
               ))}
             </AnimatePresence>
@@ -1760,6 +1812,7 @@ function SkillDialog({
   onRemove,
   onInstallDeps,
   onSetEnv,
+  onUse,
 }: {
   skill: RawSkill
   busyKeys: Set<string>
@@ -1768,6 +1821,7 @@ function SkillDialog({
   onRemove: () => void
   onInstallDeps: (installId: string) => void
   onSetEnv: (name: string) => void
+  onUse: () => void
 }) {
   const titleId = useId()
   const status = skillStatus(skill)
@@ -1938,6 +1992,9 @@ function SkillDialog({
         ) : skill.file_path ? (
           <small className="sk-dim sk-dialog__path">{skill.file_path}</small>
         ) : null}
+        <Button type="button" size="sm" onClick={onUse}>
+          Use in chat
+        </Button>
         {canUpdate ? (
           <Button
             type="button"

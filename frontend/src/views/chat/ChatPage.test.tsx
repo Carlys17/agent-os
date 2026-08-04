@@ -974,6 +974,27 @@ describe('ChatPage', () => {
     })
   })
 
+  // The Skills screen's "Use" button navigates here with the lead-in already
+  // written. It is a draft, not a submission — the operator still types the
+  // actual request underneath it.
+  it('prefills the composer from ?prompt= without sending', async () => {
+    mockRpc = makeRpc()
+    renderPage('/chat?prompt=use%20skill%20xlsx%0A')
+
+    const ta = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.value).toBe('use skill xlsx\n'))
+    expect(ta).toHaveFocus()
+    expect(mockRpc.call.mock.calls.filter(([m]) => m === 'chat.send').length).toBe(0)
+  })
+
+  it('strips ?prompt= once consumed so a reload does not re-inject it', async () => {
+    mockRpc = makeRpc()
+    renderPage('/chat?prompt=use%20skill%20xlsx%0A')
+
+    await waitFor(() => expect(probe.search).toContain('session='))
+    expect(probe.search).not.toContain('prompt=')
+  })
+
   it('switching sessions via the chip updates the URL ?session= (chat.js:1176/1809)', async () => {
     mockRpc = makeRpc()
     renderPage()

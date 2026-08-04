@@ -17,6 +17,7 @@ import {
   exportMarkdownDocument,
   hasPendingAttachmentWork,
   readAgentFromUrl,
+  readPromptFromUrl,
   readSessionFromUrl,
   webchatSessionKey,
   type ExportMessage,
@@ -134,6 +135,12 @@ export function ChatPage() {
     resolveInitialSessionKey('?' + searchParams.toString()),
   )
 
+  // `?prompt=` — a one-shot composer prefill written by the Skills screen's
+  // "Use" button. Captured from the mount-time URL (not tracked as state) so the
+  // later `persistSession` rewrite that strips the param cannot re-trigger it,
+  // and drained exactly once by the effect below.
+  const initialPromptRef = useRef(readPromptFromUrl('?' + searchParams.toString()) ?? '')
+
   // chat.js:1167-1180 `_persistSession` — mirror the canonical key into
   // localStorage + the URL `?session=` (dropping `?agent=`) so a reload / shared
   // link reopens the same session. Kept as a ref-free callback; the URL write
@@ -150,6 +157,10 @@ export function ChatPage() {
           const next = new URLSearchParams(prev)
           next.set('session', key)
           next.delete('agent')
+          // `?prompt=` is a one-shot composer prefill (Skills → "Use"). It is
+          // consumed on mount, so it must not survive into the persisted URL —
+          // otherwise a reload or a shared link re-injects the same text.
+          next.delete('prompt')
           return next
         },
         { replace: true },
@@ -198,6 +209,19 @@ export function ChatPage() {
   }, [])
   const regenerateMessage = useCallback((text: string) => {
     regenerateMessageRef.current(text)
+  }, [])
+
+  // Drain the `?prompt=` prefill into the composer once the handle is attached
+  // (refs are set before effects run). Same write path as `editMessage` above:
+  // `setValue` focuses with the caret at the end, and the mirror keeps the slash
+  // menu in sync. It never sends — the user still types their request and hits
+  // Enter, which is the whole point of the "use skill <name>" lead-in.
+  useEffect(() => {
+    const text = initialPromptRef.current
+    if (!text) return
+    initialPromptRef.current = ''
+    composerHandleRef.current?.setValue(text)
+    setComposerValue(text)
   }, [])
 
   const {

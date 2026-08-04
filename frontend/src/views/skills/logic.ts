@@ -314,6 +314,17 @@ export const SKILL_GROUP_ORDER: readonly SkillGroupKey[] = [
   'local',
 ] as const
 
+/**
+ * The chat URL behind a skill card's "Use" button. Naming a skill explicitly is
+ * the documented way to pin the agent to it — the prompt opens with
+ * `use skill <name>` and a newline so the user lands on a fresh line and types
+ * the actual request. ChatPage reads `?prompt=` on mount, prefills the composer
+ * and strips the param; nothing is sent automatically.
+ */
+export function skillChatPromptPath(name: string): string {
+  return '/chat?prompt=' + encodeURIComponent('use skill ' + name + '\n')
+}
+
 export const SKILL_GROUP_LABEL: Record<SkillGroupKey, string> = {
   partners: 'Partner Skills',
   crypto: 'AgentOS Crypto Skills',

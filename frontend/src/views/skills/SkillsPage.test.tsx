@@ -17,6 +17,12 @@ vi.mock('sonner', () => ({
   },
 }))
 
+const navigateSpy = vi.fn()
+vi.mock('react-router', async () => {
+  const actual = await vi.importActual<typeof import('react-router')>('react-router')
+  return { ...actual, useNavigate: () => navigateSpy }
+})
+
 type Handler = (...args: unknown[]) => void
 function makeRpc() {
   const listeners = new Map<string, Set<Handler>>()
@@ -365,6 +371,7 @@ const callsFor = (m: string) => mockRpc.call.mock.calls.filter(([x]) => x === m)
 describe('SkillsPage', () => {
   beforeEach(() => {
     mockRpc = makeRpc()
+    navigateSpy.mockClear()
     vi.mocked(toast.success).mockClear()
     vi.mocked(toast.error).mockClear()
     vi.mocked(toast.info).mockClear()
@@ -626,6 +633,55 @@ describe('SkillsPage', () => {
         force: true,
       }),
     )
+  })
+
+  // ── "Use" → chat with the composer prefilled ─────────────────────────────
+  // Naming the skill up front (`use skill <name>`) is the documented way to
+  // pin the agent to it; the card just saves the operator from retyping it.
+  it('the card Use button routes to chat with the skill prompt prefilled', async () => {
+    wireRpc()
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+
+    const card = screen.getByLabelText('Skill trader').closest('article') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: /^Use$/i }))
+
+    expect(navigateSpy).toHaveBeenCalledWith('/chat?prompt=use%20skill%20trader%0A')
+  })
+
+  it('Use does not also open the skill dialog', async () => {
+    wireRpc()
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+
+    const card = screen.getByLabelText('Skill trader').closest('article') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: /^Use$/i }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('the card body still opens the details dialog next to the Use button', async () => {
+    wireRpc()
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill trader')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByLabelText('Skill trader'))
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(navigateSpy).not.toHaveBeenCalled()
+  })
+
+  it('Use in chat closes the dialog before routing', async () => {
+    wireRpc()
+    renderPage()
+    await waitFor(() => expect(screen.getByLabelText('Skill weather')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('Skill weather'))
+
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Use in chat$/i }))
+
+    expect(navigateSpy).toHaveBeenCalledWith('/chat?prompt=use%20skill%20weather%0A')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
   // ── Update / Uninstall from the installed-skill dialog ───────────────────
