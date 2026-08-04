@@ -6,8 +6,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.5] - 2026-08-05
+
+### Added
+
+- The `senior-unilp-manager` skill can run an unattended take-profit ratchet on
+  a one-sided Uniswap v4 position. `ratchet.py` arms a mandate that, at fixed
+  milestones measured against the **original** principal, exits the position,
+  keeps the converted side as realized profit, and redeploys only the
+  unconverted remainder into a narrower range running from the current price to
+  the original far edge. A fire is a single `modifyLiquidities` — DECREASE →
+  BURN → MINT → TAKE_PAIR with no SETTLE leg — so Permit2 is never involved and
+  there is no window holding loose tokens and no position; the burned NFT is a
+  boolean witness that the fire landed, which makes unattended recovery a lookup
+  rather than a guess. Authorization does not go through `--confirm`:
+  `MandateAuthorization` is keyword-only, is never passed by `main()`, is
+  `isinstance`-checked, and refuses to construct once `_ARGV_ENTRY` is set, so
+  the CLI cannot build one. Each fire is re-checked against the pinned chainId,
+  PositionManager, poolId, tokenId, signer, recipient, slippage floors,
+  milestone index, the fixed far edge, a re-derived near edge, and a zero cap on
+  the harvested currency. State lives outside the price cache under
+  `$AGENTOS_HOME/state/unilp` as a write-ahead log plus a materialized view,
+  fsynced and 0600, with `flock` on a separate file. Arming the same position
+  twice is now idempotent for identical terms and refused — naming the differing
+  field — otherwise; uniqueness is a scan, because `mandate_id` hashes `label`
+  and two labels produced two mandates each intending to burn the same NFT.
+  Not yet rehearsed on chain: the combined unlock has never been sent against a
+  hooked pool, and SKILL.md marks a dust rehearsal as required before the first
+  broadcast.
+- The Skills page can pin a run to a skill without retyping its name. Each
+  installed skill card carries a `Use` button next to `View details`, and the
+  detail dialog gains `Use in chat`; both navigate to Chat with the composer
+  pre-filled with `use skill <name>\n`, focused with the caret at the end.
+  Nothing is sent and the current chat session is kept — the user writes the
+  request underneath. The prefill travels as a one-shot `?prompt=` query param
+  that ChatPage reads once on mount and `persistSession` strips, so a reload or
+  a shared link does not re-inject it; control characters other than newline are
+  dropped and the value is truncated at 2000 characters.
+- A cron job's ID is visible in the web UI. It was CLI-only despite being the
+  handle every `agentos cron …` command takes; it now renders as the first meta
+  row on each card, shortened to head+tail, with a copy button for the full
+  UUID.
+
 ### Fixed
 
+- Cron cards no longer spill over the neighbouring column. A session key like
+  `agent:main:telegram:direct:1245463966:new:59f2` has no break opportunity (a
+  colon is not one, per UAX-14), so its min-content width equals its full
+  rendered width, and three boxes between the grid track and the text — the
+  `MotionListItem` grid item, the `<dl>` row, and the `<dd>` flex item — were
+  unable to shrink, widening the card box itself before `overflow: hidden` could
+  clip anything. All three get `min-width: 0` and the value truncates with an
+  ellipsis, keeping the full string in the DOM and on `title` so it stays
+  hoverable and greppable. The prompt row wraps instead
+  (`overflow-wrap: anywhere`) so an unbroken contract address does not widen the
+  card either.
+- A cron job storing an unknown tool profile is now rejected at write time
+  instead of dying on every firing. `{"profile": "default"}` — no such profile
+  exists; `_TOOL_PROFILES` holds coding, full, memory_only, messaging and
+  minimal — stored cleanly and then failed ~50 ms into each run, before the
+  agent turn started, until the scheduler auto-paused the job after three
+  consecutive errors, with no trace but a run record the operator had no reason
+  to look at. `normalize_tool_profile` canonicalises the name or raises listing
+  the ones that exist, and `SchedulerOps` plus the `cron` RPC call it before
+  storing, mirroring how `elevated` is already handled. The read direction stays
+  tolerant on purpose: rows carrying a bad profile already exist, and `cron
+  list` has to render them or the broken job could not be found and deleted. The
+  tool schema now names the valid profiles, since the model that created this
+  job had no way to know them.
 - A cron job no longer fails forever once the chat it was created from is
   replaced. The web UI stamps `originSessionKey` onto every reminder job while
   forcing its target to `isolated`, and reminder is the default payload kind for
