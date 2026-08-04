@@ -14,6 +14,7 @@ import {
   jobKindClass,
   jobKindLabel,
   jobSchedule,
+  shortCronId,
   jobTarget,
   nextRunAbs,
   nextRuns,
@@ -60,6 +61,15 @@ describe('jobCreatedFrom', () => {
     expect(jobCreatedFrom({ createdFrom: 'agent:main:telegram:1' })).toBe('agent:main:telegram:1')
     expect(jobCreatedFrom({ creator_session_key: 'agent:main:slack:2' })).toBe('agent:main:slack:2')
     expect(jobCreatedFrom({})).toBe('')
+  })
+})
+
+describe('shortCronId', () => {
+  it('elides the middle of a uuid but leaves short ids alone', () => {
+    expect(shortCronId('3f9a2b1c-77d0-4e21-9c33-8a1b2c3d9d4e')).toBe('3f9a2b1c…9d4e')
+    expect(shortCronId('job-rem')).toBe('job-rem')
+    expect(shortCronId('0123456789abcdef')).toBe('0123456789abcdef')
+    expect(shortCronId('')).toBe('')
   })
 })
 

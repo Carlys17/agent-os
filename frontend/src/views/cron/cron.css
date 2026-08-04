@@ -107,6 +107,14 @@
   grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
   gap: 1rem;
 }
+/* Session keys have no break opportunity (a colon is not one, per UAX-14), so a
+   grid item sized by its content min-width grows past its track and the card
+   spills over its neighbour. Every box between the track and the text has to be
+   allowed to shrink. */
+.cron-cards > *,
+.cron-cards__item {
+  min-width: 0;
+}
 
 /* Job card — a .panel with a --tone status gutter. */
 .cron-card {
@@ -171,6 +179,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.5rem;
+  min-width: 0;
 }
 .cron-expr {
   font-family: var(--font-mono, ui-monospace, monospace);
@@ -194,17 +203,42 @@
   gap: 0.75rem;
   border-bottom: 1px solid var(--border);
   padding-bottom: 0.35rem;
+  min-width: 0;
 }
 .cron-card__meta dt {
   color: var(--muted-foreground);
+  flex: none;
 }
 .cron-card__meta dd {
   margin: 0;
   text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+/* The prompt is prose (and may carry a contract address), so it wraps instead of
+   truncating — `anywhere` keeps an unbroken 0x… hash from widening the card. */
 .cron-card__message dd {
   text-align: left;
   color: var(--muted-foreground);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* Cron ID reads as value + copy affordance on one line. */
+.cron-card__id dd {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+.cron-card__id-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cron-card__id dd > button {
+  flex: none;
 }
 .cron-card__abs {
   color: var(--muted-foreground);

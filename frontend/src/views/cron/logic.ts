@@ -114,6 +114,12 @@ export function jobCreatedFrom(job: RawJob): string {
   )
 }
 
+/** UUIDs are unreadable at card width; show head+tail, copy the full value. */
+export function shortCronId(id: string): string {
+  const s = String(id || '')
+  return s.length > 16 ? `${s.slice(0, 8)}…${s.slice(-4)}` : s
+}
+
 /** cron.js:618 — the schedule expression display (expression|schedule|—). */
 export function jobSchedule(job: RawJob): string {
   return String(job.expression || job.schedule || '—')

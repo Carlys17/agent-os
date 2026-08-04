@@ -24,6 +24,21 @@ describe('Cron scheduling workspace CSS contract', () => {
     )
   })
 
+  it('keeps unbreakable session keys inside the card grid track', () => {
+    // Every box between the grid track and the text must be able to shrink,
+    // otherwise a colon-separated session key sets the card's min-content width.
+    expect(css).toMatch(/\.cron-cards > \*,[\s\S]*?\.cron-cards__item \{[\s\S]*?min-width: 0;/)
+    expect(css).toMatch(/\.cron-card__meta > div \{[\s\S]*?min-width: 0;/)
+    expect(css).toMatch(/\.cron-card__meta dd \{[\s\S]*?min-width: 0;/)
+    expect(css).toMatch(/\.cron-card__meta dd \{[\s\S]*?text-overflow: ellipsis;/)
+    expect(css).toMatch(/\.cron-card__message dd \{[\s\S]*?overflow-wrap: anywhere;/)
+  })
+
+  it('lays the cron id row out as value plus copy affordance', () => {
+    expect(css).toMatch(/\.cron-card__id dd \{[\s\S]*?justify-content: flex-end;/)
+    expect(css).toMatch(/\.cron-card__id-value \{[\s\S]*?text-overflow: ellipsis;/)
+  })
+
   it('contains small-screen controls and disables decorative motion', () => {
     expect(css).toMatch(
       /@media \(max-width: 900px\)[\s\S]*?\.cron-search-wrap,[\s\S]*?\.control-surface \.cron-search \{[\s\S]*?width: 100%;/,

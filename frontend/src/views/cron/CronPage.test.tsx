@@ -182,6 +182,44 @@ describe('CronPage', () => {
     expect(screen.getByText('Health check')).toBeInTheDocument()
   })
 
+  it('shows the cron id on the card, shortened but recoverable in full', async () => {
+    const uuid = '3f9a2b1c-77d0-4e21-9c33-8a1b2c3d9d4e'
+    wireRpc({ jobs: [{ ...REMINDER_JOB, id: uuid }] })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Daily standup')).toBeInTheDocument())
+    const card = screen.getByLabelText('Cron job Daily standup')
+    expect(within(card).getByText('Cron ID')).toBeInTheDocument()
+    // Shortened for the card, full value on the row's title for hover/copy.
+    expect(within(card).getByText('3f9a2b1c…9d4e')).toBeInTheDocument()
+    expect(within(card).getByTitle(uuid)).toBeInTheDocument()
+  })
+
+  it('copies the full cron id and toasts on success', async () => {
+    const uuid = '3f9a2b1c-77d0-4e21-9c33-8a1b2c3d9d4e'
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    wireRpc({ jobs: [{ ...REMINDER_JOB, id: uuid }] })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Daily standup')).toBeInTheDocument())
+    const card = screen.getByLabelText('Cron job Daily standup')
+    fireEvent.click(within(card).getByRole('button', { name: `Copy cron ID ${uuid}` }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(uuid))
+    expect(toast.success).toHaveBeenCalledWith('Copied cron ID', expect.anything())
+  })
+
+  it('warns when copying the cron id fails', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+    Object.assign(navigator, { clipboard: { writeText } })
+    wireRpc({ jobs: [REMINDER_JOB] })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Daily standup')).toBeInTheDocument())
+    const card = screen.getByLabelText('Cron job Daily standup')
+    fireEvent.click(within(card).getByRole('button', { name: 'Copy cron ID job-rem' }))
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith('Copy failed: denied', expect.anything()),
+    )
+  })
+
   it('shows the elevated badge on the card, without opening the editor', async () => {
     wireRpc({ jobs: [{ ...AGENT_JOB, elevated: 'bypass' }] })
     renderPage()
