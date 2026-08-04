@@ -553,8 +553,11 @@ agentos cron update <job-id> --no-elevated
 
 Related flags: `--elevated-mode {bypass,full}` (default `bypass`) and
 `--tool-policy '<json>'` (`profile`, `allow`, `alsoAllow`, `deny` — can only
-narrow the cron baseline). Elevation is only accepted on agent-turn jobs;
-reminders and system events never run an agent turn with the job's tool policy.
+narrow the cron baseline). `profile` must be one of `coding`, `full`,
+`memory_only`, `messaging`, `minimal`; omit the key to inherit rather than
+inventing a name, since an unknown one is rejected when the job is written.
+Elevation is only accepted on agent-turn jobs; reminders and system events
+never run an agent turn with the job's tool policy.
 
 **What you are accepting.** Every time the job fires, with nobody watching, an
 LLM decides which shell commands run on this host as you, and they run — no

@@ -245,7 +245,9 @@ def _cron_job_agent_id(job: Any) -> str:
             "type": "object",
             "description": (
                 "Optional per-job cron tool policy with profile, allow, also_allow, and "
-                "deny. May also carry elevated: 'bypass' to let the job run shell-based "
+                "deny. profile must be one of: coding, full, memory_only, messaging, "
+                "minimal — omit it to inherit the caller's tools rather than guessing a "
+                "name. May also carry elevated: 'bypass' to let the job run shell-based "
                 "skills unattended, which only an interactive CLI or Web caller may set."
             ),
         },
