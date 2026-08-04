@@ -403,6 +403,36 @@ def tier2(g: dict, r: Results) -> None:
     s = g["signing"]
     account = account_from_private_key(s["private_key"])
     r.check("derived signer address", account["address"], s["expected_address"])
+
+    # Derivation lives in `account`, signing in `secp256k1`. lp_read.py imports the first
+    # so `positions` can resolve your own wallet, and the split is what keeps that from
+    # making a read-only script able to move funds. Pin both halves: the same address comes
+    # out of the derivation-only module, and that module has no way to sign.
+    from unilp import account as account_mod
+
+    r.check("account module derives the same address",
+            account_mod.account_from_private_key(s["private_key"])["address"],
+            s["expected_address"])
+    r.check("account module exposes no signing entry point",
+            sorted(n for n in dir(account_mod) if "sign" in n.lower()), [])
+
+    # Read the imports out of the syntax tree, not out of the text: the docstring names
+    # secp256k1 to explain the split, and a grep would score that as a dependency.
+    import ast
+
+    imported = set()
+    for node in ast.walk(ast.parse(Path(account_mod.__file__).read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom):
+            # `from . import secp256k1` parses with module=None and the module name in
+            # names — reading only `node.module` would score that as importing nothing.
+            if node.module:
+                imported.add(node.module)
+            else:
+                imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+    r.check("account module imports nothing that can sign",
+            sorted(imported - {"__future__"}), ["hexutil", "keccak"])
     signature = sign_digest(s["private_key"], s["digest"])
     r.check("RFC-6979 signature is deterministic", signature["hex"], s["signature"])
     r.check("ecrecover round-trips to the signer",
@@ -718,7 +748,7 @@ def tier5(g: dict, r: Results) -> None:
         r.skip("tier5/planning", "lp_read or unilp.prices not importable")
         return
 
-    pull = lp_read._pull_off_current_tick
+    pull = lp_read.pull_off_current_tick
 
     # The live case this was written for: AGENTOS at tick 209056, band asked for as
     # "from here up to $200K mcap", snapped outward to 206400..209200 — one spacing past
@@ -806,6 +836,33 @@ def tier5(g: dict, r: Results) -> None:
     r.check("unindexed message names the network", "robinhood" in unknown, True)
     r.check("unindexed message is not the rate-limit one",
             "rate-limiting" in unknown, False)
+
+    # `positions` with no --owner means "mine". The address comes from the signing key,
+    # which is the only thing this file ever reads it for.
+    from unilp.account import account_from_private_key
+
+    key = "0x" + "11" * 32
+    # Derived here rather than written out: tier 2 already pins the arithmetic against the
+    # golden vectors, so what this needs to prove is only that the wiring reaches it.
+    expected = account_from_private_key(key)["address"]
+    was_env = dict(os.environ)
+    try:
+        os.environ["UNIV4_LP_PRIVATE_KEY"] = key
+        r.check("positions with no --owner resolves the configured wallet",
+                lp_read.resolve_owner({}), expected)
+        r.check("an explicit --owner still wins",
+                lp_read.resolve_owner({"owner": "0x" + "ab" * 20}), "0x" + "ab" * 20)
+        os.environ["OTHER_KEY"] = "0x" + "22" * 32
+        r.check("--signer-env picks a different variable",
+                lp_read.resolve_owner({"signer-env": "OTHER_KEY"}) != expected, True)
+        # An explicit owner must not need the key at all — asking about someone else's
+        # wallet is the ordinary case and cannot depend on this machine being configured.
+        os.environ.pop("UNIV4_LP_PRIVATE_KEY")
+        r.check("an explicit --owner never touches the key",
+                lp_read.resolve_owner({"owner": "0x" + "cd" * 20}), "0x" + "cd" * 20)
+    finally:
+        os.environ.clear()
+        os.environ.update(was_env)
 
 
 # ---------------------------------------------------------------------------
@@ -949,8 +1006,9 @@ def _plan_of(lp_write, chain: dict, command: str, args: dict, *,
         captured["fields"] = dict(fields)
         return real_plan_hash(fields)
 
-    def stub_run_plan(client, chn, a, signer, ctx):
+    def stub_run_plan(client, chn, a, signer, ctx, *, authorization=None):
         captured["rows"] = ctx["rows"]
+        captured["authorization"] = authorization
         return lp_write.plan_hash(ctx["hashFields"])
 
     stubs = {"pool_key_for_id": stub_pool_key, "load_pool_state": stub_state,
@@ -1023,6 +1081,1089 @@ def tier6(g: dict, r: Results) -> None:
 
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Tier 7 — ratchet
+# ---------------------------------------------------------------------------
+
+# Two token addresses whose sort order is known, so a fixture can put the SAME token on
+# either side of the pair. That is the whole point of this tier: "the token is currency1"
+# is not an exotic case, it is half of all pools, and it inverts which way the price has to
+# move for a limit sell to fill.
+_LOW = "0x1111111111111111111111111111111111111111"
+_HIGH = "0x2222222222222222222222222222222222222222"
+
+
+def _ratchet_fixture(principal_side: str, spacing: int = 60):
+    """A position that was armed one-sided and has since been partly filled.
+
+    The two ticks are the whole point. At ARM time the range is entirely on one side of the
+    price, which is what makes it a limit order. By the time a milestone fires the price has
+    moved *into* the range, so the position holds both currencies — and the principal is no
+    longer derivable from the live geometry, which is why the mandate pins it at arm time.
+
+    currency0 principal -> the range sits ABOVE the price and fills as the tick rises.
+    currency1 principal -> the range sits BELOW and fills as the tick falls.
+    """
+    if principal_side == "currency0":
+        tick_lower, tick_upper, armed_at, current = 600, 3000, 500, 1200
+    else:
+        tick_lower, tick_upper, armed_at, current = -3000, -600, -500, -1200
+    return {"tickLower": tick_lower, "tickUpper": tick_upper, "tick": current,
+            "armedAt": armed_at, "tickSpacing": spacing}
+
+
+def _ratchet_env(lp_write, ratchet, chain, fixture, principal_side, quote_side,
+                 liquidity=10**20, owner=None):
+    """Stub the chain out from under ratchet.plan_fire and hand back the restore hook."""
+    from unilp.v4_math import get_sqrt_ratio_at_tick
+
+    owner = owner or _ME
+    pool_key = {"currency0": _LOW, "currency1": _HIGH, "fee": 3000,
+                "tickSpacing": fixture["tickSpacing"], "hooks": lp_write.NATIVE}
+    from unilp.v4_pool import compute_pool_id
+    pool_id = compute_pool_id(pool_key)
+
+    state = {
+        "poolId": pool_id, "poolKey": pool_key,
+        "sqrtPriceX96": get_sqrt_ratio_at_tick(fixture["tick"]),
+        "tick": fixture["tick"], "lpFee": 3000, "activeLiquidity": liquidity,
+    }
+    position = {
+        "tokenId": 7, "poolKey": pool_key, "poolId": pool_id,
+        "tickLower": fixture["tickLower"], "tickUpper": fixture["tickUpper"],
+        "hasSubscriber": False, "liquidity": liquidity, "owner": owner,
+    }
+
+    def stub_position(client, chn, token_id):
+        return dict(position, tokenId=int(token_id))
+
+    def stub_state(client, chn, pid, key):
+        return dict(state, poolId=pid, poolKey=key)
+
+    def stub_token_info(client, chn, address):
+        return {"address": address, "symbol": "T0" if address == _LOW else "T1",
+                "decimals": 18, "isNative": False}
+
+    stubs = {"load_position_for_write": stub_position, "load_pool_state": stub_state,
+             "token_info": stub_token_info}
+    saved = {name: getattr(lp_write, name) for name in stubs}
+    for name, fn in stubs.items():
+        setattr(lp_write, name, fn)
+
+    chain = dict(chain, knownQuotes={(_HIGH if quote_side == "currency1" else _LOW).lower():
+                                     "QUOTE"})
+
+    def restore():
+        for name, fn in saved.items():
+            setattr(lp_write, name, fn)
+
+    return {"chain": chain, "poolKey": pool_key, "poolId": pool_id, "position": position,
+            "state": state, "armedAt": fixture["armedAt"], "restore": restore}
+
+
+def _ratchet_mandate(ratchet, env, principal_side, steps=(3000, 6000, 10_000)):
+    from unilp.ratchet_math import (
+        far_edge_tick,
+        milestone_thresholds,
+        principal_for_range,
+        remaining_principal,
+    )
+    from unilp.v4_math import get_sqrt_ratio_at_tick
+
+    position = env["position"]
+    # Derived from the geometry AS ARMED — outside the range — exactly as cmd_arm does.
+    principal = principal_for_range(env["armedAt"], position["tickLower"],
+                                    position["tickUpper"])
+    assert principal == principal_side, (principal, principal_side)
+    original = remaining_principal(get_sqrt_ratio_at_tick(env["armedAt"]),
+                                   position["tickLower"], position["tickUpper"],
+                                   position["liquidity"], principal)
+    immutable = {
+        "schemaVersion": 1, "chainId": env["chain"]["chainId"], "chainKey": "test",
+        "positionManager": env["chain"]["positionManager"], "poolId": env["poolId"],
+        "poolKey": env["poolKey"], "signer": _ME, "originalTokenId": 7,
+        "principal": principal,
+        "farEdgeTick": far_edge_tick(position["tickLower"], position["tickUpper"], principal),
+        "originalTickLower": position["tickLower"],
+        "originalTickUpper": position["tickUpper"],
+        "originalPrincipalRaw": str(original), "stepsBps": list(steps), "label": "",
+    }
+    return {
+        "immutable": immutable,
+        "bounds": {"maxSlippageBps": 100, "maxDeadlineSecs": 1200, "maxTickDrift": 600,
+                   "allowHooked": False, "maxAttempts": 5,
+                   "maxPrincipalRawPerFire": None, "maxFeePerGasWei": None,
+                   "expiresAt": None},
+        "state": "ARMED", "tokenId": 7,
+        "tickLower": position["tickLower"], "tickUpper": position["tickUpper"],
+        "liquidity": str(position["liquidity"]),
+        "thresholds": [str(t) for t in milestone_thresholds(original, list(steps))],
+        "milestonesFired": 0, "currentFire": None,
+        "realized": {"amount0": "0", "amount1": "0"}, "lastSeq": 0, "history": [],
+    }
+
+
+def _tier7_math(r) -> None:
+    from unilp.ratchet_math import (
+        CURRENCY0,
+        CURRENCY1,
+        RangeExhaustedError,
+        due_milestone,
+        far_edge_tick,
+        fills_as_tick_rises,
+        milestone_thresholds,
+        parse_steps,
+        principal_for_range,
+        rearm_range,
+        remaining_principal,
+        sqrt_price_for_remaining,
+    )
+    from unilp.v4_math import get_sqrt_ratio_at_tick, pull_off_current_tick
+
+    r.check("steps parse to bps", parse_steps("30,60,100"), [3000, 6000, 10_000])
+    r.check("steps dedupe and sort", parse_steps("60, 30 ,60"), [3000, 6000])
+    r.check("thresholds are absolute against the original principal",
+            milestone_thresholds(100_000, [3000, 6000, 10_000]), [70_000, 40_000, 0])
+
+    # The matrix. Every assertion below runs once per geometry, and each geometry is
+    # exercised with the quote on either side so the sell/buy LABEL cannot leak into the
+    # geometry. A case that only ever tested "token is currency0" would pass while half of
+    # all real pools silently ratcheted the wrong way.
+    for principal, tick_lower, tick_upper, current in (
+        (CURRENCY0, 600, 3000, 1200),
+        (CURRENCY1, -3000, -600, -1200),
+    ):
+        label = f"[{principal}]"
+        # Geometry -> principal, with no reference to which token is "the" token.
+        outside = tick_lower - 1 if principal == CURRENCY0 else tick_upper
+        r.check(f"{label} principal derives from geometry alone",
+                principal_for_range(outside, tick_lower, tick_upper), principal)
+        r.check(f"{label} far edge is the end the price travels to",
+                far_edge_tick(tick_lower, tick_upper, principal),
+                tick_upper if principal == CURRENCY0 else tick_lower)
+        r.check(f"{label} fill direction", fills_as_tick_rises(principal),
+                principal == CURRENCY0)
+
+        liquidity = 10**20
+        unfilled = get_sqrt_ratio_at_tick(tick_lower if principal == CURRENCY0
+                                          else tick_upper)
+        filled = get_sqrt_ratio_at_tick(tick_upper if principal == CURRENCY0
+                                        else tick_lower)
+        original = remaining_principal(unfilled, tick_lower, tick_upper, liquidity,
+                                       principal)
+        r.check(f"{label} unfilled position is 100% principal", original > 0, True)
+        r.check(f"{label} fully crossed position holds no principal",
+                remaining_principal(filled, tick_lower, tick_upper, liquidity, principal), 0)
+        r.check(f"{label} the other currency is untouched while unfilled",
+                remaining_principal(unfilled, tick_lower, tick_upper, liquidity,
+                                    CURRENCY1 if principal == CURRENCY0 else CURRENCY0), 0)
+
+        # The inverse must land back on the amount it was asked for. One wei of slack:
+        # both directions truncate, and the runtime decision is made on the amount anyway.
+        for target in milestone_thresholds(original, [3000, 6000, 10_000]) + [original]:
+            sqrt_at = sqrt_price_for_remaining(tick_lower, tick_upper, liquidity, target,
+                                               principal)
+            back = remaining_principal(sqrt_at, tick_lower, tick_upper, liquidity, principal)
+            r.check(f"{label} remaining<->price round-trips at {target}",
+                    abs(back - target) <= 1, True)
+
+        # Re-arm travels the right way and stays one-sided on the SAME side.
+        new_lower, new_upper = rearm_range(current, far_edge_tick(tick_lower, tick_upper,
+                                                                  principal), 60, principal)
+        r.check(f"{label} re-arm keeps the far edge fixed",
+                new_upper if principal == CURRENCY0 else new_lower,
+                tick_upper if principal == CURRENCY0 else tick_lower)
+        r.check(f"{label} re-arm is still one-sided on the same currency",
+                principal_for_range(current, new_lower, new_upper), principal)
+        r.check(f"{label} re-arm narrows towards the price",
+                (new_lower > tick_lower) if principal == CURRENCY0
+                else (new_upper < tick_upper), True)
+
+        # Past the far edge there is nothing to re-arm — that IS the final milestone.
+        past = tick_upper if principal == CURRENCY0 else tick_lower
+        threw = False
+        try:
+            rearm_range(past, far_edge_tick(tick_lower, tick_upper, principal), 60, principal)
+        except RangeExhaustedError:
+            threw = True
+        r.check(f"{label} a fully crossed range reports exhausted", threw, True)
+
+    # The one-tick asymmetry, stated as its own case in both directions because
+    # range_status is strict on one edge and not on the other.
+    r.check("currency0 re-arm clears a tick sitting exactly on a spacing boundary",
+            rearm_range(1200, 3000, 60, CURRENCY0)[0] > 1200, True)
+    r.check("currency1 re-arm may land exactly on the current tick",
+            rearm_range(-1200, -3000, 60, CURRENCY1)[1], -1200)
+
+    # A forced side never falls back to the other one; an unforced call is unchanged.
+    r.check("forced pull-off matches the heuristic when they agree",
+            pull_off_current_tick(209056, 206400, 209200, 200, "currency1"),
+            pull_off_current_tick(209056, 206400, 209200, 200))
+    threw = False
+    try:
+        pull_off_current_tick(209190, 209010, 209300, 200, "currency1")
+    except RuntimeError:
+        threw = True
+    r.check("forced pull-off refuses rather than flipping sides", threw, True)
+    r.check("unforced pull-off still falls back to the other side",
+            pull_off_current_tick(209190, 209010, 209300, 200), (209200, 209300))
+
+    # A gap that clears two levels fires the deeper one only.
+    thresholds = [70, 40, 0]
+    r.check("no milestone before the first threshold", due_milestone(thresholds, 0, 71), None)
+    r.check("first milestone at its threshold", due_milestone(thresholds, 0, 70), 0)
+    r.check("a two-level gap fires the deeper level", due_milestone(thresholds, 0, 35), 1)
+    r.check("a full crossing fires the last level", due_milestone(thresholds, 0, 0), 2)
+    r.check("levels already fired never re-fire", due_milestone(thresholds, 3, 0), None)
+
+
+def _tier7_plan(r) -> None:
+    import lp_write
+    import ratchet
+    from unilp.chains import resolve_chain
+    from unilp.v4_actions import ACTIONS
+
+    base = resolve_chain("base")
+    for principal in ("currency0", "currency1"):
+        for quote in ("currency0", "currency1"):
+            label = f"[{principal}/quote={quote}]"
+            fixture = _ratchet_fixture(principal)
+            env = _ratchet_env(lp_write, ratchet, base, fixture, principal, quote)
+            try:
+                mandate = _ratchet_mandate(ratchet, env, principal)
+                client = _StubClient()
+                fire = ratchet.plan_fire(client, env["chain"], mandate, 0)
+
+                actions = fire["plan"]["actions"]
+                r.check(f"{label} a re-arming fire is decrease+burn+mint+take", actions,
+                        [ACTIONS["DECREASE_LIQUIDITY"], ACTIONS["BURN_POSITION"],
+                         ACTIONS["MINT_POSITION"], ACTIONS["TAKE_PAIR"]])
+                r.check(f"{label} the fire carries no SETTLE leg",
+                        any(a in (ACTIONS["SETTLE"], ACTIONS["SETTLE_ALL"],
+                                  ACTIONS["SETTLE_PAIR"]) for a in actions), False)
+                r.check(f"{label} the fire sends no value", fire["plan"]["value"], 0)
+                r.check(f"{label} the fire is not the final one", fire["final"], False)
+
+                remint = fire["remint"]
+                other_max = (remint["amount1Max"] if principal == "currency0"
+                             else remint["amount0Max"])
+                own_max = (remint["amount0Max"] if principal == "currency0"
+                           else remint["amount1Max"])
+                r.check(f"{label} the re-mint spends none of the harvested currency",
+                        other_max, 0)
+                r.check(f"{label} the re-mint spends the principal", own_max > 0, True)
+                r.check(f"{label} the re-mint keeps the pinned far edge",
+                        remint["tickUpper"] if principal == "currency0"
+                        else remint["tickLower"],
+                        mandate["immutable"]["farEdgeTick"])
+                need = (fire["required"]["amount0"] if principal == "currency0"
+                        else fire["required"]["amount1"])
+                r.check(f"{label} the re-mint costs less than the exit frees",
+                        need < fire["remainder"], True)
+
+                # The final milestone must not re-arm, whatever the geometry.
+                last = len(mandate["immutable"]["stepsBps"]) - 1
+                final_fire = ratchet.plan_fire(client, env["chain"], mandate, last)
+                r.check(f"{label} the final milestone exits without re-arming",
+                        final_fire["remint"], None)
+                r.check(f"{label} the final fire is decrease+burn+take",
+                        final_fire["plan"]["actions"],
+                        [ACTIONS["DECREASE_LIQUIDITY"], ACTIONS["BURN_POSITION"],
+                         ACTIONS["TAKE_PAIR"]])
+            finally:
+                env["restore"]()
+
+
+def _tier7_predicate(r) -> None:
+    import lp_write
+    import ratchet
+    from unilp.chains import resolve_chain
+
+    base = resolve_chain("base")
+    for principal in ("currency0", "currency1"):
+        fixture = _ratchet_fixture(principal)
+        env = _ratchet_env(lp_write, ratchet, base, fixture, principal, "currency1")
+        try:
+            mandate = _ratchet_mandate(ratchet, env, principal)
+            client = _StubClient()
+            fire = ratchet.plan_fire(client, env["chain"], mandate, 0)
+            fields = ratchet.hash_fields(env["chain"], mandate, fire, 0, 1200)
+            check = ratchet.make_predicate(env["chain"], mandate, 0)
+            signer = {"address": _ME, "privateKey": "0x00", "simulateOnly": False}
+
+            def run(mutation=None, sgn=None, milestone=0):
+                mutated = dict(fields, **(mutation or {}))
+                fn = check if milestone == 0 else ratchet.make_predicate(
+                    env["chain"], mandate, milestone)
+                fn(client, env["chain"], {}, sgn or signer,
+                   {"hashFields": mutated}, "deadbeef")
+
+            def refuses(name, **kwargs):
+                try:
+                    run(**kwargs)
+                except RuntimeError:
+                    r.check(f"[{principal}] predicate refuses {name}", True, True)
+                    return
+                r.check(f"[{principal}] predicate refuses {name}", False, True)
+
+            run()
+            r.check(f"[{principal}] predicate accepts its own plan", True, True)
+
+            refuses("a different tokenId", mutation={"tokenId": lp_write.Big(9)})
+            refuses("a different recipient", mutation={"recipient": _TOKEN})
+            refuses("a partial exit", mutation={"liquidity": lp_write.Big(1)})
+            refuses("a looser slippage floor", mutation={"amount0Min": lp_write.Big(0),
+                                                         "amount1Min": lp_write.Big(0)})
+            refuses("a longer deadline", mutation={"deadlineSecs": 99_999})
+            refuses("a foreign command", mutation={"cmd": "burn"})
+            refuses("a plan-only signer",
+                    sgn={"address": _ME, "privateKey": None, "simulateOnly": True})
+            refuses("a signer that is not the one that armed it",
+                    sgn={"address": _TOKEN, "privateKey": "0x00", "simulateOnly": False})
+            moved = "remintTickUpper" if principal == "currency0" else "remintTickLower"
+            refuses("a moved far edge", mutation={moved: fields[moved] + 60})
+            other = ("remintAmount1Max" if principal == "currency0"
+                     else "remintAmount0Max")
+            refuses("a re-mint that spends the harvested currency",
+                    mutation={other: lp_write.Big(1)})
+
+            # The shape of the re-mint is bound above; this binds its SIZE. The plan omits a
+            # SETTLE leg only because the mint is funded entirely by the delta the decrease
+            # credits in the same unlock, so liquidity that needs more principal than the
+            # exit frees would send a transaction that cannot do anything but revert.
+            mine = ("remintAmount0Max" if principal == "currency0"
+                    else "remintAmount1Max")
+            refuses("a re-mint sized past what the exit frees",
+                    mutation={"remintLiquidity": lp_write.Big(
+                        int(fields["remintLiquidity"]) * 4)})
+            refuses("an empty re-mint",
+                    mutation={"remintLiquidity": lp_write.Big(0)})
+            refuses("a principal allowance larger than the exit frees",
+                    mutation={mine: lp_write.Big(2**120)})
+
+            # An already-fired milestone can never be replayed.
+            mandate["milestonesFired"] = 2
+            refuses("a milestone that already fired")
+            mandate["milestonesFired"] = 0
+        finally:
+            env["restore"]()
+
+
+def _tier7_authorization(r) -> None:
+    import lp_write
+
+    r.check("importing the runner does not put lp_write in CLI mode",
+            lp_write._ARGV_ENTRY, False)
+    r.check("run_plan takes authorization keyword-only",
+            "authorization" in lp_write.run_plan.__code__.co_varnames
+            and lp_write.run_plan.__code__.co_kwonlyargcount >= 1, True)
+
+    made = lp_write.MandateAuthorization(mandate_id="m", fire_id="f",
+                                         predicate=lambda *a: None)
+    r.check("the runner can construct an authorization",
+            isinstance(made, lp_write.MandateAuthorization), True)
+
+    saved = lp_write._ARGV_ENTRY
+    try:
+        lp_write._ARGV_ENTRY = True
+        threw = False
+        try:
+            lp_write.MandateAuthorization(mandate_id="m", fire_id="f",
+                                          predicate=lambda *a: None)
+        except RuntimeError:
+            threw = True
+        r.check("a CLI process cannot construct an authorization at all", threw, True)
+    finally:
+        lp_write._ARGV_ENTRY = saved
+
+    # A non-MandateAuthorization must fail closed rather than being trusted, and a hash
+    # echo must never be combined with a mandate.
+    calls = {"n": 0}
+
+    def stub_simulate(client, call):
+        calls["n"] += 1
+        return {"ok": True, "method": "eth_call", "logs": [], "gasUsed": None, "revert": None}
+
+    real_simulate = lp_write.simulate_call
+    lp_write.simulate_call = stub_simulate
+    chain = {"positionManager": _TOKEN, "chainId": 1}
+    ctx = {"title": "t", "rows": [["k", "v"]], "hashFields": {"a": 1}, "data": "0x",
+           "value": 0}
+    signer = {"address": _ME, "privateKey": "0x00", "simulateOnly": False}
+
+    def refused(args, **kwargs) -> bool:
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                lp_write.run_plan(_StubClient(), chain, args, signer, dict(ctx), **kwargs)
+        except RuntimeError:
+            return True
+        return False
+
+    try:
+        r.check("run_plan refuses a dict posing as an authorization",
+                refused({"broadcast": True}, authorization={"mandate": "x"}), True)
+        r.check("run_plan refuses a string posing as an authorization",
+                refused({"broadcast": True}, authorization="yes"), True)
+        r.check("run_plan refuses a hash echo combined with a mandate",
+                refused({"broadcast": True, "confirm": "abc"}, authorization=made), True)
+        # And the ordinary attended path is untouched: no authorization, wrong hash, refuse.
+        r.check("the attended path still requires the right PLAN_HASH",
+                refused({"broadcast": True, "confirm": "not-the-hash"}), True)
+    finally:
+        lp_write.simulate_call = real_simulate
+
+
+def _tier7_journal(r) -> None:
+    import shutil
+    import tempfile
+
+    from unilp.journal import MandateStore, mandate_id
+
+    root = Path(tempfile.mkdtemp(prefix="unilp-selftest-"))
+    try:
+        immutable = {"chainId": 4663, "tokenId": 7, "poolId": "0xfeed"}
+        ident = mandate_id(immutable)
+        r.check("mandate ids are 16 bytes, not the 4 of a PLAN_HASH", len(ident), 32)
+
+        store = MandateStore(root, "test", ident)
+        with store.lock() as acquired:
+            r.check("an idle mandate locks", acquired, True)
+            store.save({"immutable": immutable, "state": "ARMED",
+                        "liquidity": 2**100, "lastSeq": 0})
+            r.check("the file is owner-only", oct(store.path.stat().st_mode & 0o777), "0o600")
+            loaded = store.load()
+            r.check("integers past 2**53 survive as strings",
+                    loaded["liquidity"], str(2**100))
+
+            store.append({"event": "plan.built"})
+            seq = store.append({"event": "tx.sent"})
+            r.check("the log assigns increasing sequence numbers", seq, 2)
+            # A crash between the outcome record and the mandate replace leaves the view
+            # behind the log; the tail is what tells the next tick to catch up.
+            r.check("the tail exposes records the mandate has not absorbed",
+                    [rec["event"] for rec in store.tail(loaded["lastSeq"])],
+                    ["plan.built", "tx.sent"])
+
+            # A second lock on the SAME file object is re-entrant within a process, so the
+            # meaningful check is that the lock target is not the file that gets replaced —
+            # os.replace would otherwise orphan the inode the lock is held on.
+            r.check("the lock is not the file that gets atomically replaced",
+                    store.lock_path != store.path, True)
+
+        tampered = store.path.read_text().replace('"tokenId": 7', '"tokenId": 8')
+        store.path.write_text(tampered)
+        threw = False
+        try:
+            store.load()
+        except RuntimeError:
+            threw = True
+        r.check("a mandate that no longer hashes to its filename is refused", threw, True)
+
+        # `--id` arrives straight from argv, and every path in this class is built by
+        # interpolating it. Rejecting anything that is not the shape `mandate_id` emits
+        # keeps `status`, `disarm` and especially `delete` inside the state directory.
+        for hostile in ("../../../etc/passwd", "..", "a/b", "", "ABCDEF" * 5 + "AB"):
+            refused = False
+            try:
+                MandateStore(root, "test", hostile)
+            except RuntimeError:
+                refused = True
+            r.check(f"a mandate id of {hostile!r} is refused before any path is built",
+                    refused, True)
+
+        # Only the LAST journal line may be unreadable — that is a torn write from a power
+        # cut, and the record it lost had not been confirmed anyway. A bad line with good
+        # lines after it is damage of a different kind, and since the tail of this log is
+        # what restores an in-flight fire, quietly skipping it could erase the only proof a
+        # transaction was signed.
+        good = MandateStore(root, "test", mandate_id({"chainId": 1}))
+        good.append({"event": "tx.sent"})
+        good.log_path.write_text(good.log_path.read_text() + '{"event": "tx.se\n')
+        r.check("a torn final line is tolerated",
+                [rec["event"] for rec in good.records()], ["tx.sent"])
+        good.append({"event": "tick.noop"})
+        threw = False
+        try:
+            good.records()
+        except RuntimeError:
+            threw = True
+        r.check("a corrupt line with records after it stops the runner", threw, True)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+class _RatchetChain:
+    """A chain that remembers whether the fire landed, for the recovery branches."""
+
+    def __init__(self, chain, pool_key, pool_id, me, tick=1400):
+        self.chain, self.pool_key, self.pool_id, self.me = chain, pool_key, pool_id, me
+        self.tick = tick
+        self.burned: set = set()
+        self.nonce = 0
+        self.receipts: dict = {}
+        self.logs: list = []
+        self.in_mempool = None
+        # Flipped on to model an unreachable node: `rpc.multicall` reports a transport
+        # failure the same way it reports a revert, so the reconciler must not read one as
+        # the other. Everything in the batch fails together, which is what makes the
+        # liveness control call able to tell them apart.
+        self.rpc_down = False
+        # tokenId -> (tickLower, tickUpper); anything unlisted is the original range.
+        self.ranges: dict = {}
+
+    # -- RpcClient surface -------------------------------------------------
+    def get_block(self, block="latest"):
+        return {"timestamp": hex(1_800_000_000)}
+
+    def block_number(self):
+        return 1000
+
+    def transaction_count(self, address, block="pending"):
+        return self.nonce
+
+    def get_receipt(self, tx_hash):
+        return self.receipts.get(tx_hash)
+
+    def request(self, method, params=None):
+        return self.in_mempool
+
+    def get_logs(self, params):
+        return self.logs
+
+    def multicall(self, calls, allow_failure=True, **kwargs):
+        if self.rpc_down:
+            return [{"status": "failure", "result": None,
+                     "error": "call failed on its own"} for _ in calls]
+        out = []
+        for call in calls:
+            name = call["functionName"]
+            args = call.get("args") or []
+            token_id = int(args[0]) if args else None
+            if name == "ownerOf":
+                out.append({"status": "failure", "result": None} if token_id in self.burned
+                           else {"status": "success", "result": self.me})
+            elif name == "getPositionLiquidity":
+                out.append({"status": "success",
+                            "result": 0 if token_id in self.burned else 10**20})
+            elif name == "nextTokenId":
+                out.append({"status": "success", "result": 9999})
+            else:
+                out.append({"status": "success", "result": 0})
+        return out
+
+    # -- loaders -----------------------------------------------------------
+    def position(self, client, chn, token_id):
+        if int(token_id) in self.burned:
+            raise RuntimeError(f"tokenId {token_id} has an empty PoolKey — burned")
+        lower, upper = self.ranges.get(int(token_id), (600, 3000))
+        return {"tokenId": int(token_id), "poolKey": self.pool_key, "poolId": self.pool_id,
+                "tickLower": lower, "tickUpper": upper, "hasSubscriber": False,
+                "liquidity": 10**20, "owner": self.me}
+
+    def state(self, client, chn, pool_id, key):
+        from unilp.v4_math import get_sqrt_ratio_at_tick
+        return {"poolId": pool_id, "poolKey": key, "tick": self.tick,
+                "sqrtPriceX96": get_sqrt_ratio_at_tick(self.tick), "lpFee": 3000,
+                "activeLiquidity": 10**20}
+
+    def erc721_log(self, token_id):
+        return {"address": self.chain["positionManager"],
+                "topics": [_TOPIC_ERC721, "0x" + "0" * 64,
+                           "0x" + "0" * 24 + self.me[2:].lower(),
+                           "0x" + f"{token_id:064x}"],
+                "data": "0x"}
+
+
+_TOPIC_ERC721 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+
+def _tier7_state_machine(r) -> None:
+    """The FIRE_SENT recovery table, driven for real against a stub chain.
+
+    Every row here is a crash or a network outcome that a cron-driven runner will meet, and
+    getting one wrong either strands funds or sends a duplicate. They are cheap to assert and
+    impossible to reason about reliably by reading the code.
+    """
+    import shutil
+    import tempfile
+
+    import lp_write
+    import ratchet
+    from unilp.chains import resolve_chain
+    from unilp.journal import MandateStore, mandate_id
+    from unilp.v4_pool import compute_pool_id
+
+    chain = resolve_chain("base")
+    pool_key = {"currency0": _LOW, "currency1": _HIGH, "fee": 3000, "tickSpacing": 60,
+                "hooks": lp_write.NATIVE}
+    pool_id = compute_pool_id(pool_key)
+    world = _RatchetChain(chain, pool_key, pool_id, _ME)
+
+    immutable = {
+        "schemaVersion": 1, "chainId": chain["chainId"], "chainKey": "base",
+        "positionManager": chain["positionManager"], "poolId": pool_id, "poolKey": pool_key,
+        "signer": _ME, "originalTokenId": 7, "principal": "currency0", "farEdgeTick": 3000,
+        "originalTickLower": 600, "originalTickUpper": 3000,
+        "originalPrincipalRaw": "10973255779209930436",
+        "stepsBps": [3000, 6000, 10_000], "label": "",
+    }
+    ident = mandate_id(immutable)
+    fire = {"fireId": f"{ident}:0:0", "milestone": 0, "planHash": "abcd1234", "final": False,
+            "plannedTick": 1400, "plannedRemainderRaw": "7168265174372228876",
+            "remintTickLower": 1440, "remintTickUpper": 3000,
+            "tx": {"hash": "0xfire", "nonce": 0, "sentAtBlock": 900}}
+
+    root = Path(tempfile.mkdtemp(prefix="unilp-ratchet-"))
+    saved_env = os.environ.get("UNILP_STATE_DIR")
+    os.environ["UNILP_STATE_DIR"] = str(root)
+    saved = {name: getattr(lp_write, name)
+             for name in ("load_position_for_write", "load_pool_state", "token_info",
+                          "simulate_call")}
+    lp_write.load_position_for_write = world.position
+    lp_write.load_pool_state = world.state
+    lp_write.token_info = lambda c, ch, a: {"address": a, "symbol": "T", "decimals": 18,
+                                            "isNative": False}
+    lp_write.simulate_call = lambda c, call: {"ok": True, "method": "eth_simulateV1",
+                                              "logs": [], "gasUsed": 1, "revert": None}
+    signer = {"address": _ME, "privateKey": "0x" + "11" * 32, "simulateOnly": False}
+
+    def seed(state, current_fire, max_attempts=2):
+        world.burned, world.nonce = set(), 0
+        world.receipts, world.logs, world.in_mempool = {}, [], None
+        world.rpc_down, world.ranges = False, {}
+        store = MandateStore(root, "base", ident)
+        store.delete()
+        mandate = {
+            "immutable": immutable,
+            "bounds": {"maxSlippageBps": 100, "maxDeadlineSecs": 1200, "maxTickDrift": 600,
+                       "allowHooked": False, "maxAttempts": max_attempts,
+                       "maxPrincipalRawPerFire": None, "maxFeePerGasWei": None,
+                       "expiresAt": None},
+            "state": state, "tokenId": 7, "tickLower": 600, "tickUpper": 3000,
+            "liquidity": str(10**20),
+            "thresholds": ["7681279045446951305", "4389302311683972174", "0"],
+            "milestonesFired": 0, "currentFire": current_fire,
+            "realized": {"amount0": "0", "amount1": "0"}, "lastSeq": 0, "history": [],
+        }
+        with store.lock() as ok:
+            assert ok
+            store.save(mandate)
+        return store
+
+    def tick():
+        with contextlib.redirect_stdout(io.StringIO()):
+            return ratchet.tick_one(world, chain, {}, signer, ident, False)
+
+    try:
+        seed("FIRE_SENT", dict(fire))
+        world.in_mempool = {"hash": "0xfire"}
+        out = tick()
+        r.check("a pending fire is left alone", (out["action"], out["state"]),
+                ("waiting", "FIRE_SENT"))
+
+        seed("FIRE_SENT", dict(fire))
+        out = tick()
+        r.check("a dropped fire is retried", out["truth"], "not-sent")
+
+        seed("FIRE_SENT", dict(fire))
+        world.nonce = 1
+        out = tick()
+        r.check("a consumed nonce with the NFT intact is a revert, not a landing",
+                out["truth"], "not-sent")
+
+        # The retry budget has to survive on the MANDATE, not on currentFire. Each round
+        # below re-enters FIRE_SENT with a currentFire that carries no attempt count — the
+        # state a crash between the send and the journal write leaves behind. A runner that
+        # counts on currentFire reads zero every round and retries for ever.
+        store = seed("FIRE_SENT", dict(fire), max_attempts=2)
+        seen = []
+        for _ in range(4):
+            out = tick()
+            seen.append((out.get("attempt"), out["state"]))
+            if out["state"] == "NEEDS_ATTENTION":
+                break
+            mandate = store.load()
+            mandate["state"] = "FIRE_SENT"
+            mandate["currentFire"] = dict(fire)
+            with store.lock() as ok:
+                assert ok
+                store.save(mandate)
+        r.check("repeated drops accumulate towards maxAttempts", seen,
+                [(1, "ARMED"), (2, "ARMED"), (None, "NEEDS_ATTENTION")])
+
+        seed("FIRE_SENT", dict(fire))
+        world.burned = {7}
+        world.receipts["0xfire"] = {"status": "0x1", "blockNumber": "0x1", "gasUsed": "0x1",
+                                    "logs": [world.erc721_log(101)]}
+        out = tick()
+        r.check("a burned NFT plus a receipt adopts the replacement",
+                (out["state"], out["tokenId"]), ("ARMED", 101))
+
+        seed("FIRE_SENT", dict(fire))
+        world.burned = {7}
+        world.logs = [world.erc721_log(202)]
+        out = tick()
+        r.check("with no receipt the bounded log scan finds the replacement",
+                (out["state"], out["tokenId"]), ("ARMED", 202))
+
+        seed("FIRE_SENT", dict(fire))
+        world.burned = {7}
+        out = tick()
+        r.check("an unidentifiable replacement escalates instead of re-minting",
+                out["state"], "NEEDS_ATTENTION")
+
+        seed("FIRE_SENT", dict(fire, final=True, milestone=2))
+        world.burned = {7}
+        out = tick()
+        r.check("the final milestone completes without re-arming", out["state"], "COMPLETE")
+
+        seed("COMPLETE", None)
+        out = tick()
+        r.check("a terminal mandate does no chain work", out["action"], "noop")
+
+        seed("ARMED", None)
+        world.burned = {7}
+        out = tick()
+        r.check("a position that vanished escalates", out["state"], "NEEDS_ATTENTION")
+
+        # --- the write-ahead log actually leads the mandate file -------------
+        # A crash between `on_sent`'s journal write and the mandate replace leaves the file
+        # reading ARMED with nothing in flight. Detecting that the log is ahead is not
+        # enough; the runner has to put the fire back, or it plans the same milestone again
+        # and broadcasts a second transaction for it.
+        store = seed("ARMED", None)
+        store.append({"event": "tx.sent", "fireId": fire["fireId"], "currentFire": dict(fire),
+                      "milestonesFired": 0, **fire["tx"]})
+        world.in_mempool = {"hash": "0xfire"}
+        out = tick()
+        r.check("a journalled send the mandate file never saw is replayed, not re-sent",
+                (out["state"], out["action"]), ("FIRE_SENT", "waiting"))
+        r.check("and the replay is reported", out.get("replayed"), ["tx.sent"])
+
+        # Order matters within the tail: the same fire sent and then dropped ends ARMED.
+        store = seed("ARMED", None)
+        store.append({"event": "tx.sent", "fireId": fire["fireId"], "currentFire": dict(fire),
+                      "milestonesFired": 0, **fire["tx"]})
+        store.append({"event": "tx.dropped", "reason": "dropped", "attempt": 1})
+        world.in_mempool = {"hash": "0xfire"}
+        out = tick()
+        r.check("a sent-then-dropped tail replays in order", out["state"], "ARMED")
+
+        # An event the runner has no rule for must stop it rather than be skipped: a future
+        # record type that carries state would otherwise be silently dropped on recovery.
+        store = seed("ARMED", None)
+        store.append({"event": "some.future.record"})
+        threw = False
+        try:
+            tick()
+        except RuntimeError:
+            threw = True
+        r.check("an unknown journal record halts instead of being ignored", threw, True)
+
+        # --- an unreachable node is not a burned NFT -------------------------
+        # `rpc.multicall` reports a transport failure exactly as it reports a revert. Read
+        # naively that says "the NFT is gone", which this runner treats as proof the fire
+        # landed — and on the final milestone would retire a mandate whose position is still
+        # alive and still filling.
+        seed("FIRE_SENT", dict(fire, final=True, milestone=2))
+        world.rpc_down = True
+        out = tick()
+        r.check("an unreachable node defers instead of reading a burn",
+                (out["truth"], out["action"], out["state"]),
+                ("unavailable", "deferred", "FIRE_SENT"))
+        r.check("and a deferred tick is not a halt that needs an operator",
+                out["state"] == "NEEDS_ATTENTION", False)
+
+        # --- clear-attention can finish an adoption the oracles could not ----
+        seed("FIRE_SENT", dict(fire))
+        world.burned = {7}
+        out = tick()
+        r.check("the setup lands in NEEDS_ATTENTION", out["state"], "NEEDS_ATTENTION")
+
+        world.ranges = {101: (1440, 3000)}
+        with contextlib.redirect_stdout(io.StringIO()):
+            ratchet.cmd_clear_attention(world, chain, {"id": ident, "token-id": "101"}, signer)
+        mandate = MandateStore(root, "base", ident).load()
+        r.check("an operator-supplied replacement is adopted with the milestone credited",
+                (mandate["state"], mandate["tokenId"], mandate["milestonesFired"]),
+                ("ARMED", 101, 1))
+        r.check("and the fire is recorded in the history",
+                mandate["history"][0]["newTokenId"], 101)
+
+        # The operator is standing in for an oracle, so their answer is checked like one.
+        for label, ranges, burn, expect in (
+            ("a replacement on the wrong far edge", {101: (1440, 2400)}, {7}, True),
+            ("a replacement that straddles the price", {101: (600, 3000)}, {7}, True),
+            ("an adoption while the old position is still alive", {101: (1440, 3000)},
+             set(), True),
+        ):
+            seed("FIRE_SENT", dict(fire))
+            world.burned = {7}
+            with contextlib.redirect_stdout(io.StringIO()):
+                tick()
+            world.burned, world.ranges = burn, ranges
+            refused = False
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    ratchet.cmd_clear_attention(world, chain,
+                                                {"id": ident, "token-id": "101"}, signer)
+            except RuntimeError:
+                refused = True
+            r.check(f"{label} is refused", refused, expect)
+
+        # And the happy path: price inside the range, milestone due, full dry run.
+        seed("ARMED", None)
+        out = tick()
+        r.check("a due milestone plans a fire", (out["action"], out["milestone"]),
+                ("dry-run", 0))
+        world.tick = 500
+        seed("ARMED", None)
+        out = tick()
+        r.check("no milestone before the price gets there", out["action"], "noop")
+        world.tick = 1400
+    finally:
+        for name, fn in saved.items():
+            setattr(lp_write, name, fn)
+        if saved_env is None:
+            os.environ.pop("UNILP_STATE_DIR", None)
+        else:
+            os.environ["UNILP_STATE_DIR"] = saved_env
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _tier7_duplicate_arm(r) -> None:
+    """One position, one live mandate — enforced by scanning, not by the id hash.
+
+    ``mandate_id`` hashes ``label`` along with everything else, so arming the same position
+    twice under two names produces two ids, two files, and two mandates that each intend to
+    burn the same NFT. The ``store.exists()`` check cannot see that: the ids differ. This is
+    the check that can.
+    """
+    import shutil
+    import tempfile
+
+    import ratchet
+    from unilp.journal import MandateStore, mandate_id
+
+    base = {
+        "schemaVersion": 1, "chainId": 8453, "chainKey": "base",
+        "positionManager": "0x" + "aa" * 20, "poolId": "0x" + "bb" * 32,
+        "poolKey": {"currency0": _LOW, "currency1": _HIGH, "fee": 3000, "tickSpacing": 60,
+                    "hooks": "0x" + "00" * 20},
+        "signer": _ME, "originalTokenId": 7, "principal": "currency0", "farEdgeTick": 3000,
+        "originalTickLower": 600, "originalTickUpper": 3000,
+        "originalPrincipalRaw": "1000", "stepsBps": [3000, 6000, 10_000], "label": "",
+    }
+
+    root = Path(tempfile.mkdtemp(prefix="unilp-dup-"))
+
+    def seed(immutable, state="ARMED", token_id=7, fired=0, history=None):
+        ident = mandate_id(immutable)
+        store = MandateStore(root, "base", ident)
+        with store.lock() as ok:
+            assert ok
+            store.save({"immutable": immutable, "bounds": {}, "state": state,
+                        "tokenId": token_id, "tickLower": 600, "tickUpper": 3000,
+                        "liquidity": "1", "thresholds": ["700", "400", "0"],
+                        "milestonesFired": fired, "currentFire": None,
+                        "realized": {"amount0": "0", "amount1": "0"}, "lastSeq": 0,
+                        "history": history or []})
+        return ident
+
+    def conflict(immutable):
+        return ratchet.find_position_conflict(root, "base", mandate_id(immutable), immutable)
+
+    try:
+        first = seed(base)
+
+        r.check("an unrelated position is not a conflict",
+                conflict({**base, "originalTokenId": 9}), None)
+        r.check("the mandate does not conflict with itself", conflict(base), None)
+
+        # The exact shape of the bug: same position, same terms, different label.
+        renamed = {**base, "label": "AGENTOS-7"}
+        found = conflict(renamed)
+        r.check("a second label on the same position IS a conflict",
+                None if found is None else found["id"], first)
+        # `sameTerms` is what makes a re-run idempotent instead of an error, so it has to be
+        # right in both directions.
+        r.check("identical terms are recognised as identical",
+                None if found is None else found["sameTerms"], True)
+
+        # A measurement, not a policy: principal is read off the chain at arm time and moves
+        # with the price. If it counted as a term, no re-run would ever be idempotent.
+        r.check("a re-measured principal does not make the terms differ",
+                (conflict({**base, "label": "x", "originalPrincipalRaw": "999"}) or {})
+                .get("sameTerms"), True)
+
+        for field, value in (("stepsBps", [5000, 10_000]), ("farEdgeTick", 2400),
+                             ("principal", "currency1"), ("signer", "0x" + "cc" * 20)):
+            differing = conflict({**base, "label": "x", field: value})
+            r.check(f"a different {field} is a conflict but NOT the same terms",
+                    None if differing is None else (differing["sameTerms"],
+                                                    differing["differs"]),
+                    (False, [field]))
+
+        # After a fire the mandate rolls onto the position it just minted. That one is taken
+        # too, and it is not the id in `immutable` — comparing against `originalTokenId`
+        # would leave every post-fire position free to be armed a second time.
+        MandateStore(root, "base", first).delete()
+        seed(base, token_id=9)
+        r.check("the position a fire rolled onto is taken",
+                (conflict({**base, "label": "x", "originalTokenId": 9}) or {}).get("id"),
+                mandate_id(base))
+        r.check("and the burned one it started from is not",
+                conflict({**base, "label": "x"}), None)
+        MandateStore(root, "base", mandate_id(base)).delete()
+        first = seed(base)
+
+        # Finished mandates are history. Blocking on them would make a position unusable
+        # forever after its first ratchet completes.
+        for dead in ("COMPLETE", "DISARMED", "EXPIRED"):
+            MandateStore(root, "base", first).delete()
+            seed(base, state=dead)
+            r.check(f"a {dead} mandate does not block a fresh arm", conflict(renamed), None)
+
+        # NEEDS_ATTENTION is the one non-running state that must still block: it is waiting
+        # for a human, and arming over it is exactly the mistake its note warns against.
+        MandateStore(root, "base", mandate_id(base)).delete()
+        seed(base, state="NEEDS_ATTENTION")
+        r.check("a NEEDS_ATTENTION mandate still blocks",
+                (conflict(renamed) or {}).get("state"), "NEEDS_ATTENTION")
+
+        # A mandate whose fire landed but whose replacement id is unknown is the one case
+        # where the conflict cannot be seen by tokenId — it still names the burned one.
+        MandateStore(root, "base", mandate_id(base)).delete()
+        seed(base, state="NEEDS_ATTENTION", fired=1,
+             history=[{"fireId": "x", "milestone": 0, "newTokenId": None}])
+        r.check("an unidentified re-mint is flagged when arming any other position",
+                ratchet.pending_remint_mandates(root, "base", _ME, base["poolId"]),
+                [mandate_id(base)])
+        MandateStore(root, "base", mandate_id(base)).delete()
+        seed(base, state="ARMED")
+        r.check("a healthy mandate is not flagged as a pending re-mint",
+                ratchet.pending_remint_mandates(root, "base", _ME, base["poolId"]), [])
+
+        # Failing closed here is deliberate: a mandate that no longer hashes to its filename
+        # might BE the duplicate, and arming past it would authorize unattended sends.
+        (root / "ratchet" / "base" / f"{mandate_id(base)}.json").write_text(
+            '{"immutable": {"tampered": true}}', encoding="utf-8")
+        try:
+            conflict(renamed)
+            r.check("a corrupted sibling stops the arm", "no error", "RuntimeError")
+        except RuntimeError as exc:
+            r.check("a corrupted sibling stops the arm", "does not hash" in str(exc), True)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _tier7_arm_is_idempotent(r) -> None:
+    """The wiring, driven through ``cmd_arm`` itself.
+
+    The check above proves the detector answers correctly; this proves ``arm`` asks it. They
+    are separate failures — a correct detector nobody calls is exactly the shape of duplicate
+    that reached the live state directory.
+    """
+    import shutil
+    import tempfile
+
+    import lp_write
+    import ratchet
+    from unilp.chains import resolve_chain
+    from unilp.journal import MandateStore
+    from unilp.v4_pool import compute_pool_id
+
+    chain = resolve_chain("base")
+    pool_key = {"currency0": _LOW, "currency1": _HIGH, "fee": 3000, "tickSpacing": 60,
+                "hooks": lp_write.NATIVE}
+    # Tick 300 with the stub's 600 → 3000 range: entirely above the price, so `arm` accepts
+    # it and the principal is currency0. Anything straddling is refused before this test
+    # reaches what it is here to check.
+    world = _RatchetChain(chain, pool_key, compute_pool_id(pool_key), _ME, tick=300)
+
+    root = Path(tempfile.mkdtemp(prefix="unilp-arm-"))
+    saved_env = os.environ.get("UNILP_STATE_DIR")
+    os.environ["UNILP_STATE_DIR"] = str(root)
+    saved = {name: getattr(lp_write, name)
+             for name in ("load_position_for_write", "load_pool_state", "token_info")}
+    lp_write.load_position_for_write = world.position
+    lp_write.load_pool_state = world.state
+    lp_write.token_info = lambda c, ch, a: {"address": a, "symbol": "T", "decimals": 18,
+                                            "isNative": False}
+    signer = {"address": _ME, "privateKey": "0x" + "11" * 32, "simulateOnly": False}
+
+    def arm(args):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ratchet.cmd_arm(world, chain, args, signer)
+        return out.getvalue()
+
+    def ids():
+        return MandateStore.list_ids(root, "base")
+
+    try:
+        base_args = {"token-id": "7", "steps": "30,60,100"}
+        shown = arm(dict(base_args))
+        ident = shown.rsplit("MANDATE_HASH: ", 1)[1].split()[0]
+        r.check("a dry run arms nothing", ids(), [])
+        arm({**base_args, "confirm": ident})
+        r.check("confirming writes exactly one mandate", ids(), [ident])
+
+        # The exact sequence that produced two files on the live machine.
+        again = arm({**base_args, "label": "AGENTOS-7"})
+        r.check("re-arming the same position under a new label creates nothing", ids(),
+                [ident])
+        r.check("and says so instead of failing", "already armed as" in again, True)
+        r.check("naming the mandate that already holds it", ident in again, True)
+
+        # A --confirm on the duplicate must not slip past either: same answer, same file.
+        arm({**base_args, "label": "AGENTOS-7", "confirm": "0" * 32})
+        r.check("even with --confirm, the duplicate is not written", ids(), [ident])
+
+        # Different terms are a different matter — that is an operator error, not a re-run.
+        try:
+            arm({**base_args, "steps": "50,100", "label": "other"})
+            r.check("differing terms are refused", "no error", "RuntimeError")
+        except RuntimeError as exc:
+            r.check("differing terms are refused",
+                    ("already armed" in str(exc), "stepsBps" in str(exc)), (True, True))
+        r.check("and still write nothing", ids(), [ident])
+
+        # Disarm is the documented way out, so it has to actually clear the way.
+        with contextlib.redirect_stdout(io.StringIO()):
+            ratchet.cmd_disarm(world, chain, {"id": ident}, signer)
+        replaced = arm({**base_args, "steps": "50,100", "label": "other"})
+        r.check("after disarm the position can be armed on new terms",
+                "MANDATE_HASH" in replaced, True)
+    finally:
+        for name, fn in saved.items():
+            setattr(lp_write, name, fn)
+        if saved_env is None:
+            os.environ.pop("UNILP_STATE_DIR", None)
+        else:
+            os.environ["UNILP_STATE_DIR"] = saved_env
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def tier7(g: dict, r: Results) -> None:
+    try:
+        import lp_write  # noqa: F401
+        import ratchet  # noqa: F401
+        from unilp import journal, ratchet_math  # noqa: F401
+    except ImportError as exc:
+        r.skip("tier7/ratchet", f"ratchet modules not importable ({exc})")
+        return
+
+    _tier7_math(r)
+    _tier7_plan(r)
+    _tier7_predicate(r)
+    _tier7_authorization(r)
+    _tier7_journal(r)
+    _tier7_state_machine(r)
+    _tier7_duplicate_arm(r)
+    _tier7_arm_is_idempotent(r)
+
+
 TIERS = (
     ("Tier 0 — primitives (keccak, EIP-55, fixed point, JS arithmetic)", tier0),
     ("Tier 1 — ABI codec (encode/decode, unlockData, logs)", tier1),
@@ -1031,6 +2172,7 @@ TIERS = (
     ("Tier 4 — domain layer (PositionInfo, hooks, ranges, display)", tier4),
     ("Tier 5 — planning ergonomics (tick pull-off, price cache, messages)", tier5),
     ("Tier 6 — PLAN_HASH covers every calldata-affecting flag", tier6),
+    ("Tier 7 — ratchet: both sides, both currencies, and the mandate gate", tier7),
 )
 
 

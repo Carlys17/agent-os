@@ -186,3 +186,19 @@ def resolve_private_key(signer_env: str = ENV_SIGNER) -> str:
     if len(key) != 66:
         raise RuntimeError(f"{signer_env} is not a 32-byte hex private key")
     return key
+
+
+def resolve_signer_address(signer_env: str = ENV_SIGNER) -> str:
+    """The wallet address the signing key derives — the answer to "which wallet is mine".
+
+    Imports from ``account`` rather than ``secp256k1`` on purpose. An address is public
+    information derived one-way from the key, so answering this question does not need a
+    signing path anywhere in reach, and ``lp_read.py`` can therefore call it without
+    becoming able to move funds. The distinction is structural: ``account`` has no
+    ``sign_digest`` in it.
+
+    The key itself never leaves this function.
+    """
+    from .account import account_from_private_key
+
+    return account_from_private_key(resolve_private_key(signer_env))["address"]

@@ -191,3 +191,58 @@ def build_burn_plan(pool_key: dict, token_id: int, liquidity: int, amount0_min: 
     actions.append(ACTIONS["TAKE_PAIR"])
     params.append(encode_take_pair(pool_key["currency0"], pool_key["currency1"], recipient))
     return {"actions": actions, "params": params, "value": 0}
+
+
+def build_ratchet_plan(pool_key: dict, token_id: int, liquidity: int, amount0_min: int,
+                       amount1_min: int, recipient: str, remint: dict | None = None,
+                       hook_data: str = "0x") -> dict:
+    """Exit a one-sided position and redeploy its unconverted remainder, in ONE unlock.
+
+    ``DECREASE(all) → BURN → [MINT] → TAKE_PAIR``. The mint is omitted on the final
+    milestone, where nothing is left to redeploy; then this is exactly ``build_burn_plan``.
+
+    **There is deliberately no SETTLE leg.** Deltas accumulate per currency across the whole
+    unlock, and the mint always redeploys strictly less of the principal than the decrease
+    just credited (and zero of the other currency, because the new range is one-sided). Both
+    net deltas are therefore still positive when TAKE_PAIR runs, so nothing is owed and
+    nothing is pulled from the wallet.
+
+    Two consequences worth stating, because they are the reason this shape was chosen over
+    two separate transactions:
+
+    * Permit2 never enters the picture. An allowance that lapsed mid-mandate cannot strand
+      the position, because no allowance is used.
+    * There is no window in which the tokens are loose in the wallet with no position. The
+      fire either happened or it did not, and the burned NFT proves which.
+
+    ``remint`` is ``{"tickLower", "tickUpper", "liquidity", "amount0Max", "amount1Max"}``.
+    For a one-sided redeploy exactly one of the two maxima is non-zero; passing both is
+    accepted here but rejected upstream, where the side is known.
+    """
+    actions: list[int] = []
+    params: list[str] = []
+
+    if int(liquidity) > 0:
+        actions.append(ACTIONS["DECREASE_LIQUIDITY"])
+        params.append(
+            encode_decrease_liquidity(token_id, liquidity, amount0_min, amount1_min, hook_data)
+        )
+    actions.append(ACTIONS["BURN_POSITION"])
+    params.append(encode_burn_position(token_id, 0, 0, hook_data))
+
+    if remint is not None:
+        if int(remint["liquidity"]) <= 0:
+            raise ValueError("build_ratchet_plan: remint liquidity must be > 0")
+        actions.append(ACTIONS["MINT_POSITION"])
+        params.append(encode_mint_position(
+            pool_key, remint["tickLower"], remint["tickUpper"], remint["liquidity"],
+            remint["amount0Max"], remint["amount1Max"], recipient, hook_data,
+        ))
+
+    actions.append(ACTIONS["TAKE_PAIR"])
+    params.append(encode_take_pair(pool_key["currency0"], pool_key["currency1"], recipient))
+
+    # msg.value stays 0 even when currency0 is native ETH: the mint is funded from the
+    # in-flight delta, not from the wallet, so there is nothing to send and nothing for a
+    # SWEEP to refund. build_mint_plan's native branch would be actively wrong here.
+    return {"actions": actions, "params": params, "value": 0}

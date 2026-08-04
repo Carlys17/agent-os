@@ -25,20 +25,30 @@ metadata:
           url: https://robinhood.com
           secret: false
         - name: UNIV4_LP_PRIVATE_KEY
-          description: Signing key for LP writes. Read-only commands never touch it.
+          description: Signing key for LP writes. Read-only commands use it only to derive
+            your own wallet address, and cannot sign with it.
           secret: true
 ---
 
 # Senior UniLP Manager — Uniswap V4 pools and positions
 
-Two scripts, Python 3 stdlib only, no install step.
+Three scripts, Python 3 stdlib only, no install step.
 
-**`lp_read.py` never touches a private key**; every write goes through `lp_write.py`, which
-is a dry run unless it is given both `--broadcast` and the `--confirm <PLAN_HASH>` printed by
-that same dry run.
+**`lp_read.py` can never sign**; every attended write goes through
+`lp_write.py`, which is a dry run unless it is given both `--broadcast` and the
+`--confirm <PLAN_HASH>` printed by that same dry run. `ratchet.py` is the one unattended
+path — see Part C — and it is separate precisely so that boundary is visible.
+
+`lp_read.py` reads `UNIV4_LP_PRIVATE_KEY` in exactly one place: to answer "which wallet is
+mine" when `positions` is run without `--owner`. It imports `unilp/account.py`, which holds
+curve arithmetic and address derivation and contains no `sign_digest`; `unilp/secp256k1.py`
+imports *that* and adds signing on top. The dependency only runs one way, so no argument to
+`lp_read.py` reaches a signature — and re-adding one is a circular-import error, not a code
+review question.
 
 **Part A (read) needs no confirmation. Part B (write) must never broadcast until the user has
-seen the parameter table and explicitly said yes.**
+seen the parameter table and explicitly said yes. Part C broadcasts on a schedule, under a
+mandate the user approved once, by hash.**
 
 ```bash
 # Keep the quotes — the path can contain spaces.
@@ -46,6 +56,7 @@ S="{baseDir}/scripts"
 
 python3 "$S"/lp_read.py  <command> [flags]   # default chain: robinhood
 python3 "$S"/lp_write.py <command> [flags]   # add --chain base for Base
+python3 "$S"/ratchet.py  <command> [flags]   # unattended take-profit, Part C
 ```
 
 Chain endpoints come from `RPC_ROBINHOOD_URL` and `RPC_BASE_URL`; `--rpc <url>` overrides.
@@ -149,7 +160,20 @@ in/out of range, uncollected fees, USD values. The owner line names known contra
 ## 4. A wallet's positions
 
 ```bash
-python3 "$S"/lp_read.py positions --owner <address> [--include-empty]
+python3 "$S"/lp_read.py positions [--owner <address>] [--include-empty]
+```
+
+**Never ask the user for their own address.** Leave `--owner` off and it resolves the wallet
+`UNIV4_LP_PRIVATE_KEY` derives; `--signer-env <VAR>` reads a different variable. Pass
+`--owner` only when the question is about *someone else's* wallet — that path never touches
+the key, so it works on a machine with no key configured at all.
+
+If you need the address itself rather than the positions — to show the user which wallet is
+in use, or to feed another command — `lp_write.py address` prints it. No chain, no plan,
+nothing sent:
+
+```bash
+python3 "$S"/lp_write.py address [--json]
 ```
 
 The v4 PositionManager has no enumerable index, so this scans inbound ERC-721 `Transfer` logs
@@ -268,8 +292,10 @@ transaction does changes the hash — if you find a flag that does not, that is 
 The key is read from **`UNIV4_LP_PRIVATE_KEY` in the environment and nowhere else**.
 **Never put a private key on a command line** — it would land in shell history and in the
 agent transcript, and redaction only masks `NAME=value`, not a bare hex string. Override the
-variable name with `--signer-env <VAR>`. Only the derived address is ever printed. Signing is
-pure Python and therefore **not constant-time**: use a hot LP key, not a treasury key.
+variable name with `--signer-env <VAR>`. Only the derived address is ever printed —
+`lp_write.py address` prints just that, and is the way to answer "which wallet am I using".
+Signing is pure Python and therefore **not constant-time**: use a hot LP key, not a treasury
+key.
 
 `--from <address>` is **planning mode**: simulate as any address with no key present. It can
 never broadcast. Use it to answer "would this even work" before anyone approves tokens.
@@ -305,6 +331,19 @@ here up to a higher mcap" is a range **below** the current tick and takes the to
 When it is `currency0` it is the other way round. `ticks` (§6) prints the side outright on
 its `position type` line: trust that line and pass its `--tick-lower` / `--tick-upper`
 straight through, rather than deriving the direction yourself.
+
+Written out, because "a sell sits above the price" is true for exactly half of all pools:
+
+| intent | token is | you deposit | range vs price | fills as the tick |
+|---|---|---|---|---|
+| limit **sell** the token | currency0 | currency0 (the token) | **above** | **rises** |
+| limit **sell** the token | currency1 | currency1 (the token) | **below** | **falls** |
+| limit **buy** the token | currency0 | currency1 (the quote) | **below** | **falls** |
+| limit **buy** the token | currency1 | currency0 (the quote) | **above** | **rises** |
+
+Sort order is not something the user chooses — it falls out of the two addresses. So never
+key logic on "sell" or "buy"; key it on **which currency the range takes**, which the
+geometry fixes on its own.
 
 **Hook policy: this skill mints into hook-less pools by default.** A pool whose `hooks` is not
 the zero address is refused outright unless you pass `--allow-hooked`, because a hook can
@@ -366,7 +405,163 @@ nothing, so that trace is the only way to know what a call really moves.
 a `WARNING` above 0.5% divergence. Causes and how to read a revert:
 `assets/v4-reference.md`.
 
+---
+
+# Part C — Ratchet (unattended take-profit)
+
+`ratchet.py` watches a one-sided position fill and takes profit at milestones without anyone
+watching. At each milestone it exits the whole position, keeps whatever has already
+converted, and redeploys **only the unconverted remainder** into a narrower range running
+from the current price to the original far edge.
+
+It ratchets — converted value never goes back to work, and a price retracement leaves the
+position sitting still rather than unwinding. That is the trade: a plain one-sided position
+would buy the token back if the price came down, and this deliberately gives that up.
+
+```bash
+python3 "$S"/ratchet.py arm --token-id <id> [--steps 30,60,100]
+python3 "$S"/ratchet.py arm --token-id <id> --steps 30,60,100 --confirm <MANDATE_HASH>
+python3 "$S"/ratchet.py tick --all --broadcast --json     # what cron runs
+python3 "$S"/ratchet.py status --id <m>   |   list   |   disarm --id <m>
+```
+
+**Milestones are measured against the ORIGINAL principal, not what is left.** 100k AGENTOS
+with `--steps 30,60,100` fires when 70k, then 40k, then 0 remains — three fires, then the
+mandate completes. Re-basing onto the remainder would never reach zero.
+
+**One position, one live mandate.** Re-running `arm` on a position that already has one is
+safe and idempotent: identical terms print `already armed as <id>` and change nothing, exit
+0. Differing terms (`--steps`, principal, far edge, signer) are refused — two mandates would
+each try to burn the same NFT — so `disarm` the old one first if the new terms are the ones
+you want. Do not work around this by re-labelling: `--label` is only a display string.
+
+## One transaction, and why that matters
+
+A fire is a single `modifyLiquidities` call:
+
+    DECREASE_LIQUIDITY(all) → BURN_POSITION → MINT_POSITION(remainder) → TAKE_PAIR
+
+There is **no SETTLE leg**. Deltas accumulate per currency across the unlock, and the mint
+always redeploys strictly less of the principal than the decrease just credited (and zero of
+the other currency, since the new range is one-sided), so both net deltas are still positive
+when `TAKE_PAIR` runs. Nothing is pulled from the wallet.
+
+Two consequences that a two-transaction design would not have:
+
+- **Permit2 is not involved.** An allowance that lapsed mid-mandate cannot strand anything.
+- **There is no window with loose tokens and no position.** The fire either happened or it
+  did not, and the burned NFT proves which — which is what makes unattended recovery a
+  boolean rather than a guess.
+
+## The mandate is the approval
+
+`arm` is attended and hash-confirmed, exactly like a write: it prints the full table and a
+`MANDATE_HASH` you must echo back. What the mandate then buys is the right to replay *that*
+approval against a plan proven to fall inside it. Every fire is checked against the pinned
+`chainId`, PositionManager, poolId (which is `keccak(PoolKey)`, so the hook address is pinned
+with it), tokenId, signer, recipient, slippage floors, milestone index and — for a re-arm —
+the fixed far edge plus a re-derived near edge and a zero cap on the harvested currency.
+
+`lp_write.py --broadcast` is unchanged: it still requires a `--confirm <PLAN_HASH>` a human
+echoed back, and its CLI cannot construct a mandate authorization at all.
+
+**Optional bounds, off by default:** `--max-principal-per-fire`, `--max-fee-per-gas`,
+`--expires-days`. Without them there is no ceiling on what a fire may move, so a math error
+or a manipulated pool has no brake beyond the slippage floor. Say so when arming one.
+
+## States
+
+| state | meaning | what `tick` does |
+|---|---|---|
+| `ARMED` | position live, nothing in flight | evaluate; fire if a milestone is due |
+| `FIRE_SENT` | hash and nonce on disk, outcome unknown | reconcile against the chain |
+| `COMPLETE` | final milestone fired | nothing |
+| `NEEDS_ATTENTION` | an ambiguity it refuses to resolve alone | nothing until `clear-attention` |
+| `DISARMED` / `EXPIRED` | stopped by a human / by the clock | nothing |
+
+Reconciliation is chain-first: `ownerOf` reverting means the fire landed, the nonce watermark
+separates "still pending" from "dropped", and a log scan bounded by the journalled
+`sentAtBlock` finds the replacement tokenId. If none of those give a total answer it goes to
+`NEEDS_ATTENTION` rather than retrying — a duplicate burn is harmless, a duplicate mint is
+not.
+
+**"The node did not answer" is not "the NFT is gone".** `multicall` reports a transport
+failure the same way it reports a revert, so `ownerOf` failing is only read as a burn when a
+`nextTokenId` control call in the same request came back. If both fail the tick reports
+`deferred`, changes nothing, and tries again next time — a five-minute cron meets a flaky
+RPC eventually, and halting on one would make every blip cost a manual `clear-attention`.
+
+A price gap that clears several milestones at once fires **only the deepest**; the ones it
+skipped are satisfied by the same reading and recorded as fired.
+
+### When `clear-attention` needs `--token-id`
+
+One `NEEDS_ATTENTION` cause needs more than an acknowledgement: the fire landed, the old NFT
+is burned, and neither the receipt nor the log scan could say which position replaced it.
+Find it with `lp_read.py positions` — the mandate's signer is the configured wallet, so no
+`--owner` is needed — and hand the new id back:
+
+```
+python3 <S>/ratchet.py clear-attention --id <m> --token-id <new>
+```
+
+It is checked before adoption — same pool, same signer, live liquidity, same far edge, and
+one-sided on the same side of the price — and the old position must really be burned.
+
+Do **not** disarm and arm a fresh mandate instead. `arm` reads the position it is given as a
+new original principal, so every milestone still to come is rebased onto the remainder: a
+100k mandate that has already converted 60k would re-arm as a 40k mandate and fire its next
+30% at 28k left, not at the 40k the original plan meant.
+
+## State on disk
+
+`$UNILP_STATE_DIR`, else `$AGENTOS_HOME/state/unilp`, else `~/.agentos/state/unilp`. Three
+files per mandate: the mandate JSON (mode 0600, replaced atomically), an append-only
+`.log.jsonl` write-ahead log, and a `.lock` for `flock`. Overlapping cron ticks are normal
+and the loser exits 0.
+
+The mandate file is now an **authorization artifact**. It is written 0600 and the runner
+re-hashes it to its own filename on load, which catches corruption and hand-editing. It is
+not a defence against someone who can write that directory — they can also read the dotenv
+holding the signing key, and forging a mandate is the long way round from there. Only the
+`immutable` block is covered by that hash; the mutable fields are guarded by the predicate
+re-deriving them from the chain at the gate, not by the file.
+
+Two rules the log follows, both because it is what restores an in-flight fire after a crash:
+
+* Only the **last** line may be unreadable — that is a torn write from a power cut, and the
+  record it lost had not been confirmed anyway. A bad line with good lines after it stops
+  the runner, because silently skipping it could erase the only proof a transaction was
+  signed.
+* A `tx.sent` record carries the whole in-flight fire, not just the hash. A crash between
+  that append and the mandate replace leaves the file reading `ARMED`; the next tick replays
+  the record and finds the transaction rather than planning the same milestone again.
+
+`--id` only ever accepts 32 lowercase hex characters — the shape `mandate_id` produces — and
+is validated before any path is built, so it cannot walk out of the state directory.
+
+## Wiring it to cron
+
+```
+cron(action="add", schedule={"kind": "cron", "expr": "*/5 * * * *"},
+     task="python3 <S>/ratchet.py tick --all --broadcast --json — report the result, "
+          "and raise the alarm if any state is NEEDS_ATTENTION",
+     job_kind="agent_turn", session_target="isolated")
+```
+
+`tick` does the reconcile and the fire in one process on purpose: no agent judgement sits
+between deciding and sending.
+
+## Before arming anything real
+
+Run `tick` **without** `--broadcast` first — it is a full dry run of the transaction,
+simulation trace and `PLAN_HASH` included, and sends nothing. Then rehearse one real fire by
+hand with dust, on **both** a range above the price and one below: the two directions take
+different branches at every layer, and a hook can answer differently on each.
+
 ## Error handling
+
+
 
 | Symptom | Cause / fix |
 |---|---|
@@ -388,17 +583,40 @@ a `WARNING` above 0.5% divergence. Causes and how to read a revert:
 | `--confirm mismatch` | Parameters changed after approval. Re-plan — never force it |
 | `pool moved: tick X → Y` | Drift past `--max-tick-drift` between plan and send. Re-plan |
 | USD columns show `n/a` | GeckoTerminal has not indexed the token. Amounts are still exact |
+| `tokenId … has an empty PoolKey` | The position was burned, or that id was never minted on this chain. `getPoolAndPositionInfo` is a mapping read and does not revert for a burned id, so this check is what stands in for one |
+| `range … straddles the current tick` (arm) | A ratchet needs a range entirely above or entirely below the price. Two-sided positions have no "unconverted remainder" to redeploy |
+| `mandate refuses the plan: …` | The unattended bounds check rejected the fire. Not a retry — read which bound and why |
+| `position #N is already armed as <id> … differs in: …` | A second mandate on one position would burn the same NFT twice. `disarm --id <id>` if the new terms are the ones you want. Identical terms are not an error at all — they print `already armed` and exit 0 |
+| `another tick holds the lock` | A concurrent cron tick, normal during a fire. Exits 0; nothing to do |
+| `mandate … does not hash to its own filename` | The state file was edited or truncated. Do not repair it by hand — `disarm` and arm a fresh mandate |
+| ratchet state `NEEDS_ATTENTION` | It refused to resolve an ambiguity alone. `status --id <m>` for the record, then `clear-attention --id <m>` once the position is confirmed — add `--token-id <new>` if the note says the replacement could not be identified |
+| ratchet action `deferred` | The node could not be read, so nothing was decided and nothing changed. Normal on a flaky RPC; investigate only if it repeats for hours |
+| `journal holds an unreplayed … record` | The log has an event this build does not know. Almost always a downgrade — run the version that wrote it |
+| `… line N is corrupt … not a torn tail` | The write-ahead log was damaged mid-file. `status --id <m> --json` still reads the mandate; the log needs a human before the runner will move |
+| `… is not a mandate id` | `--id` takes the 32 hex characters `list` prints, nothing else |
 
 ## Verifying a change
 
 ```bash
-python3 {baseDir}/scripts/selftest.py     # 503 offline assertions, no network
+python3 {baseDir}/scripts/selftest.py     # 695 offline assertions, no network
 ```
 
 Covers the keccak / EIP-55 / ABI-codec primitives, secp256k1 signing, TickMath, the AGENTOS
 reserve figures, market-cap bands, the three Base launchpad poolIds, every `unlockData`
 blob, and the planning helpers `--from-current` leans on. Run it after touching anything in
 `scripts/unilp/`; the live fixtures it pins are listed in its module docstring.
+
+Tier 7 covers the ratchet, and runs its assertions across all four combinations of
+{token is currency0, token is currency1} × {range above the price, range below it}, because
+a bug on one side is invisible from the other. It also pins the five independent reasons
+`lp_write.py`'s CLI cannot construct a mandate authorization; if you touch `run_plan`'s gate,
+that tier is the one that has to stay green.
+
+Its state-machine block drives every crash and network outcome a cron runner meets against
+a stub chain — a send journalled but never saved, an unreachable node, an unidentifiable
+replacement, a retry budget that has to survive on the mandate rather than on the fire.
+Those rows exist because each one was a real bug at some point; they are cheap to assert
+and close to impossible to keep right by reading the code.
 
 Deeper background — the v4 Actions table, hook permission bits, and the Clanker / Liquid /
 Doppler registry architecture: `{baseDir}/assets/v4-reference.md`.

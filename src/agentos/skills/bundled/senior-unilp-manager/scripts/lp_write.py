@@ -37,7 +37,12 @@ from unilp.abi_defs import (  # noqa: E402
     POSITION_MANAGER_ABI,
     STATE_VIEW_ABI,
 )
-from unilp.chains import ENV_SIGNER, resolve_chain, resolve_private_key  # noqa: E402
+from unilp.chains import (  # noqa: E402
+    ENV_SIGNER,
+    resolve_chain,
+    resolve_private_key,
+    resolve_signer_address,
+)
 from unilp.fmt import (  # noqa: E402
     die,
     fmt_units,
@@ -103,6 +108,7 @@ senior-unilp-manager — Uniswap V4 LP writes (DRY RUN unless --broadcast --conf
            [--recipient <addr>]
   collect  --token-id <id> [--recipient <addr>]
   burn     --token-id <id> [--slippage-bps 100] [--recipient <addr>]
+  address  [--json]        print the wallet UNIV4_LP_PRIVATE_KEY derives; no chain, no send
 
 Safety:  --broadcast --confirm <PLAN_HASH>   both required to send
          --from <addr>            simulate only, no key needed
@@ -153,6 +159,52 @@ def plan_hash(fields: dict) -> str:
         separators=(",", ":"),
     )
     return keccak256(to_hex(canonical.encode("utf-8")))[2:10]
+
+
+# ---------------------------------------------------------------------------
+# Mandate authorization — the ONLY way a broadcast happens without a human hash
+# ---------------------------------------------------------------------------
+
+_ARGV_ENTRY = False
+"""True once :func:`main` has run, i.e. this process is the interactive CLI.
+
+A CLI process may never construct a :class:`MandateAuthorization`. That is not a policy
+check that a future refactor could forget — it makes the two modes disjoint by construction.
+"""
+
+
+class MandateAuthorization:
+    """A programmatic stand-in for the ``--confirm <PLAN_HASH>`` a human echoes back.
+
+    ``run_plan`` normally refuses to broadcast unless the caller passes back the exact hash
+    printed by the dry run they just showed a human. An unattended runner has nobody to echo
+    it, so it supplies one of these instead: the human approved a *mandate* once, and this
+    object carries the predicate that decides whether the plan in hand falls inside it.
+
+    Reachability from ``lp_write.py``'s own CLI is blocked five independent ways —
+    keyword-only parameter, ``main()`` never passes one, an ``isinstance`` gate that fails
+    closed, the ``_ARGV_ENTRY`` guard below, and the pre-existing "``--broadcast`` requires
+    ``--confirm``" check in ``main``. ``lp_write.py --broadcast`` still needs a human hash.
+    """
+
+    __slots__ = ("mandate_id", "fire_id", "_predicate")
+
+    def __init__(self, *, mandate_id: str, fire_id: str, predicate) -> None:
+        if _ARGV_ENTRY:
+            raise RuntimeError(
+                "lp_write.py's CLI can never construct a MandateAuthorization; --broadcast "
+                "requires --confirm <PLAN_HASH> echoed back by a human"
+            )
+        if not callable(predicate):
+            raise TypeError("MandateAuthorization predicate must be callable")
+        self.mandate_id = str(mandate_id)
+        self.fire_id = str(fire_id)
+        self._predicate = predicate
+
+    def authorize(self, client, chain: dict, args: dict, signer: dict, ctx: dict,
+                  hash_value: str) -> None:
+        """Raise unless every bound holds. Returning normally means "send it"."""
+        self._predicate(client, chain, args, signer, ctx, hash_value)
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +288,16 @@ def load_position_for_write(client, chain: dict, token_id: int) -> dict:
         raise RuntimeError(f"tokenId {token_id} does not exist on {chain['name']}")
     raw_key, info = pool_and_info["result"]
     pool_key = normalize_pool_key(raw_key)
+    # getPoolAndPositionInfo is a mapping read, so a BURNED tokenId comes back with status
+    # "success" and an all-zero PoolKey rather than reverting. Without this check the caller
+    # goes on to compute_pool_id(zeros) and builds a plan against a pool that cannot exist,
+    # failing later with an unrelated revert instead of saying the position is gone.
+    if (pool_key["currency0"] == NATIVE and pool_key["currency1"] == NATIVE
+            and int(pool_key["fee"]) == 0 and int(pool_key["tickSpacing"]) == 0):
+        raise RuntimeError(
+            f"tokenId {token_id} has an empty PoolKey on {chain['name']} — the position was "
+            "burned, or that id was never minted here"
+        )
     return {
         "tokenId": int(token_id),
         "poolKey": pool_key,
@@ -298,8 +360,13 @@ def allowance_problem(row: dict, needed: int, now_secs: int) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def run_plan(client, chain: dict, args: dict, signer: dict, ctx: dict):
-    """Simulate, print, gate on the confirmed hash, then (only then) broadcast."""
+def run_plan(client, chain: dict, args: dict, signer: dict, ctx: dict, *,
+             authorization: MandateAuthorization | None = None):
+    """Simulate, print, gate on the confirmed hash, then (only then) broadcast.
+
+    ``authorization`` replaces the human hash echo for an unattended mandate run; see
+    :class:`MandateAuthorization`. It is keyword-only and unreachable from this file's CLI.
+    """
     hash_value = plan_hash(ctx["hashFields"])
     token_map = ctx.get("tokenMap") or {}
 
@@ -375,7 +442,19 @@ def run_plan(client, chain: dict, args: dict, signer: dict, ctx: dict):
         return None
     # Confirm is checked before anything else about the signer: a stale hash means the
     # plan the human approved is not the plan in hand, and that is the worse failure.
-    if args.get("confirm") != hash_value:
+    if authorization is not None:
+        if not isinstance(authorization, MandateAuthorization):
+            raise RuntimeError(
+                "authorization must be a MandateAuthorization; refusing to broadcast on a "
+                f"{type(authorization).__name__}"
+            )
+        if args.get("confirm"):
+            raise RuntimeError(
+                "--confirm and a mandate authorization are mutually exclusive: one of them "
+                "is stale, and guessing which would defeat both"
+            )
+        authorization.authorize(client, chain, args, signer, ctx, hash_value)
+    elif args.get("confirm") != hash_value:
         raise RuntimeError(
             f'--confirm mismatch: got "{args.get("confirm") or "(none)"}", plan is '
             f'"{hash_value}".\n'
@@ -397,19 +476,26 @@ def run_plan(client, chain: dict, args: dict, signer: dict, ctx: dict):
     data = ctx["rebuildData"](deadline) if ctx.get("rebuildData") else ctx["data"]
 
     return _send(client, chain, args, signer, chain["positionManager"], data,
-                 ctx.get("value", 0))
+                 ctx.get("value", 0), on_sent=ctx.get("onSent"))
 
 
 def _send(client, chain: dict, args: dict, signer: dict, to: str, data: str,
-          value: int = 0, label: str = "") -> dict:
-    """Build, sign, broadcast and wait. Shared by run_plan and the approve legs."""
+          value: int = 0, label: str = "", on_sent=None) -> dict:
+    """Build, sign, broadcast and wait. Shared by run_plan and the approve legs.
+
+    ``on_sent`` is passed straight through to :func:`send_transaction` so an unattended
+    caller can persist the hash and nonce before the broadcast leaves the process.
+    """
+    max_fee_cap = args.get("max-fee-per-gas")
     tx = prepare_transaction(
         client, chain, signer["address"], to, data, value,
         gas_multiplier=float(args.get("gas-multiplier") or DEFAULT_GAS_MULTIPLIER),
+        max_fee_cap=int(str(max_fee_cap).replace("_", "")) if max_fee_cap else None,
     )
     prefix = f"  {label} " if label else "\n  "
     tx_hash = send_transaction(client, chain, tx, signer["privateKey"],
-                               on_hash=lambda h: print(f"{prefix}sent: {h}"))
+                               on_hash=lambda h: print(f"{prefix}sent: {h}"),
+                               on_sent=on_sent)
     receipt = wait_for_receipt(client, tx_hash)
     status = receipt_status(receipt)
     print(f"  status: {status}  block: {int(receipt['blockNumber'], 16)}  "
@@ -576,7 +662,8 @@ def _token_map(info0: dict, info1: dict) -> dict:
     return {info0["address"].lower(): info0, info1["address"].lower(): info1}
 
 
-def cmd_mint(client, chain: dict, args: dict, signer: dict) -> None:
+def cmd_mint(client, chain: dict, args: dict, signer: dict, *,
+             authorization: MandateAuthorization | None = None) -> dict | None:
     pool_id = require_arg(args, "pool", "poolId")
     pool_key = pool_key_for_id(client, chain, pool_id, args)
     if not pool_key:
@@ -672,7 +759,7 @@ def cmd_mint(client, chain: dict, args: dict, signer: dict) -> None:
                 f"(drift {drift} > {max_drift}). Re-plan."
             )
 
-    run_plan(client, chain, args, signer, {
+    return run_plan(client, chain, args, signer, {
         "title": "mint position",
         "rows": rows,
         "tokenMap": _token_map(info0, info1),
@@ -692,7 +779,7 @@ def cmd_mint(client, chain: dict, args: dict, signer: dict) -> None:
         },
         "rebuildData": lambda d: encode_call(plan, d),
         "revalidate": revalidate,
-    })
+    }, authorization=authorization)
 
 
 def cmd_increase(client, chain: dict, args: dict, signer: dict) -> None:
@@ -869,7 +956,8 @@ def cmd_collect(client, chain: dict, args: dict, signer: dict) -> None:
     })
 
 
-def cmd_burn(client, chain: dict, args: dict, signer: dict) -> None:
+def cmd_burn(client, chain: dict, args: dict, signer: dict, *,
+             authorization: MandateAuthorization | None = None) -> dict | None:
     token_id = int(require_arg(args, "token-id"))
     pos = load_position_for_write(client, chain, token_id)
     hook_gate(pos["poolKey"], args)
@@ -890,7 +978,7 @@ def cmd_burn(client, chain: dict, args: dict, signer: dict) -> None:
                            amount0_min, amount1_min, recipient)
     deadline = int(client.get_block()["timestamp"], 16) + deadline_offset(args)
 
-    run_plan(client, chain, args, signer, {
+    return run_plan(client, chain, args, signer, {
         "title": f"burn position #{token_id} (full exit)",
         "tokenMap": _token_map(info0, info1),
         "rows": [
@@ -916,7 +1004,24 @@ def cmd_burn(client, chain: dict, args: dict, signer: dict) -> None:
         "data": encode_call(plan, deadline),
         "value": 0,
         "rebuildData": lambda d: encode_call(plan, d),
-    })
+    }, authorization=authorization)
+
+
+def cmd_address(args: dict) -> None:
+    """Print the wallet ``UNIV4_LP_PRIVATE_KEY`` derives. No chain, no plan, no send.
+
+    Kept here rather than in ``lp_read.py`` because this is the script that already holds
+    the key, so nothing about the read/write boundary moves to add it. ``lp_read.py
+    positions`` resolves the same address on its own; this command is for the times you
+    want the address itself — to check which wallet is configured, or to hand to another
+    tool. The key is never printed.
+    """
+    signer_env = args.get("signer-env") or ENV_SIGNER
+    address = resolve_signer_address(signer_env)
+    if args.get("json"):
+        print(json.dumps({"address": address, "signerEnv": signer_env}, indent=2))
+    else:
+        print(address)
 
 
 COMMANDS = {
@@ -930,11 +1035,22 @@ COMMANDS = {
 
 
 def main() -> None:
+    # From here on this process is the interactive CLI, and MandateAuthorization refuses to
+    # be constructed. The unattended runner imports this module and never calls main().
+    global _ARGV_ENTRY
+    _ARGV_ENTRY = True
+
     args = parse_args(sys.argv[1:])
     command = args["_"][0] if args["_"] else None
     if not command or args.get("help") or args.get("h"):
         print(USAGE)
         sys.exit(0 if command else 1)
+    # Answered before a chain or an RpcClient is built: this command reads one env var and
+    # does arithmetic, so it must not fail because an RPC endpoint is unset or unreachable.
+    if command == "address":
+        cmd_address(args)
+        return
+
     if args.get("broadcast") and not args.get("confirm"):
         raise RuntimeError("--broadcast requires --confirm <PLAN_HASH>. Run the dry run "
                            "first and show the plan to the user.")

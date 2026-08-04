@@ -185,9 +185,23 @@ def estimate_gas(client, tx: dict, multiplier: float = DEFAULT_GAS_MULTIPLIER) -
 
 def prepare_transaction(client, chain: dict, signer: str, to: str, data: str,
                         value: int = 0, gas_multiplier: float = DEFAULT_GAS_MULTIPLIER,
-                        priority_fee: int | None = None) -> dict:
-    """Everything needed to sign, read from the chain in one place."""
+                        priority_fee: int | None = None,
+                        max_fee_cap: int | None = None) -> dict:
+    """Everything needed to sign, read from the chain in one place.
+
+    ``max_fee_cap`` refuses the send outright when the suggested ``maxFeePerGas`` exceeds
+    it, rather than silently clamping — a clamped fee just produces a transaction that sits
+    in the mempool and gets dropped, which for an unattended runner is a slower way to fail.
+    Off by default; gas price is deliberately excluded from PLAN_HASH, so an interactive
+    user approved the plan without seeing it either way.
+    """
     fees = suggest_fees(client, priority_fee)
+    if max_fee_cap is not None and fees["maxFeePerGas"] > int(max_fee_cap):
+        raise RuntimeError(
+            f"refusing to send: maxFeePerGas would be {fees['maxFeePerGas']} wei, over the "
+            f"{int(max_fee_cap)} wei cap (base fee {fees['baseFeePerGas']}). Wait for gas to "
+            "fall, or raise the cap."
+        )
     tx = {
         "type": "eip1559",
         "chainId": chain["chainId"],
@@ -204,12 +218,18 @@ def prepare_transaction(client, chain: dict, signer: str, to: str, data: str,
 
 
 def send_transaction(client, chain: dict, tx: dict, private_key: str,
-                     on_hash=None) -> str:
+                     on_hash=None, on_sent=None) -> str:
     """Sign and broadcast. Returns the hash; does not wait.
 
     The chain id is re-read from the node rather than trusted from the config: signing
     for 8453 and sending to 4663 produces a transaction that is either rejected or —
     worse, if the same key has funds on both — replayable.
+
+    ``on_sent`` is the durability hook: it fires after signing and before broadcast with
+    everything needed to find this transaction again, so a journal can fsync first. A crash
+    between that fsync and the broadcast is recoverable (nothing was sent); a broadcast with
+    nothing on disk would not be. ``on_hash`` is the older display-only callback and still
+    fires, after ``on_sent``.
     """
     live_chain_id = client.chain_id()
     if live_chain_id != int(tx["chainId"]):
@@ -223,6 +243,23 @@ def send_transaction(client, chain: dict, tx: dict, private_key: str,
         raise RuntimeError(
             f"refusing to send: the key derives {signed['from']}, plan says {tx['from']}"
         )
+
+    if on_sent:
+        # The head is read BEFORE broadcasting on purpose. A recovery log scan bounded by a
+        # block number taken afterwards could start past the block the transaction landed
+        # in, and would then conclude it never happened.
+        try:
+            sent_at_block = client.block_number()
+        except Exception:  # noqa: BLE001 — a missing bound only widens the recovery scan
+            sent_at_block = None
+        on_sent({
+            "hash": signed["hash"],
+            "nonce": int(tx["nonce"]),
+            "sentAtBlock": sent_at_block,
+            "maxFeePerGas": int(tx.get("maxFeePerGas") or 0),
+            "maxPriorityFeePerGas": int(tx.get("maxPriorityFeePerGas") or 0),
+            "gas": int(tx.get("gas") or 0),
+        })
 
     # Print the hash before the send, not after: if the node accepts the transaction and
     # the connection then drops, the hash is the only way to find it again.
