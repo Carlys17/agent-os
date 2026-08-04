@@ -241,11 +241,42 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--background);
-  cursor: pointer;
   min-width: 0;
 }
 .sk-card:hover {
   border-color: var(--dim);
+}
+/* The card body is the "open details" target; the foot row next to it carries
+   the Use action, so the two cannot be one button (mirrors .sk-rcard__details). */
+.sk-card__details {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.sk-card__details:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.sk-card__foot-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 .sk-card__head {
   display: flex;
@@ -1281,7 +1312,8 @@
 .control-surface .sk-card__foot {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  justify-content: space-between;
+  gap: 0.5rem;
   margin-top: auto;
   color: var(--dim);
   font-size: 0.6875rem;
@@ -1294,11 +1326,11 @@
   transition: transform 180ms ease;
 }
 
-.control-surface .sk-card:hover .sk-card__foot {
+.control-surface .sk-card:hover .sk-card__foot-link {
   color: var(--primary);
 }
 
-.control-surface .sk-card:hover .sk-card__foot svg {
+.control-surface .sk-card:hover .sk-card__foot-link svg {
   transform: translateX(2px);
 }
 
@@ -1484,7 +1516,8 @@
   line-clamp: 3;
 }
 
-.control-surface .sk-rcard__foot [data-slot='button'] {
+.control-surface .sk-rcard__foot [data-slot='button'],
+.control-surface .sk-card__foot [data-slot='button'] {
   min-height: 2.25rem;
 }
 

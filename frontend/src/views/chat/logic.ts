@@ -315,6 +315,34 @@ export function readAgentFromUrl(search: string): string | null {
 }
 
 /**
+ * The longest `?prompt=` we will accept. A prefill is meant to be a one-line
+ * lead-in ("use skill foo"), not a payload — anything past this is a malformed
+ * or hostile link, so we truncate rather than dump it into the composer.
+ */
+export const MAX_URL_PROMPT_LENGTH = 2000
+
+/**
+ * Read `?prompt=` from a search string — the composer prefill used by the
+ * Skills screen's "Use" button (`navigate('/chat?prompt=use skill <name>\n')`).
+ * Unlike `?session=` / `?agent=` this lands in user-editable text, so it is
+ * sanitised: control characters other than newline are dropped (a stray `\r`
+ * or ANSI escape has no business in a textarea) and the result is capped at
+ * `MAX_URL_PROMPT_LENGTH`. Returns `null` when absent, unparseable, or empty
+ * after sanitising, so the caller's "no prefill" branch is a single falsy test.
+ */
+export function readPromptFromUrl(search: string): string | null {
+  try {
+    const raw = new URLSearchParams(search).get('prompt')
+    if (!raw) return null
+    // Keep \n (\u000A); drop every other C0 control plus DEL.
+    const clean = raw.replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, '')
+    return clean.slice(0, MAX_URL_PROMPT_LENGTH) || null
+  } catch {
+    return null
+  }
+}
+
+/**
  * The stable transcript id for a message (chat.js:3086-3090). Legacy reads the
  * raw `transcript_id` field and coerces via `Number`, returning the number when
  * finite else `null`. We return the finite value stringified (the brief's

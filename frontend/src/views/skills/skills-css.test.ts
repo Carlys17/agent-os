@@ -67,8 +67,10 @@ describe('Skills directory CSS contract', () => {
   })
 
   it('keeps the installed chip the same height as the card install action', () => {
+    // The installed-card foot shares this rule with the catalog card, so the
+    // "Use" button lines up with an Install button at the same height.
     expect(css).toMatch(
-      /\.control-surface \.sk-rcard__foot \[data-slot='button'\] \{[\s\S]*?min-height:\s*2\.25rem;/,
+      /\.control-surface \.sk-rcard__foot \[data-slot='button'\],\s*\.control-surface \.sk-card__foot \[data-slot='button'\] \{[\s\S]*?min-height:\s*2\.25rem;/,
     )
     expect(css).toMatch(
       /\.control-surface \.sk-rcard__foot \.sk-chip--card-action \{[\s\S]*?display:\s*inline-flex;[\s\S]*?min-height:\s*2\.25rem;/,

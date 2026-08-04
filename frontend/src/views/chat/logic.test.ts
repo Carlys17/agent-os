@@ -28,6 +28,7 @@ import {
   normalizeSlashCommand,
   pageDumpMarkerScore,
   parseSlashInput,
+  readPromptFromUrl,
   readSessionFromUrl,
   replayGapShouldWarn,
   renderMessageAttachmentHtml,
@@ -51,6 +52,7 @@ import {
   displayRoleLabel,
   enqueuePending,
   exportMarkdownDocument,
+  MAX_URL_PROMPT_LENGTH,
   popAllPendingIntoComposer,
   popPendingTail,
   type PendingAttachment,
@@ -121,6 +123,30 @@ describe('readSessionFromUrl', () => {
   })
   it('returns null when session is absent but other params exist', () => {
     expect(readSessionFromUrl('?agent=main')).toBeNull()
+  })
+})
+
+// The Skills screen's "Use" button hands the composer a prefill through
+// `?prompt=`. Unlike the session/agent params this text is shown to the user,
+// so the reader sanitises it.
+describe('readPromptFromUrl', () => {
+  it('decodes the prompt, newline included', () => {
+    expect(readPromptFromUrl('?prompt=use%20skill%20xlsx%0A')).toBe('use skill xlsx\n')
+  })
+  it('returns null when the param is absent, empty, or the search is bare', () => {
+    expect(readPromptFromUrl('?session=agent%3Amain')).toBeNull()
+    expect(readPromptFromUrl('?prompt=')).toBeNull()
+    expect(readPromptFromUrl('')).toBeNull()
+  })
+  it('drops control characters but keeps the newline', () => {
+    expect(readPromptFromUrl('?prompt=a%00b%1Bc%7Fd%0De%0Af')).toBe('abcde\nf')
+  })
+  it('returns null when nothing survives sanitising', () => {
+    expect(readPromptFromUrl('?prompt=%00%1B')).toBeNull()
+  })
+  it('truncates an oversized prompt instead of dumping it into the composer', () => {
+    const long = 'x'.repeat(MAX_URL_PROMPT_LENGTH + 500)
+    expect(readPromptFromUrl('?prompt=' + long)).toHaveLength(MAX_URL_PROMPT_LENGTH)
   })
 })
 
