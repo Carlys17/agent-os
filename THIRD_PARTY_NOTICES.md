@@ -207,6 +207,7 @@ are released under AgentOS's repository license (Apache-2.0; see `LICENSE`):
 
 - `agentos`
 - `cron`
+- `cron-watchers`
 - `deep-research`
 - `docx`
 - `git-diff`

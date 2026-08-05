@@ -11,6 +11,7 @@ ORIGINALS = {
     "advanced-dubbing-studio",
     "agentos",
     "cron",
+    "cron-watchers",
     "deep-research",
     "docx",
     "git-diff",
