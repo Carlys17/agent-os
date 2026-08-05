@@ -50,7 +50,7 @@ Translation examples (do this in your own reasoning before calling the tool):
 
 ## Running a script instead of a model
 
-`job_kind="script"` runs a file on schedule and delivers its stdout — no model
+`job_kind="script"` runs a file on schedule and delivers its stdout — no LLM
 call, no tokens. The `script` must be a path relative to `~/.agentos/scripts/`;
 `script_args` is a list passed as argv (never through a shell). Empty stdout
 means the run stays silent, and a non-zero exit is delivered as a failure.

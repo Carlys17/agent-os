@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import structlog
 
+from agentos.scheduler.payloads import SCRIPT_KIND
 from agentos.scheduler.types import (
     CronJob,
     DeliveryConfig,
@@ -22,6 +23,8 @@ from agentos.scheduler.types import (
 from agentos.session.keys import parse_agent_id
 
 log = structlog.get_logger(__name__)
+
+SCRIPT_HANDLER_KEY = "script_run"
 
 
 _WEBHOOK_TIMEOUT_SECONDS = 10.0
@@ -62,6 +65,14 @@ def validate_webhook_url(url: str) -> None:
 # session and never reaches these branches.
 ORIGIN_SESSION_GONE = "origin_gone"
 
+# A script job produced output but is bound to no conversation to mirror it
+# into — an isolated job scheduled without ``--session-key``. Like
+# ``ORIGIN_SESSION_GONE`` this is not a failure (the script ran, and its stdout
+# is on the run record), but it is not "skipped" either: something *was*
+# produced and had nowhere to go. Naming it separately is what makes an empty
+# chat legible in ``agentos cron runs`` instead of looking like a silent run.
+NO_SESSION_TARGET = "no_session_target"
+
 
 @dataclass
 class DeliveryReport:
@@ -88,6 +99,43 @@ class DeliveryChain:
         self._channel_manager_ref = channel_manager_ref
         self._ws_emitter = ws_emitter
         self._session_forwarder = session_forwarder
+
+    @staticmethod
+    def _is_script_job(job: CronJob) -> bool:
+        """Whether this job's output came from a script rather than a model turn.
+
+        Several skips in this chain mean "the run already wrote this into the
+        session, so mirroring it would duplicate it" — true for an agent turn,
+        which appends its own reply to the transcript it ran in. A script job
+        has no turn: nothing writes its stdout anywhere unless this chain does,
+        so those skips silently discard the output instead of deduplicating it.
+        """
+        if job.handler_key == SCRIPT_HANDLER_KEY:
+            return True
+        payload = job.payload if isinstance(job.payload, dict) else {}
+        return str(payload.get("kind", "")) == SCRIPT_KIND
+
+    @staticmethod
+    def _script_mirror_session_key(job: CronJob, session_key: str) -> str:
+        """Where a script job's stdout should be mirrored, or "" if nowhere.
+
+        The originating chat wins — that is the conversation the operator was
+        in when they scheduled the job. Failing that, an explicitly bound
+        session (``sessionTarget`` of ``session``/``current``) is a destination
+        the operator chose. An isolated job created with neither — the shape
+        ``agentos cron add --script`` produces without ``--session-key`` — has
+        no conversation to mirror into, and says so rather than pretending.
+        """
+        if job.origin_session_key:
+            return job.origin_session_key
+        target = (
+            job.session_target
+            if isinstance(job.session_target, SessionTarget)
+            else SessionTarget(job.session_target)
+        )
+        if target in (SessionTarget.SESSION, SessionTarget.CURRENT):
+            return job.session_key or session_key
+        return ""
 
     @staticmethod
     def _is_same_webchat_session_delivery(
@@ -218,6 +266,16 @@ class DeliveryChain:
             channel_id=channel_id or "",
             session_key=session_key,
         ):
+            # An agent turn ran *in* this session and already appended its reply
+            # there, so "same session" means the work is done. A script job left
+            # nothing behind — mirror its stdout or it reaches no one.
+            if self._is_script_job(job):
+                return await self._mirror_to_session(
+                    job,
+                    text,
+                    session_key=session_key,
+                    target_session_key=session_key,
+                )
             return "delivered"
         if self._is_origin_webchat_session_delivery(
             job,
@@ -242,14 +300,38 @@ class DeliveryChain:
         text: str,
         session_key: str,
     ) -> str:
+        return await self._mirror_to_session(
+            job,
+            text,
+            session_key=session_key,
+            target_session_key=job.origin_session_key,
+        )
+
+    async def _mirror_to_session(
+        self,
+        job: CronJob,
+        text: str,
+        *,
+        session_key: str,
+        target_session_key: str,
+    ) -> str:
+        """Append ``text`` to ``target_session_key``'s transcript.
+
+        Shared by the two channel-side paths that resolve to a chat rather than
+        a real channel adapter. Speaks the channel vocabulary
+        (``delivered``/``delivery_failed``/``origin_gone``) because
+        :func:`handlers._required_delivery_error` reads it as primary delivery.
+        """
         text = strip_reply_directives(text) or ""
         if not self._session_forwarder:
             return "delivery_failed"
         if not text or not text.strip():
             return "delivery_failed"
+        if not target_session_key:
+            return "delivery_failed"
         try:
             forwarded = await self._session_forwarder(
-                origin_session_key=job.origin_session_key,
+                origin_session_key=target_session_key,
                 text=text,
                 provenance={
                     "kind": "cron",
@@ -261,7 +343,7 @@ class DeliveryChain:
             log.warning(
                 "delivery.webchat_forward_failed",
                 job_id=job.id,
-                origin_session_key=job.origin_session_key,
+                origin_session_key=target_session_key,
                 exc_info=True,
             )
             return "delivery_failed"
@@ -276,7 +358,7 @@ class DeliveryChain:
             log.info(
                 "delivery.webchat_origin_session_missing",
                 job_id=job.id,
-                origin_session_key=job.origin_session_key,
+                origin_session_key=target_session_key,
             )
             return ORIGIN_SESSION_GONE
         return "delivered"
@@ -463,15 +545,31 @@ class DeliveryChain:
             return "skipped"
         if target == SessionTarget.MAIN:
             return "skipped"
-        if not job.origin_session_key:
-            return "skipped"
-        if job.origin_session_key == session_key:
-            return "skipped"
         if not text or not text.strip():
             return "skipped"
+        # A script job has no turn of its own, so neither "the run wrote this
+        # into its own session" nor "there is no origin" is a reason to drop the
+        # output — both just mean this mirror is the only writer. It still needs
+        # somewhere to write; an isolated script job bound to no chat has not.
+        if self._is_script_job(job):
+            mirror_session_key = self._script_mirror_session_key(job, session_key)
+            if not mirror_session_key:
+                log.info(
+                    "delivery.script_output_has_no_session",
+                    job_id=job.id,
+                    session_target=str(target.value),
+                    hint="bind a chat with --session-key to mirror this output",
+                )
+                return NO_SESSION_TARGET
+        else:
+            if not job.origin_session_key:
+                return "skipped"
+            if job.origin_session_key == session_key:
+                return "skipped"
+            mirror_session_key = job.origin_session_key
         try:
             forwarded = await self._session_forwarder(
-                origin_session_key=job.origin_session_key,
+                origin_session_key=mirror_session_key,
                 text=text,
                 provenance={
                     "kind": "cron",
@@ -483,7 +581,7 @@ class DeliveryChain:
             log.warning(
                 "delivery.session_forward_failed",
                 job_id=job.id,
-                origin_session_key=job.origin_session_key,
+                origin_session_key=mirror_session_key,
                 exc_info=True,
             )
             return "forward_failed"
@@ -497,7 +595,7 @@ class DeliveryChain:
             log.info(
                 "delivery.origin_session_missing",
                 job_id=job.id,
-                origin_session_key=job.origin_session_key,
+                origin_session_key=mirror_session_key,
             )
             return ORIGIN_SESSION_GONE
         return "delivered"

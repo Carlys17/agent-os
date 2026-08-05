@@ -1090,3 +1090,132 @@ def test_cron_update_no_elevated_sends_a_clearing_false(stub_gateway) -> None:
 
     _method, params = stub_gateway.calls[-1]
     assert params["elevated"] is False
+
+
+# --- script job output visibility -----------------------------------------
+#
+# A script job scheduled from the CLI had no conversation to report into, so it
+# ran every tick with nothing to show for it. --session-key names that chat, and
+# the runs table surfaces the stdout the run record was already storing.
+
+
+def _add_script_job(**overrides: Any) -> dict[str, Any]:
+    """Call cron_add for a script job, returning the RPC params."""
+    kwargs: dict[str, Any] = dict(
+        expression="*/5 * * * *",
+        text=None,
+        script="watch-memory.sh",
+        job_kind="script",
+        name=None,
+        agent=None,
+        session_target="isolated",
+        timeout=None,
+        tz=None,
+        wake=None,
+        exact=False,
+        jitter=None,
+        announce=False,
+        no_deliver=False,
+        channel=None,
+        to=None,
+        account=None,
+        best_effort_deliver=False,
+        webhook_url=None,
+        webhook_token=None,
+        webhook_token_env=None,
+        webhook_token_file=None,
+        failure_mode=None,
+        failure_channel=None,
+        failure_to=None,
+        failure_account=None,
+        failure_webhook_url=None,
+        failure_webhook_token=None,
+        failure_webhook_token_env=None,
+        failure_webhook_token_file=None,
+        elevated=None,
+        elevated_mode=None,
+        tool_policy=None,
+        json_output=False,
+    )
+    kwargs.update(overrides)
+    cron_cmd.cron_add(**kwargs)
+    return kwargs
+
+
+def test_cron_add_session_key_binds_the_reporting_chat(stub_gateway) -> None:
+    _add_script_job(session_key="agent:main:webchat:my-chat")
+
+    _method, params = stub_gateway.calls[-1]
+    assert params["sessionKey"] == "agent:main:webchat:my-chat"
+    # The run itself stays isolated; only the mirror target is bound.
+    assert params["sessionTarget"] == "isolated"
+
+
+def test_cron_add_omits_session_key_when_not_given(stub_gateway) -> None:
+    _add_script_job()
+
+    _method, params = stub_gateway.calls[-1]
+    assert "sessionKey" not in params
+
+
+def test_cron_add_rejects_session_key_with_main_target(stub_gateway) -> None:
+    # Main-target jobs report through the heartbeat, so a chat binding is a
+    # misunderstanding worth naming rather than silently dropping.
+    with pytest.raises(typer.BadParameter, match="session-key.*main"):
+        _add_script_job(
+            script=None,
+            text="daily rollup",
+            job_kind="system_event",
+            session_target="main",
+            session_key="agent:main:webchat:my-chat",
+        )
+
+
+def test_cron_add_session_target_session_requires_a_key(stub_gateway) -> None:
+    with pytest.raises(typer.BadParameter, match="requires --session-key"):
+        _add_script_job(session_target="session")
+
+
+# --- runs table output column ---------------------------------------------
+
+
+def test_run_output_cell_flattens_and_clips_script_stdout() -> None:
+    assert cron_cmd._run_output_cell("line one\nline two") == "line one line two"
+    assert cron_cmd._run_output_cell(None) == ""
+    assert cron_cmd._run_output_cell("   ") == ""
+
+    clipped = cron_cmd._run_output_cell("x" * 200)
+    assert len(clipped) == cron_cmd._RUN_OUTPUT_WIDTH
+    assert clipped.endswith("…")
+
+
+def test_render_runs_shows_the_script_output(capsys, monkeypatch) -> None:
+    # Eight columns do not fit an 80-column default, and rich wraps headers
+    # mid-word when they do not. Widen the console so the assertions describe
+    # the table rather than the terminal.
+    from rich.console import Console
+
+    monkeypatch.setattr(cron_cmd, "console", Console(width=200))
+    cron_cmd._render_runs(
+        [
+            {
+                "id": "run-1",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "finished_at": "2026-01-01T00:00:01+00:00",
+                "status": "ok",
+                "duration_ms": 1000,
+                "summary": "3 alerts pending",
+                "deliveryStatus": "skipped|ws:no_subscribers|fwd:no_session_target",
+                "error": None,
+            }
+        ]
+    )
+
+    out = capsys.readouterr().out
+    # Both new columns are present, and the stdout the run record was already
+    # storing is finally on screen. Rich wraps to the terminal width, so the
+    # cells are matched loosely rather than verbatim.
+    assert "Output" in out
+    assert "Delivery" in out
+    assert "3 alerts pending" in out
+    assert "no_session_target" in out

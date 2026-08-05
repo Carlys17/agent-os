@@ -1,5 +1,5 @@
 import './cron.css'
-import { useEffect, useId, useState } from 'react'
+import { Fragment, useEffect, useId, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence } from 'motion/react'
@@ -163,6 +163,9 @@ function RunsDrawer({
   })
 
   const runs = runsQuery.data ?? []
+  // A script job's output is its only trace — the row preview is one clipped
+  // line, so the full text has to be reachable without leaving the page.
+  const [expanded, setExpanded] = useState<number | null>(null)
 
   return (
     <div className="cron-detail panel" aria-label={`Run history for ${jobName}`}>
@@ -197,39 +200,63 @@ function RunsDrawer({
                 <th>Status</th>
                 <th>Duration</th>
                 <th>Delivery</th>
-                <th>Reply</th>
+                <th>Output</th>
                 <th />
               </tr>
             </thead>
             <tbody>
               {runs.map((r, i) => {
                 const row = runRow(r, relTime)
+                const isOpen = expanded === i
                 return (
-                  <tr key={i}>
-                    <td className="cron-mono">{row.timeLabel}</td>
-                    <td>
-                      <span className={`cron-status ${row.statusOk ? 'tone-ok' : 'tone-danger'}`}>
-                        {row.status}
-                      </span>
-                    </td>
-                    <td className="cron-mono">{row.duration}</td>
-                    <td>{row.delivery}</td>
-                    <td className="cron-runs__reply">{row.reply}</td>
-                    <td>
-                      {row.sessionKey ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            navigate('/chat?session=' + encodeURIComponent(row.sessionKey))
-                          }
-                        >
-                          → Chat
-                        </Button>
-                      ) : null}
-                    </td>
-                  </tr>
+                  <Fragment key={i}>
+                    <tr>
+                      <td className="cron-mono">{row.timeLabel}</td>
+                      <td>
+                        <span className={`cron-status ${row.statusOk ? 'tone-ok' : 'tone-danger'}`}>
+                          {row.status}
+                        </span>
+                      </td>
+                      <td className="cron-mono">{row.duration}</td>
+                      <td>{row.delivery}</td>
+                      <td className="cron-runs__reply">
+                        {row.replyFull ? (
+                          <button
+                            type="button"
+                            className="cron-runs__reply-toggle"
+                            aria-expanded={isOpen}
+                            title={isOpen ? 'Hide full output' : 'Show full output'}
+                            onClick={() => setExpanded(isOpen ? null : i)}
+                          >
+                            {row.reply}
+                          </button>
+                        ) : (
+                          row.reply
+                        )}
+                      </td>
+                      <td>
+                        {row.sessionKey ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              navigate('/chat?session=' + encodeURIComponent(row.sessionKey))
+                            }
+                          >
+                            → Chat
+                          </Button>
+                        ) : null}
+                      </td>
+                    </tr>
+                    {isOpen ? (
+                      <tr className="cron-runs__output-row">
+                        <td colSpan={6}>
+                          <pre className="cron-runs__output">{row.replyFull}</pre>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 )
               })}
             </tbody>

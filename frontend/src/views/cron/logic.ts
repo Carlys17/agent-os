@@ -256,6 +256,8 @@ export interface RunRow {
   duration: string
   delivery: string
   reply: string
+  /** Untruncated output, for the expanded view. Empty when there was none. */
+  replyFull: string
   sessionKey: string
 }
 
@@ -274,13 +276,17 @@ export function runRow(run: RawRun, relTime: (ts: string | number) => string): R
         : '—'
   const status = run.status || 'unknown'
   const summary = run.summary ? String(run.summary) : ''
+  // A script job's stdout *is* its result and is routinely multi-line, so the
+  // cell keeps a flattened preview while the full text stays reachable.
+  const preview = summary.split('\n').join(' ').trim()
   return {
     timeLabel: run.started_at != null ? relTime(run.started_at) : '—',
     status,
     statusOk: status === 'ok',
     duration: run.duration_ms != null ? run.duration_ms + 'ms' : '—',
     delivery,
-    reply: summary ? summary.substring(0, 120) : '—',
+    reply: preview ? preview.substring(0, 120) : '—',
+    replyFull: summary,
     sessionKey: run.sessionKey ? String(run.sessionKey) : '',
   }
 }

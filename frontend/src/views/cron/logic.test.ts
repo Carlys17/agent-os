@@ -223,6 +223,7 @@ describe('runRow', () => {
       duration: '42ms',
       delivery: 'ch: slack, ws: sent',
       reply: 'done',
+      replyFull: 'done',
       sessionKey: 'k',
     })
   })
@@ -232,10 +233,22 @@ describe('runRow', () => {
       statusOk: false,
       duration: '—',
       reply: '—',
+      replyFull: '',
       timeLabel: '—',
       sessionKey: '',
     })
     expect(runRow({}, rel)).toMatchObject({ status: 'unknown', delivery: '—' })
+  })
+  it('flattens multi-line script stdout for the cell but keeps it whole', () => {
+    // A script job's stdout is the whole result, and it is routinely multi-line
+    // and longer than the cell — the preview must not be the only copy.
+    const stdout = 'line one\nline two\n' + 'x'.repeat(200)
+    const row = runRow({ status: 'ok', summary: stdout }, rel)
+
+    expect(row.reply).not.toContain('\n')
+    expect(row.reply.startsWith('line one line two')).toBe(true)
+    expect(row.reply).toHaveLength(120)
+    expect(row.replyFull).toBe(stdout)
   })
 })
 
