@@ -1,6 +1,6 @@
 ---
 name: senior-unilp-manager
-description: "Query and manage Uniswap V4 liquidity on Base (8453) and Robinhood Chain (4663). Use when the user asks how much liquidity a token has, wants a pool's reserves or market-cap bands, asks who launched a token or whether its LP is locked, wants to inspect an LP position or a wallet's positions, or wants to mint, increase, decrease, collect fees from, or burn a V4 position. NOT for: Uniswap v2/v3 positions, token swaps, or price quotes."
+description: "Query and manage Uniswap V4 liquidity on Base (8453) and Robinhood Chain (4663). Use when the user asks how much liquidity a token has, wants a pool's reserves or market-cap bands, asks who launched a token or whether its LP is locked, wants to inspect an LP position or a wallet's positions, or wants to mint, increase, decrease, collect fees from, or burn a V4 position, or wants to create (initialize) a new hook-less V4 pool. NOT for: Uniswap v2/v3 positions, token swaps, or price quotes."
 homepage: https://docs.uniswap.org/contracts/v4/overview
 triggers: [uniswap v4, liquidity position, "check LP", pool id, collect fees, robinhood chain]
 provenance:
@@ -370,11 +370,48 @@ and on Robinhood Chain that is normally a Doppler pool; the hook-less pools that
 for the same token are frequently dust with punitive fee tiers. Compare `TVL` before
 switching pools, and prefer the one `pools` marks as recommended (§1).
 
-**Targeting the pool.** `mint` takes a `--pool <poolId>` that must already exist — this skill
-**never creates a pool**; there is no `initialize` path in it. Find one first with
-`pools --token <addr> --no-hook` (§1). On Base the PoolKey behind that id still has to be
-recovered, so pass `--token <addr>`, or spell the key out with
+**Targeting the pool.** `mint` takes a `--pool <poolId>` that must already exist. Find one
+first with `pools --token <addr> --no-hook` (§1); if none exists at the tier you want, open
+one with `create-pool` (§8b). On Base the PoolKey behind that id still has to be recovered,
+so pass `--token <addr>`, or spell the key out with
 `--currency0 --currency1 --fee --tick-spacing` (§2) — those flags work here too.
+
+## 8b. Create a pool
+
+```bash
+python3 "$S"/lp_write.py create-pool --token0 <addr|native> --token1 <addr> \
+  --fee 3000 --tick-spacing 60 (--tick <t> | --price <n>) [--allow-odd-tier]
+```
+
+Only reach for this when `pools --token <addr>` genuinely found nothing usable. Opening a
+second pool for a token that already has one splits its liquidity and leaves yours as the
+shallow side.
+
+**The starting price cannot be changed, ever.** A pool is initialized once. If the tick you
+pick is off the real market, the first swap or mint against it is an arbitrage at your
+expense — and the only fix is to open a different pool. Treat the price line in the table as
+the thing the user is approving, not the fee tier.
+
+- `--price <n>` is **currency1 per one whole currency0**, decimals already handled, i.e. the
+  same direction the table prints. The two tokens are sorted into PoolKey order for you, so
+  which one you typed as `--token0` does not decide anything — read the printed
+  `currency0`/`currency1` rows and check the price is the right way up. Both directions are
+  printed for exactly this reason.
+- `--price` lands on the nearest tick (the 1.0001 grid, ~1 bp), so the effective price in the
+  table is what gets initialized, not the number typed. `--tick <t>` sets it exactly. The
+  initial tick does **not** have to be a multiple of `tickSpacing` — only position boundaries
+  do — so nothing is snapped here.
+- `hooks` is fixed at the zero address. There is no `--hooks` flag: initializing a hooked pool
+  runs that hook's `beforeInitialize`/`afterInitialize`, which is out of scope for this skill.
+- `--fee`/`--tick-spacing` off the conventional tiers (100/1, 500/10, 3000/60, 10000/200) are
+  refused unless you pass `--allow-odd-tier`, because `pools` only searches those tiers and
+  you would not find the pool again afterwards. A dynamic fee (`0x800000`) is refused
+  outright — it requires a hook.
+
+The transaction moves no tokens and needs no approvals, so there is nothing to `approve`
+first; it still goes through the same dry-run → `PLAN_HASH` → `--broadcast --confirm` gate as
+everything else. It prints the `poolId`, which is what `mint` then takes. If the pool already
+exists the command says so, prints its current tick, and exits without planning anything.
 
 ## 9. Increase / decrease / collect / burn
 
@@ -598,7 +635,7 @@ different branches at every layer, and a hook can answer differently on each.
 ## Verifying a change
 
 ```bash
-python3 {baseDir}/scripts/selftest.py     # 695 offline assertions, no network
+python3 {baseDir}/scripts/selftest.py     # 716 offline assertions, no network
 ```
 
 Covers the keccak / EIP-55 / ABI-codec primitives, secp256k1 signing, TickMath, the AGENTOS
