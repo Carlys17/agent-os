@@ -28,7 +28,7 @@ from agentos.scheduler.schedule_normalizer import (
     coerce_schedule,
     coerce_schedule_from_params,
 )
-from agentos.scheduler.scripts import validate_script_path
+from agentos.scheduler.scripts import normalize_script_value, validate_script_path
 from agentos.scheduler.types import (
     DeliveryConfig,
     DeliveryMode,
@@ -527,7 +527,7 @@ def _build_payload(
     agent_id = params.get("agentId", "main")
 
     script_raw = params.get("script")
-    script = script_raw.strip() if isinstance(script_raw, str) else ""
+    script = normalize_script_value(script_raw) if isinstance(script_raw, str) else ""
     workdir_raw = params.get("workdir")
     workdir = workdir_raw.strip() if isinstance(workdir_raw, str) else ""
     script_args = _coerce_script_args(params.get("scriptArgs", params.get("script_args")))

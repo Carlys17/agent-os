@@ -26,6 +26,7 @@ from agentos.scheduler.scripts import (
     MAX_SCRIPT_OUTPUT_CHARS,
     ScriptPathError,
     has_actionable_output,
+    normalize_script_value,
     resolve_script_path,
     run_job_script,
     scripts_dir,
@@ -133,6 +134,34 @@ def test_validate_rejects_paths_that_leave_the_scripts_dir(agentos_home, raw):
 def test_validate_does_not_require_the_file_to_exist(agentos_home):
     """A job may be scheduled before its script is written."""
     assert validate_script_path("not-written-yet.py") is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('"watch.sh"', "watch.sh"),
+        ("'watch.sh'", "watch.sh"),
+        ('  "watch.sh"  ', "watch.sh"),
+        ("watch.sh", "watch.sh"),
+        ('"', '"'),
+        ("", ""),
+        (None, ""),
+        ('watch"quoted".sh', 'watch"quoted".sh'),
+    ],
+)
+def test_a_quoted_path_is_unwrapped(raw, expected):
+    """Asking an agent for a script job gets you `"watch.sh"`, quotes included.
+
+    Storing that verbatim buys a job that saves cleanly and then fails at fire
+    time against a path with quote characters in it.
+    """
+    assert normalize_script_value(raw) == expected
+
+
+def test_a_quoted_path_still_resolves(agentos_home):
+    _write_script(agentos_home, "watch.sh", "echo hi")
+
+    assert resolve_script_path('"watch.sh"') == agentos_home / "scripts" / "watch.sh"
 
 
 # ── the runner ──────────────────────────────────────────────────────────────

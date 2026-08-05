@@ -19,7 +19,7 @@ from agentos.scheduler.payloads import (
 )
 from agentos.scheduler.prompt_safety import scan_cron_prompt as _scan_cron_prompt
 from agentos.scheduler.schedule_normalizer import coerce_schedule_from_params
-from agentos.scheduler.scripts import validate_script_path
+from agentos.scheduler.scripts import normalize_script_value, validate_script_path
 from agentos.scheduler.types import (
     DeliveryConfig,
     DeliveryMode,
@@ -520,7 +520,7 @@ async def cron(
                     delivery.channel_name = ctx.channel_kind or ""
                     delivery.channel_id = ctx.channel_id or ""
 
-        normalized_script = (script or "").strip()
+        normalized_script = normalize_script_value(script)
         normalized_workdir = (workdir or "").strip()
         normalized_args = [str(arg) for arg in (script_args or [])]
         if job_kind == SCRIPT_KIND:

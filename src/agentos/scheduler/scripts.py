@@ -57,6 +57,20 @@ def scripts_dir() -> Path:
     return default_agentos_home() / "scripts"
 
 
+def normalize_script_value(script: str | None) -> str:
+    """Trim a script path as written and drop one layer of matching quotes.
+
+    A model asked for a script job routinely passes ``"watch.sh"`` with the
+    quotes still attached. A path whose first and last characters are the same
+    quote is never a real file name, so accepting it verbatim only buys a job
+    that stores cleanly and then fails at fire time with a confusing path.
+    """
+    raw = (script or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+        raw = raw[1:-1].strip()
+    return raw
+
+
 def resolve_script_path(script: str) -> Path:
     """Resolve *script* to an absolute path inside :func:`scripts_dir`.
 
@@ -68,7 +82,7 @@ def resolve_script_path(script: str) -> Path:
     Raises:
         ScriptPathError: the path is empty or resolves outside the scripts dir.
     """
-    raw = (script or "").strip()
+    raw = normalize_script_value(script)
     if not raw:
         raise ScriptPathError("script path is required")
 
@@ -100,10 +114,10 @@ def validate_script_path(script: str | None) -> str | None:
     Existence is deliberately not checked — a job may be scheduled before its
     script is written, and a missing file surfaces as a delivered run error.
     """
-    if script is None or not script.strip():
+    raw = normalize_script_value(script)
+    if not raw:
         return None  # empty means "no script" / "clear the field"
 
-    raw = script.strip()
     if raw.startswith(("/", "~", "\\")) or (len(raw) >= 2 and raw[1] == ":"):
         return (
             f"Script path must be relative to {scripts_dir()}. Got {raw!r} — "
@@ -326,6 +340,7 @@ __all__ = [
     "MAX_SCRIPT_OUTPUT_CHARS",
     "ScriptPathError",
     "has_actionable_output",
+    "normalize_script_value",
     "resolve_script_path",
     "run_job_script",
     "scripts_dir",
