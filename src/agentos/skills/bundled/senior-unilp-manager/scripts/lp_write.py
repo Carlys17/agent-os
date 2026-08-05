@@ -7,6 +7,8 @@ echoing that hash back, so the transaction that gets signed is provably the one 
 human approved.
 
     python3 scripts/lp_write.py approve  --token <addr>
+    python3 scripts/lp_write.py create-pool --token0 <addr> --token1 <addr> --fee 3000 \\
+                                         --tick-spacing 60 --price <n>
     python3 scripts/lp_write.py mint     --pool <poolId> --tick-lower <t> --tick-upper <t> \\
                                          --amount1 <n>
     python3 scripts/lp_write.py increase --token-id <id> --amount1 <n>
@@ -75,6 +77,7 @@ from unilp.v4_actions import (  # noqa: E402
     describe_actions,
     encode_unlock_data,
     is_native_currency,
+    pool_key_tuple,
 )
 from unilp.v4_math import (  # noqa: E402
     get_amounts_for_liquidity,
@@ -84,21 +87,29 @@ from unilp.v4_math import (  # noqa: E402
     get_sqrt_ratio_at_tick,
     range_status,
     snap_tick,
+    tick_at_price,
+    token_price_in_quote_at_tick,
 )
 from unilp.v4_pool import (  # noqa: E402
     NATIVE,
+    VANILLA_FEE_TIERS,
     compute_pool_id,
     decode_hook_flags,
     decode_position_info,
     format_fee,
     format_hook_flags,
+    is_dynamic_fee,
     normalize_pool_key,
+    sort_currencies,
 )
 
 USAGE = """
 senior-unilp-manager — Uniswap V4 LP writes (DRY RUN unless --broadcast --confirm <HASH>)
 
   approve  --token <addr> [--amount max] [--expiration-days 30]
+  create-pool --token0 <addr|native> --token1 <addr> --fee <n> --tick-spacing <n>
+           (--tick <t> | --price <currency1 per currency0>) [--allow-odd-tier]
+           hook-less pools only; the starting price can never be changed afterwards
   mint     --pool <poolId> (--tick-lower <t> --tick-upper <t>)
            (--amount0 <n> | --amount1 <n> | --liquidity <raw>)
            [--slippage-bps 100] [--recipient <addr>] [--allow-hooked]
@@ -124,6 +135,11 @@ DEFAULT_SLIPPAGE_BPS = 100
 DEFAULT_DEADLINE_SECS = 1200
 MAX_UINT160 = 2**160 - 1
 MAX_UINT256 = 2**256 - 1
+# 100% in hundredths of a bip, and the int16 ceiling the PoolManager enforces on
+# tickSpacing. Both are validated locally so create-pool fails with a sentence rather
+# than an unnamed custom-error selector out of the simulation.
+MAX_STATIC_FEE = 1_000_000
+MAX_TICK_SPACING = 32_767
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +289,29 @@ def load_pool_state(client, chain: dict, pool_id: str, pool_key: dict) -> dict:
         "lpFee": int(lp_fee),
         "activeLiquidity": int(liquidity["result"]),
     }
+
+
+def pool_is_initialized(client, chain: dict, pool_id: str) -> bool:
+    """Does this poolId exist yet?
+
+    An uninitialized pool is a zeroed mapping entry rather than a revert, so getSlot0
+    succeeds and returns sqrtPriceX96 = 0 — the same test ``lp_read.py`` uses to filter
+    derived pool candidates. Kept separate from :func:`load_pool_state`, which would
+    otherwise have to invent a meaning for a zero price.
+    """
+    slot0 = client.multicall([
+        {"address": chain["stateView"], "abi": STATE_VIEW_ABI,
+         "functionName": "getSlot0", "args": [pool_id]},
+    ], allow_failure=False)[0]
+    return int(slot0["result"][0]) != 0
+
+
+def _currency_arg(args: dict, name: str) -> str:
+    """A PoolKey currency from the CLI: an address, or ``native``/``eth`` for ETH."""
+    value = str(require_arg(args, name, "token address, or 'native' for ETH")).strip()
+    if value.lower() in ("native", "eth", "0", "0x0"):
+        return NATIVE
+    return checksum_address(value)
 
 
 def load_position_for_write(client, chain: dict, token_id: int) -> dict:
@@ -662,6 +701,146 @@ def _token_map(info0: dict, info1: dict) -> dict:
     return {info0["address"].lower(): info0, info1["address"].lower(): info1}
 
 
+def cmd_create_pool(client, chain: dict, args: dict, signer: dict) -> dict | None:
+    """Initialize a hook-less v4 pool. Moves no tokens; fixes the starting price forever.
+
+    ``initializePool`` is a plain PositionManager function, not a ``modifyLiquidities``
+    action — there is no INITIALIZE_POOL byte in the Actions enum. That keeps the target
+    address the same as every other write here, so nothing about ``run_plan`` changes.
+    """
+    token_a = _currency_arg(args, "token0")
+    token_b = _currency_arg(args, "token1")
+    if token_a.lower() == token_b.lower():
+        raise RuntimeError("--token0 and --token1 are the same currency")
+    currency0, currency1 = sort_currencies(token_a, token_b)
+
+    fee = int(require_arg(args, "fee", "fee in hundredths of a bip, e.g. 3000 for 0.30%"))
+    tick_spacing = int(require_arg(args, "tick-spacing"))
+    if is_dynamic_fee(fee):
+        raise RuntimeError(
+            f"fee {fee} sets the dynamic-fee flag (0x800000). A dynamic-fee pool has to be "
+            "driven by a hook, and this command only opens hook-less pools."
+        )
+    if not 0 <= fee <= MAX_STATIC_FEE:
+        raise RuntimeError(f"--fee must be between 0 and {MAX_STATIC_FEE} (= 100%), got {fee}")
+    if not 1 <= tick_spacing <= MAX_TICK_SPACING:
+        raise RuntimeError(f"--tick-spacing must be between 1 and {MAX_TICK_SPACING}, "
+                           f"got {tick_spacing}")
+    # A pool opened off the conventional tiers is invisible to `lp_read.py pools`, which
+    # derives hook-less candidates from VANILLA_FEE_TIERS only. Creating a pool you cannot
+    # then find again is a bad enough trap to be opt-in.
+    odd_tier = (fee, tick_spacing) not in VANILLA_FEE_TIERS
+    if odd_tier and not args.get("allow-odd-tier"):
+        tiers = ", ".join(f"{f}/{s}" for f, s in VANILLA_FEE_TIERS)
+        raise RuntimeError(
+            f"fee {fee} with tickSpacing {tick_spacing} is not one of the conventional tiers "
+            f"({tiers}).\n"
+            "  v4 allows it, but `lp_read.py pools` only searches those tiers, so the pool "
+            "would not show up\n"
+            "  in discovery afterwards. Re-run with --allow-odd-tier if that is deliberate."
+        )
+
+    pool_key = normalize_pool_key({
+        "currency0": currency0, "currency1": currency1, "fee": fee,
+        "tickSpacing": tick_spacing, "hooks": NATIVE,
+    })
+    pool_id = compute_pool_id(pool_key)
+    info0 = token_info(client, chain, currency0)
+    info1 = token_info(client, chain, currency1)
+
+    # --- starting price ------------------------------------------------------
+    # v4 does not require the initial tick to sit on the tickSpacing grid — only position
+    # boundaries do — so neither branch snaps. --price still lands on the 1.0001^n grid,
+    # which is why the effective price is echoed back before anything is signed.
+    # `is not None` would not do: parse_args turns a valueless `--tick` into True, and
+    # int(True) is 1 — a silently wrong starting price is exactly the failure to avoid.
+    has_tick = args.get("tick") not in (None, True)
+    has_price = args.get("price") not in (None, True)
+    if has_tick == has_price:
+        raise RuntimeError("give exactly one of --tick <t> or --price <currency1 per currency0>")
+    if has_tick:
+        tick = int(args["tick"])
+        price_source = "--tick"
+    else:
+        tick = tick_at_price(float(args["price"]), info0["decimals"], info1["decimals"])
+        price_source = f"--price {args['price']}"
+    sqrt_price_x96 = get_sqrt_ratio_at_tick(tick)
+
+    price_1_per_0 = token_price_in_quote_at_tick(tick, False, info0["decimals"],
+                                                 info1["decimals"])
+    price_0_per_1 = token_price_in_quote_at_tick(tick, True, info0["decimals"],
+                                                 info1["decimals"])
+
+    if pool_is_initialized(client, chain, pool_id):
+        state = load_pool_state(client, chain, pool_id, pool_key)
+        print(heading(f"pool already exists on {chain['name']}"))
+        print(render_kv([
+            ["poolId", pool_id],
+            ["pair", f"{info0['symbol']}/{info1['symbol']}"],
+            ["fee", format_fee(pool_key["fee"], state["lpFee"])],
+            ["tickSpacing", str(tick_spacing)],
+            ["current tick", str(state["tick"])],
+        ]))
+        print("\n  Nothing to do — a pool can only be initialized once. To add liquidity:")
+        print(f"    python3 scripts/lp_read.py pool --id {pool_id}   (read it first)")
+        print(f"    python3 scripts/lp_write.py mint --pool {pool_id} --tick-lower <t> "
+              "--tick-upper <t> --amount1 <n>")
+        return None
+
+    data = encode_function_data(POSITION_MANAGER_ABI, "initializePool",
+                               [pool_key_tuple(pool_key), sqrt_price_x96])
+
+    rows = [
+        ["signer", signer["address"] + ("  (simulate-only, --from)"
+                                        if signer["simulateOnly"] else "")],
+        ["poolId", pool_id],
+        ["currency0", f"{info0['symbol']}  {currency0}"],
+        ["currency1", f"{info1['symbol']}  {currency1}"],
+        ["fee", format_fee(fee) + ("  (NON-STANDARD TIER)" if odd_tier else "")],
+        ["tickSpacing", str(tick_spacing)],
+        ["hooks", "none (0x0) — fixed, this command never opens a hooked pool"],
+        ["start tick", f"{tick}  (from {price_source})"],
+        ["sqrtPriceX96", str(sqrt_price_x96)],
+        ["start price", f"1 {info0['symbol']} = {price_1_per_0:.10g} {info1['symbol']}"],
+        ["", f"1 {info1['symbol']} = {price_0_per_1:.10g} {info0['symbol']}"],
+        ["moves", "no tokens — initialize only; liquidity comes later via mint"],
+    ]
+
+    # Printed ahead of the table rather than after it because run_plan owns everything from
+    # the heading down. It reads as an instruction for how to look at the rows below.
+    print("\n  READ THE START PRICE BELOW. A pool is initialized once and its starting tick "
+          "can never\n  be changed; if it is off the real market, the first swap or mint "
+          "against it is an\n  arbitrage at your expense, and the only remedy is a different "
+          "pool.")
+
+    def revalidate() -> None:
+        # Somebody else can initialize the same PoolKey between the dry run and the
+        # broadcast — the tx would revert, but failing here says why.
+        if pool_is_initialized(client, chain, pool_id):
+            raise RuntimeError(
+                f"pool {pool_id} was initialized by someone else since the plan was made. "
+                "Re-run to read its current price."
+            )
+
+    return run_plan(client, chain, args, signer, {
+        "title": f"create pool {info0['symbol']}/{info1['symbol']} on {chain['name']}",
+        "rows": rows,
+        "tokenMap": _token_map(info0, info1),
+        "hashFields": {
+            "chainId": chain["chainId"], "to": chain["positionManager"], "cmd": "create-pool",
+            "currency0": currency0, "currency1": currency1, "fee": fee,
+            "tickSpacing": tick_spacing, "hooks": pool_key["hooks"], "poolId": pool_id,
+            "tick": tick, "sqrtPriceX96": Big(sqrt_price_x96),
+            "signer": signer["address"],
+        },
+        # No unlockData and no deadline in the calldata, so there is nothing to rebuild at
+        # send time and deadlineSecs is deliberately absent from the hash above.
+        "data": data,
+        "value": 0,
+        "revalidate": revalidate,
+    })
+
+
 def cmd_mint(client, chain: dict, args: dict, signer: dict, *,
              authorization: MandateAuthorization | None = None) -> dict | None:
     pool_id = require_arg(args, "pool", "poolId")
@@ -1026,6 +1205,7 @@ def cmd_address(args: dict) -> None:
 
 COMMANDS = {
     "approve": cmd_approve,
+    "create-pool": cmd_create_pool,
     "mint": cmd_mint,
     "increase": cmd_increase,
     "decrease": cmd_decrease,

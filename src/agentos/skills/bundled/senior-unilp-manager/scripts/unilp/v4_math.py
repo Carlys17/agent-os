@@ -394,6 +394,30 @@ def mcap_band_for_range(
     }
 
 
+def tick_at_price(price_1_per_0: float, decimals0: int, decimals1: int) -> int:
+    """The tick at which one whole currency0 costs ``price_1_per_0`` whole currency1.
+
+    Inverse of ``token_price_in_quote_at_tick(tick, False, ...)``. Only used to turn a
+    human-typed ``--price`` into a candidate tick, which the caller then snaps to the
+    pool's tickSpacing and shows back before anything is signed — the exact
+    :func:`get_sqrt_ratio_at_tick` of that snapped tick is what reaches the calldata,
+    so this float never lands in a transaction.
+    """
+    price = float(price_1_per_0)
+    if not price > 0:
+        raise ValueError("tick_at_price: price must be positive")
+    raw = price * 10 ** (int(decimals1) - int(decimals0))
+    tick = math.log(raw) / math.log(1.0001)
+    if not math.isfinite(tick):
+        raise ValueError(f"tick_at_price: non-finite tick for price {price_1_per_0}")
+    if tick < MIN_TICK or tick > MAX_TICK:
+        raise ValueError(
+            f"tick_at_price: price {price_1_per_0} is outside the representable range "
+            f"(tick {js_round(tick)}, limits {MIN_TICK}..{MAX_TICK})"
+        )
+    return js_round(tick)
+
+
 def tick_at_mcap(
     mcap_usd: float,
     token_is_currency1: bool,
