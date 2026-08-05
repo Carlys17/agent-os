@@ -70,6 +70,128 @@ agentos cron add \
   --name launch-checklist-reminder
 ```
 
+## Job Kinds
+
+`--job-kind` decides what actually happens when a job fires. It defaults to
+`auto`, which resolves to `reminder` for normal targets, `system_event` for
+`--session-target main`, and `script` when you pass `--script`.
+
+| Kind | What fires | Spends tokens |
+| --- | --- | --- |
+| `reminder` | Your `--text` is delivered verbatim. Nothing else runs. | No |
+| `script` | A file in `~/.agentos/scripts/` runs; its stdout is delivered. | No |
+| `agent_turn` | The agent runs `--text` as a prompt and its reply is delivered. | Yes |
+| `system_event` | The text is written into the main session and wakes the heartbeat. | Yes |
+
+An `agent_turn` job can also carry a `--script`, which then runs *before* the
+turn as a data collector — see [Pre-run scripts](#pre-run-scripts).
+
+The default matters: `agentos cron add --every 1h --text "Summarize updates"`
+creates a **reminder**, so it repeats that sentence every hour rather than
+summarizing anything. Add `--job-kind agent_turn` when you want the agent to do
+the work.
+
+## Run a Script Instead of a Model
+
+A `script` job is the watchdog shape — poll something on a timer, deliver a line
+when it matters, stay quiet otherwise — with no model in the loop:
+
+```sh
+mkdir -p ~/.agentos/scripts
+cat > ~/.agentos/scripts/watch-memory.sh <<'EOF'
+#!/usr/bin/env bash
+used=$(ps -A -o %mem | awk '{s+=$1} END {printf "%d", s}')
+[ "$used" -gt 90 ] && echo "⚠ memory at ${used}%"
+EOF
+
+agentos cron add --every 5m --script watch-memory.sh --name memory-watchdog
+agentos cron update <job-id> --script watch-disk.sh
+```
+
+The script path is **relative to `~/.agentos/scripts/`**. Absolute paths, `~`,
+and `..` are refused, and a symlink that leaves the directory is refused at run
+time — the directory is the trust boundary. `.sh` and `.bash` run under bash;
+every other extension runs under the same Python interpreter as the gateway.
+Pass `--workdir` to run somewhere other than the script's own directory.
+
+Arguments go through `--script-arg`, repeated once per argument:
+
+```sh
+agentos cron add --every 15m --script watch_rss.py --name hn-watch \
+  --script-arg --name --script-arg hn \
+  --script-arg --url --script-arg https://news.ycombinator.com/rss
+```
+
+They are passed to the script as argv with no shell in between, so a value
+containing spaces or `;` stays one argument and cannot start a second command.
+The Web UI takes them as one line and splits it the way a shell would.
+
+The bundled **cron-watchers** skill ships ready-made scripts for the common
+sources (RSS/Atom, a JSON endpoint, a GitHub repo) that already follow this
+contract — ask the agent for it, or see
+`agentos skills view cron-watchers`.
+
+What the job does with the result:
+
+- **stdout** → delivered verbatim, exactly as printed (capped at 16k characters).
+- **no stdout** → silent run. Nothing is delivered and the run counts as a
+  success, so a watchdog that prints only on trouble stays quiet.
+- **a final line of `{"wakeAgent": false}`** → also treated as silence, so
+  watchdog scripts written for other runtimes work unchanged.
+- **non-zero exit or timeout** → the error is delivered *and* the job fails, so
+  a broken watchdog cannot be mistaken for a quiet one. `--timeout` bounds the
+  run (default 600s).
+
+Secrets are masked in both stdout and stderr before delivery, and AgentOS's own
+controls (`AGENTOS_GATEWAY_TOKEN` and the redaction/sensitive-path switches) are
+withheld from the child process. Provider credentials are *not* — a script
+inherits `OPENAI_API_KEY` and friends exactly like every other AgentOS child
+process, which is what lets a watcher call a model API of its own. Set
+`AGENTOS_STRIP_PROVIDER_ENV=1` to withhold those too.
+
+**What you are accepting.** The script runs on this host as you, on schedule,
+with nobody watching and no approval prompt — there is no model deciding what to
+run, but also nothing reviewing it. Treat `~/.agentos/scripts/` as trusted as
+your shell profile, and remember that anything with write access to that
+directory can schedule itself. For that reason a script job can only be created
+by an interactive CLI or Web caller: the in-agent `cron` tool refuses
+`job_kind='script'` from a channel, which keeps a chat message from scheduling
+unattended execution.
+
+Script jobs never take `--elevated` — elevation only means something for a job
+that runs an agent turn.
+
+## Pre-run Scripts
+
+The other half of the same idea: keep the script, but let an agent read what it
+found instead of the user. Add `--script` to an `agent_turn` job and it runs
+first, as a data collector:
+
+```sh
+agentos cron add --every 10m --name repo-triage \
+  --job-kind agent_turn \
+  --script watch_github.py \
+  --script-arg --repo --script-arg owner/name \
+  --script-arg --scope --script-arg issues \
+  --text "Summarize anything here that looks urgent. Stay brief."
+```
+
+Per tick:
+
+- **stdout** → prepended to the prompt as `## Script output`, then the turn runs
+  with your `--text` after it.
+- **no stdout** (or a `{"wakeAgent": false}` final line) → the turn is skipped
+  entirely. No model call, no session, no transcript line, no delivery. This is
+  what makes the pattern cheap: the agent only wakes on ticks with news.
+- **non-zero exit** → the error is prepended as `## Script error` and the turn
+  runs anyway, so the agent can tell the user the collector broke.
+
+Same directory rule, same argv handling, and the same operator gate as a script
+job. The script's stdout is untrusted input arriving inside a prompt — the
+header says so to the model, and a cron turn's read-only tool surface is the
+real containment. Think twice before combining a pre-run script that reads the
+open internet with `--elevated`.
+
 ## Choose the Session Target
 
 The default target is an isolated session. For most scheduled work, that is the
@@ -162,6 +284,11 @@ If a job posts to a channel, also check:
 ```sh
 agentos channels status
 ```
+
+A `script` job that appears to do nothing is usually working as designed: empty
+stdout means silence. `agentos cron runs <job-id>` distinguishes the two — a
+silent run is recorded with a `silent: script produced no output` summary, while
+a broken script is recorded as a failure with the exit code and stderr.
 
 Read next:
 

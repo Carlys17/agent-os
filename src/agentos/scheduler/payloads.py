@@ -20,6 +20,7 @@ delivery path:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -100,8 +101,13 @@ def deserialize(data: dict[str, Any]) -> DeliveryReport:
 AGENT_TURN_KIND = "agent_turn"
 REMINDER_KIND = "reminder"
 SYSTEM_EVENT_KIND = "system_event"
-_VALID_PAYLOAD_KINDS = frozenset({AGENT_TURN_KIND, REMINDER_KIND, SYSTEM_EVENT_KIND})
-_KNOWN_HANDLER_KEYS = frozenset({"agent_run", "static_message", "system_event"})
+SCRIPT_KIND = "script"
+_VALID_PAYLOAD_KINDS = frozenset(
+    {AGENT_TURN_KIND, REMINDER_KIND, SYSTEM_EVENT_KIND, SCRIPT_KIND}
+)
+_KNOWN_HANDLER_KEYS = frozenset(
+    {"agent_run", "static_message", "system_event", "script_run"}
+)
 
 
 def payload_kind(payload: dict[str, Any] | None, session_target: SessionTarget | str) -> str:
@@ -122,14 +128,44 @@ def payload_kind(payload: dict[str, Any] | None, session_target: SessionTarget |
 
 
 def payload_text(payload: dict[str, Any] | None, session_target: SessionTarget | str) -> str:
-    """Return the primary text field regardless of payload generation version."""
+    """Return the primary text field regardless of payload generation version.
+
+    A ``script`` payload has no text — its script path stands in, so list and
+    status surfaces that render "what this job does" show the file name.
+    """
     data = payload or {}
     kind = payload_kind(data, session_target)
-    if kind in {REMINDER_KIND, SYSTEM_EVENT_KIND}:
+    if kind == SCRIPT_KIND:
+        value = data.get("script") or ""
+    elif kind in {REMINDER_KIND, SYSTEM_EVENT_KIND}:
         value = data.get("text") or data.get("task") or ""
     else:
         value = data.get("task") or data.get("text") or ""
     return value if isinstance(value, str) else str(value)
+
+
+def payload_script(payload: dict[str, Any] | None) -> str:
+    """Return the payload's script path, if it has one.
+
+    Set on a ``script`` payload (where it is the job) and optionally on an
+    ``agent_turn`` payload (where it is a pre-run data collector).
+    """
+    value = (payload or {}).get("script") or ""
+    return value if isinstance(value, str) else str(value)
+
+
+def payload_workdir(payload: dict[str, Any] | None) -> str:
+    """Return the working directory the payload's script runs in, if any."""
+    value = (payload or {}).get("workdir") or ""
+    return value if isinstance(value, str) else str(value)
+
+
+def payload_args(payload: dict[str, Any] | None) -> list[str]:
+    """Return the argv passed to the payload's script (empty when unset)."""
+    value = (payload or {}).get("args")
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [item if isinstance(item, str) else str(item) for item in value]
 
 
 def payload_agent_id(payload: dict[str, Any] | None, default: str = "main") -> str:
@@ -153,12 +189,29 @@ def normalize_origin_session_key(
     return origin_session_key or ""
 
 
-def make_agent_turn_payload(task: str, agent_id: str = "main") -> dict[str, str]:
-    return {
+def make_agent_turn_payload(
+    task: str,
+    agent_id: str = "main",
+    script: str = "",
+    workdir: str = "",
+    args: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Build an agent-turn payload, optionally with a pre-run script.
+
+    The script keys are omitted entirely when there is no script, so a plain
+    agent turn keeps the three-key shape it has always had on the wire.
+    """
+    payload: dict[str, Any] = {
         "kind": AGENT_TURN_KIND,
         "task": task,
         "agent_id": agent_id or "main",
     }
+    if script:
+        payload["script"] = script
+        payload["workdir"] = workdir or ""
+        if args:
+            payload["args"] = [str(arg) for arg in args]
+    return payload
 
 
 def make_reminder_payload(text: str, agent_id: str = "main") -> dict[str, str]:
@@ -177,6 +230,23 @@ def make_system_event_payload(text: str, agent_id: str = "main") -> dict[str, st
     }
 
 
+def make_script_payload(
+    script: str,
+    agent_id: str = "main",
+    workdir: str = "",
+    args: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "kind": SCRIPT_KIND,
+        "script": script,
+        "workdir": workdir or "",
+        "agent_id": agent_id or "main",
+    }
+    if args:
+        payload["args"] = [str(arg) for arg in args]
+    return payload
+
+
 def normalize_contract(
     *,
     handler_key: str,
@@ -185,7 +255,7 @@ def normalize_contract(
     session_key: str = "",
     origin_session_key: str = "",
     strict: bool = True,
-) -> tuple[str, dict[str, str], SessionTarget, str]:
+) -> tuple[str, dict[str, Any], SessionTarget, str]:
     """Normalize a job contract into the supported cron execution modes."""
     target = (
         session_target
@@ -204,6 +274,30 @@ def normalize_contract(
     kind = payload_kind(data, target)
     agent_id = payload_agent_id(data)
     text = payload_text(data, target)
+
+    if kind == SCRIPT_KIND:
+        script = payload_script(data)
+        if strict and not script.strip():
+            raise ValueError("Cron script payloads require a script path")
+        if strict and target == SessionTarget.MAIN:
+            raise ValueError("script payloads cannot use sessionTarget='main'")
+        if (
+            strict
+            and target in (SessionTarget.CURRENT, SessionTarget.SESSION)
+            and not bound_session_key
+        ):
+            raise ValueError(f"{target.value} sessionTarget requires a bound session key")
+        return (
+            "script_run",
+            make_script_payload(
+                script,
+                agent_id,
+                payload_workdir(data),
+                payload_args(data),
+            ),
+            target,
+            bound_session_key,
+        )
 
     if strict and not text.strip():
         raise ValueError("Cron payload text is required")
@@ -233,22 +327,40 @@ def normalize_contract(
     ):
         raise ValueError(f"{target.value} sessionTarget requires a bound session key")
 
-    return "agent_run", make_agent_turn_payload(text, agent_id), target, bound_session_key
+    # An agent turn may carry a pre-run script; the keys ride along so a job
+    # edited through any surface keeps its collector.
+    return (
+        "agent_run",
+        make_agent_turn_payload(
+            text,
+            agent_id,
+            payload_script(data),
+            payload_workdir(data),
+            payload_args(data),
+        ),
+        target,
+        bound_session_key,
+    )
 
 
 __all__ = [
     "AGENT_TURN_KIND",
     "REMINDER_KIND",
+    "SCRIPT_KIND",
     "SYSTEM_EVENT_KIND",
     "DeliveryReport",
     "deserialize",
     "make_agent_turn_payload",
     "make_reminder_payload",
+    "make_script_payload",
     "make_system_event_payload",
     "normalize_contract",
     "normalize_origin_session_key",
     "payload_agent_id",
+    "payload_args",
     "payload_kind",
+    "payload_script",
     "payload_text",
+    "payload_workdir",
     "serialize",
 ]

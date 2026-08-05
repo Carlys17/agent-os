@@ -2067,6 +2067,7 @@ async def start_gateway_server(
         from agentos.scheduler.delivery import DeliveryChain
         from agentos.scheduler.handlers import (
             make_agent_run_handler,
+            make_script_run_handler,
             make_static_message_handler,
             make_system_event_handler,
         )
@@ -2216,12 +2217,15 @@ async def start_gateway_server(
             default_elevated=lambda: configured_default_elevated(config),
         )
         static_handler = make_static_message_handler(delivery_chain=delivery_chain)
+        script_handler = make_script_run_handler(delivery_chain=delivery_chain)
         svc.cron_scheduler.register_handler("agent_run", agent_handler)
         svc.cron_scheduler.register_handler("static_message", static_handler)
         svc.cron_scheduler.register_handler("system_event", system_handler)
+        svc.cron_scheduler.register_handler("script_run", script_handler)
         log.info("gateway.cron_handler_registered", handler_key="agent_run")
         log.info("gateway.cron_handler_registered", handler_key="static_message")
         log.info("gateway.cron_handler_registered", handler_key="system_event")
+        log.info("gateway.cron_handler_registered", handler_key="script_run")
         # Dream was removed; pause any cron rows an older install left behind
         # so they cannot keep firing against a handler that no longer exists.
         await _pause_orphaned_dream_crons(

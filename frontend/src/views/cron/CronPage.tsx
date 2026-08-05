@@ -636,7 +636,11 @@ export function CronPage() {
   const enabledCount = jobs.filter((j) => j.enabled).length
   const paused = total - enabledCount
   const upcoming = jobs.filter((j) => isUpcomingRun(j)).length
-  const reminders = jobs.filter((j) => (j.payloadKind || j.payload_kind) === 'reminder').length
+  // Reminders and scripts share a tile: both deliver without spending a token.
+  const reminders = jobs.filter((j) => {
+    const kind = j.payloadKind || j.payload_kind
+    return kind === 'reminder' || kind === 'script'
+  }).length
   const agentTasks = jobs.filter((j) => (j.payloadKind || j.payload_kind) === 'agent_turn').length
 
   // cron.js:562-570 — filter then sort.
@@ -707,7 +711,7 @@ export function CronPage() {
             value={upcoming}
             hint={upcoming ? 'scheduled ahead' : 'no upcoming runs'}
           />
-          <StatTile label="Reminders" value={reminders} hint="static reminders" />
+          <StatTile label="Reminders" value={reminders} hint="reminders & scripts" />
           <StatTile label="Agent tasks" value={agentTasks} hint="scheduled turns" />
         </div>
       </section>

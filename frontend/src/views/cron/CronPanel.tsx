@@ -39,6 +39,7 @@ const SCHEDULE_TYPES: Array<{ value: ScheduleKind; label: string }> = [
 // cron.js:130-134 — job mode options.
 const JOB_MODES: Array<{ value: PayloadKind; label: string }> = [
   { value: 'reminder', label: 'Static Reminder (no model)' },
+  { value: 'script', label: 'Script (no model)' },
   { value: 'agent_turn', label: 'Background Agent Task (choose session)' },
   { value: 'system_event', label: 'System Event (Main)' },
 ]
@@ -146,6 +147,11 @@ export function CronPanel({
 
   // cron.js:997-1057 — the resolved session target (locked flags + message label).
   const targetRes = resolveTarget(form.payloadKind, form.sessionTarget, activeSessionKey)
+
+  // A script job's script IS the job (required); an agent turn may add one as
+  // an optional pre-run collector. No other kind runs a file.
+  const isScriptJob = form.payloadKind === 'script'
+  const canRunScript = isScriptJob || form.payloadKind === 'agent_turn'
 
   const isAnnounce = form.deliveryMode === 'announce'
   const isWebhook = form.deliveryMode === 'webhook'
@@ -350,16 +356,82 @@ export function CronPanel({
             </label>
           ) : null}
 
-          <label className="cron-field">
-            <span className="t-label">{targetRes.messageLabel}</span>
-            <textarea
-              className="cron-input cron-input--textarea"
-              rows={4}
-              placeholder="Run daily report…"
-              value={form.message}
-              onChange={(e) => set('message', e.target.value)}
-            />
-          </label>
+          {isScriptJob ? null : (
+            <label className="cron-field">
+              <span className="t-label">{targetRes.messageLabel}</span>
+              <textarea
+                className="cron-input cron-input--textarea"
+                rows={4}
+                placeholder="Run daily report…"
+                value={form.message}
+                onChange={(e) => set('message', e.target.value)}
+              />
+            </label>
+          )}
+
+          {canRunScript ? (
+            <>
+              <label className="cron-field">
+                <span className="t-label">{isScriptJob ? 'Script' : 'Pre-run script'}</span>
+                <input
+                  className="cron-input"
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={isScriptJob ? 'watch-memory.sh' : '(optional) watch-rss.py'}
+                  value={form.script}
+                  onChange={(e) => set('script', e.target.value)}
+                />
+                <span className="cron-field__hint">
+                  Relative to ~/.agentos/scripts/. .sh and .bash run under bash, anything else under
+                  python.{' '}
+                  {isScriptJob
+                    ? 'Its stdout is delivered as-is; no output means nothing is sent.'
+                    : 'Its stdout becomes context for the turn; no output means the turn is skipped.'}
+                </span>
+              </label>
+
+              <label className="cron-field">
+                <span className="t-label">Script arguments</span>
+                <input
+                  className="cron-input"
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="--url https://example.com/feed.xml"
+                  value={form.scriptArgs}
+                  onChange={(e) => set('scriptArgs', e.target.value)}
+                />
+                <span className="cron-field__hint">
+                  Split the way a shell would, then passed straight to the script — never run
+                  through a shell. Quote a value that contains spaces.
+                </span>
+              </label>
+
+              <label className="cron-field">
+                <span className="t-label">Working directory</span>
+                <input
+                  className="cron-input"
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="(the script's own directory)"
+                  value={form.workdir}
+                  onChange={(e) => set('workdir', e.target.value)}
+                />
+              </label>
+            </>
+          ) : null}
+
+          {isScriptJob || (canRunScript && form.script.trim()) ? (
+            <div className="cron-field cron-elevated tone-danger">
+              <p className="cron-elevated__warning">
+                This script runs on this host as you, on schedule, with nobody watching and no
+                approval prompt. Nothing reviews what it does before it runs — keep the scripts
+                directory as trusted as your own shell profile.
+              </p>
+            </div>
+          ) : null}
 
           {form.payloadKind === 'agent_turn' ? (
             <div className="cron-field cron-elevated tone-danger">

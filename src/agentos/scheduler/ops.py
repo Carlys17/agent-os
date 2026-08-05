@@ -344,7 +344,15 @@ class SchedulerOps:
             job.session_key = patch.pop("session_key") or ""
 
         if payload_patch:
-            job.payload = {**job.payload, **payload_patch}
+            # A patch that names its `kind` is a complete, already-normalized
+            # payload from the RPC layer — take it whole. Merging it would make
+            # optional keys unremovable: dropping a job's pre-run script sends a
+            # payload without `script`, and a merge would resurrect the old one.
+            # Partial patches (legacy callers touching one field) still merge.
+            if payload_patch.get("kind"):
+                job.payload = dict(payload_patch)
+            else:
+                job.payload = {**job.payload, **payload_patch}
         if "delivery" in patch:
             job.delivery = patch.pop("delivery")
 

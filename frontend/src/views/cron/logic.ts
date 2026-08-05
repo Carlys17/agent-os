@@ -23,6 +23,12 @@ export interface RawJob {
   last_status?: string
   payloadKind?: string
   payload_kind?: string
+  /** The file under ~/.agentos/scripts/ the scheduler runs, if the job has one. */
+  script?: string
+  /** Arguments passed to that script. */
+  scriptArgs?: unknown
+  /** The working directory the script runs in. */
+  workdir?: string
   sessionTarget?: string
   session_target?: string
   message?: string
@@ -79,13 +85,17 @@ export function jobKindLabel(job: RawJob): string {
   const kind = job.payloadKind || job.payload_kind
   if (kind === 'reminder') return 'Reminder'
   if (kind === 'system_event') return 'System event'
+  if (kind === 'script') return 'Script'
   return 'Agent task'
 }
 
-/** cron.js:607-610 — reminder→is-reminder, everything else→is-agent. */
+/**
+ * cron.js:607-610 — reminder→is-reminder, everything else→is-agent. Script jobs
+ * join the reminder bucket: both deliver without ever reaching a model.
+ */
 export function jobKindClass(job: RawJob): 'is-reminder' | 'is-agent' {
   const kind = job.payloadKind || job.payload_kind
-  return kind === 'reminder' ? 'is-reminder' : 'is-agent'
+  return kind === 'reminder' || kind === 'script' ? 'is-reminder' : 'is-agent'
 }
 
 /**
@@ -571,7 +581,7 @@ export function explainCron(expr: string): string {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type ScheduleKind = 'cron' | 'every' | 'at'
-export type PayloadKind = 'reminder' | 'agent_turn' | 'system_event'
+export type PayloadKind = 'reminder' | 'agent_turn' | 'system_event' | 'script'
 export type SessionTarget = 'main' | 'current' | 'isolated' | 'session'
 export type DeliveryMode = '' | 'none' | 'announce' | 'webhook'
 export type FailureDestMode = '' | 'channel' | 'webhook'
@@ -583,6 +593,12 @@ export interface CronForm {
   enabled: boolean
   agentId: string
   payloadKind: PayloadKind
+  /** File under ~/.agentos/scripts/ this job runs (the job itself, or a pre-run collector). */
+  script: string
+  /** Arguments for that script, as one shell-style line. */
+  scriptArgs: string
+  /** Working directory for the script (blank → the script's own directory). */
+  workdir: string
   sessionTarget: SessionTarget
   targetSessionKey: string
   scheduleKind: ScheduleKind
@@ -617,6 +633,9 @@ export const EMPTY_CRON_FORM: CronForm = {
   enabled: true,
   agentId: 'main',
   payloadKind: 'reminder',
+  script: '',
+  scriptArgs: '',
+  workdir: '',
   sessionTarget: 'isolated',
   targetSessionKey: '',
   scheduleKind: 'cron',
@@ -716,6 +735,9 @@ export function seedForm(
     enabled: job ? !!job.enabled : true,
     agentId: job ? str(job.agentId) || 'main' : str(tpl.agentId) || 'main',
     payloadKind,
+    script: job ? str(job.script) : str(tpl.script),
+    scriptArgs: joinScriptArgs(job ? job.scriptArgs : tpl.scriptArgs),
+    workdir: job ? str(job.workdir) : str(tpl.workdir),
     sessionTarget,
     targetSessionKey: job
       ? jobSessionKey(job)
@@ -808,6 +830,40 @@ export function deliveryFormFromJob(
  * agent-turn target). Returns the resolved target + lock + message label; the
  * component uses these to render disabled state and conditional rows.
  */
+/**
+ * Render a job's stored argv back into the single line the form edits. Args
+ * containing whitespace are quoted so the round trip through the backend's
+ * shell-style split is lossless.
+ */
+export function joinScriptArgs(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (!Array.isArray(value)) return ''
+  return value
+    .map((arg) => {
+      const text = String(arg)
+      return /[\s"']/.test(text) ? JSON.stringify(text) : text
+    })
+    .join(' ')
+}
+
+/**
+ * Mirror of the backend's script-path rule (scheduler/scripts.py): a script is
+ * named by a path relative to ~/.agentos/scripts/, so absolute, home-relative,
+ * and traversal paths are refused before the RPC round trip. Returns an error
+ * string, or '' when the path is usable.
+ */
+export function validateScriptPath(raw: string): string {
+  const script = (raw || '').trim()
+  if (!script) return 'Script path is required'
+  if (/^[/~\\]/.test(script) || /^[A-Za-z]:/.test(script)) {
+    return 'Script path must be relative to ~/.agentos/scripts/ — use just the file name'
+  }
+  if (script.split(/[/\\]/).includes('..')) {
+    return 'Script path must stay inside ~/.agentos/scripts/'
+  }
+  return ''
+}
+
 export interface TargetResolution {
   target: SessionTarget
   locked: boolean
@@ -828,6 +884,15 @@ export function resolveTarget(
       target: 'isolated',
       locked: true,
       messageLabel: 'Reminder text',
+      showTargetSessionRow: false,
+    }
+  }
+  if (payloadKind === 'script') {
+    // The script is the job; there is no prompt and no session to continue.
+    return {
+      target: 'isolated',
+      locked: true,
+      messageLabel: 'Note (not sent)',
       showTargetSessionRow: false,
     }
   }
@@ -953,7 +1018,7 @@ export function buildSavePayload(
   const sessionTarget: SessionTarget =
     payloadKind === 'system_event'
       ? 'main'
-      : payloadKind === 'reminder'
+      : payloadKind === 'reminder' || payloadKind === 'script'
         ? 'isolated'
         : form.sessionTarget
   const targetSessionKey = form.targetSessionKey.trim()
@@ -965,6 +1030,20 @@ export function buildSavePayload(
     agentId,
     sessionTarget,
     text: message,
+  }
+
+  // A script job's script IS the job; an agent turn may carry one as a pre-run
+  // collector, where blank means "no collector". The keys are always sent for
+  // both kinds — an omitted `script` on update means "keep what you had", so
+  // clearing the field has to travel as an explicit empty string.
+  if (payloadKind === 'script' || payloadKind === 'agent_turn') {
+    if (payloadKind === 'script' || form.script.trim()) {
+      const scriptError = validateScriptPath(form.script)
+      if (scriptError) return { ok: false, error: scriptError }
+    }
+    payload.script = form.script.trim()
+    payload.workdir = form.workdir.trim()
+    payload.scriptArgs = form.scriptArgs.trim()
   }
 
   if (form.scheduleKind === 'cron') {

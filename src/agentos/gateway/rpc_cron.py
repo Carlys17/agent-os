@@ -2,25 +2,33 @@
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import asdict
 from typing import Any, TypeGuard
 
 from agentos.gateway.rpc import RpcContext, RpcUnavailableError, get_dispatcher
 from agentos.permissions import cron_tool_policy_elevated, normalize_cron_elevated
 from agentos.scheduler.payloads import (
+    AGENT_TURN_KIND,
     REMINDER_KIND,
+    SCRIPT_KIND,
     SYSTEM_EVENT_KIND,
     make_agent_turn_payload,
     make_reminder_payload,
+    make_script_payload,
     make_system_event_payload,
     payload_agent_id,
+    payload_args,
     payload_kind,
+    payload_script,
     payload_text,
+    payload_workdir,
 )
 from agentos.scheduler.schedule_normalizer import (
     coerce_schedule,
     coerce_schedule_from_params,
 )
+from agentos.scheduler.scripts import validate_script_path
 from agentos.scheduler.types import (
     DeliveryConfig,
     DeliveryMode,
@@ -84,6 +92,11 @@ def _job_to_wire(j: Any) -> dict[str, Any]:
         "message": text,
         "text": text,
         "payloadKind": kind,
+        # A script job's file (and an agent turn's optional pre-run collector),
+        # emitted for every kind so the UI reads one shape.
+        "script": payload_script(payload),
+        "workdir": payload_workdir(payload),
+        "scriptArgs": payload_args(payload),
         "agentId": payload_agent_id(payload, "main"),
         "status": status_str,
         "enabled": (
@@ -474,6 +487,28 @@ def _originating_reply_target(ctx: RpcContext) -> ReplyTargetSnapshot | None:
     )
 
 
+def _coerce_script_args(value: Any) -> list[str]:
+    """Normalize the wire's script arguments into an argv list.
+
+    A list arrives already split (CLI, tool). A plain string is what a text
+    input gives you, so it is split the way a shell would — quotes respected,
+    but nothing is ever handed to a shell.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        try:
+            return shlex.split(stripped)
+        except ValueError as exc:
+            raise ValueError(f"scriptArgs could not be parsed: {exc}") from exc
+    if isinstance(value, (list, tuple)):
+        return [item if isinstance(item, str) else str(item) for item in value]
+    raise ValueError("scriptArgs must be a list of strings or a single string")
+
+
 def _build_payload(
     params: dict[str, Any],
     session_target: SessionTarget,
@@ -490,6 +525,33 @@ def _build_payload(
     if not isinstance(kind, str) or not kind:
         kind = SYSTEM_EVENT_KIND if session_target == SessionTarget.MAIN else REMINDER_KIND
     agent_id = params.get("agentId", "main")
+
+    script_raw = params.get("script")
+    script = script_raw.strip() if isinstance(script_raw, str) else ""
+    workdir_raw = params.get("workdir")
+    workdir = workdir_raw.strip() if isinstance(workdir_raw, str) else ""
+    script_args = _coerce_script_args(params.get("scriptArgs", params.get("script_args")))
+
+    if kind == SCRIPT_KIND:
+        if session_target == SessionTarget.MAIN:
+            raise ValueError("payloadKind='script' cannot use sessionTarget='main'")
+        # Required even on update: the merge carries the job's current script
+        # forward, so an empty one here means the caller is asking for a script
+        # job with nothing to run.
+        if not script:
+            raise ValueError("Cron script is required for payloadKind='script'")
+        script_error = validate_script_path(script)
+        if script_error:
+            raise ValueError(script_error)
+        return kind, make_script_payload(script, agent_id, workdir, script_args)
+
+    if script and kind != AGENT_TURN_KIND:
+        # Refuse rather than drop it: silently ignoring `script` here would let
+        # `cron update --script x` on a reminder report success and change nothing.
+        raise ValueError(
+            f"script is only used by payloadKind='script' or 'agent_turn', not {kind!r}"
+        )
+
     if require_text and not text.strip():
         raise ValueError("Cron text is required")
     if kind == SYSTEM_EVENT_KIND:
@@ -502,7 +564,12 @@ def _build_payload(
         return kind, make_reminder_payload(text, agent_id)
     if session_target == SessionTarget.MAIN:
         raise ValueError("payloadKind='agent_turn' cannot use sessionTarget='main'")
-    return kind, make_agent_turn_payload(text, agent_id)
+    if script:
+        # A pre-run collector on an agent turn: same file, same directory rule.
+        script_error = validate_script_path(script)
+        if script_error:
+            raise ValueError(script_error)
+    return kind, make_agent_turn_payload(text, agent_id, script, workdir, script_args)
 
 
 def _handler_key_for_payload_kind(kind: str) -> str:
@@ -510,6 +577,8 @@ def _handler_key_for_payload_kind(kind: str) -> str:
         return "system_event"
     if kind == REMINDER_KIND:
         return "static_message"
+    if kind == SCRIPT_KIND:
+        return "script_run"
     return "agent_run"
 
 
@@ -748,6 +817,10 @@ async def _handle_cron_update(params: dict | None, ctx: RpcContext) -> dict[str,
             "message",
             "payloadKind",
             "agentId",
+            "script",
+            "workdir",
+            "scriptArgs",
+            "script_args",
             "sessionTarget",
             "targetSessionKey",
             "target_session_key",
@@ -757,16 +830,21 @@ async def _handle_cron_update(params: dict | None, ctx: RpcContext) -> dict[str,
         )
     )
     if payload_related:
-        current_text = payload_text(current_job.payload, current_job.session_target)
+        current_kind = payload_kind(current_job.payload, current_job.session_target)
+        merged_kind = params.get("payloadKind", current_kind)
+        # A script payload's "text" is its script path (payload_text stands in for
+        # display), so it must not be inherited as prompt text when a job is
+        # converted away from script.
+        current_text = (
+            "" if current_kind == SCRIPT_KIND
+            else payload_text(current_job.payload, current_job.session_target)
+        )
         merged_params = {
             "text": params.get(
                 "text",
                 params.get("prompt", params.get("message", current_text)),
             ),
-            "payloadKind": params.get(
-                "payloadKind",
-                payload_kind(current_job.payload, current_job.session_target),
-            ),
+            "payloadKind": merged_kind,
             "agentId": params.get("agentId", payload_agent_id(current_job.payload)),
             "sessionTarget": params.get(
                 "sessionTarget",
@@ -780,6 +858,19 @@ async def _handle_cron_update(params: dict | None, ctx: RpcContext) -> dict[str,
                 ),
             ),
         }
+        if merged_kind in (SCRIPT_KIND, AGENT_TURN_KIND):
+            # Carried across an unrelated patch so editing a job's schedule does
+            # not drop the script it runs. Only for the two kinds that can hold
+            # one: inheriting it into a reminder would trip the guard in
+            # _build_payload when a job is converted away from script.
+            merged_params["script"] = params.get("script", payload_script(current_job.payload))
+            merged_params["workdir"] = params.get("workdir", payload_workdir(current_job.payload))
+            merged_params["scriptArgs"] = params.get(
+                "scriptArgs",
+                params.get("script_args", payload_args(current_job.payload)),
+            )
+        elif isinstance(params.get("script"), str) and params["script"].strip():
+            merged_params["script"] = params["script"]
         session_target = _resolve_session_target(merged_params)
         if session_target == SessionTarget.MAIN:
             merged_params["targetSessionKey"] = params.get(
