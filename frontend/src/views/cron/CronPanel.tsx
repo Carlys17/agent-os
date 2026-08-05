@@ -38,8 +38,8 @@ const SCHEDULE_TYPES: Array<{ value: ScheduleKind; label: string }> = [
 
 // cron.js:130-134 — job mode options.
 const JOB_MODES: Array<{ value: PayloadKind; label: string }> = [
-  { value: 'reminder', label: 'Static Reminder (no model)' },
-  { value: 'script', label: 'Script (no model)' },
+  { value: 'reminder', label: 'Static Reminder (no LLM)' },
+  { value: 'script', label: 'Script (no LLM)' },
   { value: 'agent_turn', label: 'Background Agent Task (choose session)' },
   { value: 'system_event', label: 'System Event (Main)' },
 ]

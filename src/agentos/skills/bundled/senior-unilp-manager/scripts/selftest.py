@@ -885,11 +885,17 @@ _POOL = "0xdb2c20421239d46bb30a7a73029b7f9b7f166489bfb972057d33cbd7249413a5f"
 _POOL_ALT = "0x1299aa8c4ea0db5b8453757ed129ed8e916561925926a161cb89842e3987401a"
 _TOKEN = "0x4200000000000000000000000000000000000006"
 _TOKEN_ALT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+_TOKEN_THIRD = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 _ME = "0x7de10Fec3dBC1267446d00a1F3ccFcb7F4176412"
 _THEM = "0x000000000000000000000000000000000000dEaD"
 
 _BASELINE = {
     "approve": {"token": _TOKEN, "amount": "1", "expiration-days": "30"},
+    # 3000/60 is a conventional tier, so --allow-odd-tier is inert here; it is set so the
+    # fee and tick-spacing mutations below do not trip the odd-tier refusal instead of
+    # producing a plan. The refusal itself is tested separately in tier6.
+    "create-pool": {"token0": _TOKEN, "token1": _TOKEN_ALT, "fee": "3000",
+                    "tick-spacing": "60", "tick": "0", "allow-odd-tier": True},
     "mint": {"pool": _POOL, "tick-lower": "-600", "tick-upper": "600",
              "liquidity": "1000000", "slippage-bps": "100", "recipient": _ME,
              "max-tick-drift": "60", "deadline-secs": "1200"},
@@ -908,6 +914,11 @@ _MUTATIONS = [
     ("approve", "token", _TOKEN_ALT),
     ("approve", "amount", "2"),
     ("approve", "expiration-days", "3650"),
+    ("create-pool", "token0", _TOKEN_THIRD),
+    ("create-pool", "token1", _TOKEN_THIRD),
+    ("create-pool", "fee", "500"),
+    ("create-pool", "tick-spacing", "10"),
+    ("create-pool", "tick", "600"),
     ("mint", "pool", _POOL_ALT),
     ("mint", "tick-lower", "-1200"),
     ("mint", "tick-upper", "1200"),
@@ -940,6 +951,9 @@ _MUTATIONS = [
 _HASH_FIELDS = {
     "approve": ["amount", "chainId", "cmd", "expirationDays", "needErc20", "needPermit2",
                 "signer", "token"],
+    # No deadlineSecs: initializePool carries no deadline, so nothing binds one.
+    "create-pool": ["chainId", "cmd", "currency0", "currency1", "fee", "hooks", "poolId",
+                    "signer", "sqrtPriceX96", "tick", "tickSpacing", "to"],
     "mint": ["amount0Max", "amount1Max", "chainId", "cmd", "deadlineSecs", "liquidity",
              "maxTickDrift", "poolId", "recipient", "signer", "tickLower", "tickUpper",
              "to"],
@@ -1014,7 +1028,10 @@ def _plan_of(lp_write, chain: dict, command: str, args: dict, *,
     stubs = {"pool_key_for_id": stub_pool_key, "load_pool_state": stub_state,
              "load_position_for_write": stub_position, "token_info": stub_token_info,
              "check_allowances": stub_allowances, "plan_hash": recording_plan_hash,
-             "run_plan": stub_run_plan}
+             "run_plan": stub_run_plan,
+             # create-pool returns early (and never hashes) against a live pool, so the
+             # planning path is the one where this reads False.
+             "pool_is_initialized": lambda client, chn, pool_id: False}
     saved = {name: getattr(lp_write, name) for name in stubs}
     signer = {"address": _ME, "privateKey": None, "simulateOnly": True}
     try:
@@ -1077,6 +1094,61 @@ def tier6(g: dict, r: Results) -> None:
             "unused" in (_row(plans["increase"]["rows"], "recipient") or ""), True)
     r.check("mint shows the tick-drift bound it hashes",
             "60" in (_row(plans["mint"]["rows"], "max tick drift") or ""), True)
+
+    # --- create-pool -------------------------------------------------------
+    # The starting price is the one parameter of this command that cannot be undone, so
+    # the two ways of expressing it must agree exactly and both must reach the hash.
+    def _create(**overrides):
+        return _plan_of(lp_write, chain, "create-pool",
+                        dict(_BASELINE["create-pool"], **overrides))
+
+    # Pinned selector: the ABI fragment is hand-written, so a typo in a parameter type
+    # would still encode cleanly and only fail on chain. 0xf7020405 is
+    # initializePool((address,address,uint24,int24,address),uint160).
+    from unilp.abi_codec import encode_function_data as _efd
+    from unilp.abi_defs import POSITION_MANAGER_ABI as _PM_ABI
+    _key = {"currency0": lp_write.NATIVE, "currency1": _TOKEN, "fee": 3000,
+            "tickSpacing": 60, "hooks": lp_write.NATIVE}
+    _data = _efd(_PM_ABI, "initializePool", [lp_write.pool_key_tuple(_key), 1 << 96])
+    r.check("initializePool encodes to the known selector", _data[:10], "0xf7020405")
+    r.check("initializePool calldata is 4 + 6 words", len(_data), 2 + 8 + 6 * 64)
+
+    base = plans["create-pool"]
+    r.check("create-pool hashes the sqrtPriceX96 it will send",
+            int(base["fields"]["sqrtPriceX96"]), 1 << 96)
+    r.check("create-pool pins hooks to the zero address",
+            base["fields"]["hooks"], lp_write.NATIVE)
+    r.check("create-pool sorts the currencies into PoolKey order",
+            (base["fields"]["currency0"].lower() < base["fields"]["currency1"].lower()), True)
+    swapped = _create(token0=_TOKEN_ALT, token1=_TOKEN)
+    r.check("create-pool ignores the order the two tokens were typed in",
+            swapped["hash"], base["hash"])
+
+    # --price 1.0 on two 18-decimal tokens is tick 0, i.e. the same plan as --tick 0.
+    by_price = _plan_of(lp_write, chain, "create-pool",
+                        {k: v for k, v in dict(_BASELINE["create-pool"],
+                                               price="1").items() if k != "tick"})
+    r.check("create-pool --price and the equivalent --tick produce one plan",
+            by_price["hash"], base["hash"])
+
+    def _refuses(**overrides):
+        try:
+            _create(**overrides)
+        except Exception:  # noqa: BLE001 — the message differs per guard; refusal is the check
+            return True
+        return False
+
+    r.check("create-pool refuses a non-standard tier without --allow-odd-tier",
+            _refuses(fee="3000", **{"tick-spacing": "10", "allow-odd-tier": None}), True)
+    r.check("create-pool refuses a dynamic fee (needs a hook)",
+            _refuses(fee=str(0x800000)), True)
+    r.check("create-pool refuses tickSpacing 0", _refuses(**{"tick-spacing": "0"}), True)
+    r.check("create-pool refuses a fee above 100%", _refuses(fee="1000001"), True)
+    r.check("create-pool refuses the same token twice", _refuses(token1=_TOKEN), True)
+    r.check("create-pool refuses both --tick and --price", _refuses(price="1"), True)
+    r.check("create-pool refuses neither --tick nor --price",
+            _refuses(tick=None, price=None), True)
+    r.check("create-pool refuses a valueless --tick", _refuses(tick=True), True)
 
 
 # ---------------------------------------------------------------------------

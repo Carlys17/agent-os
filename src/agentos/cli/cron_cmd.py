@@ -448,6 +448,24 @@ def _render_mapping(payload: dict[str, Any], *, title: str) -> None:
     console.print(table)
 
 
+_RUN_OUTPUT_WIDTH = 60
+
+
+def _run_output_cell(summary: Any) -> str:
+    """One-line preview of a run's output for the runs table.
+
+    A script job's stdout *is* its result, and it is routinely multi-line, so it
+    is flattened and clipped here rather than allowed to break the table. The
+    untruncated text stays available through ``--json``.
+    """
+    text = " ".join(str(summary or "").split())
+    if not text:
+        return ""
+    if len(text) <= _RUN_OUTPUT_WIDTH:
+        return text
+    return text[: _RUN_OUTPUT_WIDTH - 1] + "…"
+
+
 def _render_runs(rows: list[dict[str, Any]]) -> None:
     if not rows:
         typer.echo("No cron runs.")
@@ -458,6 +476,8 @@ def _render_runs(rows: list[dict[str, Any]]) -> None:
     table.add_column("Finished")
     table.add_column("Status")
     table.add_column("Duration ms", justify="right")
+    table.add_column("Delivery")
+    table.add_column("Output")
     table.add_column("Error")
     for row in rows:
         table.add_row(
@@ -466,6 +486,8 @@ def _render_runs(rows: list[dict[str, Any]]) -> None:
             str(row.get("finished_at") or ""),
             str(row.get("status") or ("ok" if row.get("success") else "error")),
             str(row.get("duration_ms") or ""),
+            str(row.get("deliveryStatus") or row.get("delivery_status") or ""),
+            _run_output_cell(row.get("summary")),
             str(row.get("error") or ""),
         )
     console.print(table)
@@ -538,7 +560,7 @@ def cron_add(
         "--script",
         help=(
             "Run this script, relative to ~/.agentos/scripts/. On its own it "
-            "creates a script job: stdout is delivered verbatim and no model "
+            "creates a script job: stdout is delivered verbatim and no LLM "
             "runs. With --job-kind agent_turn it becomes a pre-run collector — "
             "the agent sees the stdout, and no output means the turn is skipped."
         ),
@@ -568,6 +590,16 @@ def cron_add(
         "isolated",
         "--session-target",
         help="Target session mode: isolated, main, current, or session",
+    ),
+    session_key: str | None = typer.Option(
+        None,
+        "--session-key",
+        help=(
+            "Chat session this job reports into. Without it a job scheduled "
+            "from the CLI has no conversation to mirror results to — which is "
+            "how a --script job ends up running with nothing to show for it. "
+            "List keys with 'agentos sessions list'."
+        ),
     ),
     timeout: float | None = typer.Option(None, "--timeout", help="Run timeout in seconds"),
     tz: str | None = typer.Option(
@@ -720,6 +752,7 @@ def cron_add(
     text = _as_optional_str(text)
     script = _as_optional_str(script)
     workdir = _as_optional_str(workdir)
+    session_key = _as_optional_str(session_key)
     script_args = _as_str_list(script_arg)
     target = _validate_session_target(session_target)
     payload_kind = _validate_job_kind(job_kind)
@@ -762,6 +795,13 @@ def cron_add(
             "--session-target current is only available from session-bound clients; "
             "use the WebUI/current chat surface or choose --session-target isolated"
         )
+    if session_key and target == "main":
+        raise typer.BadParameter(
+            "--session-key cannot be combined with --session-target main; "
+            "main-target jobs report through the heartbeat, not a chat"
+        )
+    if target == "session" and not session_key:
+        raise typer.BadParameter("--session-target session requires --session-key")
     params: dict[str, Any] = {
         **_build_schedule_param(
             expression=expression,
@@ -774,6 +814,8 @@ def cron_add(
         "payloadKind": payload_kind,
         "sessionTarget": target,
     }
+    if session_key:
+        params["sessionKey"] = session_key
     if script:
         params["script"] = script
     if workdir:

@@ -37,6 +37,12 @@ Encoded by `scripts/unilp/v4_actions.py`.
 | `0x13` | CLEAR_OR_TAKE | take if above a threshold, otherwise forfeit dust |
 | `0x14` | SWEEP | refund a leftover currency balance to a recipient |
 
+There is **no INITIALIZE_POOL action byte**. Creating a pool is
+`PositionManager.initializePool(PoolKey, uint160 sqrtPriceX96)` — a plain function call
+(selector `0xf7020405`), outside `modifyLiquidities` entirely, which forwards to
+`PoolManager.initialize`. `lp_write.py create-pool` is that call; it takes no `unlockData`
+and no deadline.
+
 ## Parameter layouts
 
 ```
@@ -368,6 +374,9 @@ Read-only, Uniswap v4 only, by design:
 - **No Uniswap v3 positions.** Clanker v3.1 and Doppler's v3 initializers still deploy v3
   pools; those fall back to the balance-only `--include-v3` report, which reads raw pool
   balances (including uncollected fees) and cannot read v3 NFT positions.
+- **No hooked pool creation.** `create-pool` opens hook-less pools only; a hook address in
+  the PoolKey would make `initialize` call that hook's `beforeInitialize`/`afterInitialize`,
+  and deploying a hook (which has to be mined for its flag bits) is out of scope entirely.
 
 Sources: [Clanker](https://clanker.world/docs/references/deployed-contracts#base-8453) ·
 [Liquid](https://app.liquidprotocol.org/docs#contracts) ·

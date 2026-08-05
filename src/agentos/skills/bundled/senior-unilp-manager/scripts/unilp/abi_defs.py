@@ -106,6 +106,15 @@ POSITION_MANAGER_ABI = [
     {"type": "function", "name": "modifyLiquidities", "stateMutability": "payable",
      "inputs": [{"name": "unlockData", "type": "bytes"}, {"name": "deadline", "type": "uint256"}],
      "outputs": []},
+    # Creating a pool is a plain function call, not a modifyLiquidities action: there is
+    # no INITIALIZE_POOL byte in the Actions enum. PositionManager forwards to
+    # PoolManager.initialize, which is why the skill still never targets PoolManager.
+    {"type": "function", "name": "initializePool", "stateMutability": "payable",
+     "inputs": [
+         {"name": "key", "type": "tuple", "components": POOL_KEY_COMPONENTS},
+         {"name": "sqrtPriceX96", "type": "uint160"},
+     ],
+     "outputs": [{"name": "tick", "type": "int24"}]},
     {"type": "event", "name": "Transfer",
      "inputs": [
          {"name": "from", "type": "address", "indexed": True},

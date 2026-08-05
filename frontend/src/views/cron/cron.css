@@ -311,10 +311,43 @@
   font-size: 0.7rem;
 }
 .cron-runs__reply {
-  max-width: 24ch;
+  max-width: 32ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The preview doubles as the disclosure control for the full output. */
+.cron-runs__reply-toggle {
+  all: unset;
+  cursor: pointer;
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+.cron-runs__reply-toggle:hover,
+.cron-runs__reply-toggle:focus-visible {
+  color: var(--foreground);
+}
+.cron-runs__output-row > td {
+  padding-top: 0;
+}
+.cron-runs__output {
+  margin: 0;
+  max-height: 18rem;
+  overflow: auto;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Empty state — dashed, tokenized. */

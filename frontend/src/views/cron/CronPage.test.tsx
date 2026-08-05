@@ -371,6 +371,30 @@ describe('CronPage', () => {
     )
   })
 
+  it('expands a run to show script stdout the cell had to clip', async () => {
+    // A script job's stdout is its only trace, and it is routinely multi-line
+    // and wider than the cell — the preview must not be the only copy on screen.
+    const stdout = 'checked 4 pools\nunilp-3 below floor\n' + 'detail '.repeat(40)
+    wireRpc({ runs: [{ started_at: Date.now(), status: 'ok', duration_ms: 8, summary: stdout }] })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Daily standup')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Daily standup' }))
+
+    const toggle = await screen.findByRole('button', { name: /checked 4 pools/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    // Queried by node, not by text: the stdout is deliberately whitespace-heavy
+    // and testing-library's text matcher collapses whitespace.
+    expect(document.querySelector('.cron-runs__output')).toBeNull()
+
+    fireEvent.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(document.querySelector('.cron-runs__output')?.textContent).toBe(stdout)
+
+    fireEvent.click(toggle)
+    expect(document.querySelector('.cron-runs__output')).toBeNull()
+  })
+
   it('deleting requires confirmation then calls cron.remove and invalidates', async () => {
     wireRpc()
     renderPage()
