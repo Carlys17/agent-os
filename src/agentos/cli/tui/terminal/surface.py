@@ -19,6 +19,8 @@ class _TerminalOutputSource(Protocol):
 
     def stream_output(self) -> AbstractAsyncContextManager[Callable[[str], None]]: ...
 
+    async def clear_screen(self) -> None: ...
+
 
 class _TerminalSessionHandle(_TerminalOutputSource, Protocol):
     async def next_line(self) -> str | None: ...
@@ -49,6 +51,9 @@ class TerminalOutputHandle:
 
     def stream_output(self) -> AbstractAsyncContextManager[Callable[[str], None]]:
         return self._source.stream_output()
+
+    async def clear_screen(self) -> None:
+        await self._source.clear_screen()
 
 
 class TerminalSurface:

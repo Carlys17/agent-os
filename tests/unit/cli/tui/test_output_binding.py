@@ -20,6 +20,9 @@ class _OutputHandle:
 
         return _cm()
 
+    async def clear_screen(self) -> None:
+        return None
+
 
 class _SurfaceWithOutput:
     def __init__(self, output_handle: TuiOutputHandle) -> None:

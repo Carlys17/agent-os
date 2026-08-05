@@ -72,6 +72,9 @@ class _FakeOutputHandle:
 
         return _cm()
 
+    async def clear_screen(self) -> None:
+        return None
+
 
 def test_map_slash_category_keeps_runtime_independent_from_slash_policy() -> None:
     from agentos.cli.repl.slash_policy import SlashCategory

@@ -695,6 +695,29 @@ class ChatApplication:
         except Exception:
             pass
 
+    async def clear_screen(self) -> None:
+        """Wipe the visible surface so a reset starts on a blank page.
+
+        Full-screen: drop the transcript pane buffer outright — Rich console
+        output is funnelled into that buffer by ``_TranscriptConsoleSink``, so
+        a plain ``console.clear()`` would only append an escape sequence.
+        Native scrollback: write the erase sequence through ``write_through``
+        so it goes out under the output lock / ``in_terminal`` and prompt-
+        toolkit repaints the prompt afterwards. ``\\x1b[3J`` also drops the
+        scrollback buffer, so the cleared turns cannot be scrolled back to.
+        """
+        if self._fullscreen:
+            self._transcript = ""
+            self._transcript_selection = None
+            self._transcript_follow = True
+            self._transcript_scroll = 0
+            try:
+                self._app.invalidate()
+            except Exception:
+                pass
+            return
+        await self.write_through("\x1b[H\x1b[2J\x1b[3J")
+
     def set_toolbar(self, key: str, value: str | None) -> None:
         """Mutate the shared toolbar dict in place.
 

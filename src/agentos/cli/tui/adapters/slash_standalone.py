@@ -535,6 +535,11 @@ async def handle_standalone_slash_command(
             await truncate_session(context.session_key, max_messages=0)
         state.transcript.clear()
         state.usage.reset()
+        # Wipe the visible surface too: clearing only the in-memory transcript
+        # leaves the reset conversation on screen, which reads as "nothing
+        # happened". Done before the confirmation line so it survives.
+        if context.tui_output is not None:
+            await context.tui_output.clear_screen()
         console.print(f"[{ACCENT}]cleared[/] [dim]{state.session_key}[/dim]")
         return True
 

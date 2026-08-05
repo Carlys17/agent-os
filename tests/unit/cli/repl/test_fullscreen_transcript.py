@@ -80,6 +80,44 @@ def test_append_transcript_accumulates_and_follows(fullscreen_env: None) -> None
         assert chat._transcript_scroll == 0
 
 
+def test_clear_screen_empties_the_pane(fullscreen_env: None) -> None:
+    """`/reset` wipes the full-screen pane buffer.
+
+    Rich console output is funnelled into this buffer, so a plain
+    ``console.clear()`` would only append an escape sequence — the pane needs
+    its own reset.
+    """
+    with create_pipe_input() as pipe:
+        chat = _build(pipe)
+        chat.append_transcript("old turn\n")
+        chat._transcript_follow = False
+        chat._transcript_scroll = 3
+
+        asyncio.run(chat.clear_screen())
+
+        assert chat._transcript == ""
+        assert chat._transcript_selection is None
+        assert chat._transcript_follow is True
+        assert chat._transcript_scroll == 0
+
+
+def test_clear_screen_erases_native_scrollback() -> None:
+    """Without full-screen, the erase sequence goes out through write_through."""
+    with create_pipe_input() as pipe:
+        chat = _build(pipe)
+        assert chat.fullscreen is False
+        written: list[str] = []
+
+        async def _fake_write_through(payload: str) -> None:
+            written.append(payload)
+
+        chat.write_through = _fake_write_through  # type: ignore[method-assign]
+        asyncio.run(chat.clear_screen())
+
+        # \x1b[3J drops scrollback so the cleared turns cannot be scrolled to.
+        assert written == ["\x1b[H\x1b[2J\x1b[3J"]
+
+
 def test_streamed_turn_renders_in_pane_with_frame_pinned(fullscreen_env: None) -> None:
     async def _render() -> list[str]:
         with create_pipe_input() as pipe:

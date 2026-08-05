@@ -71,6 +71,9 @@ def _install_fake_inputs(monkeypatch, inputs: Iterable[str]) -> None:
         async def write_through(self, payload: str) -> None:
             return None
 
+        async def clear_screen(self) -> None:
+            return None
+
     @asynccontextmanager
     async def _fake_session(**kwargs):
         yield TerminalSurface(_FakeHandle())

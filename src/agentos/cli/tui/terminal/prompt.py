@@ -532,6 +532,9 @@ class InteractiveSessionHandle:
     def stream_output(self) -> AbstractAsyncContextManager[Callable[[str], None]]:
         return self._chat_app.stream_output()
 
+    async def clear_screen(self) -> None:
+        await self._chat_app.clear_screen()
+
     def set_cancel_callback(self, callback: Callable[[], None] | None) -> None:
         self._chat_app.set_cancel_callback(callback)
 

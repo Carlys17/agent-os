@@ -279,6 +279,11 @@ async def handle_gateway_slash_command(
         await client.reset_session(state.session_key)
         state.transcript.clear()
         state.usage.reset()
+        # Wipe the visible surface too: clearing only the in-memory transcript
+        # leaves the reset conversation on screen, which reads as "nothing
+        # happened". Done before the confirmation line so it survives.
+        if tui_output is not None:
+            await tui_output.clear_screen()
         console.print(f"[{ACCENT}]cleared[/] [dim]{state.session_key}[/dim]")
         return True
 

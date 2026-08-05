@@ -1135,6 +1135,46 @@ export function useTranscript(opts: {
     }
   }, [opts.sessionKey, historyRenderer, rpc, queryClient, controller])
 
+  /* ── Reset (`/reset`) clears the visible thread ─────────────────────────── */
+
+  // `sessions.reset` rotates the session's `session_id` but keeps the session
+  // KEY, so none of the session-switch teardown above fires and the reset
+  // conversation stays on screen. The gateway broadcasts `session.epoch_changed`
+  // on (and only on) that path, so an epoch bump is the reset signal — for the
+  // typed `/reset`, the slash menu, the SessionChip button, and a reset issued
+  // by another connected client alike.
+  const clearTranscriptForReset = useCallback(() => {
+    // MUST come first: `renderHistoryMessages([])` deliberately preserves a
+    // live stream bubble, thinking indicator, or pending-finalized assistant
+    // bubble (transcript/history.ts:439-464), so any of those would survive the
+    // clear and leave a half-answer floating above an empty thread. This drops
+    // all three plus the router strips and lowers the streaming flag.
+    controller.clearViewLocalStreamState('session_reset')
+    setBusyRef.current()
+    activeTaskGroupsRef.current.clear()
+    abortedRef.current = false
+    stopRequestedByUserRef.current = false
+    historyHasRenderedRef.current = false
+    headerStateRef.current.day = ''
+    headerStateRef.current.role = ''
+    pagingRef.current = {
+      loadedMessages: [],
+      oldestCursor: null,
+      hasMore: false,
+      scope: 'complete',
+      loadingEarlier: false,
+      error: '',
+      compactionSummaries: [],
+    }
+    // Immediate visual clear — the empty branch wipes the thread and renders
+    // the "No messages yet." state.
+    historyRenderer.renderHistoryMessages([], pagingRef.current)
+    applySessionRunState({ run_status: 'idle' })
+    // Authoritative refetch. The rotated `session_id` makes `chat.history`
+    // return empty, so this confirms the clear rather than reverting it.
+    void queryClient.invalidateQueries({ queryKey: ['chat', 'history', sessionKeyRef.current] })
+  }, [applySessionRunState, controller, historyRenderer, queryClient])
+
   /* ── Live WS subscription + all rpc.on handlers (chat.js:2857/4699-5181) ── */
 
   useEffect(() => {
@@ -1419,14 +1459,16 @@ export function useTranscript(opts: {
       }),
     )
 
-    // chat.js:4899-4905 — epoch bump drops stale pre-reset frames.
+    // chat.js:4899-4905 — epoch bump drops stale pre-reset frames, and (since
+    // the bump only ever comes from `sessions.reset`) clears the thread the
+    // reset just emptied server-side.
     unsubs.push(
       onEvent('session.epoch_changed', (payload: StreamEventPayload) => {
         if (isForeign(payload)) return
         const epoch = Number(payload.epoch)
         if (Number.isFinite(epoch) && epoch > currentEpochRef.current) {
-          activeTaskGroupsRef.current.clear()
           currentEpochRef.current = epoch
+          clearTranscriptForReset()
         }
         seams().onEpochChanged?.(payload)
       }),
@@ -1795,7 +1837,7 @@ export function useTranscript(opts: {
       unsubs.forEach((off) => off())
       unsubscribe()
     }
-  }, [applySessionRunState, opts.sessionKey, rpc, controller, queryClient])
+  }, [applySessionRunState, opts.sessionKey, rpc, controller, queryClient, clearTranscriptForReset])
 
   // Reset per-session paging state when the session key changes so a switch
   // does not merge one session's pages into another's.
