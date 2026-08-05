@@ -263,6 +263,82 @@ describe('ChatPage', () => {
     expect(fetch).toHaveBeenCalledTimes(fetchCallsBeforeAudioClick)
   })
 
+  // `sessions.reset` keeps the session KEY and only rotates `session_id`, so
+  // none of the session-switch teardown fires — without an explicit clear the
+  // reset conversation stays on screen. The epoch bump is the only reset signal
+  // the client gets.
+  it('clears the thread when a reset bumps the session epoch', async () => {
+    mockRpc = makeRpc()
+    let historyReads = 0
+    mockRpc.call.mockImplementation((...args: unknown[]) => {
+      if (args[0] === 'commands.list_for_surface') {
+        return Promise.resolve({ surface: 'web_chat', commands: SLASH_CATALOG })
+      }
+      if (args[0] === 'chat.history') {
+        historyReads += 1
+        // After the reset the rotated `session_id` makes history empty.
+        if (historyReads > 1) return Promise.resolve({ messages: [], history_scope: 'complete' })
+        return Promise.resolve({
+          messages: [
+            { role: 'user', text: 'question', timestamp: 100 },
+            { role: 'assistant', text: 'answer', timestamp: 200 },
+          ],
+          history_scope: 'complete',
+        })
+      }
+      return Promise.resolve({})
+    })
+    renderPage()
+
+    await waitFor(() => expect(document.querySelector('.msg.user')).toHaveTextContent('question'))
+
+    act(() => {
+      mockRpc.emit('session.epoch_changed', { key: 'agent:main:webchat:default', epoch: 1 })
+    })
+
+    const thread = document.querySelector('.chat-thread') as HTMLElement
+    // Cleared imperatively on the event — not waiting on the refetch.
+    expect(thread.querySelector('.msg')).toBeNull()
+    expect(thread.querySelector('.chat-empty')).toHaveTextContent('No messages yet.')
+    // ...and the authoritative refetch is kicked off to confirm it.
+    await waitFor(() => expect(historyReads).toBeGreaterThan(1))
+    expect(thread.querySelector('.msg')).toBeNull()
+  })
+
+  it('drops an in-flight stream bubble when a reset bumps the session epoch', async () => {
+    mockRpc = makeRpc()
+    mockRpc.call.mockImplementation((...args: unknown[]) => {
+      if (args[0] === 'commands.list_for_surface') {
+        return Promise.resolve({ surface: 'web_chat', commands: SLASH_CATALOG })
+      }
+      if (args[0] === 'chat.history') {
+        return Promise.resolve({ messages: [], history_scope: 'complete' })
+      }
+      return Promise.resolve({})
+    })
+    renderPage()
+    await waitFor(() => expect(document.querySelector('.chat-thread')).not.toBeNull())
+
+    act(() => {
+      mockRpc.emit('session.event.text_delta', {
+        key: 'agent:main:webchat:default',
+        stream_seq: 1,
+        text: 'half an answer',
+      })
+    })
+    const thread = document.querySelector('.chat-thread') as HTMLElement
+    await waitFor(() => expect(thread).toHaveTextContent('half an answer'))
+
+    act(() => {
+      mockRpc.emit('session.epoch_changed', { key: 'agent:main:webchat:default', epoch: 1 })
+    })
+
+    // `renderHistoryMessages([])` preserves a live stream bubble, so the clear
+    // has to end streaming first or the partial answer floats above an empty
+    // thread.
+    expect(thread).not.toHaveTextContent('half an answer')
+  })
+
   it('reveals entry atomically after replay and its terminal history refresh settle', async () => {
     mockRpc = makeRpc()
     let resolveSubscribe!: (value: Record<string, unknown>) => void

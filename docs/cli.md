@@ -79,7 +79,7 @@ The most useful ones:
 | `/resume <key>` | Resume an existing session by key (or a prefix / display-name match in gateway mode). |
 | `/status` | Show the current session, model, permissions, and the active Pilot Router tier (or `auto`). |
 | `/model <id>` | Override the model for this session. |
-| `/clear` / `/reset` | Clear the current conversation context. |
+| `/clear` / `/reset` | Clear the current conversation context. The screen is wiped too (including scrollback), so the cleared turns are gone from view as well as from context. |
 | `/compact` | Compact older context into a summary. |
 | `/cost` | Show per-session token and cost totals. |
 | `/save [path]` | Save the transcript to a Markdown file. |

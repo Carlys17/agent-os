@@ -48,6 +48,8 @@ class TuiOutputHandle(Protocol):
 
     def stream_output(self) -> AbstractAsyncContextManager[Callable[[str], None]]: ...
 
+    async def clear_screen(self) -> None: ...
+
 
 @runtime_checkable
 class TuiRenderer(Protocol):

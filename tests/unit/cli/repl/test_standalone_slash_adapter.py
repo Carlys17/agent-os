@@ -11,6 +11,24 @@ from agentos.cli.tui.contracts import TuiOutputHandle
 from agentos.engine.commands import Surface
 
 
+class _RecordingOutputHandle:
+    def __init__(self) -> None:
+        self.clear_screen_calls = 0
+
+    @property
+    def approval_surface(self) -> object:
+        return Surface.CLI_STANDALONE
+
+    async def write_through(self, payload: str) -> None:
+        return None
+
+    def stream_output(self):  # type: ignore[no-untyped-def]
+        raise AssertionError("stream_output is only consumed by the renderer")
+
+    async def clear_screen(self) -> None:
+        self.clear_screen_calls += 1
+
+
 class _StandaloneSlashHarness:
     def __init__(self) -> None:
         self.create_calls: list[dict[str, str]] = []
@@ -267,6 +285,42 @@ async def test_standalone_slash_adapter_reset_uses_typed_truncate_handle() -> No
     assert handled is True
     assert harness.truncate_calls == [(session_key, 0)]
     assert not state.transcript.to_markdown()
+
+
+@pytest.mark.parametrize("cmd", ["/reset", "/clear"])
+@pytest.mark.asyncio
+async def test_standalone_slash_reset_wipes_the_visible_surface(cmd: str) -> None:
+    """`/reset` must clear the screen, not just the in-memory transcript.
+
+    Clearing only `state.transcript` left the reset conversation on screen,
+    which reads to the user as "nothing happened".
+    """
+    from agentos.cli.repl.standalone_slash_adapter import (
+        StandaloneSlashContext,
+        handle_standalone_slash_command,
+    )
+
+    harness = _StandaloneSlashHarness()
+    session_key = "agent:main:standalone:test"
+    state = ChatSessionState(session_key=session_key, model="openai/test")
+    state.transcript.add("user", "local")
+    tui_output = _RecordingOutputHandle()
+    context = StandaloneSlashContext(
+        state=state,
+        session_key=session_key,
+        model=state.model,
+        tool_ctx=object(),
+        slash_services=_slash_services(harness),
+        turn_runner=object(),
+        build_tool_ctx=lambda _session_key: object(),
+        replace_session=lambda **_updates: None,
+        tui_output=cast(TuiOutputHandle, tui_output),
+    )
+
+    handled = await handle_standalone_slash_command(cmd, context)
+
+    assert handled is True
+    assert tui_output.clear_screen_calls == 1
 
 
 @pytest.mark.asyncio

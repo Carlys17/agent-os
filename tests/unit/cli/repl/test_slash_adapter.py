@@ -83,6 +83,9 @@ class _FakeGatewayClient:
 
 
 class _RecordingOutputHandle:
+    def __init__(self) -> None:
+        self.clear_screen_calls = 0
+
     @property
     def approval_surface(self) -> object:
         return "approval-surface"
@@ -92,6 +95,9 @@ class _RecordingOutputHandle:
 
     def stream_output(self):
         raise AssertionError("stream_output is only consumed by the renderer")
+
+    async def clear_screen(self) -> None:
+        self.clear_screen_calls += 1
 
 
 def test_gateway_slash_adapter_exposes_typed_context() -> None:
@@ -131,6 +137,37 @@ async def test_gateway_slash_adapter_handles_clear_without_chat_command_state() 
     assert handled is True
     assert client.reset_calls == ["agent:main:test"]
     assert state.transcript.turns == []
+
+
+@pytest.mark.parametrize("cmd", ["/reset", "/clear"])
+@pytest.mark.asyncio
+async def test_gateway_slash_reset_wipes_the_visible_surface(cmd: str) -> None:
+    """`/reset` must clear the screen, not just the in-memory transcript.
+
+    Clearing only `state.transcript` left the reset conversation on screen,
+    which reads to the user as "nothing happened".
+    """
+    from agentos.cli.repl.slash_adapter import (
+        GatewaySlashContext,
+        handle_gateway_slash_command,
+    )
+
+    state = ChatSessionState(session_key="agent:main:test", model="openai/test")
+    state.transcript.add("user", "hello")
+    tui_output = _RecordingOutputHandle()
+
+    handled = await handle_gateway_slash_command(
+        cmd,
+        GatewaySlashContext(
+            state=state,
+            client=_FakeGatewayClient(),
+            elevated_state={"mode": None},
+            tui_output=tui_output,
+        ),
+    )
+
+    assert handled is True
+    assert tui_output.clear_screen_calls == 1
 
 
 @pytest.mark.asyncio

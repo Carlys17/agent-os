@@ -892,6 +892,9 @@ class _ContractOutputHandle:
 
         return _cm()
 
+    async def clear_screen(self) -> None:
+        return None
+
 
 class _ContractRenderer:
     async def aappend_text(self, delta: str) -> None:
