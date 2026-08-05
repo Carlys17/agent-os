@@ -39,25 +39,27 @@ Three scripts, Python 3 stdlib only, no install step.
 `--confirm <PLAN_HASH>` printed by that same dry run. `ratchet.py` is the one unattended
 path — see Part C — and it is separate precisely so that boundary is visible.
 
-`lp_read.py` reads `UNIV4_LP_PRIVATE_KEY` in exactly one place: to answer "which wallet is
-mine" when `positions` is run without `--owner`. It imports `unilp/account.py`, which holds
-curve arithmetic and address derivation and contains no `sign_digest`; `unilp/secp256k1.py`
-imports *that* and adds signing on top. The dependency only runs one way, so no argument to
-`lp_read.py` reaches a signature — and re-adding one is a circular-import error, not a code
-review question.
+That is structural, not a convention: `lp_read.py` touches `UNIV4_LP_PRIVATE_KEY` in one
+place only — deriving "which wallet is mine" for `positions` without `--owner` — and it
+imports `unilp/account.py`, which has address derivation and no `sign_digest`. Signing lives
+in `unilp/secp256k1.py`, which imports *that*. The dependency runs one way, so no argument to
+`lp_read.py` can reach a signature.
 
 **Part A (read) needs no confirmation. Part B (write) must never broadcast until the user has
 seen the parameter table and explicitly said yes. Part C broadcasts on a schedule, under a
 mandate the user approved once, by hash.**
 
 ```bash
-# Keep the quotes — the path can contain spaces.
+# Set this once per shell, and keep the quotes — the path can contain spaces.
 S="{baseDir}/scripts"
 
 python3 "$S"/lp_read.py  <command> [flags]   # default chain: robinhood
 python3 "$S"/lp_write.py <command> [flags]   # add --chain base for Base
 python3 "$S"/ratchet.py  <command> [flags]   # unattended take-profit, Part C
 ```
+
+Every command below is written `python3 "$S"/<script>`. Use that form verbatim — a literal
+`<S>` is not a variable, and in a shell it reads as a redirect from a file named `S`.
 
 Chain endpoints come from `RPC_ROBINHOOD_URL` and `RPC_BASE_URL`; `--rpc <url>` overrides.
 
@@ -104,11 +106,10 @@ conventional tiers (0.01%/1, 0.05%/10, 0.30%/60, 1.00%/200) and confirmed with *
 multicall**. No log scan, same speed on every chain.
 
 This is the fastest way to answer "does a plain, hook-free pool exist for this token?" — the
-question to ask before minting, since a hooked pool is refused by default (§8). It covers
-only pools paired with a **known quote currency** at a **conventional tier**; `--quote <addr>`
-probes a different pairing currency. It is a fast probe, not an exhaustive index, so a
-negative result means "not found at the usual shapes", not "does not exist" — drop `--no-hook`
-for full discovery.
+question to ask before minting, since a hooked pool is refused by default (§8). It is a fast
+probe, not an exhaustive index: it covers only **known quote currencies** at **conventional
+tiers**, so a negative result means "not found at the usual shapes", not "does not exist".
+`--quote <addr>` probes a different pairing currency; drop `--no-hook` for full discovery.
 
 ## 2. One pool in depth
 
@@ -218,11 +219,24 @@ for, so the result is genuinely single-sided.
 
 The `position type` line names the currency the range takes. **Read it rather than working
 the direction out yourself** — it is the same rule `mint` enforces, so if they disagree the
-mint is what is wrong. USD columns need a price for the quote currency; if the indexer is
-rate-limiting, the error says so and the fix is to wait, not to change pool (§ Error
+mint is what is wrong (§8). USD columns need a price for the quote currency; if the indexer
+is rate-limiting, the error says so and the fix is to wait, not to change pool (§ Error
 handling).
 
----
+## 6b. What is a token worth in USD?
+
+```bash
+python3 "$S"/lp_read.py price --tokens <addr>[,<addr>,...] [--chain base] [--json]
+```
+
+One indexer call for any number of tokens, and the same cache the other commands share.
+
+**Use this rather than deriving a price from a pool** — and never compute one by hand from
+two other prices. A pool with no depth still quotes a tick, so reading a price off a dust
+pool returns a number that looks plausible and is not the market. That number then decides
+the starting tick of a new pool (§8b) or the band of a mint, neither of which can be undone
+cheaply. If the token is not indexed the command says so, which is the answer — ask the
+user for the price instead of inferring one.
 
 # Part B — Write
 
@@ -256,18 +270,16 @@ python3 "$S"/lp_write.py approve --token <addr>
 python3 "$S"/lp_write.py mint ...same flags... --broadcast --confirm <PLAN_HASH>
 ```
 
-Things that turn this into a loop, all of them seen in practice:
+Five ways this turns into a loop, all seen in practice. Each is a deviation from the five
+steps above, and the fix is always to go back to them:
 
-- **Choosing the side yourself.** Step 2 prints `position type: single-sided: 100% SYM
-  (currencyN)`. Use that. Deriving it from whether the target mcap is higher or lower gets
-  it backwards half the time (§8).
-- **Abandoning a pool because it has a hook.** Check the hook's flags first (§8) — a
-  Doppler pool takes third-party LPs, and it is usually the only pool with real depth.
-- **Skipping `approve`.** `mint` exiting 2 on approvals is not a reason to try another
-  pool; it means the parameters were fine and the allowance was not.
-- **Omitting `--from-current`** when one end of the band is today's price. Without it the
-  ticks snap outward across the current tick and the position comes back two-sided.
-- **Recomputing ticks by hand in Python.** `ticks` already does it, against the same math
+- **Choosing the side yourself** instead of reading `position type` from step 2 — backwards
+  half the time (§8).
+- **Abandoning a pool because it has a hook** without checking its flags first (§8).
+- **Skipping `approve`** — `mint` exiting 2 on approvals means the parameters were fine and
+  the allowance was not, so it is not a reason to try another pool (§7).
+- **Omitting `--from-current`** when one end of the band is today's price (§6).
+- **Recomputing ticks by hand in Python** — `ticks` already does it, against the same math
   the mint uses.
 
 ## The protocol — follow it exactly
@@ -321,16 +333,16 @@ python3 "$S"/lp_write.py mint --pool <poolId> --tick-lower <t> --tick-upper <t> 
 Size with exactly one of `--amount0`, `--amount1`, or `--liquidity` (give both for a
 two-sided position). Ticks snap outward to `tickSpacing`.
 
-**Which currency a single-sided range takes.** A range entirely **above** the current price
-takes **currency0 only**; entirely **below** takes **currency1 only**. The wrong side is
-rejected with an explanation rather than minting nothing.
+**Which currency a single-sided range takes — the one rule this section exists for.** A range
+entirely **above** the current price takes **currency0 only**; entirely **below** takes
+**currency1 only**. The wrong side is rejected with an explanation rather than minting
+nothing.
 
-Do not reason about this from the market cap — the mapping flips with which currency the
-token is. When the token is `currency1`, a *higher* market cap is a *lower* tick, so "from
-here up to a higher mcap" is a range **below** the current tick and takes the token itself.
-When it is `currency0` it is the other way round. `ticks` (§6) prints the side outright on
-its `position type` line: trust that line and pass its `--tick-lower` / `--tick-upper`
-straight through, rather than deriving the direction yourself.
+Never derive that from the market cap. The mapping flips with which currency the token is:
+when the token is `currency1`, a *higher* market cap is a *lower* tick, so "from here up to a
+higher mcap" is a range **below** the current tick and takes the token itself. When it is
+`currency0` it is the other way round. `ticks` (§6) prints the answer on its `position type`
+line — pass its `--tick-lower` / `--tick-upper` straight through.
 
 Written out, because "a sell sits above the price" is true for exactly half of all pools:
 
@@ -364,11 +376,10 @@ does set — runs after the add and can still revert it, which is exactly what t
 catches.
 
 `--allow-hooked` lets the attempt through, it does not make it work — but the dry run costs
-one call and never broadcasts, so on a Doppler pool run it rather than going off to hunt for
-a hook-less alternative. The deepest pool for a launched token is usually the launch pool,
-and on Robinhood Chain that is normally a Doppler pool; the hook-less pools that also exist
-for the same token are frequently dust with punitive fee tiers. Compare `TVL` before
-switching pools, and prefer the one `pools` marks as recommended (§1).
+one call and never broadcasts, so on a Doppler pool run it rather than hunting for a
+hook-less alternative. The deepest pool for a launched token is usually the launch pool, and
+on Robinhood Chain that is normally a Doppler pool, while the hook-less pools for the same
+token are frequently dust at punitive tiers. Compare `TVL` before switching (§1).
 
 **Targeting the pool.** `mint` takes a `--pool <poolId>` that must already exist. Find one
 first with `pools --token <addr> --no-hook` (§1); if none exists at the tier you want, open
@@ -440,7 +451,7 @@ nothing, so that trace is the only way to know what a call really moves.
 
 **When the trace disagrees with the computed table, the trace is right** — the script prints
 a `WARNING` above 0.5% divergence. Causes and how to read a revert:
-`assets/v4-reference.md`.
+`{baseDir}/assets/v4-reference.md`.
 
 ---
 
@@ -539,7 +550,7 @@ Find it with `lp_read.py positions` — the mandate's signer is the configured w
 `--owner` is needed — and hand the new id back:
 
 ```
-python3 <S>/ratchet.py clear-attention --id <m> --token-id <new>
+python3 "$S"/ratchet.py clear-attention --id <m> --token-id <new>
 ```
 
 It is checked before adoption — same pool, same signer, live liquidity, same far edge, and
@@ -579,20 +590,24 @@ is validated before any path is built, so it cannot walk out of the state direct
 
 ## Wiring it to cron
 
+**`$S` does not exist here.** It is a variable in your shell; a cron job runs in a fresh
+isolated session, or as a file with no shell state at all. Anything that outlives this
+conversation — a cron task string, a script on disk — has to carry the full path
+`{baseDir}/scripts/ratchet.py`, spelled out. This is the one place the `"$S"` form above is
+wrong.
+
 ```
 cron(action="add", schedule={"kind": "cron", "expr": "*/5 * * * *"},
-     task="python3 <S>/ratchet.py tick --all --broadcast --json — report the result, "
-          "and raise the alarm if any state is NEEDS_ATTENTION",
+     task="python3 {baseDir}/scripts/ratchet.py tick --all --broadcast --json — report the "
+          "result, and raise the alarm if any state is NEEDS_ATTENTION",
      job_kind="agent_turn", session_target="isolated")
 ```
 
 `tick` does the reconcile and the fire in one process on purpose: no agent judgement sits
-between deciding and sending.
-
-That is also why the model in the loop is optional. Put the same command in a script under
-`~/.agentos/scripts/` and schedule it with `job_kind="script"` to get the ticks with no model
-call and no tokens — stdout is delivered verbatim, and a tick that prints nothing stays
-silent:
+between deciding and sending — which is why the model in the loop is optional. Put the same
+command in a script under `~/.agentos/scripts/` (again with the path spelled out) and the
+ticks cost no model call and no tokens; stdout is delivered verbatim, and a tick that prints
+nothing stays silent:
 
 ```
 cron(action="add", schedule={"kind": "every", "every_seconds": 600},
@@ -600,11 +615,10 @@ cron(action="add", schedule={"kind": "every", "every_seconds": 600},
 ```
 
 A script job runs the file itself and never starts an agent turn, so it takes **no**
-`tool_policy` — passing `tool_policy.elevated` here is rejected, not honoured. Elevation
-belongs to the `agent_turn` shape above, where an agent turn actually runs. Either shape
-needs an interactive CLI or Web caller: scheduling a script is refused from a chat channel.
-The script inherits the gateway process environment, so check that
-`UNIV4_LP_PRIVATE_KEY` is visible there before arming — a missing key fails every tick, and
+`tool_policy` — `tool_policy.elevated` belongs to the `agent_turn` shape above and is
+rejected here. Both shapes need an interactive CLI or Web caller; neither can be scheduled
+from a chat channel. The script inherits the gateway process environment, so confirm
+`UNIV4_LP_PRIVATE_KEY` is visible there before arming: a missing key fails every tick, and
 five consecutive failures retire the job.
 
 ## Before arming anything real
@@ -615,8 +629,6 @@ hand with dust, on **both** a range above the price and one below: the two direc
 different branches at every layer, and a hook can answer differently on each.
 
 ## Error handling
-
-
 
 | Symptom | Cause / fix |
 |---|---|
@@ -653,7 +665,7 @@ different branches at every layer, and a hook can answer differently on each.
 ## Verifying a change
 
 ```bash
-python3 {baseDir}/scripts/selftest.py     # 716 offline assertions, no network
+python3 "$S"/selftest.py     # offline assertions only, no network
 ```
 
 Covers the keccak / EIP-55 / ABI-codec primitives, secp256k1 signing, TickMath, the AGENTOS
