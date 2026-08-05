@@ -19,6 +19,7 @@ import {
   artifactPreviewUrl,
   artifactAuthenticatedDownloadUrl,
 } from './artifacts'
+import { CHART_ARTIFACT_MIME } from './chart'
 
 /* ── artifactMime / artifactName (chat.js:7523-7529) ────────────────────── */
 
@@ -93,6 +94,14 @@ describe('artifactCategory (parity chat.js:7538)', () => {
     )
     expect(artifactCategory({} as never)).toBe('file')
   })
+  it('classifies the AgentOS chart mime as "chart" (no legacy counterpart)', () => {
+    // Wins over the +json extension fallback, which would otherwise land the
+    // chart payload in 'data' and render it as a download chip.
+    expect(artifactCategory({ mime: CHART_ARTIFACT_MIME, name: 'bonk.chart.json' } as never)).toBe(
+      'chart',
+    )
+    expect(artifactCategory({ mime: 'application/json', name: 'x.json' } as never)).toBe('data')
+  })
 })
 
 /* ── artifactCategoryLabel (chat.js:7551) ───────────────────────────────── */
@@ -103,6 +112,7 @@ describe('artifactCategoryLabel (parity chat.js:7551)', () => {
     expect(artifactCategoryLabel('document')).toBe('doc')
     expect(artifactCategoryLabel('code')).toBe('code')
     expect(artifactCategoryLabel('audio')).toBe('audio')
+    expect(artifactCategoryLabel('chart')).toBe('chart')
   })
   it('defaults unknown / visual / file categories to "file"', () => {
     expect(artifactCategoryLabel('visual')).toBe('file')

@@ -682,6 +682,25 @@ Steps: `token info` → `token security` → `token pool` → market heat check 
 
 **For active risk monitoring** on a held position (user asks "any risk warnings", "are whales dumping", "is liquidity still healthy"), follow: [`docs/workflow-risk-warning.md`](../../docs/workflow-risk-warning.md). Uses `token security` + `token pool` + `token holders` to flag whale exits, liquidity drain, and developer dumps.
 
+## Price Chart During Research
+
+`token info` gives a price snapshot but no candles, so a research answer reads
+better with a chart alongside the summary card. After `token info` succeeds, use
+the **`gmgn-market`** skill to fetch `market kline` and publish the candlestick
+chart artifact — that skill owns the kline route and ships the converter script
+(`scripts/kline_chart.py`); follow its "Rendering the Candlestick Chart" section
+rather than reimplementing the conversion here.
+
+Pick the resolution from the `creation_timestamp` you already have from
+`token info`, using the token-age table in that same section.
+
+Add the chart when the user asks about price, trend, or due diligence. Skip it
+when they asked a narrow non-price question (just holders, just the honeypot
+check) — an unrequested extra API call spends rate-limit budget for nothing.
+
+**If `is_honeypot = "yes"`, do not fetch a chart.** Stop at the honeypot warning
+as the security section requires.
+
 ---
 
 ## Output Format

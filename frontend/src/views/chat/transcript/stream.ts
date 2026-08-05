@@ -194,6 +194,11 @@ export interface TranscriptHeaderStateRef {
  */
 export interface StreamControllerDeps {
   markdown?: MarkdownDep
+  /**
+   * chart.ts `mountCharts` — draw chart-artifact placeholders that just entered
+   * `container`. AgentOS-native (no legacy counterpart). Default: no-op.
+   */
+  mountCharts?: (container: HTMLElement) => void
   /** chat.js:419/387/391 — display-text sanitizers. Default: identity. */
   stripProtocolTextLeak?: (text: string) => string
   stripDirectiveTags?: (text: string) => string
@@ -1418,6 +1423,7 @@ export function createStreamController(
     esc,
     toast,
     diag,
+    mountCharts: deps.mountCharts,
   })
 
   /* ── compaction renderer (chat.js:2916-3397 + 8654-8710, compaction.ts) ── */

@@ -42,6 +42,42 @@ Use artifacts for:
 
 Use chat text for short answers, decisions, and next steps.
 
+## Inline Charts
+
+Most artifacts render in Web UI chat as a download chip; images and audio render
+inline. One more mime renders inline as an interactive chart:
+
+| Mime | Rendered as |
+|------|-------------|
+| `application/vnd.agentos.chart+json` | Candlestick chart with a volume histogram |
+
+Publish a JSON file with that mime and the chat draws it in place of the chip.
+The body is:
+
+```json
+{
+  "type": "candlestick",
+  "title": "BONK · 1h",
+  "subtitle": "SOL · 1h",
+  "candles": [
+    { "time": 1754380800, "open": 1.2e-6, "high": 1.5e-6, "low": 1.1e-6,
+      "close": 1.4e-6, "volume": 12500.5 }
+  ]
+}
+```
+
+`time` is a Unix timestamp in **seconds** and `volume` is optional; every other
+candle field is required. Rows may arrive in any order and may repeat a
+timestamp — the renderer sorts them and keeps the last entry per timestamp.
+`title` and `subtitle` are display-only text, never markup.
+
+The `gmgn-market` skill ships `scripts/kline_chart.py`, which converts GMGN
+kline output into this shape; use it as a worked example when adding charts to
+another skill.
+
+Charts render in the Web UI only. Other surfaces receive the artifact as a
+normal JSON file, so keep a short text summary in the reply alongside the chart.
+
 ## Document Skills
 
 AgentOS includes skills for common document formats:

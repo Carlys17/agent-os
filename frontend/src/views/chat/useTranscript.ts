@@ -3,7 +3,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useRpc } from '@/app/providers'
 import { useApprovals } from '@/services/approval-monitor'
+import { useTheme } from '@/stores/theme'
 import { chatMarkdown } from './markdown'
+import { createChartMounter, type ChartMounter } from './transcript/chart'
 import {
   createStreamController,
   type StreamController,
@@ -63,6 +65,22 @@ function getAuthToken(): string {
   } catch {
     return ''
   }
+}
+
+/**
+ * Fetch a chart artifact body for the chart mounter (chart.ts).
+ *
+ * The URL already carries `sessionKey` + `token` query params (the artifact
+ * renderer builds it through `artifactPreviewUrl`); the Authorization header
+ * mirrors `downloadArtifact` so both auth paths are accepted.
+ */
+async function fetchChartPayload(url: string): Promise<unknown> {
+  const token = getAuthToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const response = await fetch(url, { method: 'GET', headers, credentials: 'same-origin' })
+  if (!response.ok) throw new Error(`chart artifact request failed: HTTP ${response.status}`)
+  return response.json()
 }
 
 /**
@@ -421,10 +439,33 @@ export function useTranscript(opts: {
     [stampRowMeta],
   )
 
+  // Chart artifacts (chart.ts). The mounter owns every live chart on this
+  // transcript so a theme toggle can re-color them in place and a route unmount
+  // can dispose the canvases.
+  const [chartMounter] = useState<ChartMounter>(() =>
+    createChartMounter({
+      fetchPayload: fetchChartPayload,
+      getTheme: () => useTheme.getState().mode,
+    }),
+  )
+  const mountCharts = useCallback(
+    (container: HTMLElement) => chartMounter.mountCharts(container),
+    [chartMounter],
+  )
+
+  useEffect(() => {
+    const unsubscribe = useTheme.subscribe((state) => chartMounter.applyTheme(state.mode))
+    return () => {
+      unsubscribe()
+      chartMounter.destroyAll()
+    }
+  }, [chartMounter])
+
   // eslint-disable-next-line react-hooks/refs -- factory stores the refs and reads .current only later, inside methods invoked outside render (never at creation)
   const [controller] = useState<StreamController>(() =>
     createStreamController(containerRef, {
       markdown: chatMarkdown,
+      mountCharts,
       stripProtocolTextLeak,
       stripDirectiveTags,
       stripGeneratedArtifactMarkers,
@@ -743,6 +784,7 @@ export function useTranscript(opts: {
         }),
       renderMessageAttachmentHtml,
       renderArtifacts: (artifacts) => controller.renderArtifacts(artifacts),
+      mountCharts,
       prepareHistoryRouterFx: () => controller.prepareHistoryRouterFx(),
       reconcileHistoryRouterFx: (usage, options) =>
         controller.reconcileHistoryRouterFx(usage, options),

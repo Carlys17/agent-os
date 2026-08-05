@@ -46,6 +46,18 @@ describe('unified Chat CSS contract', () => {
     )
   })
 
+  it('reserves chart geometry and overlays the status so a drawn chart cannot shift the transcript', () => {
+    // The canvas is filled after a lazy import plus a payload fetch, so its
+    // height must exist before either resolves.
+    expect(css).toMatch(/\.chat-surface \.msg-artifact-chart__canvas \{[\s\S]*?height: 20rem;/)
+    // Canvas and status share one grid cell — hiding the status must not
+    // collapse a row.
+    expect(css).toMatch(
+      /\.chat-surface \.msg-artifact-chart__canvas,[\s\S]*?\.chat-surface \.msg-artifact-chart__status \{[\s\S]*?grid-row: 2;[\s\S]*?grid-column: 1;/,
+    )
+    expect(css).toMatch(/\.chat-surface \.msg-artifact-charts \{[\s\S]*?max-width: 100%;/)
+  })
+
   it('reserves portalled header geometry before reactive controls mount', () => {
     expect(css).toMatch(
       /\.shell-chat-header__context \{[\s\S]*?min-height: 2\.5rem;[\s\S]*?overflow: visible;/,

@@ -473,8 +473,10 @@ when multiple packages use the same license.
 - `clsx@2.1.1` — MIT
 - `cookie@1.1.1` — MIT
 - `dompurify@3.4.12` — MPL-2.0 or Apache-2.0
+- `fancy-canvas@2.1.0` — MIT
 - `framer-motion@12.42.2` — MIT
 - `highlight.js@11.11.1` — BSD-3-Clause
+- `lightweight-charts@5.2.0` — Apache-2.0
 - `lucide-react@1.25.0` — ISC
 - `marked@18.0.7` — MIT
 - `motion@12.42.2` — MIT
