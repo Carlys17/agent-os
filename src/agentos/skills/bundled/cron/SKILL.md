@@ -48,6 +48,33 @@ Translation examples (do this in your own reasoning before calling the tool):
 - "明天早上9点叫我" → compute the absolute ISO-8601 string with timezone, then `cron(action="add", schedule={"kind": "at", "at": "<that ISO-8601>"}, task="...", job_kind="system_event", session_target="main")`
 - "every weekday at 9am Los Angeles time" → `cron(action="add", schedule={"kind": "cron", "expr": "0 9 * * 1-5", "tz": "America/Los_Angeles"}, task="...")`
 
+## Running a script instead of a model
+
+`job_kind="script"` runs a file on schedule and delivers its stdout — no model
+call, no tokens. The `script` must be a path relative to `~/.agentos/scripts/`;
+`script_args` is a list passed as argv (never through a shell). Empty stdout
+means the run stays silent, and a non-zero exit is delivered as a failure.
+
+```
+cron(action="add", schedule={"kind": "every", "every_seconds": 300},
+     job_kind="script", script="watch-memory.sh")
+```
+
+`job_kind="agent_turn"` with a `script` is the other half: the script runs
+first, its stdout becomes context for the turn, and a tick where it prints
+nothing skips the turn entirely.
+
+```
+cron(action="add", schedule={"kind": "cron", "expr": "*/10 * * * *"},
+     job_kind="agent_turn", script="watch_github.py",
+     script_args=["--repo", "owner/name"],
+     task="Summarize anything urgent.")
+```
+
+Either way, scheduling a script needs an interactive CLI or Web caller — it is
+refused from a chat channel. The bundled `cron-watchers` skill ships scripts for
+RSS feeds, JSON endpoints, and GitHub repos that already follow this contract.
+
 Other actions:
 
 - List: `cron(action="list")`.

@@ -35,6 +35,7 @@ DEFAULTS = (
         "agentos",
         "ai-video-script",
         "cron",
+        "cron-watchers",
         "deep-research",
         "docx",
         "git-diff",

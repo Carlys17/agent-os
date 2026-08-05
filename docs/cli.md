@@ -538,6 +538,42 @@ agentos cron status <job-id>
 agentos cron runs <job-id>
 ```
 
+`--job-kind` picks what fires: `reminder` (delivers `--text` verbatim, no model),
+`script` (runs a file, no model), `agent_turn` (the agent runs `--text` as a
+prompt), or `system_event`. It defaults to `auto`, which is `reminder` for normal
+targets — so the example above repeats that sentence hourly rather than
+summarizing anything. Add `--job-kind agent_turn` to have the agent do the work.
+
+### Running a script on a schedule, without a model
+
+```sh
+agentos cron add --every 5m --script watch-memory.sh --name memory-watchdog
+agentos cron update <job-id> --script watch-disk.sh --workdir /srv/app
+agentos cron add --every 15m --script watch_rss.py --name hn \
+  --script-arg --url --script-arg https://news.ycombinator.com/rss
+```
+
+`--script` implies `--job-kind script` and resolves relative to
+`~/.agentos/scripts/`; absolute paths, `~`, and `..` are refused, and so is a
+symlink out of that directory. `.sh`/`.bash` run under bash, anything else under
+python. `--script-arg` (repeatable) passes argv straight to the script — never
+through a shell. Non-empty stdout is delivered verbatim, empty stdout is a silent
+run, and a non-zero exit or `--timeout` delivers the error and fails the job.
+Secrets are masked in the output, and the gateway token is withheld from the
+child process. The bundled `cron-watchers` skill ships scripts for RSS, JSON
+endpoints, and GitHub repos that already follow this contract.
+
+Add `--script` to an `--job-kind agent_turn` job instead and it becomes a
+pre-run collector: its stdout is handed to the agent as context, and a tick
+where it prints nothing skips the turn entirely — no model call at all. See
+[`scheduling.md`](scheduling.md).
+
+No model runs, so no tokens are spent — but nothing reviews the script before it
+executes either. It runs on this host as you, unattended, so treat
+`~/.agentos/scripts/` as trusted as your shell profile. Only an interactive CLI
+or Web caller can create one; the in-agent `cron` tool refuses `job_kind='script'`
+from a channel.
+
 ### Letting a cron job run shell-based skills
 
 A cron turn runs under a read-only tool allowlist, so a job that is shown a

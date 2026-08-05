@@ -9,14 +9,17 @@ import structlog
 
 from agentos.scheduler.payloads import (
     REMINDER_KIND,
+    SCRIPT_KIND,
     SYSTEM_EVENT_KIND,
     make_agent_turn_payload,
     make_reminder_payload,
+    make_script_payload,
     make_system_event_payload,
     payload_agent_id,
 )
 from agentos.scheduler.prompt_safety import scan_cron_prompt as _scan_cron_prompt
 from agentos.scheduler.schedule_normalizer import coerce_schedule_from_params
+from agentos.scheduler.scripts import normalize_script_value, validate_script_path
 from agentos.scheduler.types import (
     DeliveryConfig,
     DeliveryMode,
@@ -204,9 +207,39 @@ def _cron_job_agent_id(job: Any) -> str:
                 "Use reminder for static user-facing reminders; it does not call "
                 "the model. Use agent_turn only for scheduled background tasks "
                 "that need the agent/model to work. Use system_event only for "
-                "internal main-session events."
+                "internal main-session events. Use script to run an existing "
+                "script on schedule and deliver its stdout — no model, no tokens; "
+                "it requires the script parameter and an interactive CLI or Web "
+                "caller."
             ),
-            "enum": ["reminder", "system_event", "agent_turn"],
+            "enum": ["reminder", "system_event", "agent_turn", "script"],
+        },
+        "script": {
+            "type": "string",
+            "description": (
+                "File under ~/.agentos/scripts/ to run. Relative path only; "
+                ".sh/.bash run under bash, anything else under python. With "
+                "job_kind='script' it IS the job: stdout is delivered verbatim, "
+                "empty stdout stays silent, a non-zero exit is a failure. With "
+                "job_kind='agent_turn' it is a pre-run collector: its stdout is "
+                "given to the agent as context, and no output means the turn is "
+                "skipped entirely. Either way it needs an interactive CLI or Web "
+                "caller."
+            ),
+        },
+        "script_args": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Arguments passed to 'script' as argv. Never shell-interpreted."
+            ),
+        },
+        "workdir": {
+            "type": "string",
+            "description": (
+                "Optional working directory for 'script' (defaults to the "
+                "script's own directory)."
+            ),
         },
         "session_target": {
             "type": "string",
@@ -273,13 +306,18 @@ async def cron(
     agent_id: str = "main",
     wake_mode: str = "now",
     tool_policy: dict[str, Any] | None = None,
+    script: str | None = None,
+    script_args: list[str] | None = None,
+    workdir: str = "",
     tz: str = "",
 ) -> str:
     if action not in _VALID_CRON_ACTIONS:
         raise ToolError(f"Invalid action: {action}. Must be list|add|remove|run")
 
-    if action == "add" and (schedule is None or not task):
-        raise ToolError("'schedule' and 'task' required for add")
+    if action == "add" and schedule is None:
+        raise ToolError("'schedule' required for add")
+    if action == "add" and job_kind != SCRIPT_KIND and not task:
+        raise ToolError("'task' required for add")
     if action in ("remove", "run") and not job_id:
         raise ToolError(f"'job_id' required for {action}")
 
@@ -329,6 +367,17 @@ async def cron(
                 "tool_policy.elevated requires an interactive CLI or Web caller"
             )
 
+    # Any job that runs a script executes a file on this host every tick with
+    # nothing in the loop to review it — the same unattended shell that
+    # elevation grants, minus the model. Both the script job and the pre-run
+    # collector get the same operator gate.
+    if action == "add" and (job_kind == SCRIPT_KIND or script):
+        caller_kind = getattr(ctx, "caller_kind", None) if ctx is not None else None
+        if caller_kind not in (CallerKind.CLI, CallerKind.WEB):
+            raise ToolError(
+                "scheduling a script requires an interactive CLI or Web caller"
+            )
+
     if action == "list":
         jobs = [
             job for job in await sched.list_jobs() if _cron_job_agent_id(job) == current_agent_id
@@ -348,7 +397,6 @@ async def cron(
 
     if action == "add":
         assert schedule is not None
-        assert task is not None
         wake_mode = str(wake_mode or "now").strip().lower()
         schedule_kind, schedule_value, schedule_tz = _coerce_tool_schedule(
             schedule,
@@ -356,12 +404,28 @@ async def cron(
         )
 
         # Scan prompt for injection/exfiltration before scheduling
-        blocked, reason = _scan_cron_prompt(task)
-        if blocked:
-            raise ToolError(reason)
+        if task:
+            blocked, reason = _scan_cron_prompt(task)
+            if blocked:
+                raise ToolError(reason)
 
-        if job_kind not in ("reminder", "system_event", "agent_turn"):
-            raise ToolError("job_kind must be reminder, system_event, or agent_turn")
+        if job_kind not in ("reminder", "system_event", "agent_turn", SCRIPT_KIND):
+            raise ToolError(
+                "job_kind must be reminder, system_event, agent_turn, or script"
+            )
+        if job_kind == SCRIPT_KIND:
+            if session_target == "main":
+                raise ToolError("script jobs cannot use session_target=main")
+            if not script or not script.strip():
+                raise ToolError("job_kind='script' requires 'script'")
+        elif script and job_kind != "agent_turn":
+            raise ToolError(
+                "'script' is only used by job_kind='script' or 'agent_turn'"
+            )
+        if script:
+            script_error = validate_script_path(script)
+            if script_error:
+                raise ToolError(script_error)
         if session_target not in ("main", "isolated", "current", "session"):
             raise ToolError("session_target must be main, isolated, current, or session")
         if job_kind == "system_event" and session_target == "current":
@@ -456,18 +520,38 @@ async def cron(
                     delivery.channel_name = ctx.channel_kind or ""
                     delivery.channel_id = ctx.channel_id or ""
 
-        if job_kind == SYSTEM_EVENT_KIND:
+        normalized_script = normalize_script_value(script)
+        normalized_workdir = (workdir or "").strip()
+        normalized_args = [str(arg) for arg in (script_args or [])]
+        if job_kind == SCRIPT_KIND:
+            payload = make_script_payload(
+                normalized_script,
+                current_agent_id,
+                normalized_workdir,
+                normalized_args,
+            )
+            handler_key = "script_run"
+        elif job_kind == SYSTEM_EVENT_KIND:
+            assert task is not None
             payload = make_system_event_payload(task, current_agent_id)
             handler_key = "system_event"
         elif job_kind == REMINDER_KIND:
+            assert task is not None
             payload = make_reminder_payload(task, current_agent_id)
             handler_key = "static_message"
         else:
-            payload = make_agent_turn_payload(task, current_agent_id)
+            assert task is not None
+            payload = make_agent_turn_payload(
+                task,
+                current_agent_id,
+                normalized_script,
+                normalized_workdir,
+                normalized_args,
+            )
             handler_key = "agent_run"
         effective_tz = (schedule_tz or tz or "").strip()
         job = await sched.add_job(
-            name=task or "cron-tool-job",
+            name=task or script or "cron-tool-job",
             handler_key=handler_key,
             payload=payload,
             session_target=SessionTarget(session_target),
@@ -501,6 +585,7 @@ async def cron(
                 "schedule_kind": schedule_kind.value,
                 "schedule_value": schedule_value,
                 "task": task,
+                "script": script or "",
                 "payload_kind": job_kind,
                 "session_target": session_target,
                 "wake_mode": wake_mode,

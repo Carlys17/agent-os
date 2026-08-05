@@ -220,6 +220,29 @@ describe('CronPage', () => {
     )
   })
 
+  it('renders a script job with the Script pill and its script path', async () => {
+    wireRpc({
+      jobs: [
+        {
+          id: 'job-script',
+          name: 'Memory watchdog',
+          enabled: true,
+          expression: '*/5 * * * *',
+          payloadKind: 'script',
+          sessionTarget: 'isolated',
+          script: 'watch-memory.sh',
+          message: 'watch-memory.sh',
+        },
+      ],
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Memory watchdog')).toBeInTheDocument())
+    const card = screen.getByLabelText('Cron job Memory watchdog')
+    expect(within(card).getByText('Script')).toBeInTheDocument()
+    expect(within(card).getByText('watch-memory.sh')).toBeInTheDocument()
+    expect(within(card).queryByText(/elevated/i)).toBeNull()
+  })
+
   it('shows the elevated badge on the card, without opening the editor', async () => {
     wireRpc({ jobs: [{ ...AGENT_JOB, elevated: 'bypass' }] })
     renderPage()

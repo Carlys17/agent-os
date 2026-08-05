@@ -18,7 +18,7 @@ from agentos.cli.ui import ACCENT_HEADER, console
 cron_app = typer.Typer(help="Inspect and manage scheduled AgentOS runs.")
 
 _SESSION_TARGETS = {"isolated", "main", "current", "session"}
-_JOB_KINDS = {"auto", "reminder", "agent_turn", "system_event"}
+_JOB_KINDS = {"auto", "reminder", "agent_turn", "system_event", "script"}
 _WAKE_MODES = {"now", "next-heartbeat"}
 _ELEVATED_MODES = {"bypass", "full"}
 
@@ -40,13 +40,50 @@ def _validate_session_target(value: str) -> str:
     return normalized
 
 
+def _validate_script_path(script: str) -> str | None:
+    """Reject a script path that cannot resolve inside the scripts directory.
+
+    A local echo of the scheduler's rule (``scheduler/scripts.py``), kept here
+    so a typo fails at the prompt instead of after a gateway round trip. The
+    scheduler stays the authority — this CLI talks to it over RPC and never
+    imports it.
+    """
+    raw = (script or "").strip()
+    if not raw:
+        return "--script requires a path"
+    if raw.startswith(("/", "~", "\\")) or (len(raw) >= 2 and raw[1] == ":"):
+        return (
+            "--script must be relative to ~/.agentos/scripts/ — place the script "
+            "there and pass just the file name"
+        )
+    if ".." in Path(raw).parts:
+        return "--script must stay inside ~/.agentos/scripts/"
+    return None
+
+
+def _as_optional_str(value: Any) -> str | None:
+    """Normalize an option that may arrive as typer's unfilled default.
+
+    These commands are also called directly (tests, other CLI code), where an
+    omitted option is still the ``typer.Option`` sentinel rather than ``None``.
+    """
+    return value if isinstance(value, str) else None
+
+
+def _as_str_list(value: Any) -> list[str]:
+    """Same normalization for a repeatable option."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
 def _validate_job_kind(value: Any) -> str:
     if not isinstance(value, str):
         return "auto"
     normalized = value.strip().lower()
     if normalized not in _JOB_KINDS:
         raise typer.BadParameter(
-            "--job-kind must be one of auto, reminder, agent_turn, system_event"
+            "--job-kind must be one of auto, reminder, agent_turn, system_event, script"
         )
     return normalized
 
@@ -380,6 +417,7 @@ def _render_jobs(rows: list[dict[str, Any]], *, title: str = "Cron jobs") -> Non
     table.add_column("Name")
     table.add_column("Enabled")
     table.add_column("Expression")
+    table.add_column("Kind")
     table.add_column("Agent")
     table.add_column("Elevated")
     table.add_column("Next run")
@@ -391,6 +429,7 @@ def _render_jobs(rows: list[dict[str, Any]], *, title: str = "Cron jobs") -> Non
             str(row.get("name") or ""),
             str(row.get("enabled") or False),
             str(row.get("expression") or row.get("schedule_raw") or ""),
+            str(row.get("payloadKind") or row.get("payload_kind") or ""),
             str(row.get("agentId") or row.get("agent_id") or ""),
             str(row.get("elevated") or ""),
             str(row.get("next_run") or ""),
@@ -489,15 +528,40 @@ def cron_add(
     at: Annotated[
         str | None, typer.Option("--at", help="One-time ISO-8601 time with timezone")
     ] = None,
-    text: str = typer.Option(..., "--text", help="Prompt text to run"),
+    text: str | None = typer.Option(
+        None,
+        "--text",
+        help="Prompt text to run. Required for every kind except script.",
+    ),
+    script: str | None = typer.Option(
+        None,
+        "--script",
+        help=(
+            "Run this script, relative to ~/.agentos/scripts/. On its own it "
+            "creates a script job: stdout is delivered verbatim and no model "
+            "runs. With --job-kind agent_turn it becomes a pre-run collector — "
+            "the agent sees the stdout, and no output means the turn is skipped."
+        ),
+    ),
+    script_arg: list[str] | None = typer.Option(
+        None,
+        "--script-arg",
+        help="Argument passed to --script. Repeat for several; never shell-interpreted.",
+    ),
+    workdir: str | None = typer.Option(
+        None,
+        "--workdir",
+        help="Working directory for --script (defaults to the script's own directory).",
+    ),
     name: str | None = typer.Option(None, "--name", help="Display name"),
     agent: str | None = typer.Option(None, "--agent", help="Agent id"),
     job_kind: str = typer.Option(
         "auto",
         "--job-kind",
         help=(
-            "Cron payload kind: auto, reminder, agent_turn, or system_event. "
-            "auto creates static reminders for non-main targets and system events for main."
+            "Cron payload kind: auto, reminder, agent_turn, system_event, or script. "
+            "auto creates static reminders for non-main targets, system events for "
+            "main, and script jobs when --script is given."
         ),
     ),
     session_target: str = typer.Option(
@@ -653,16 +717,46 @@ def cron_add(
 ) -> None:
     """Add a scheduled cron job."""
 
+    text = _as_optional_str(text)
+    script = _as_optional_str(script)
+    workdir = _as_optional_str(workdir)
+    script_args = _as_str_list(script_arg)
     target = _validate_session_target(session_target)
     payload_kind = _validate_job_kind(job_kind)
     if payload_kind == "auto":
-        payload_kind = "system_event" if target == "main" else "reminder"
+        if script:
+            payload_kind = "script"
+        else:
+            payload_kind = "system_event" if target == "main" else "reminder"
     if payload_kind == "reminder" and target == "main":
         raise typer.BadParameter("--job-kind reminder cannot use --session-target main")
     if payload_kind == "agent_turn" and target == "main":
         raise typer.BadParameter("--job-kind agent_turn cannot use --session-target main")
     if payload_kind == "system_event" and target != "main":
         raise typer.BadParameter("--job-kind system_event requires --session-target main")
+    if payload_kind == "script":
+        if target == "main":
+            raise typer.BadParameter("--job-kind script cannot use --session-target main")
+        if not script:
+            raise typer.BadParameter("--job-kind script requires --script")
+    elif payload_kind == "agent_turn":
+        # --script here is a pre-run collector, not the job itself.
+        if not text or not text.strip():
+            raise typer.BadParameter("--text is required")
+    else:
+        if script:
+            raise typer.BadParameter(
+                "--script is only used by script and agent_turn jobs; "
+                "pass --job-kind script or --job-kind agent_turn"
+            )
+        if not text or not text.strip():
+            raise typer.BadParameter("--text is required")
+    if script:
+        script_error = _validate_script_path(script)
+        if script_error:
+            raise typer.BadParameter(script_error)
+    elif workdir or script_args:
+        raise typer.BadParameter("--workdir and --script-arg require --script")
     if target == "current":
         raise typer.BadParameter(
             "--session-target current is only available from session-bound clients; "
@@ -676,10 +770,16 @@ def cron_add(
             at=at,
             tz=tz,
         ),
-        "text": text,
+        "text": text or "",
         "payloadKind": payload_kind,
         "sessionTarget": target,
     }
+    if script:
+        params["script"] = script
+    if workdir:
+        params["workdir"] = workdir
+    if script_args:
+        params["scriptArgs"] = script_args
     if name:
         params["name"] = name
     if agent:
@@ -762,6 +862,32 @@ def cron_update(
         str | None, typer.Option("--at", help="One-time ISO-8601 time with timezone")
     ] = None,
     text: str | None = typer.Option(None, "--text", help="Prompt text to run"),
+    job_kind: str | None = typer.Option(
+        None,
+        "--job-kind",
+        help=(
+            "Convert the job to another kind: reminder, agent_turn, system_event, "
+            "or script. Converting to script also needs --script."
+        ),
+    ),
+    script: str | None = typer.Option(
+        None,
+        "--script",
+        help=(
+            "Point the job at a different script under ~/.agentos/scripts/. "
+            "Pass an empty string to drop an agent turn's pre-run script."
+        ),
+    ),
+    script_arg: list[str] | None = typer.Option(
+        None,
+        "--script-arg",
+        help="Replace the script's arguments. Repeat for several.",
+    ),
+    workdir: str | None = typer.Option(
+        None,
+        "--workdir",
+        help="Working directory for the job's script (empty string clears it).",
+    ),
     name: str | None = typer.Option(None, "--name", help="Display name"),
     enabled: bool | None = typer.Option(None, "--enabled/--disabled", help="Enable/disable job"),
     timeout: float | None = typer.Option(None, "--timeout", help="Run timeout in seconds"),
@@ -856,7 +982,19 @@ def cron_update(
     destination IS patchable via the --failure-* flags.
     """
 
+    script = _as_optional_str(script)
+    workdir = _as_optional_str(workdir)
+    job_kind = _as_optional_str(job_kind)
+    script_args = _as_str_list(script_arg)
     params: dict[str, Any] = {"id": job_id}
+    if job_kind is not None:
+        payload_kind = _validate_job_kind(job_kind)
+        if payload_kind == "auto":
+            raise typer.BadParameter(
+                "--job-kind on update must name a kind: reminder, agent_turn, "
+                "system_event, or script"
+            )
+        params["payloadKind"] = payload_kind
     params.update(
         _build_optional_schedule_param(
             expression=expression,
@@ -868,6 +1006,18 @@ def cron_update(
     )
     if text is not None:
         params["text"] = text
+    if script is not None:
+        # An explicit empty string clears the job's script; anything else has
+        # to be a usable path.
+        if script.strip():
+            script_error = _validate_script_path(script)
+            if script_error:
+                raise typer.BadParameter(script_error)
+        params["script"] = script
+    if workdir is not None:
+        params["workdir"] = workdir
+    if script_args:
+        params["scriptArgs"] = script_args
     if name is not None:
         params["name"] = name
     if enabled is not None:

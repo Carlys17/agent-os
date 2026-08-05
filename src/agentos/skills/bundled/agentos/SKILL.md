@@ -109,7 +109,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `models` | `list` |
 | `skills` | `list`, `search`, `view`, `install`, `uninstall`, `update`, `publish`, `tap add/list/remove` |
 | `sessions` | `list`, `show`, `resume`, `abort`, `delete`, `export` |
-| `cron` | `list`, `status`, `add`, `update` (both take `--elevated`, `--elevated-mode`, `--tool-policy`; the policy's `profile` must be one of `coding`/`full`/`memory_only`/`messaging`/`minimal`, or be omitted), `remove`, `run`, `runs` |
+| `cron` | `list`, `status`, `add`, `update` (both take `--job-kind`, `--script`, `--script-arg`, `--workdir`, `--elevated`, `--elevated-mode`, `--tool-policy`; the policy's `profile` must be one of `coding`/`full`/`memory_only`/`messaging`/`minimal`, or be omitted), `remove`, `run`, `runs` |
 | `channels` | `list`, `status`, `types`, `describe`, `native-commands`, `add`, `remove`, `enable`, `disable`, `edit`, `restart`, `logout`, `pairing …` |
 | `memory` | `status`, `index`, `list`, `search`, `show`, `embedding-download`, `raw-fallbacks …` |
 | `sandbox` | `status`, `on`, `bypass`, `full`, `reset` |
@@ -386,6 +386,18 @@ Bounding flags: `--timeout` (wall-clock seconds), `--max-iterations`,
 ```sh
 agentos sessions list / show <id> / export <id> <out>
 agentos cron list / add / run <id> / runs
+# --job-kind decides what fires. Default 'auto' = reminder: --text is delivered
+# verbatim and NO model runs, so a job that should think needs agent_turn.
+agentos cron add --every 1h --job-kind agent_turn --text "Summarize updates"
+# script jobs run a file in ~/.agentos/scripts/ and deliver its stdout — no
+# model, no tokens. Empty stdout = silent; non-zero exit delivers the error and
+# fails the job. Relative paths only; CLI/Web callers only (never a channel).
+agentos cron add --every 5m --script watch-memory.sh --name memory-watchdog
+# --script on an agent_turn is a pre-run collector instead: its stdout becomes
+# the turn's context, and a tick that prints nothing skips the turn (no tokens).
+agentos cron add --every 10m --job-kind agent_turn --script watch_rss.py \
+  --script-arg --url --script-arg https://example.com/feed.xml \
+  --text "Summarize anything urgent."
 # Cron turns are read-only by default, so a job cannot run a shell-based skill.
 # --elevated opts one agent-turn job out of that: no approval, no sandbox, host
 # shell as the user. See docs/cli.md before suggesting it.

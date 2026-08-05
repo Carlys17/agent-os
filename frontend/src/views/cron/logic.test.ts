@@ -34,12 +34,16 @@ describe('jobKindLabel / jobKindClass', () => {
     expect(jobKindLabel({ payloadKind: 'reminder' })).toBe('Reminder')
     expect(jobKindLabel({ payload_kind: 'system_event' })).toBe('System event')
     expect(jobKindLabel({ payloadKind: 'agent_turn' })).toBe('Agent task')
+    expect(jobKindLabel({ payloadKind: 'script' })).toBe('Script')
     expect(jobKindLabel({})).toBe('Agent task')
   })
   it('maps reminder→is-reminder, else is-agent', () => {
     expect(jobKindClass({ payloadKind: 'reminder' })).toBe('is-reminder')
     expect(jobKindClass({ payloadKind: 'system_event' })).toBe('is-agent')
     expect(jobKindClass({})).toBe('is-agent')
+  })
+  it('groups script jobs with reminders — neither reaches a model', () => {
+    expect(jobKindClass({ payloadKind: 'script' })).toBe('is-reminder')
   })
 })
 
@@ -348,8 +352,10 @@ import {
   canonicalSessionKey,
   deliveryFormFromJob,
   jobSessionKey,
+  joinScriptArgs,
   resolveTarget,
   seedForm,
+  validateScriptPath,
   type CronForm,
 } from './logic'
 
@@ -772,6 +778,175 @@ describe('buildSavePayload', () => {
     expect(
       buildSavePayload(form({ name: 'X', cron: '* * * * *', deliveryMode: 'webhook' }), null, ''),
     ).toEqual({ ok: false, error: 'Webhook URL is required for webhook delivery' })
+  })
+})
+
+describe('script jobs', () => {
+  it('locks a script job to an isolated session', () => {
+    expect(resolveTarget('script', 'current', 'k')).toMatchObject({
+      target: 'isolated',
+      locked: true,
+      showTargetSessionRow: false,
+    })
+  })
+
+  it('accepts a relative script path', () => {
+    expect(validateScriptPath('watch-memory.sh')).toBe('')
+    expect(validateScriptPath('watchers/disk.py')).toBe('')
+  })
+
+  it('refuses a path that leaves the scripts directory', () => {
+    expect(validateScriptPath('')).toMatch(/required/)
+    expect(validateScriptPath('/etc/passwd')).toMatch(/relative/)
+    expect(validateScriptPath('~/evil.sh')).toMatch(/relative/)
+    expect(validateScriptPath('../escape.sh')).toMatch(/inside/)
+  })
+
+  it('sends the script and workdir with an isolated target', () => {
+    const res = buildSavePayload(
+      form({
+        name: 'Memory watchdog',
+        payloadKind: 'script',
+        script: 'watch-memory.sh',
+        workdir: '/srv/app',
+        cron: '*/5 * * * *',
+      }),
+      null,
+      'agent:main:webchat:abc',
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.ok && res.payload).toMatchObject({
+      payloadKind: 'script',
+      script: 'watch-memory.sh',
+      workdir: '/srv/app',
+      sessionTarget: 'isolated',
+    })
+  })
+
+  it('refuses to save a script job without a script', () => {
+    expect(
+      buildSavePayload(form({ name: 'X', payloadKind: 'script', cron: '* * * * *' }), null, ''),
+    ).toEqual({ ok: false, error: 'Script path is required' })
+  })
+
+  it('refuses elevation on a script job — there is no agent turn to elevate', () => {
+    const res = buildSavePayload(
+      form({
+        name: 'X',
+        payloadKind: 'script',
+        script: 'watch.sh',
+        cron: '* * * * *',
+        elevated: true,
+      }),
+      null,
+      '',
+    )
+
+    expect(res.ok).toBe(false)
+  })
+
+  it('seeds the script fields when editing', () => {
+    const seeded = seedForm(
+      {
+        id: 'j1',
+        payloadKind: 'script',
+        script: 'watch.sh',
+        workdir: '/srv',
+        scriptArgs: ['--url', 'https://example.com/feed.xml'],
+      },
+      null,
+      '',
+    )
+
+    expect(seeded.payloadKind).toBe('script')
+    expect(seeded.script).toBe('watch.sh')
+    expect(seeded.workdir).toBe('/srv')
+    expect(seeded.scriptArgs).toBe('--url https://example.com/feed.xml')
+  })
+
+  it('quotes stored args that contain spaces so the round trip survives', () => {
+    expect(joinScriptArgs(['--name', 'my feed', '--limit', '5'])).toBe('--name "my feed" --limit 5')
+    expect(joinScriptArgs(undefined)).toBe('')
+    expect(joinScriptArgs('--already text')).toBe('--already text')
+  })
+
+  it('sends script args as the typed line', () => {
+    const res = buildSavePayload(
+      form({
+        name: 'Feed',
+        payloadKind: 'script',
+        script: 'watch_rss.py',
+        scriptArgs: '--url https://example.com/feed.xml',
+        cron: '*/5 * * * *',
+      }),
+      null,
+      '',
+    )
+
+    expect(res.ok && res.payload.scriptArgs).toBe('--url https://example.com/feed.xml')
+  })
+})
+
+describe('pre-run script on an agent turn', () => {
+  it('sends the script alongside the prompt', () => {
+    const res = buildSavePayload(
+      form({
+        name: 'Triage',
+        payloadKind: 'agent_turn',
+        message: 'Summarize anything urgent.',
+        script: 'watch_github.py',
+        scriptArgs: '--repo owner/name',
+        cron: '*/15 * * * *',
+      }),
+      null,
+      '',
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.ok && res.payload).toMatchObject({
+      payloadKind: 'agent_turn',
+      text: 'Summarize anything urgent.',
+      script: 'watch_github.py',
+      scriptArgs: '--repo owner/name',
+    })
+  })
+
+  it('sends an empty script so clearing the field actually clears it', () => {
+    // An omitted key means "keep what the job had" on the update path, so a
+    // blank field has to travel as an explicit empty string.
+    const res = buildSavePayload(
+      form({
+        name: 'Plain turn',
+        payloadKind: 'agent_turn',
+        message: 'Do the thing.',
+        cron: '0 * * * *',
+      }),
+      null,
+      '',
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.ok && res.payload.script).toBe('')
+  })
+
+  it('still validates the path when one is given', () => {
+    const res = buildSavePayload(
+      form({
+        name: 'Triage',
+        payloadKind: 'agent_turn',
+        message: 'Summarize.',
+        script: '/etc/passwd',
+        cron: '0 * * * *',
+      }),
+      null,
+      '',
+    )
+
+    expect(res).toEqual({
+      ok: false,
+      error: 'Script path must be relative to ~/.agentos/scripts/ — use just the file name',
+    })
   })
 })
 
