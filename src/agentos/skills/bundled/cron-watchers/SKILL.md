@@ -53,7 +53,7 @@ whichever watcher you install.
 
 ## Schedule one
 
-Deliver the new items straight to the user, no model call:
+Deliver the new items straight to the user, no LLM call:
 
 ```sh
 agentos cron add --every 15m --name hn-watch --script watch_rss.py \

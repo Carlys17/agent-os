@@ -538,8 +538,8 @@ agentos cron status <job-id>
 agentos cron runs <job-id>
 ```
 
-`--job-kind` picks what fires: `reminder` (delivers `--text` verbatim, no model),
-`script` (runs a file, no model), `agent_turn` (the agent runs `--text` as a
+`--job-kind` picks what fires: `reminder` (delivers `--text` verbatim, no LLM),
+`script` (runs a file, no LLM), `agent_turn` (the agent runs `--text` as a
 prompt), or `system_event`. It defaults to `auto`, which is `reminder` for normal
 targets — so the example above repeats that sentence hourly rather than
 summarizing anything. Add `--job-kind agent_turn` to have the agent do the work.
@@ -563,12 +563,32 @@ Secrets are masked in the output, and the gateway token is withheld from the
 child process. The bundled `cron-watchers` skill ships scripts for RSS, JSON
 endpoints, and GitHub repos that already follow this contract.
 
+#### Seeing what the script did
+
+A job scheduled from the CLI has no conversation attached, so "delivered
+verbatim" has nowhere to deliver to: the stdout lands on the run record and the
+chat stays empty. `--session-key` names the chat the job reports into — the run
+itself stays isolated, only the output is mirrored there:
+
+```sh
+agentos sessions list                       # copy the key of the chat you want
+agentos cron add --every 5m --script watch-memory.sh --name memory-watchdog \
+  --session-key 'agent:main:webchat:<id>'
+```
+
+Either way `agentos cron runs <job-id>` shows each run's `Output` and
+`Delivery` columns; `--json` prints the output untruncated. A `Delivery` of
+`fwd:no_session_target` is the scheduler saying the script printed something
+that reached no conversation — add `--session-key`. Jobs created from the Web UI
+or from a chat already carry their originating session, so their output shows up
+in that chat without any extra flag.
+
 Add `--script` to an `--job-kind agent_turn` job instead and it becomes a
 pre-run collector: its stdout is handed to the agent as context, and a tick
-where it prints nothing skips the turn entirely — no model call at all. See
+where it prints nothing skips the turn entirely — no LLM call at all. See
 [`scheduling.md`](scheduling.md).
 
-No model runs, so no tokens are spent — but nothing reviews the script before it
+No LLM runs, so no tokens are spent — but nothing reviews the script before it
 executes either. It runs on this host as you, unattended, so treat
 `~/.agentos/scripts/` as trusted as your shell profile. Only an interactive CLI
 or Web caller can create one; the in-agent `cron` tool refuses `job_kind='script'`

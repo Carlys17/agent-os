@@ -32,7 +32,14 @@ from agentos.tools.types import ToolError
 
 log = structlog.get_logger(__name__)
 
-_VALID_CRON_ACTIONS = ("list", "add", "remove", "run")
+_VALID_CRON_ACTIONS = ("list", "add", "remove", "run", "runs")
+
+# Run history is the only record of what a script job printed, and a watcher's
+# stdout can be arbitrarily long. These bounds keep "what did it do last night?"
+# from spending the context window on one answer.
+_CRON_RUNS_DEFAULT_LIMIT = 5
+_CRON_RUNS_MAX_LIMIT = 20
+_CRON_RUN_OUTPUT_MAX_CHARS = 2000
 
 
 _VALID_GATEWAY_ACTIONS = ("restart", "config_get", "config_set")
@@ -71,6 +78,8 @@ class _SchedulerProtocol(Protocol):
     async def remove_job(self, job_id: str) -> bool: ...
 
     async def run_job_now(self, job_id: str) -> Any: ...
+
+    async def get_runs(self, job_id: str, limit: int = 20) -> list[Any]: ...
 
 
 # Setter-injected dependencies (gateway boot calls these)
@@ -134,10 +143,43 @@ def _cron_job_agent_id(job: Any) -> str:
     return payload_agent_id(payload if isinstance(payload, dict) else None, "main")
 
 
+def _cron_run_item(run: Any) -> dict[str, Any]:
+    """Shape one execution record for the model.
+
+    ``summary`` is renamed to ``output`` because for a script job that field
+    holds the script's literal stdout, not a description of it — a name that
+    invites the model to quote it rather than paraphrase. ``delivery`` is
+    included so the model can tell "this ran and told you" from "this ran and
+    the output went nowhere", which reads identically from the job alone.
+    """
+    output = str(getattr(run, "summary", "") or "")
+    truncated = len(output) > _CRON_RUN_OUTPUT_MAX_CHARS
+    if truncated:
+        output = output[:_CRON_RUN_OUTPUT_MAX_CHARS]
+    started_at = getattr(run, "started_at", None)
+    item: dict[str, Any] = {
+        "started_at": started_at.isoformat() if started_at is not None else "",
+        "success": bool(getattr(run, "success", False)),
+        "output": output,
+        "delivery": str(getattr(run, "delivery_status", "") or ""),
+    }
+    if truncated:
+        item["output_truncated"] = True
+    error = getattr(run, "error", None)
+    if error:
+        item["error"] = str(error)
+    return item
+
+
 @tool(
     name="cron",
     description=(
-        "Create, list, remove, or trigger scheduled cron jobs. "
+        "Create, list, inspect, remove, or trigger scheduled cron jobs. "
+        "Use action=runs to answer any question about what a job actually did — "
+        "its recent runs with the output each one produced, whether it succeeded, "
+        "and where that output was delivered. For a script job the run output is "
+        "the script's stdout, and run history is the only place it is recorded, "
+        "so answer from action=runs rather than guessing what a schedule produced. "
         "Use this tool (NOT exec_command or background_process) for any recurring/timed "
         "task scheduling or reminders. Translate any natural language into the "
         "structured schedule shape yourself; the tool will not parse free-form text. "
@@ -156,7 +198,7 @@ def _cron_job_agent_id(job: Any) -> str:
     params={
         "action": {
             "type": "string",
-            "description": "Action: list, add, remove, run",
+            "description": "Action: list, add, remove, run, runs",
         },
         "schedule": {
             "type": "object",
@@ -208,7 +250,7 @@ def _cron_job_agent_id(job: Any) -> str:
                 "the model. Use agent_turn only for scheduled background tasks "
                 "that need the agent/model to work. Use system_event only for "
                 "internal main-session events. Use script to run an existing "
-                "script on schedule and deliver its stdout — no model, no tokens; "
+                "script on schedule and deliver its stdout — no LLM, no tokens; "
                 "it requires the script parameter and an interactive CLI or Web "
                 "caller."
             ),
@@ -258,7 +300,17 @@ def _cron_job_agent_id(job: Any) -> str:
         },
         "job_id": {
             "type": "string",
-            "description": "Job ID (required for remove and run)",
+            "description": "Job ID (required for remove, run, and runs)",
+        },
+        "limit": {
+            "type": "integer",
+            "description": (
+                f"How many recent runs to return for action=runs "
+                f"(default {_CRON_RUNS_DEFAULT_LIMIT}, max {_CRON_RUNS_MAX_LIMIT})."
+            ),
+            "minimum": 1,
+            "maximum": _CRON_RUNS_MAX_LIMIT,
+            "default": _CRON_RUNS_DEFAULT_LIMIT,
         },
         "agent_id": {
             "type": "string",
@@ -310,15 +362,16 @@ async def cron(
     script_args: list[str] | None = None,
     workdir: str = "",
     tz: str = "",
+    limit: int = _CRON_RUNS_DEFAULT_LIMIT,
 ) -> str:
     if action not in _VALID_CRON_ACTIONS:
-        raise ToolError(f"Invalid action: {action}. Must be list|add|remove|run")
+        raise ToolError(f"Invalid action: {action}. Must be list|add|remove|run|runs")
 
     if action == "add" and schedule is None:
         raise ToolError("'schedule' required for add")
     if action == "add" and job_kind != SCRIPT_KIND and not task:
         raise ToolError("'task' required for add")
-    if action in ("remove", "run") and not job_id:
+    if action in ("remove", "run", "runs") and not job_id:
         raise ToolError(f"'job_id' required for {action}")
 
     # Dispatch to injected scheduler
@@ -394,6 +447,28 @@ async def cron(
             for j in jobs
         ]
         return json.dumps({"action": "list", "jobs": items})
+
+    if action == "runs":
+        assert job_id is not None
+        target_job = await sched.get_job(job_id)
+        if target_job is None:
+            raise ToolError(f"Job not found: {job_id}")
+        if _cron_job_agent_id(target_job) != current_agent_id:
+            raise ToolError("cron job belongs to a different profile")
+        try:
+            requested = int(limit)
+        except (TypeError, ValueError):
+            requested = _CRON_RUNS_DEFAULT_LIMIT
+        requested = max(1, min(requested, _CRON_RUNS_MAX_LIMIT))
+        runs = await sched.get_runs(job_id, limit=requested)
+        return json.dumps(
+            {
+                "action": "runs",
+                "job_id": job_id,
+                "name": target_job.name,
+                "runs": [_cron_run_item(run) for run in runs],
+            }
+        )
 
     if action == "add":
         assert schedule is not None

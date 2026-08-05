@@ -94,7 +94,7 @@ the work.
 ## Run a Script Instead of a Model
 
 A `script` job is the watchdog shape — poll something on a timer, deliver a line
-when it matters, stay quiet otherwise — with no model in the loop:
+when it matters, stay quiet otherwise — with no LLM in the loop:
 
 ```sh
 mkdir -p ~/.agentos/scripts
@@ -150,7 +150,7 @@ process, which is what lets a watcher call a model API of its own. Set
 `AGENTOS_STRIP_PROVIDER_ENV=1` to withhold those too.
 
 **What you are accepting.** The script runs on this host as you, on schedule,
-with nobody watching and no approval prompt — there is no model deciding what to
+with nobody watching and no approval prompt — there is no LLM deciding what to
 run, but also nothing reviewing it. Treat `~/.agentos/scripts/` as trusted as
 your shell profile, and remember that anything with write access to that
 directory can schedule itself. For that reason a script job can only be created
@@ -181,7 +181,7 @@ Per tick:
 - **stdout** → prepended to the prompt as `## Script output`, then the turn runs
   with your `--text` after it.
 - **no stdout** (or a `{"wakeAgent": false}` final line) → the turn is skipped
-  entirely. No model call, no session, no transcript line, no delivery. This is
+  entirely. No LLM call, no session, no transcript line, no delivery. This is
   what makes the pattern cheap: the agent only wakes on ticks with news.
 - **non-zero exit** → the error is prepended as `## Script error` and the turn
   runs anyway, so the agent can tell the user the collector broke.
@@ -255,6 +255,31 @@ Run a job immediately:
 ```sh
 agentos cron run <job-id> --yes
 ```
+
+`cron runs` shows each run's `Output` (the reply, or a script job's stdout) and
+`Delivery` (where that output went). Use `--json` for untruncated output.
+
+### Asking the agent what a job did
+
+The in-agent `cron` tool reads the same history through `action="runs"`, so you
+can ask in chat — "what did the memory watchdog report today?" — and the model
+answers from the recorded runs instead of guessing what the schedule produced:
+
+```json
+{"action": "runs", "job_id": "<job-id>", "limit": 5}
+```
+
+It returns each run's `started_at`, `success`, `output`, and `delivery`, plus
+`error` on a failure. `limit` defaults to 5 and is clamped to 20, and output
+longer than 2000 characters comes back with `output_truncated: true` — the full
+text is always available from `agentos cron runs <job-id> --json`. The action is
+scoped to the caller's own profile, the same boundary `remove` and `run` use.
+
+A script job's stdout can contain whatever the script fetched (an RSS item, an
+API response), and `action="runs"` puts that text in the model's context. That
+is the same content a delivered job already mirrors into the chat, but a job
+that reports nowhere is now readable too, so treat script output as untrusted
+input the same way you would any fetched content.
 
 ## Update or Remove Jobs
 

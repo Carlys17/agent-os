@@ -109,7 +109,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `models` | `list` |
 | `skills` | `list`, `search`, `view`, `install`, `uninstall`, `update`, `publish`, `tap add/list/remove` |
 | `sessions` | `list`, `show`, `resume`, `abort`, `delete`, `export` |
-| `cron` | `list`, `status`, `add`, `update` (both take `--job-kind`, `--script`, `--script-arg`, `--workdir`, `--elevated`, `--elevated-mode`, `--tool-policy`; the policy's `profile` must be one of `coding`/`full`/`memory_only`/`messaging`/`minimal`, or be omitted), `remove`, `run`, `runs` |
+| `cron` | `list`, `status`, `add` (also takes `--session-key`, the chat a job reports into), `update` (both take `--job-kind`, `--script`, `--script-arg`, `--workdir`, `--elevated`, `--elevated-mode`, `--tool-policy`; the policy's `profile` must be one of `coding`/`full`/`memory_only`/`messaging`/`minimal`, or be omitted), `remove`, `run`, `runs` |
 | `channels` | `list`, `status`, `types`, `describe`, `native-commands`, `add`, `remove`, `enable`, `disable`, `edit`, `restart`, `logout`, `pairing …` |
 | `memory` | `status`, `index`, `list`, `search`, `show`, `embedding-download`, `raw-fallbacks …` |
 | `sandbox` | `status`, `on`, `bypass`, `full`, `reset` |
@@ -387,12 +387,21 @@ Bounding flags: `--timeout` (wall-clock seconds), `--max-iterations`,
 agentos sessions list / show <id> / export <id> <out>
 agentos cron list / add / run <id> / runs
 # --job-kind decides what fires. Default 'auto' = reminder: --text is delivered
-# verbatim and NO model runs, so a job that should think needs agent_turn.
+# verbatim and NO LLM runs, so a job that should think needs agent_turn.
 agentos cron add --every 1h --job-kind agent_turn --text "Summarize updates"
 # script jobs run a file in ~/.agentos/scripts/ and deliver its stdout — no
 # model, no tokens. Empty stdout = silent; non-zero exit delivers the error and
 # fails the job. Relative paths only; CLI/Web callers only (never a channel).
 agentos cron add --every 5m --script watch-memory.sh --name memory-watchdog
+# ...but a job added from the CLI has no chat to deliver into, so that stdout
+# only reaches the run record. --session-key names the chat it reports into
+# (the run stays isolated). Web UI / in-chat jobs already carry their session.
+agentos cron add --every 5m --script watch-memory.sh --session-key "$KEY"
+# 'runs' shows each run's Output + Delivery; --json prints output untruncated.
+# Delivery 'fwd:no_session_target' == printed something, reached no chat.
+# In chat, the cron tool reads the same history via action="runs" — use it to
+# answer "what did that job do?" instead of guessing from the schedule.
+agentos cron runs <id> [--json]
 # --script on an agent_turn is a pre-run collector instead: its stdout becomes
 # the turn's context, and a tick that prints nothing skips the turn (no tokens).
 agentos cron add --every 10m --job-kind agent_turn --script watch_rss.py \
