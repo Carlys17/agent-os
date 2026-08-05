@@ -552,6 +552,24 @@ cron(action="add", schedule={"kind": "cron", "expr": "*/5 * * * *"},
 `tick` does the reconcile and the fire in one process on purpose: no agent judgement sits
 between deciding and sending.
 
+That is also why the model in the loop is optional. Put the same command in a script under
+`~/.agentos/scripts/` and schedule it with `job_kind="script"` to get the ticks with no model
+call and no tokens — stdout is delivered verbatim, and a tick that prints nothing stays
+silent:
+
+```
+cron(action="add", schedule={"kind": "every", "every_seconds": 600},
+     job_kind="script", script="ratchet-tick.sh", session_target="isolated")
+```
+
+A script job runs the file itself and never starts an agent turn, so it takes **no**
+`tool_policy` — passing `tool_policy.elevated` here is rejected, not honoured. Elevation
+belongs to the `agent_turn` shape above, where an agent turn actually runs. Either shape
+needs an interactive CLI or Web caller: scheduling a script is refused from a chat channel.
+The script inherits the gateway process environment, so check that
+`UNIV4_LP_PRIVATE_KEY` is visible there before arming — a missing key fails every tick, and
+five consecutive failures retire the job.
+
 ## Before arming anything real
 
 Run `tick` **without** `--broadcast` first — it is a full dry run of the transaction,

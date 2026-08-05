@@ -28,7 +28,7 @@ from agentos.scheduler.types import (
     SessionTarget,
 )
 from agentos.tools.registry import tool
-from agentos.tools.types import ToolError
+from agentos.tools.types import SafeToolError, ToolError
 
 log = structlog.get_logger(__name__)
 
@@ -113,11 +113,13 @@ def _coerce_tool_schedule(
     Returns ``(ScheduleKind, schedule_value, schedule_tz)`` ready for
     ``add_job(schedule_kind=..., schedule_value=..., schedule_tz=...)``.
 
-    Raises ``ToolError`` whose message names the offending field and shows the
-    accepted shape so the model can self-correct on the next turn.
+    Raises ``SafeToolError`` whose message names the offending field and shows
+    the accepted shape so the model can self-correct on the next turn. Plain
+    ``ToolError`` would be sanitised to a generic "internal error" line, which
+    leaves the model nothing to correct against.
     """
     if not isinstance(schedule, dict):
-        raise ToolError(
+        raise SafeToolError(
             "schedule must be an object with shape "
             "{kind: 'cron'|'every'|'at', ...}; "
             f"got {type(schedule).__name__}"
@@ -125,7 +127,7 @@ def _coerce_tool_schedule(
     try:
         return coerce_schedule_from_params({"schedule": schedule, "tz": tz})
     except ValueError as exc:
-        raise ToolError(str(exc)) from exc
+        raise SafeToolError(str(exc)) from exc
 
 
 def _cron_job_agent_id(job: Any) -> str:
@@ -312,18 +314,18 @@ async def cron(
     tz: str = "",
 ) -> str:
     if action not in _VALID_CRON_ACTIONS:
-        raise ToolError(f"Invalid action: {action}. Must be list|add|remove|run")
+        raise SafeToolError(f"Invalid action: {action}. Must be list|add|remove|run")
 
     if action == "add" and schedule is None:
-        raise ToolError("'schedule' required for add")
+        raise SafeToolError("'schedule' required for add")
     if action == "add" and job_kind != SCRIPT_KIND and not task:
-        raise ToolError("'task' required for add")
+        raise SafeToolError("'task' required for add")
     if action in ("remove", "run") and not job_id:
-        raise ToolError(f"'job_id' required for {action}")
+        raise SafeToolError(f"'job_id' required for {action}")
 
     # Dispatch to injected scheduler
     if _scheduler is None:
-        raise ToolError("Scheduler not available")
+        raise SafeToolError("Scheduler not available")
 
     sched = _scheduler
 
@@ -345,17 +347,17 @@ async def cron(
 
     if channel_caller:
         if not caller_session_key:
-            raise ToolError(
+            raise SafeToolError(
                 "cron requires a session context for channel callers"
             )
         if action == "add":
             if target_session_key:
-                raise ToolError(
+                raise SafeToolError(
                     "target_session_key is unavailable from a channel; "
                     "channel reminders stay in the current session"
                 )
             if tool_policy:
-                raise ToolError("tool_policy is unavailable from a channel")
+                raise SafeToolError("tool_policy is unavailable from a channel")
 
     # Elevation hands an unattended job a real shell, so it stays an operator
     # decision. Subagents and agent-kind callers already cannot reach `cron` at
@@ -363,7 +365,7 @@ async def cron(
     if tool_policy and isinstance(tool_policy, dict) and tool_policy.get("elevated"):
         caller_kind = getattr(ctx, "caller_kind", None) if ctx is not None else None
         if caller_kind not in (CallerKind.CLI, CallerKind.WEB):
-            raise ToolError(
+            raise SafeToolError(
                 "tool_policy.elevated requires an interactive CLI or Web caller"
             )
 
@@ -374,7 +376,7 @@ async def cron(
     if action == "add" and (job_kind == SCRIPT_KIND or script):
         caller_kind = getattr(ctx, "caller_kind", None) if ctx is not None else None
         if caller_kind not in (CallerKind.CLI, CallerKind.WEB):
-            raise ToolError(
+            raise SafeToolError(
                 "scheduling a script requires an interactive CLI or Web caller"
             )
 
@@ -407,44 +409,55 @@ async def cron(
         if task:
             blocked, reason = _scan_cron_prompt(task)
             if blocked:
-                raise ToolError(reason)
+                raise SafeToolError(reason)
 
         if job_kind not in ("reminder", "system_event", "agent_turn", SCRIPT_KIND):
-            raise ToolError(
+            raise SafeToolError(
                 "job_kind must be reminder, system_event, agent_turn, or script"
             )
         if job_kind == SCRIPT_KIND:
             if session_target == "main":
-                raise ToolError("script jobs cannot use session_target=main")
+                raise SafeToolError("script jobs cannot use session_target=main")
             if not script or not script.strip():
-                raise ToolError("job_kind='script' requires 'script'")
+                raise SafeToolError("job_kind='script' requires 'script'")
+            # A script job runs the file directly and never starts an agent
+            # turn, so there is no tool policy for elevation to apply to. The
+            # scheduler refuses this too, but only once the message has been
+            # flattened into a bare ValueError several layers down.
+            if isinstance(tool_policy, dict) and tool_policy.get("elevated"):
+                raise SafeToolError(
+                    "job_kind='script' cannot carry tool_policy.elevated: a script "
+                    "job runs the file itself and never starts an agent turn for a "
+                    "tool policy to apply to. Drop tool_policy, or use "
+                    "job_kind='agent_turn' if the schedule needs a model in the loop."
+                )
         elif script and job_kind != "agent_turn":
-            raise ToolError(
+            raise SafeToolError(
                 "'script' is only used by job_kind='script' or 'agent_turn'"
             )
         if script:
             script_error = validate_script_path(script)
             if script_error:
-                raise ToolError(script_error)
+                raise SafeToolError(script_error)
         if session_target not in ("main", "isolated", "current", "session"):
-            raise ToolError("session_target must be main, isolated, current, or session")
+            raise SafeToolError("session_target must be main, isolated, current, or session")
         if job_kind == "system_event" and session_target == "current":
             job_kind = REMINDER_KIND
             session_target = "isolated"
         if job_kind == "system_event" and session_target != "main":
-            raise ToolError("system_event jobs must use session_target=main")
+            raise SafeToolError("system_event jobs must use session_target=main")
         if job_kind == REMINDER_KIND and session_target == "main":
-            raise ToolError("reminder jobs cannot use session_target=main")
+            raise SafeToolError("reminder jobs cannot use session_target=main")
         if job_kind == "agent_turn" and session_target == "main":
-            raise ToolError("agent_turn jobs cannot use session_target=main")
+            raise SafeToolError("agent_turn jobs cannot use session_target=main")
         if session_target == "current" and not caller_session_key:
-            raise ToolError(
+            raise SafeToolError(
                 "session_target=current requires a caller session context"
             )
         if session_target == "session" and not target_session_key:
-            raise ToolError("target_session_key is required when session_target=session")
+            raise SafeToolError("target_session_key is required when session_target=session")
         if wake_mode not in ("now", "next-heartbeat"):
-            raise ToolError("wake_mode must be now or next-heartbeat")
+            raise SafeToolError("wake_mode must be now or next-heartbeat")
 
         # Auto-detect delivery target from session storage.
         delivery = None
@@ -550,27 +563,34 @@ async def cron(
             )
             handler_key = "agent_run"
         effective_tz = (schedule_tz or tz or "").strip()
-        job = await sched.add_job(
-            name=task or script or "cron-tool-job",
-            handler_key=handler_key,
-            payload=payload,
-            session_target=SessionTarget(session_target),
-            session_key=(
-                caller_session_key
-                if session_target == "current"
-                else (target_session_key or "")
-            ),
-            wake_mode=wake_mode,
-            delivery=delivery,
-            origin_session_key=caller_session_key,
-            tool_policy=tool_policy,
-            tz=effective_tz,
-            creator_session_key=caller_session_key,
-            creator_sender_id=caller_sender_id,
-            schedule_kind=schedule_kind,
-            schedule_value=schedule_value,
-            schedule_tz=effective_tz,
-        )
+        try:
+            job = await sched.add_job(
+                name=task or script or "cron-tool-job",
+                handler_key=handler_key,
+                payload=payload,
+                session_target=SessionTarget(session_target),
+                session_key=(
+                    caller_session_key
+                    if session_target == "current"
+                    else (target_session_key or "")
+                ),
+                wake_mode=wake_mode,
+                delivery=delivery,
+                origin_session_key=caller_session_key,
+                tool_policy=tool_policy,
+                tz=effective_tz,
+                creator_session_key=caller_session_key,
+                creator_sender_id=caller_sender_id,
+                schedule_kind=schedule_kind,
+                schedule_value=schedule_value,
+                schedule_tz=effective_tz,
+            )
+        except ValueError as exc:
+            # The scheduler's own validation rejects combinations this tool does
+            # not re-check. Its messages are authored literals naming the field,
+            # so they are worth the model seeing; the bare ValueError would
+            # otherwise be sanitised to "received an invalid argument".
+            raise SafeToolError(str(exc)) from exc
         # Populate ws_topic
         if job.delivery and not job.delivery.ws_topic:
             job.delivery.ws_topic = f"cron:{job.id}"
@@ -598,21 +618,21 @@ async def cron(
         assert job_id is not None
         target_job = await sched.get_job(job_id)
         if target_job is None:
-            raise ToolError(f"Job not found: {job_id}")
+            raise SafeToolError(f"Job not found: {job_id}")
         if _cron_job_agent_id(target_job) != current_agent_id:
-            raise ToolError("cron job belongs to a different profile")
+            raise SafeToolError("cron job belongs to a different profile")
         removed = await sched.remove_job(job_id)
         if not removed:
-            raise ToolError(f"Job not found: {job_id}")
+            raise SafeToolError(f"Job not found: {job_id}")
         return json.dumps({"action": "remove", "job_id": job_id, "status": "removed"})
 
     # run
     assert job_id is not None
     target_job = await sched.get_job(job_id)
     if target_job is None:
-        raise ToolError(f"Job not found: {job_id}")
+        raise SafeToolError(f"Job not found: {job_id}")
     if _cron_job_agent_id(target_job) != current_agent_id:
-        raise ToolError("cron job belongs to a different profile")
+        raise SafeToolError("cron job belongs to a different profile")
     result = await sched.run_job_now(job_id)
     status = getattr(result, "status", "")
     status_str = status.value if hasattr(status, "value") else str(status)

@@ -27,9 +27,11 @@ from agentos.scheduler.types import (
     SessionTarget,
 )
 from agentos.tools.builtin.control import cron as cron_tool
+from agentos.tools.envelope import build_tool_failure_envelope
 from agentos.tools.types import (
     CallerKind,
     InteractionMode,
+    SafeToolError,
     ToolContext,
     ToolError,
     current_tool_context,
@@ -222,6 +224,83 @@ async def test_tool_still_requires_task_for_other_kinds(agentos_home, fake_sched
     with _with_ctx(_ctx(CallerKind.CLI)):
         with pytest.raises(ToolError, match="'task' required"):
             await cron_tool(action="add", schedule=_SCHEDULE, job_kind="reminder")
+
+
+@pytest.mark.asyncio
+async def test_tool_rejects_elevation_on_a_script_job(agentos_home, fake_scheduler):
+    """A script job has no agent turn, so elevation has nothing to govern.
+
+    ``SchedulerOps`` refuses this too, but only as a bare ``ValueError`` from
+    several layers down; the tool has to name the offending field itself.
+    """
+    with _with_ctx(_ctx(CallerKind.CLI)):
+        with pytest.raises(SafeToolError, match="cannot carry tool_policy.elevated"):
+            await cron_tool(
+                action="add",
+                schedule=_SCHEDULE,
+                job_kind="script",
+                script="watch.sh",
+                tool_policy={"profile": "minimal", "elevated": "bypass"},
+            )
+    assert fake_scheduler.add_calls == []
+
+
+@pytest.mark.asyncio
+async def test_tool_accepts_a_script_job_without_a_tool_policy(agentos_home, fake_scheduler):
+    """The same call minus the elevation is the shape that was meant."""
+    with _with_ctx(_ctx(CallerKind.CLI)):
+        raw = await cron_tool(
+            action="add",
+            schedule=_SCHEDULE,
+            job_kind="script",
+            script="watch.sh",
+        )
+
+    assert json.loads(raw)["payload_kind"] == SCRIPT_KIND
+    assert fake_scheduler.add_calls[-1]["handler_key"] == "script_run"
+
+
+@pytest.mark.asyncio
+async def test_script_job_refusals_reach_the_model_intact(agentos_home, fake_scheduler):
+    """The refusal has to survive the envelope, not just the raise.
+
+    A plain ``ToolError`` is sanitised to "failed with an internal error", which
+    is what sent one session into seven identical retries: the model was never
+    told which field was wrong.
+    """
+    cases = [
+        (
+            {"job_kind": "script", "script": "watch.sh", "tool_policy": {"elevated": "bypass"}},
+            "tool_policy.elevated",
+        ),
+        ({"job_kind": "script"}, "requires 'script'"),
+        ({"job_kind": "script", "script": "watch.sh", "session_target": "main"}, "session_target"),
+    ]
+    for kwargs, expected in cases:
+        with _with_ctx(_ctx(CallerKind.CLI)):
+            try:
+                await cron_tool(action="add", schedule=_SCHEDULE, **kwargs)
+            except ToolError as exc:
+                envelope = build_tool_failure_envelope(exc, "cron")
+            else:  # pragma: no cover - the call must refuse
+                pytest.fail(f"cron accepted {kwargs!r}")
+
+        assert expected in envelope["user_message"]
+        assert "internal error" not in envelope["user_message"]
+
+
+@pytest.mark.asyncio
+async def test_missing_schedule_names_the_missing_field(agentos_home, fake_scheduler):
+    """``schedule`` is required for add, and the model must be told so."""
+    with _with_ctx(_ctx(CallerKind.CLI)):
+        try:
+            await cron_tool(action="add", job_kind="script", script="watch.sh")
+        except ToolError as exc:
+            envelope = build_tool_failure_envelope(exc, "cron")
+        else:  # pragma: no cover - the call must refuse
+            pytest.fail("cron accepted an add without a schedule")
+
+    assert "'schedule' required for add" in envelope["user_message"]
 
 
 # ── the RPC surface ─────────────────────────────────────────────────────────

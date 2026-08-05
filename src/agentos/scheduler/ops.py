@@ -47,7 +47,9 @@ def _normalized_tool_policy(
     Only ``agent_run`` jobs are allowed to carry elevation. A ``system_event``
     job may be serviced by HeartbeatLoop, which builds its own read-only
     ToolContext and never sees ``job.tool_policy``, so elevation would be
-    honoured on one path and silently dropped on the other.
+    honoured on one path and silently dropped on the other. A ``script_run`` job
+    has no agent turn at all — the file is the job — so there is nothing for a
+    tool policy to govern.
     """
 
     policy = dict(tool_policy or {})
@@ -61,8 +63,9 @@ def _normalized_tool_policy(
         return policy
     if handler_key != "agent_run":
         raise ValueError(
-            "cron elevation is only supported for agent_turn jobs; reminder and "
-            "system_event jobs never run an agent turn with the job's tool policy"
+            "cron elevation is only supported for agent_turn jobs; reminder, "
+            "system_event and script jobs never run an agent turn with the job's "
+            "tool policy"
         )
     policy["elevated"] = mode
     return policy
