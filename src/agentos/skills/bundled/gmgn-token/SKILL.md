@@ -697,6 +697,11 @@ gmgn-cli market kline --chain sol --address <addr> --resolution 1h \
       --output <symbol>-1h.chart.json
 ```
 
+Keep `--output` a bare filename as shown. Scripts run with the workspace as
+their working directory, and `publish_artifact` only accepts files inside that
+workspace — writing to `/tmp` or any other absolute path outside it makes the
+publish fail.
+
 Then call `publish_artifact` with that path and
 `mime=application/vnd.agentos.chart+json`. Passing the mime is what makes the
 Web chat draw the chart inline — without it the payload arrives as a plain JSON

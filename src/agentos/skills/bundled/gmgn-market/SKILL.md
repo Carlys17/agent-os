@@ -991,6 +991,11 @@ gmgn-cli market kline --chain sol --address <addr> --resolution 1h \
       --output <symbol>-1h.chart.json
 ```
 
+Keep `--output` a bare filename as shown. Scripts run with the workspace as
+their working directory, and `publish_artifact` only accepts files inside that
+workspace — writing to `/tmp` or any other absolute path outside it makes the
+publish fail.
+
 Then call `publish_artifact` with that path and
 `mime=application/vnd.agentos.chart+json`. The surface draws the chart inline;
 do not describe the artifact as a download or put a URL in your reply.
