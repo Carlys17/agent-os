@@ -66,6 +66,32 @@ export interface RawDelivery {
   [key: string]: unknown
 }
 
+/** One recipient a channel can be pointed at, from `channels.deliveryTargets`. */
+export interface DeliveryTarget {
+  /** The value that goes on the wire as `channelId` — a Telegram chat id, say. */
+  id: string
+  /** What a human recognises: a display name, a username, or the id itself. */
+  label: string
+  kind: string
+}
+
+/**
+ * Known recipients keyed by channel name. A channel is absent when the gateway
+ * has no way to enumerate its chats — the caller must then let the operator
+ * type an id rather than imply the list is exhaustive.
+ */
+export type DeliveryTargetMap = Record<string, DeliveryTarget[]>
+
+/** The recipients on offer for `channel`, or none when we cannot enumerate them. */
+export function targetsForChannel(
+  targets: DeliveryTargetMap | undefined,
+  channel: string,
+): DeliveryTarget[] {
+  const key = (channel || '').trim().toLowerCase()
+  if (!key || !targets) return []
+  return targets[key] ?? []
+}
+
 /** A raw run-history row from cron.runs (all fields optional; snake or camel). */
 export interface RawRun {
   started_at?: string | number

@@ -44,6 +44,7 @@ import {
   shortCronId,
   sortJobs,
   type CronDot,
+  type DeliveryTargetMap,
   type RawJob,
   type RawRun,
   type SaveBuild,
@@ -111,6 +112,10 @@ interface CronListResult {
 }
 interface CronRunsResult {
   runs?: RawRun[]
+}
+/** channels.deliveryTargets — recipients we can offer per channel. */
+interface DeliveryTargetsResult {
+  targets?: DeliveryTargetMap
 }
 
 // dot state → --tone bucket (status color ONLY via --tone; never hardcoded).
@@ -531,6 +536,18 @@ export function CronPage() {
     refetchOnWindowFocus: false,
   })
 
+  // Recipients the gateway can name for us, so the delivery form offers a
+  // choice instead of asking someone to remember a chat id. A failure here is
+  // not worth a toast: the form falls back to its text input.
+  const deliveryTargetsQuery = useQuery<DeliveryTargetsResult>({
+    queryKey: ['cron', 'deliveryTargets'],
+    queryFn: async () => {
+      await rpc.waitForConnection()
+      return rpc.call<DeliveryTargetsResult>('channels.deliveryTargets', {})
+    },
+    refetchOnWindowFocus: false,
+  })
+
   // cron.js:346 — load-failure toast (stable id so repeats dedupe).
   useEffect(() => {
     if (jobsQuery.isError) {
@@ -877,6 +894,7 @@ export function CronPage() {
           template={panel.kind === 'create' ? panel.template : null}
           activeSessionKey={readActiveSessionKey()}
           saving={saveMutation.isPending}
+          deliveryTargets={deliveryTargetsQuery.data?.targets}
           onCancel={() => setPanel({ kind: 'closed' })}
           onSubmit={(build) => saveMutation.mutate(build)}
         />

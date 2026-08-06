@@ -108,7 +108,13 @@ def _required_delivery_error(job: CronJob, report: Any) -> str | None:
     channel_status = getattr(report, "channel_status", "skipped")
     session_status = getattr(report, "session_status", "skipped")
     if channel_status == "delivery_failed":
-        return f"Cron job '{job.name}' delivery failed"
+        # This string is the whole of what `agentos cron runs` shows for a failed
+        # run, so it has to name the destination and the reason. "delivery
+        # failed" alone sent an operator digging through gateway logs for a
+        # Telegram "chat not found".
+        where = job.delivery.channel_name or "the configured destination"
+        reason = getattr(report, "channel_detail", "") or "no reason reported"
+        return f"Cron job '{job.name}' delivery to {where} failed: {reason}"
     if (
         mode in {DeliveryMode.CHANNEL, DeliveryMode.ORIGIN, DeliveryMode.WEBHOOK}
         and channel_status == "skipped"
