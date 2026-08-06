@@ -1,21 +1,121 @@
-// Pure-helper tests for the chart-artifact renderer (chart.ts).
+// Tests for the chart-artifact renderer (chart.ts).
 //
-// The imperative mounter draws through lightweight-charts against a real canvas
-// and is covered by the live-browser sweep, not here. What IS covered here is
-// everything that decides WHAT gets drawn: mime matching, payload
-// normalization, the ordering/dedup contract lightweight-charts asserts on, and
-// the price precision that keeps sub-cent meme tokens readable.
+// Two surfaces, mirroring the module: the pure helpers that decide WHAT gets
+// drawn (mime matching, payload normalization, the ordering/dedup contract
+// lightweight-charts asserts on, the price precision that keeps sub-cent meme
+// tokens readable), and the imperative mounter, exercised against a stubbed
+// lightweight-charts so a silent "no chart appeared" regression fails here
+// rather than only in a live browser. Real canvas painting stays a browser
+// concern; everything up to the library call does not.
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createArtifactRenderer } from './artifacts'
 import {
   CHART_ARTIFACT_MIME,
   chartTheme,
+  createChartMounter,
   hasVolume,
   isChartArtifact,
   normalizeChartPayload,
   priceDecimals,
   volumeSeriesData,
 } from './chart'
+
+/* ── lightweight-charts stub ────────────────────────────────────────────── */
+
+interface FakeSeries {
+  setData: ReturnType<typeof vi.fn>
+  applyOptions: ReturnType<typeof vi.fn>
+}
+
+interface FakeChart {
+  addSeries: ReturnType<typeof vi.fn>
+  priceScale: ReturnType<typeof vi.fn>
+  timeScale: ReturnType<typeof vi.fn>
+  applyOptions: ReturnType<typeof vi.fn>
+  remove: ReturnType<typeof vi.fn>
+  series: FakeSeries[]
+}
+
+const lib = vi.hoisted(() => ({ charts: [] as unknown[], createChart: vi.fn() }))
+
+vi.mock('lightweight-charts', () => ({
+  ColorType: { Solid: 'solid' },
+  CandlestickSeries: { kind: 'candlestick' },
+  HistogramSeries: { kind: 'histogram' },
+  createChart: lib.createChart,
+}))
+
+function makeFakeChart(): FakeChart {
+  const series: FakeSeries[] = []
+  return {
+    series,
+    addSeries: vi.fn(() => {
+      const next: FakeSeries = { setData: vi.fn(), applyOptions: vi.fn() }
+      series.push(next)
+      return next
+    }),
+    priceScale: vi.fn(() => ({ applyOptions: vi.fn() })),
+    timeScale: vi.fn(() => ({ fitContent: vi.fn() })),
+    applyOptions: vi.fn(),
+    remove: vi.fn(),
+  }
+}
+
+function createdCharts(): FakeChart[] {
+  return lib.charts as FakeChart[]
+}
+
+/**
+ * The placeholder the artifact renderer emits. The hooks it must carry —
+ * `[data-chart-src]` plus the canvas/status/name children — are pinned against
+ * the real renderer in artifacts.test.ts; this builds the same shape so the
+ * mounter can be exercised on its own.
+ */
+function placeholder(url: string): HTMLElement {
+  const host = document.createElement('div')
+  host.className = 'msg-artifact-chart'
+  if (url) host.dataset.chartSrc = url
+  else host.setAttribute('data-chart-src', '')
+  host.innerHTML =
+    '<div class="msg-artifact-chart__header">' +
+    '<span class="msg-artifact-chart__name">bonk.chart.json</span>' +
+    '</div>' +
+    '<div class="msg-artifact-chart__canvas"></div>' +
+    '<p class="msg-artifact-chart__status">Loading chart…</p>'
+  return host
+}
+
+function mountRoot(...hosts: HTMLElement[]): HTMLElement {
+  const root = document.createElement('div')
+  hosts.forEach((host) => root.appendChild(host))
+  document.body.appendChild(root)
+  return root
+}
+
+function statusOf(host: HTMLElement): string {
+  return host.querySelector('.msg-artifact-chart__status')?.textContent ?? ''
+}
+
+const CANDLES = [
+  { time: 100, open: 1, high: 2, low: 1, close: 2, volume: 10 },
+  { time: 200, open: 2, high: 3, low: 2, close: 1, volume: 20 },
+]
+
+function payloadBody(): unknown {
+  return { type: 'candlestick', title: 'BONK · 1h', subtitle: 'SOL · 1h', candles: CANDLES }
+}
+
+beforeEach(() => {
+  document.body.innerHTML = ''
+  lib.charts.length = 0
+  lib.createChart.mockReset()
+  lib.createChart.mockImplementation(() => {
+    const chart = makeFakeChart()
+    lib.charts.push(chart)
+    return chart
+  })
+})
 
 /* ── isChartArtifact ────────────────────────────────────────────────────── */
 
@@ -204,5 +304,248 @@ describe('priceDecimals', () => {
   it('ignores zero closes and caps the precision', () => {
     expect(priceDecimals(withCloses(0, 2))).toBe(2)
     expect(priceDecimals(withCloses(1e-30))).toBe(12)
+  })
+})
+
+/* ── createChartMounter ─────────────────────────────────────────────────── */
+
+describe('createChartMounter', () => {
+  it('fetches the payload and draws a chart into the placeholder', async () => {
+    const fetchPayload = vi.fn(async () => payloadBody())
+    const host = placeholder('/api/v1/artifacts/art-1?sessionKey=s&token=t')
+    const root = mountRoot(host)
+    const mounter = createChartMounter({ fetchPayload, getTheme: () => 'dark' })
+
+    mounter.mountCharts(root)
+
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+    expect(fetchPayload).toHaveBeenCalledWith('/api/v1/artifacts/art-1?sessionKey=s&token=t')
+    const [chart] = createdCharts()
+    // Candles plus the volume histogram, each fed its own data.
+    expect(chart?.addSeries).toHaveBeenCalledTimes(2)
+    expect(chart?.series[0]?.setData).toHaveBeenCalledWith(
+      CANDLES.map((candle) => expect.objectContaining({ time: candle.time, close: candle.close })),
+    )
+    // The status line is what the user stares at while nothing is painted yet.
+    await vi.waitFor(() => expect(statusOf(host)).toBe(''))
+  })
+
+  it('titles the card from the payload rather than the artifact filename', async () => {
+    const host = placeholder('/api/v1/artifacts/art-1')
+    const root = mountRoot(host)
+    const mounter = createChartMounter({
+      fetchPayload: async () => payloadBody(),
+      getTheme: () => 'light',
+    })
+
+    mounter.mountCharts(root)
+
+    await vi.waitFor(() =>
+      expect(host.querySelector('.msg-artifact-chart__name')?.textContent).toBe('BONK · 1h'),
+    )
+    // Token metadata is attacker-controlled, so it must never become markup.
+    expect(host.querySelector('.msg-artifact-chart__name')?.innerHTML).toBe('BONK · 1h')
+  })
+
+  it('mounts a placeholder once even when called after every streamed artifact', async () => {
+    const fetchPayload = vi.fn(async () => payloadBody())
+    const root = mountRoot(placeholder('/api/v1/artifacts/art-1'))
+    const mounter = createChartMounter({ fetchPayload, getTheme: () => 'dark' })
+
+    mounter.mountCharts(root)
+    mounter.mountCharts(root)
+    mounter.mountCharts(root)
+
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+    expect(fetchPayload).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips the volume histogram when no candle carries a volume', async () => {
+    const root = mountRoot(placeholder('/api/v1/artifacts/art-1'))
+    const mounter = createChartMounter({
+      fetchPayload: async () => ({ candles: [{ time: 100, open: 1, high: 2, low: 1, close: 2 }] }),
+      getTheme: () => 'dark',
+    })
+
+    mounter.mountCharts(root)
+
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+    expect(createdCharts()[0]?.addSeries).toHaveBeenCalledTimes(1)
+  })
+
+  it('says so when the payload cannot be read, instead of leaving "Loading" forever', async () => {
+    const host = placeholder('/api/v1/artifacts/art-1')
+    const mounter = createChartMounter({
+      fetchPayload: async () => ({ candles: [] }),
+      getTheme: () => 'dark',
+    })
+
+    mounter.mountCharts(mountRoot(host))
+
+    await vi.waitFor(() => expect(statusOf(host)).toBe('Chart data could not be read.'))
+    expect(createdCharts()).toHaveLength(0)
+  })
+
+  it('says so when the payload request fails', async () => {
+    const host = placeholder('/api/v1/artifacts/art-1')
+    const mounter = createChartMounter({
+      fetchPayload: async () => {
+        throw new Error('HTTP 404')
+      },
+      getTheme: () => 'dark',
+    })
+
+    mounter.mountCharts(mountRoot(host))
+
+    await vi.waitFor(() => expect(statusOf(host)).toBe('Chart failed to load.'))
+  })
+
+  it('does not fetch for a placeholder that carries no source', async () => {
+    const fetchPayload = vi.fn(async () => payloadBody())
+    const host = placeholder('')
+    const mounter = createChartMounter({ fetchPayload, getTheme: () => 'dark' })
+
+    mounter.mountCharts(mountRoot(host))
+
+    await vi.waitFor(() => expect(statusOf(host)).toBe('Chart data is unavailable.'))
+    expect(fetchPayload).not.toHaveBeenCalled()
+  })
+
+  it('disposes charts whose row was rebuilt away', async () => {
+    // A session switch and "load earlier" both replace every row wholesale.
+    const host = placeholder('/api/v1/artifacts/art-1')
+    const root = mountRoot(host)
+    const mounter = createChartMounter({
+      fetchPayload: async () => payloadBody(),
+      getTheme: () => 'dark',
+    })
+    mounter.mountCharts(root)
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+
+    root.innerHTML = ''
+    mounter.pruneDetached()
+
+    expect(createdCharts()[0]?.remove).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-mounts a rebuilt row rather than treating the old host as still drawn', async () => {
+    const root = mountRoot(placeholder('/api/v1/artifacts/art-1'))
+    const mounter = createChartMounter({
+      fetchPayload: async () => payloadBody(),
+      getTheme: () => 'dark',
+    })
+    mounter.mountCharts(root)
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+
+    root.innerHTML = ''
+    root.appendChild(placeholder('/api/v1/artifacts/art-1'))
+    mounter.mountCharts(root)
+
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(2))
+    expect(createdCharts()[0]?.remove).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-colors live charts on a theme toggle and skips the pruned ones', async () => {
+    const first = placeholder('/api/v1/artifacts/art-1')
+    const second = placeholder('/api/v1/artifacts/art-2')
+    const root = mountRoot(first, second)
+    const mounter = createChartMounter({
+      fetchPayload: async () => payloadBody(),
+      getTheme: () => 'dark',
+    })
+    mounter.mountCharts(root)
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(2))
+
+    first.remove()
+    mounter.applyTheme('light')
+
+    // Re-themed in place, so a toggle does not reset the user's pan/zoom.
+    expect(createdCharts()[1]?.applyOptions).toHaveBeenCalled()
+    expect(createdCharts()[0]?.applyOptions).not.toHaveBeenCalled()
+    expect(createdCharts()[0]?.remove).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops a chart whose row disappeared while the payload was in flight', async () => {
+    const host = placeholder('/api/v1/artifacts/art-1')
+    const root = mountRoot(host)
+    let release = (): void => {}
+    const mounter = createChartMounter({
+      fetchPayload: async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return payloadBody()
+      },
+      getTheme: () => 'dark',
+    })
+
+    mounter.mountCharts(root)
+    root.innerHTML = ''
+    release()
+
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+    await vi.waitFor(() => expect(createdCharts()[0]?.remove).toHaveBeenCalledTimes(1))
+  })
+
+  it('tears every chart down on route unmount', async () => {
+    const root = mountRoot(
+      placeholder('/api/v1/artifacts/art-1'),
+      placeholder('/api/v1/artifacts/art-2'),
+    )
+    const mounter = createChartMounter({
+      fetchPayload: async () => payloadBody(),
+      getTheme: () => 'dark',
+    })
+    mounter.mountCharts(root)
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(2))
+
+    mounter.destroyAll()
+
+    expect(createdCharts()[0]?.remove).toHaveBeenCalledTimes(1)
+    expect(createdCharts()[1]?.remove).toHaveBeenCalledTimes(1)
+  })
+})
+
+/* ── renderer → mounter contract ────────────────────────────────────────── */
+
+describe('the artifact renderer and the chart mounter agree on the placeholder', () => {
+  it('draws a chart into markup produced by the real artifact renderer', async () => {
+    // The two modules meet through class names and a data attribute only, so
+    // nothing but a test like this catches a rename on one side.
+    const bubble = document.createElement('div')
+    const body = document.createElement('div')
+    body.className = 'msg-body'
+    bubble.appendChild(body)
+    document.body.appendChild(bubble)
+
+    const renderer = createArtifactRenderer({
+      ensureStreamBubble: () => bubble,
+      markVisibleStreamEvent: () => {},
+      scrollToBottom: () => {},
+      getAutoScroll: () => false,
+      getStreamBubble: () => bubble,
+      pushStreamArtifact: () => {},
+      getStreamArtifacts: () => [],
+      getSessionKey: () => 'agent:main:webchat:test',
+      getAuthToken: () => 'tok',
+      esc: (value) => value,
+    })
+    body.innerHTML = renderer.renderArtifacts([
+      {
+        id: 'art-1',
+        name: 'bonk.chart.json',
+        mime: CHART_ARTIFACT_MIME,
+        download_url: '/api/v1/artifacts/art-1',
+      },
+    ])
+
+    const fetchPayload = vi.fn(async () => payloadBody())
+    createChartMounter({ fetchPayload, getTheme: () => 'dark' }).mountCharts(body)
+
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+    expect(fetchPayload).toHaveBeenCalledWith(
+      '/api/v1/artifacts/art-1?sessionKey=agent%3Amain%3Awebchat%3Atest&token=tok',
+    )
+    expect(body.querySelector('.msg-artifact-chart__status')?.textContent).toBe('')
   })
 })

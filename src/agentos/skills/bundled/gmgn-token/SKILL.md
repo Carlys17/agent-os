@@ -685,14 +685,44 @@ Steps: `token info` → `token security` → `token pool` → market heat check 
 ## Price Chart During Research
 
 `token info` gives a price snapshot but no candles, so a research answer reads
-better with a chart alongside the summary card. After `token info` succeeds, use
-the **`gmgn-market`** skill to fetch `market kline` and publish the candlestick
-chart artifact — that skill owns the kline route and ships the converter script
-(`scripts/kline_chart.py`); follow its "Rendering the Candlestick Chart" section
-rather than reimplementing the conversion here.
+better with a real candlestick chart alongside the summary card. Fetch the
+candles with `market kline` and pipe them through the bundled converter, then
+publish what it writes:
 
-Pick the resolution from the `creation_timestamp` you already have from
-`token info`, using the token-age table in that same section.
+```bash
+gmgn-cli market kline --chain sol --address <addr> --resolution 1h \
+  --from <unix_ts> --to <unix_ts> --raw \
+  | python3 {baseDir}/scripts/kline_chart.py \
+      --symbol <SYMBOL> --chain sol --resolution 1h \
+      --output <symbol>-1h.chart.json
+```
+
+Then call `publish_artifact` with that path and
+`mime=application/vnd.agentos.chart+json`. Passing the mime is what makes the
+Web chat draw the chart inline — without it the payload arrives as a plain JSON
+download chip. Do not describe the artifact as a download or put a URL in your
+reply.
+
+Keep the text summary as well — the chart shows the shape, the summary carries
+the numbers.
+
+### Choosing a resolution
+
+Pick the window from the `creation_timestamp` you already have from
+`token info` (Unix seconds), unless the user asked for a specific range. The aim
+is roughly 30–100 candles: fewer looks empty, more turns to noise.
+
+| Token age | Range | `--resolution` |
+|-----------|-------|----------------|
+| < 6 hours | since creation | `1m` |
+| < 3 days | 24 hours | `15m` |
+| < 30 days | 7 days | `1h` |
+| ≥ 30 days | 30 days | `4h` |
+
+When the user names a range ("last hour", "this week"), honor it and pick the
+resolution that keeps the candle count in that same 30–100 band.
+
+### When to draw one
 
 Add the chart when the user asks about price, trend, or due diligence. Skip it
 when they asked a narrow non-price question (just holders, just the honeypot
@@ -700,6 +730,13 @@ check) — an unrequested extra API call spends rate-limit budget for nothing.
 
 **If `is_honeypot = "yes"`, do not fetch a chart.** Stop at the honeypot warning
 as the security section requires.
+
+### Failure handling
+
+The converter exits non-zero and explains itself on stderr when the response has
+no usable candles. If that happens, skip the chart, still present the text
+summary, and do not retry the CLI call — an empty candle list means the token
+has no trades in that window, not that the request failed.
 
 ---
 

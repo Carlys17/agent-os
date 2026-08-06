@@ -639,3 +639,47 @@ describe('createHistoryRenderer persisted rich content', () => {
     expect(a2.title).not.toBe('')
   })
 })
+
+describe('createHistoryRenderer chart artifacts', () => {
+  it('hands a replayed row to the chart mounter so history redraws charts', () => {
+    // Charts ride the artifact seam, so a reload has to redraw them; without
+    // this handoff a refreshed conversation shows an empty chart card.
+    const thread = document.createElement('div')
+    document.body.appendChild(thread)
+    const mountCharts = vi.fn()
+    const messages = [
+      {
+        role: 'assistant',
+        text: 'here is the chart',
+        artifacts: [
+          {
+            id: 'art-1',
+            name: 'bonk.chart.json',
+            mime: 'application/vnd.agentos.chart+json',
+          },
+        ],
+      },
+    ] as unknown as ChatMessage[]
+    const renderer = createHistoryRenderer(historyDeps(thread, { mountCharts }))
+
+    renderer.renderHistoryMessages(messages, pagingState(messages))
+
+    const body = thread.querySelector('.msg-body') as HTMLElement
+    expect(mountCharts).toHaveBeenCalledWith(body)
+  })
+
+  it('replays rows without a mounter composed in', () => {
+    const thread = document.createElement('div')
+    document.body.appendChild(thread)
+    const messages = [
+      {
+        role: 'assistant',
+        text: 'here is the chart',
+        artifacts: [{ id: 'art-1', name: 'bonk.chart.json', mime: 'image/png' }],
+      },
+    ] as unknown as ChatMessage[]
+    const renderer = createHistoryRenderer(historyDeps(thread))
+
+    expect(() => renderer.renderHistoryMessages(messages, pagingState(messages))).not.toThrow()
+  })
+})

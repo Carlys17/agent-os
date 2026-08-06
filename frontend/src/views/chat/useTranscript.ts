@@ -1088,6 +1088,9 @@ export function useTranscript(opts: {
             }
           : {},
       )
+      // The rebuild above replaced every row, so any chart from the previous
+      // session (or the previous page of this one) is now detached.
+      chartMounter.pruneDetached()
       // chat.js:3119 — overlay the history compaction-summary separators once
       // the message rows exist.
       controller.renderCompactionSummarySeparators(messages)
@@ -1100,6 +1103,7 @@ export function useTranscript(opts: {
     historyQuery.fetchStatus,
     historyRenderer,
     controller,
+    chartMounter,
     opts.sessionKey,
     revealTranscriptIfSettled,
     subscriptionSettleRevision,
@@ -1162,6 +1166,8 @@ export function useTranscript(opts: {
           previousScrollHeight,
           previousScrollTop,
         })
+        // Same rebuild, same sweep: the pre-existing chart rows were replaced.
+        chartMounter.pruneDetached()
         // Re-overlay the compaction-summary separators against the new row set.
         controller.renderCompactionSummarySeparators(mergedMessages)
       } catch {
@@ -1175,7 +1181,7 @@ export function useTranscript(opts: {
     reloadHistoryRef.current = () => {
       void queryClient.invalidateQueries({ queryKey: ['chat', 'history', opts.sessionKey] })
     }
-  }, [opts.sessionKey, historyRenderer, rpc, queryClient, controller])
+  }, [opts.sessionKey, historyRenderer, rpc, queryClient, controller, chartMounter])
 
   /* ── Reset (`/reset`) clears the visible thread ─────────────────────────── */
 

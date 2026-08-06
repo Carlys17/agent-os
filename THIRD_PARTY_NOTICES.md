@@ -496,6 +496,16 @@ The type-only `@types/*` and `csstype` packages installed to compile the
 TypeScript source do not enter the browser bundle and are intentionally
 omitted from this production list.
 
+### Vendored dependency licenses
+
+`fancy-canvas@2.1.0` (a dependency of `lightweight-charts`) publishes a `files`
+allowlist covering only its compiled JavaScript and type declarations, so its
+MIT text is absent from the npm tarball. The upstream license from
+https://github.com/tradingview/fancy-canvas is kept verbatim at
+`frontend/vendor-licenses/fancy-canvas-LICENSE.txt`, and the Control UI builder
+appends it to the generated ledger marked as vendored. Packages that ship no
+license and have no vendored copy still fail the build.
+
 ### React Control UI fonts
 
 - Inter Variable — Copyright (c) 2016 The Inter Project Authors

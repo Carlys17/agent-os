@@ -211,6 +211,26 @@ export function priceDecimals(payload: ChartPayload): number {
 
 /* ── Injected mounter dependencies ──────────────────────────────────────── */
 
+/**
+ * Load lightweight-charts once, however many charts a transcript holds.
+ *
+ * The import stays dynamic so the library keeps its own chunk and never loads
+ * for a chat with no charts. Caching the promise means several charts arriving
+ * together share one resolution instead of each racing its own.
+ */
+let libraryPromise: Promise<typeof import('lightweight-charts')> | null = null
+
+function loadChartLibrary(): Promise<typeof import('lightweight-charts')> {
+  libraryPromise ??= import('lightweight-charts')
+  return libraryPromise
+}
+
+/** A drawn chart, held by its host element so the mounter can sweep it later. */
+interface LiveChart {
+  dispose: () => void
+  applyTheme: (mode: ChartThemeMode) => void
+}
+
 export interface ChartMounterDeps {
   /** Fetch a chart artifact body from its (authenticated) URL. */
   fetchPayload: (url: string) => Promise<unknown>
@@ -231,9 +251,37 @@ export interface ChartMounterDeps {
  */
 export function createChartMounter(deps: ChartMounterDeps) {
   const diag = deps.diag ?? ((): void => {})
-  const mounted = new Set<HTMLElement>()
-  const disposers: Array<() => void> = []
-  const applyThemeCallbacks: Array<(mode: ChartThemeMode) => void> = []
+  /** Hosts this mounter has picked up — payload in flight or chart drawn. */
+  const claimed = new Set<HTMLElement>()
+  /** Drawn charts, keyed by host so a detached row can be swept (`pruneDetached`). */
+  const live = new Map<HTMLElement, LiveChart>()
+
+  function disposeQuietly(entry: LiveChart): void {
+    try {
+      entry.dispose()
+    } catch {
+      // A chart the library already tore down is fine to skip.
+    }
+  }
+
+  /**
+   * Dispose every chart whose host has left the document.
+   *
+   * The transcript rebuilds its rows wholesale — on a session switch and on
+   * "load earlier" — which detaches all existing chart hosts. Each stranded
+   * chart otherwise keeps a canvas, a ResizeObserver and a theme callback alive
+   * for as long as the Chat route stays mounted.
+   */
+  function pruneDetached(): void {
+    for (const host of [...claimed]) {
+      if (host.isConnected) continue
+      claimed.delete(host)
+      const entry = live.get(host)
+      if (!entry) continue
+      live.delete(host)
+      disposeQuietly(entry)
+    }
+  }
 
   function setStatus(host: HTMLElement, message: string): void {
     const status = host.querySelector<HTMLElement>('.msg-artifact-chart__status')
@@ -258,7 +306,7 @@ export function createChartMounter(deps: ChartMounterDeps) {
       if (label) label.title = payload.subtitle
     }
 
-    const lib = await import('lightweight-charts')
+    const lib = await loadChartLibrary()
     const theme = chartTheme(deps.getTheme())
     const decimals = priceDecimals(payload)
 
@@ -339,7 +387,6 @@ export function createChartMounter(deps: ChartMounterDeps) {
       })
       volumeSeries?.setData(volumeSeriesData(payload, next))
     }
-    applyThemeCallbacks.push(applyTheme)
 
     // The transcript column resizes with the window and the sidebar; the chart
     // is canvas-based so it cannot reflow on its own.
@@ -352,10 +399,21 @@ export function createChartMounter(deps: ChartMounterDeps) {
       observer.observe(canvasHost)
     }
 
-    disposers.push(() => {
-      observer?.disconnect()
-      chart.remove()
-    })
+    const entry: LiveChart = {
+      applyTheme,
+      dispose: () => {
+        observer?.disconnect()
+        chart.remove()
+      },
+    }
+    // The row can be rebuilt while the payload and the library are in flight —
+    // a chart drawn into a detached host has nobody to show it.
+    if (!host.isConnected) {
+      claimed.delete(host)
+      disposeQuietly(entry)
+      return
+    }
+    live.set(host, entry)
     setStatus(host, '')
   }
 
@@ -385,40 +443,36 @@ export function createChartMounter(deps: ChartMounterDeps) {
   /** Mount every not-yet-mounted chart placeholder inside `root`. */
   function mountCharts(root: HTMLElement | null | undefined): void {
     if (!root) return
+    // Any row rebuild that adds a chart also detached the previous ones.
+    pruneDetached()
     const hosts = root.querySelectorAll<HTMLElement>('[data-chart-src]')
     hosts.forEach((host) => {
-      if (mounted.has(host)) return
-      mounted.add(host)
+      if (claimed.has(host)) return
+      claimed.add(host)
       void mountOne(host)
     })
   }
 
   /** Push a theme change into every live chart. */
   function applyTheme(mode: ChartThemeMode): void {
-    applyThemeCallbacks.forEach((apply) => {
+    pruneDetached()
+    live.forEach((entry) => {
       try {
-        apply(mode)
+        entry.applyTheme(mode)
       } catch {
         // A chart removed mid-toggle must not break the remaining ones.
       }
     })
   }
 
-  /** Tear down every live chart (route unmount / session reset). */
+  /** Tear down every live chart (route unmount). */
   function destroyAll(): void {
-    disposers.forEach((dispose) => {
-      try {
-        dispose()
-      } catch {
-        // Already-removed charts are fine to skip.
-      }
-    })
-    disposers.length = 0
-    applyThemeCallbacks.length = 0
-    mounted.clear()
+    live.forEach(disposeQuietly)
+    live.clear()
+    claimed.clear()
   }
 
-  return { mountCharts, applyTheme, destroyAll }
+  return { mountCharts, applyTheme, destroyAll, pruneDetached }
 }
 
 export type ChartMounter = ReturnType<typeof createChartMounter>
