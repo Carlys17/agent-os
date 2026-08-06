@@ -68,11 +68,16 @@ export interface RawDelivery {
 
 /** A raw run-history row from cron.runs (all fields optional; snake or camel). */
 export interface RawRun {
+  id?: string
   started_at?: string | number
   status?: string
   duration_ms?: number | null
+  /** Preview only — cron.runs caps this. Full text comes from cron.runOutput. */
   summary?: string
+  summaryTruncated?: boolean
   sessionKey?: string
+  /** Whether sessionKey names a session that still exists and can be opened. */
+  chatAvailable?: boolean
   deliveryStatus?: unknown
   delivery_status?: unknown
   [key: string]: unknown
@@ -256,9 +261,22 @@ export interface RunRow {
   duration: string
   delivery: string
   reply: string
-  /** Untruncated output, for the expanded view. Empty when there was none. */
+  /**
+   * The preview text, shown in the expanded view until (or unless) the full
+   * output arrives from cron.runOutput. Empty when there was no output.
+   */
   replyFull: string
+  /** Run id used to fetch the full output; empty for rows the server sent without one. */
+  runId: string
+  /** True when the server preview is only part of the stored output. */
+  truncated: boolean
   sessionKey: string
+  /**
+   * Whether a chat transcript actually exists for this run. Script jobs never
+   * create a session and isolated agent sessions are reaped, so the key alone
+   * does not mean there is anything to open.
+   */
+  chatAvailable: boolean
 }
 
 /**
@@ -287,7 +305,12 @@ export function runRow(run: RawRun, relTime: (ts: string | number) => string): R
     delivery,
     reply: preview ? preview.substring(0, 120) : '—',
     replyFull: summary,
+    runId: run.id ? String(run.id) : '',
+    truncated: Boolean(run.summaryTruncated),
     sessionKey: run.sessionKey ? String(run.sessionKey) : '',
+    // Absent means an older gateway that cannot tell us — keep the previous
+    // behaviour there rather than hiding the button everywhere.
+    chatAvailable: run.chatAvailable !== false,
   }
 }
 

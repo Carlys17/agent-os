@@ -100,6 +100,8 @@ function wireRpc(
     removePending?: boolean
     createPending?: boolean
     runs?: unknown[]
+    runOutput?: string
+    runOutputReject?: boolean
   } = {},
 ) {
   mockRpc.call.mockImplementation((method: string) => {
@@ -124,6 +126,10 @@ function wireRpc(
         return opts.runsReject
           ? Promise.reject(new Error('runs down'))
           : Promise.resolve(opts.runs ?? RUNS)
+      case 'cron.runOutput':
+        return opts.runOutputReject
+          ? Promise.reject(new Error('output down'))
+          : Promise.resolve({ output: opts.runOutput ?? '' })
       case 'cron.remove':
         if (opts.removePending) return new Promise(() => undefined)
         return opts.removeReject ? Promise.reject(new Error('remove failed')) : Promise.resolve({})
@@ -371,6 +377,45 @@ describe('CronPage', () => {
     )
   })
 
+  it('hides the Chat button for a run whose session was never created', async () => {
+    // Script jobs never open a session, and isolated agent sessions are reaped
+    // after 24h — the key alone used to send you to "Could not load chat history."
+    wireRpc({
+      runs: [
+        {
+          started_at: Date.now(),
+          status: 'ok',
+          summary: 'script ran',
+          sessionKey: 'cron:job-rem:run:deadbeef',
+          chatAvailable: false,
+        },
+        {
+          started_at: Date.now() - 60_000,
+          status: 'ok',
+          summary: 'agent turn',
+          sessionKey: 'cron:job-rem:run:cafe1234',
+          chatAvailable: true,
+        },
+      ],
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Daily standup')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Daily standup' }))
+
+    await screen.findByText('script ran')
+    expect(screen.getAllByRole('button', { name: '→ Chat' })).toHaveLength(1)
+  })
+
+  it('keeps the Chat button when the gateway does not report availability', async () => {
+    // An older gateway omits the field; hiding every button would be a regression.
+    wireRpc({ runs: [{ started_at: Date.now(), status: 'ok', summary: 'x', sessionKey: 'k' }] })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Daily standup')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Daily standup' }))
+
+    expect(await screen.findByRole('button', { name: '→ Chat' })).toBeInTheDocument()
+  })
+
   it('expands a run to show script stdout the cell had to clip', async () => {
     // A script job's stdout is its only trace, and it is routinely multi-line
     // and wider than the cell — the preview must not be the only copy on screen.
@@ -393,6 +438,58 @@ describe('CronPage', () => {
 
     fireEvent.click(toggle)
     expect(document.querySelector('.cron-runs__output')).toBeNull()
+  })
+
+  it('expanding a run fetches the full output the list row only previewed', async () => {
+    // cron.runs sends a 500-char preview so a 20-row list stays small; the rest
+    // of the output — which is the whole point of opening the row — arrives here.
+    const preview = 'checked 4 pools'
+    const full = preview + '\n' + 'x'.repeat(4000) + '\n}'
+    wireRpc({
+      runs: [
+        {
+          id: 'run-9',
+          started_at: Date.now(),
+          status: 'ok',
+          duration_ms: 8,
+          summary: preview,
+          summaryTruncated: true,
+        },
+      ],
+      runOutput: full,
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Daily standup')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Daily standup' }))
+
+    const toggle = await screen.findByRole('button', { name: /checked 4 pools/ })
+    fireEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(mockRpc.call).toHaveBeenCalledWith('cron.runOutput', {
+        id: 'job-rem',
+        runId: 'run-9',
+      }),
+    )
+    await waitFor(() =>
+      expect(document.querySelector('.cron-runs__output')?.textContent).toBe(full),
+    )
+  })
+
+  it('falls back to the preview when the full output cannot be fetched', async () => {
+    const preview = 'checked 4 pools'
+    wireRpc({
+      runs: [{ id: 'run-9', started_at: Date.now(), status: 'ok', summary: preview }],
+      runOutputReject: true,
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Daily standup')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Daily standup' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: /checked 4 pools/ }))
+
+    expect(await screen.findByText(/Failed to load full output/)).toBeInTheDocument()
+    expect(document.querySelector('.cron-runs__output')?.textContent).toBe(preview)
   })
 
   it('deleting requires confirmation then calls cron.remove and invalidates', async () => {
