@@ -536,6 +536,7 @@ agentos cron list
 agentos cron add --every 1h --text "Summarize important updates" --name hourly-summary
 agentos cron status <job-id>
 agentos cron runs <job-id>
+agentos cron output <job-id>
 ```
 
 `--job-kind` picks what fires: `reminder` (delivers `--text` verbatim, no LLM),
@@ -577,7 +578,10 @@ agentos cron add --every 5m --script watch-memory.sh --name memory-watchdog \
 ```
 
 Either way `agentos cron runs <job-id>` shows each run's `Output` and
-`Delivery` columns; `--json` prints the output untruncated. A `Delivery` of
+`Delivery` columns. The `Output` column is a 500-character preview, so the whole
+list stays small no matter how much a job prints; `agentos cron output <job-id>`
+prints one run's output in full (the most recent run, or `--run <run-id>` for an
+older one — run ids come from `agentos cron runs --json`). A `Delivery` of
 `fwd:no_session_target` is the scheduler saying the script printed something
 that reached no conversation — add `--session-key`. Jobs created from the Web UI
 or from a chat already carry their originating session, so their output shows up

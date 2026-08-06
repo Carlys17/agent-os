@@ -33,6 +33,8 @@ from agentos.scheduler.types import (
     DeliveryMode,
     HandlerResult,
     SessionTarget,
+    clamp_run_output,
+    preview_summary,
 )
 from agentos.session.keys import build_main_key
 from agentos.session.terminal_reply import (
@@ -358,7 +360,7 @@ def make_agent_run_handler(
                     )
                     error_message = f"Cron job '{job.name}' timed out after {timeout_value}s"
                     result_text = error_message
-                    summary = result_text[:500]
+                    summary = clamp_run_output(result_text)
                 else:
                     success = getattr(record, "status", None) == AgentTaskStatus.SUCCEEDED
                     if success:
@@ -376,7 +378,7 @@ def make_agent_run_handler(
                         if is_context_payload_too_large(record):
                             error_message = build_terminal_reply(record)
                         result_text = error_message or ""
-                    summary = result_text[:500] if result_text else error_message
+                    summary = clamp_run_output(result_text) if result_text else error_message
             else:
                 assert turn_runner is not None
                 tool_context = _build_cron_tool_context(
@@ -425,7 +427,7 @@ def make_agent_run_handler(
                 result_text = "".join(collected_text)
                 if not success and not result_text:
                     result_text = error_message or ""
-                summary = result_text[:500] if result_text else error_message
+                summary = clamp_run_output(result_text) if result_text else error_message
         except Exception as exc:
             _, error_message = sanitize_agent_error(
                 {
@@ -437,7 +439,7 @@ def make_agent_run_handler(
                 fallback_error_message=str(exc) or "Agent error",
             )
             result_text = f"Cron job '{job.name}' failed: {error_message}"
-            summary = result_text[:500]
+            summary = clamp_run_output(result_text)
             success = False
 
         result_text = strip_reply_directives(result_text) or ""
@@ -448,7 +450,7 @@ def make_agent_run_handler(
             job,
             result_text=result_text,
             success=success,
-            summary=summary,
+            summary=preview_summary(summary),
             session_key=session_key,
             route_envelope=build_reply_rendezvous_envelope(job, session_key),
         )
@@ -492,7 +494,7 @@ def make_static_message_handler(delivery_chain: DeliveryChain) -> Callable:
             job,
             result_text=text,
             success=True,
-            summary=text[:500],
+            summary=preview_summary(text),
             session_key=session_key,
             route_envelope=build_reply_rendezvous_envelope(job, session_key),
         )
@@ -500,7 +502,7 @@ def make_static_message_handler(delivery_chain: DeliveryChain) -> Callable:
         if delivery_error:
             raise RuntimeError(delivery_error)
         return HandlerResult(
-            summary=text[:500],
+            summary=clamp_run_output(text),
             session_key=session_key,
             delivery_status=(
                 f"{report.channel_status}|ws:{report.ws_status}|fwd:{report.session_status}"
@@ -551,7 +553,7 @@ def make_script_run_handler(delivery_chain: DeliveryChain) -> Callable:
                 job,
                 result_text=alert,
                 success=False,
-                summary=alert[:500],
+                summary=preview_summary(alert),
                 session_key=session_key,
                 route_envelope=build_reply_rendezvous_envelope(job, session_key),
             )
@@ -570,7 +572,7 @@ def make_script_run_handler(delivery_chain: DeliveryChain) -> Callable:
             job,
             result_text=output,
             success=True,
-            summary=output[:500],
+            summary=preview_summary(output),
             session_key=session_key,
             route_envelope=build_reply_rendezvous_envelope(job, session_key),
         )
@@ -578,7 +580,7 @@ def make_script_run_handler(delivery_chain: DeliveryChain) -> Callable:
         if delivery_error:
             raise RuntimeError(delivery_error)
         return HandlerResult(
-            summary=output[:500],
+            summary=clamp_run_output(output),
             session_key=session_key,
             delivery_status=(
                 f"{report.channel_status}|ws:{report.ws_status}|fwd:{report.session_status}"

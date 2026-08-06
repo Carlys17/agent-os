@@ -194,6 +194,33 @@ async def test_chat_history_returns_empty_for_missing_webchat_session(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "session_key",
+    [
+        # Isolated per-run key: script jobs never create the session at all, and
+        # agent-turn ones are reaped after 24h. Run history links here either way.
+        "cron:6b23bfa7-8344-4c07-80f0-2a1c6dbf13d6:run:ddad09c4",
+        # SessionTarget.SESSION shares one key across runs.
+        "cron:6b23bfa7-8344-4c07-80f0-2a1c6dbf13d6",
+    ],
+)
+async def test_chat_history_returns_empty_for_missing_cron_session(session_key: str) -> None:
+    mgr = _FakeSessionManager(
+        [],
+        canonical_exception=KeyError(f"Session not found: {session_key}"),
+        transcript_exception=KeyError(f"Session not found: {session_key}"),
+    )
+
+    result = await _handle_chat_history(
+        {"sessionKey": session_key, "limit": 2},
+        RpcContext(conn_id="test", session_manager=mgr),
+    )
+
+    assert result["messages"] == []
+    assert result["history_scope"] == "complete"
+
+
+@pytest.mark.asyncio
 async def test_chat_history_keeps_not_found_for_missing_non_webchat_session() -> None:
     session_key = "agent:main:cli:new123"
     mgr = _FakeSessionManager(

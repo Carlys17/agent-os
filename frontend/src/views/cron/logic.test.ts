@@ -224,7 +224,24 @@ describe('runRow', () => {
       delivery: 'ch: slack, ws: sent',
       reply: 'done',
       replyFull: 'done',
+      runId: '',
+      truncated: false,
       sessionKey: 'k',
+      chatAvailable: true,
+    })
+  })
+  it('treats chatAvailable as opt-out so an older gateway keeps its Chat buttons', () => {
+    // A script job's session is never created; the server says so explicitly.
+    expect(runRow({ sessionKey: 'cron:j:run:ab', chatAvailable: false }, rel).chatAvailable).toBe(
+      false,
+    )
+    // Field absent — we cannot know, so do not hide what used to work.
+    expect(runRow({ sessionKey: 'cron:j:run:ab' }, rel).chatAvailable).toBe(true)
+  })
+  it('carries the run id and truncation flag through for the lazy output fetch', () => {
+    expect(runRow({ id: 'run-9', summary: 'head…', summaryTruncated: true }, rel)).toMatchObject({
+      runId: 'run-9',
+      truncated: true,
     })
   })
   it('falls back for a string / absent deliveryStatus and missing fields', () => {

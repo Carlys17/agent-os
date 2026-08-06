@@ -1162,3 +1162,37 @@ def cron_runs(
         print_json(payload)
         return
     _render_runs(_job_rows(payload))
+
+
+@cron_app.command("output")
+def cron_output(
+    job_id: str = typer.Argument(..., help="Cron job id"),
+    run: str = typer.Option("", "--run", "-r", help="Run id (default: the most recent run)"),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
+) -> None:
+    """Print the full output of one run.
+
+    'cron runs' shows a short preview per row; this prints the whole thing for a
+    single run — which for a script job is its entire stdout.
+    """
+
+    async def _run(client):
+        params = {"id": job_id}
+        if run:
+            params["runId"] = run
+        return await client.call("cron.runOutput", params)
+
+    payload = run_gateway_sync(_run, json_output=json_output)
+    if json_output:
+        print_json(payload)
+        return
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if error:
+            console.print(f"[red]error:[/red] {error}")
+        output = payload.get("output")
+        if output:
+            # Raw script stdout — JSON brackets must not be read as rich markup.
+            console.print(output, markup=False, highlight=False)
+        else:
+            console.print("[dim](no output)[/dim]")

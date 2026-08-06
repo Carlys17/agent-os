@@ -117,6 +117,10 @@ interface CronRunsResult {
 interface DeliveryTargetsResult {
   targets?: DeliveryTargetMap
 }
+/** cron.runOutput — the full stored output for a single run. */
+interface CronRunOutput {
+  output?: string
+}
 
 // dot state → --tone bucket (status color ONLY via --tone; never hardcoded).
 function dotTone(state: CronDot): string {
@@ -171,6 +175,19 @@ function RunsDrawer({
   // A script job's output is its only trace — the row preview is one clipped
   // line, so the full text has to be reachable without leaving the page.
   const [expanded, setExpanded] = useState<number | null>(null)
+
+  // cron.runs sends previews so a 20-row list stays small; the full output is
+  // fetched for the one run that is open, and cached per run id.
+  const openRunId = expanded != null ? (runs[expanded]?.id ?? '') : ''
+  const outputQuery = useQuery<CronRunOutput>({
+    queryKey: ['cron', 'runOutput', jobId, openRunId],
+    enabled: Boolean(openRunId),
+    queryFn: async () => {
+      await rpc.waitForConnection()
+      return rpc.call<CronRunOutput>('cron.runOutput', { id: jobId, runId: openRunId })
+    },
+    refetchOnWindowFocus: false,
+  })
 
   return (
     <div className="cron-detail panel" aria-label={`Run history for ${jobName}`}>
@@ -240,7 +257,7 @@ function RunsDrawer({
                         )}
                       </td>
                       <td>
-                        {row.sessionKey ? (
+                        {row.sessionKey && row.chatAvailable ? (
                           <Button
                             type="button"
                             variant="ghost"
@@ -257,7 +274,16 @@ function RunsDrawer({
                     {isOpen ? (
                       <tr className="cron-runs__output-row">
                         <td colSpan={6}>
-                          <pre className="cron-runs__output">{row.replyFull}</pre>
+                          <pre className="cron-runs__output">
+                            {outputQuery.data?.output ?? row.replyFull}
+                          </pre>
+                          {outputQuery.isLoading ? (
+                            <p className="cron-muted">Loading full output…</p>
+                          ) : outputQuery.isError ? (
+                            <p className="cron-muted">
+                              Failed to load full output — showing preview.
+                            </p>
+                          ) : null}
                         </td>
                       </tr>
                     ) : null}

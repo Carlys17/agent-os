@@ -10,7 +10,15 @@ from zoneinfo import ZoneInfo
 
 from .parser import parse_cron
 from .persistence import JobStore
-from .types import CronJob, HandlerResult, JobExecution, JobStatus, ScheduleKind, clear_reservation
+from .types import (
+    CronJob,
+    HandlerResult,
+    JobExecution,
+    JobStatus,
+    ScheduleKind,
+    clamp_run_output,
+    clear_reservation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -137,16 +145,16 @@ async def execute_with_timeout(job: CronJob, handler: HandlerFn) -> JobExecution
             result = await asyncio.wait_for(task, timeout=job.timeout_seconds)
         execution.success = True
         if isinstance(result, HandlerResult):
-            execution.summary = result.summary[:500] if result.summary else None
+            execution.summary = clamp_run_output(result.summary)
             execution.session_key = result.session_key
             execution.delivery_status = result.delivery_status
         elif isinstance(result, tuple) and len(result) >= 2:
-            execution.summary = result[0][:500] if isinstance(result[0], str) else None
+            execution.summary = clamp_run_output(result[0]) if isinstance(result[0], str) else None
             execution.session_key = result[1] or ""
             if len(result) >= 3:
                 execution.delivery_status = result[2] or ""
         elif isinstance(result, str):
-            execution.summary = result[:500]
+            execution.summary = clamp_run_output(result)
         else:
             execution.summary = None
     except TimeoutError:

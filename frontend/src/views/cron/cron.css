@@ -337,7 +337,9 @@
 }
 .cron-runs__output {
   margin: 0;
-  max-height: 18rem;
+  /* Script output is routinely hundreds of lines — give it most of the viewport
+     before falling back to the scrollbar. */
+  max-height: min(60vh, 32rem);
   overflow: auto;
   padding: 0.6rem 0.75rem;
   border: 1px solid var(--border);

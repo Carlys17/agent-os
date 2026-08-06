@@ -397,11 +397,13 @@ agentos cron add --every 5m --script watch-memory.sh --name memory-watchdog
 # only reaches the run record. --session-key names the chat it reports into
 # (the run stays isolated). Web UI / in-chat jobs already carry their session.
 agentos cron add --every 5m --script watch-memory.sh --session-key "$KEY"
-# 'runs' shows each run's Output + Delivery; --json prints output untruncated.
+# 'runs' shows each run's Output + Delivery; Output is a 500-char preview.
+# 'output' prints one run in full — latest by default, or --run <run-id>.
 # Delivery 'fwd:no_session_target' == printed something, reached no chat.
 # In chat, the cron tool reads the same history via action="runs" — use it to
 # answer "what did that job do?" instead of guessing from the schedule.
 agentos cron runs <id> [--json]
+agentos cron output <id> [--run <run-id>] [--json]
 # --script on an agent_turn is a pre-run collector instead: its stdout becomes
 # the turn's context, and a tick that prints nothing skips the turn (no tokens).
 agentos cron add --every 10m --job-kind agent_turn --script watch_rss.py \
