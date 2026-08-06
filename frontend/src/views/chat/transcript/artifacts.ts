@@ -303,8 +303,14 @@ export function createArtifactRenderer(deps: ArtifactRendererDeps) {
         // A mount placeholder, not a finished card: the chart mounter fetches
         // `data-chart-src` and draws into `__canvas`. Geometry is reserved in
         // CSS so the transcript does not jump when the chart lands.
+        //
+        // `data-artifact-download` stays OFF the host and lives only on the
+        // Download anchor below — same as the audio card. The transcript's
+        // delegated click handler downloads any non-anchor element carrying
+        // that attribute, so stamping it here would turn every pan, zoom and
+        // crosshair click on the canvas into a file download.
         const payloadUrl = artifactPreviewUrl(artifact || {}, { sessionKey, token })
-        html += `<div class="msg-artifact-chart" data-chart-src="${escAttr(payloadUrl)}" data-artifact-category="${escAttr(category)}" data-artifact-download="${escAttr(downloadUrl)}" data-artifact-id="${escAttr(artifact?.id || '')}" data-artifact-name="${escAttr(name)}">
+        html += `<div class="msg-artifact-chart" data-chart-src="${escAttr(payloadUrl)}" data-artifact-category="${escAttr(category)}" data-artifact-id="${escAttr(artifact?.id || '')}" data-artifact-name="${escAttr(name)}">
           <div class="msg-artifact-chart__header">
             <span class="msg-artifact-chart__name">${esc(name)}</span>
             <a class="msg-artifact-chart__download" href="${escAttr(downloadHref)}" download="${escAttr(name)}" data-artifact-download="${escAttr(downloadUrl)}">Download</a>

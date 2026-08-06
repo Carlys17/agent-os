@@ -264,6 +264,36 @@ describe('createArtifactRenderer chart artifacts', () => {
     expect(container.querySelector('.msg-artifact-files')).toBeNull()
   })
 
+  it('does not turn a click on the chart itself into a download', () => {
+    // useTranscript delegates clicks: any non-anchor element that resolves to
+    // [data-artifact-download] downloads the file. A chart is interactive, so
+    // the host must not carry it — otherwise every pan, zoom and crosshair
+    // click fetches the JSON instead of moving the chart.
+    const { deps } = chartRendererDeps()
+
+    const container = document.createElement('div')
+    container.innerHTML = createArtifactRenderer(deps).renderArtifacts([CHART_ARTIFACT])
+
+    const canvas = container.querySelector<HTMLElement>('.msg-artifact-chart__canvas')
+    expect(canvas?.closest('[data-artifact-download]')).toBeNull()
+    expect(container.querySelector('.msg-artifact-chart')).not.toHaveAttribute(
+      'data-artifact-download',
+    )
+  })
+
+  it('keeps the download on the anchor, which the click handler steps aside for', () => {
+    const { deps } = chartRendererDeps()
+
+    const container = document.createElement('div')
+    container.innerHTML = createArtifactRenderer(deps).renderArtifacts([CHART_ARTIFACT])
+
+    const link = container.querySelector<HTMLElement>('.msg-artifact-chart__download')
+    // Resolving to itself and being an anchor is exactly what makes the
+    // delegated handler leave it to the browser's native download.
+    expect(link?.closest('[data-artifact-download]')).toBe(link)
+    expect(link?.tagName).toBe('A')
+  })
+
   it('still offers the raw payload as a download', () => {
     const { deps } = chartRendererDeps()
 
