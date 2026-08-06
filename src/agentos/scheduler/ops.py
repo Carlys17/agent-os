@@ -442,3 +442,7 @@ class SchedulerOps:
     async def get_runs(self, job_id: str, limit: int = 20) -> list[JobExecution]:
         """Return recent execution records for a job."""
         return await self._store.list_executions(job_id, limit)
+
+    async def get_run(self, job_id: str, run_id: str | None = None) -> JobExecution | None:
+        """Return one execution record — the latest when *run_id* is omitted."""
+        return await self._store.get_execution(job_id, run_id)

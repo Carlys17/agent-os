@@ -240,6 +240,10 @@ class SchedulerEngine:
         """Return recent execution records for a job."""
         return await self._ops.get_runs(job_id, limit)
 
+    async def get_run(self, job_id: str, run_id: str | None = None) -> JobExecution | None:
+        """Return one execution record — the latest when *run_id* is omitted."""
+        return await self._ops.get_run(job_id, run_id)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

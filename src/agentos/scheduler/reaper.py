@@ -19,6 +19,8 @@ class SessionReaper:
 
     DEFAULT_RETENTION_SECONDS = 86400  # 24 hours
     MIN_REAP_INTERVAL = 300  # 5 minutes
+    PAGE_SIZE = 500
+    MAX_PAGES = 200  # backstop, so a pathological store cannot spin forever
 
     def __init__(self, session_store, retention_seconds: int = DEFAULT_RETENTION_SECONDS) -> None:
         self._session_store = session_store
@@ -40,15 +42,26 @@ class SessionReaper:
 
         cutoff_ms = int((time.time() - self._retention) * 1000)
 
-        sessions = await self._session_store.list_sessions()
         to_delete: list[str] = []
-
-        for session in sessions:
-            key = getattr(session, "session_key", None) or getattr(session, "key", None)
-            updated_at = getattr(session, "updated_at", None)
-            if key and updated_at is not None:
-                if _is_isolated_cron_session(key) and updated_at < cutoff_ms:
-                    to_delete.append(key)
+        # list_sessions defaults to the 100 most recently updated sessions, which
+        # is precisely the set that is *not* expired — so the whole store has to
+        # be walked. Collect first, delete after: deleting mid-sweep would shift
+        # the offsets of the pages still to come.
+        for page in range(self.MAX_PAGES):
+            sessions = await self._session_store.list_sessions(
+                limit=self.PAGE_SIZE,
+                offset=page * self.PAGE_SIZE,
+            )
+            for session in sessions:
+                key = getattr(session, "session_key", None) or getattr(session, "key", None)
+                updated_at = getattr(session, "updated_at", None)
+                if key and updated_at is not None:
+                    if _is_isolated_cron_session(key) and updated_at < cutoff_ms:
+                        to_delete.append(key)
+            if len(sessions) < self.PAGE_SIZE:
+                break
+        else:
+            logger.warning("reaper.page_cap_reached pages=%d", self.MAX_PAGES)
 
         for key in to_delete:
             await self._session_store.delete_session(key)

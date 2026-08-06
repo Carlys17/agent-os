@@ -30,12 +30,14 @@ from agentos.scheduler.schedule_normalizer import (
 )
 from agentos.scheduler.scripts import normalize_script_value, validate_script_path
 from agentos.scheduler.types import (
+    CRON_SUMMARY_PREVIEW_CHARS,
     DeliveryConfig,
     DeliveryMode,
     FailureDestination,
     ReplyTargetSnapshot,
     ScheduleKind,
     SessionTarget,
+    preview_summary,
 )
 from agentos.tools.policy_config import normalize_tool_profile
 
@@ -996,6 +998,28 @@ async def _handle_cron_run(params: dict | None, ctx: RpcContext) -> dict[str, An
     return _manual_run_to_wire(result)
 
 
+async def _live_session_keys(ctx: RpcContext, keys: list[str]) -> set[str]:
+    """Of *keys*, the ones a chat transcript can actually be opened for.
+
+    A run always carries a session key, but that key is only a label unless a
+    handler created the session: ``script_run`` never touches the session manager
+    at all, and isolated ``agent_run`` sessions are reaped after 24h. Probing here
+    is what lets the UI hide a "→ Chat" button that would only lead to an error.
+    """
+    manager = getattr(ctx, "session_manager", None)
+    getter = getattr(manager, "get_session", None)
+    if not callable(getter):
+        return set()
+    live: set[str] = set()
+    for key in dict.fromkeys(keys):  # de-dup, order irrelevant
+        try:
+            if await getter(key) is not None:
+                live.add(key)
+        except Exception:  # noqa: BLE001 - run history must render regardless
+            continue
+    return live
+
+
 @_d.method("cron.runs")
 async def _handle_cron_runs(params: dict | None, ctx: RpcContext) -> list[dict]:
     if not isinstance(params, dict):
@@ -1008,6 +1032,7 @@ async def _handle_cron_runs(params: dict | None, ctx: RpcContext) -> list[dict]:
     if scheduler is None:
         return []
     runs = await scheduler.get_runs(job_id, limit=limit)
+    live_keys = await _live_session_keys(ctx, [r.session_key for r in runs if r.session_key])
     return [
         {
             "id": r.id,
@@ -1021,12 +1046,41 @@ async def _handle_cron_runs(params: dict | None, ctx: RpcContext) -> list[dict]:
                 else None
             ),
             "error": r.error,
-            "summary": r.summary,
+            # Rows carry a preview only — a script job's stdout can be large and
+            # this list is 10-20 rows wide. cron.runOutput fetches the full text
+            # for the one run the caller opens.
+            "summary": preview_summary(r.summary),
+            "summaryTruncated": bool(r.summary and len(r.summary) > CRON_SUMMARY_PREVIEW_CHARS),
             "sessionKey": r.session_key or None,
+            # False when the session was never created (script jobs) or has been
+            # reaped — the caller should not offer to open a chat that 404s.
+            "chatAvailable": bool(r.session_key) and r.session_key in live_keys,
             "deliveryStatus": r.delivery_status or None,
         }
         for r in runs
     ]
+
+
+@_d.method("cron.runOutput")
+async def _handle_cron_run_output(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
+    """Full stored output for a single run. Omit ``runId`` for the latest run."""
+    if not isinstance(params, dict):
+        raise ValueError("params.id is required")
+    job_id = params.get("id") or params.get("job_id")
+    if not job_id:
+        raise ValueError("params.id is required")
+    run_id = params.get("runId") or params.get("run_id") or None
+    scheduler = _require_scheduler(ctx)
+    run = await scheduler.get_run(job_id, run_id)
+    if run is None:
+        raise KeyError(f"Cron run not found: {run_id or 'latest'}")
+    return {
+        "runId": run.id,
+        "jobId": run.job_id,
+        "success": run.success,
+        "error": run.error,
+        "output": run.summary or "",
+    }
 
 
 @_d.method("cron.subscribe")

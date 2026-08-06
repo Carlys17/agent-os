@@ -65,6 +65,17 @@ def _is_webchat_session_key(key: str) -> bool:
     )
 
 
+def _is_cron_session_key(key: str) -> bool:
+    """Cron run keys — ``cron:<job>:run:<hex>`` (isolated) or ``cron:<job>``.
+
+    These routinely name a session that does not exist: ``script_run`` jobs never
+    create one, and isolated per-run sessions are reaped after 24h. Opening one
+    should read as an empty transcript, not a failed request.
+    """
+    parts = str(key or "").split(":")
+    return len(parts) >= 2 and parts[0] == "cron" and bool(parts[1])
+
+
 def _empty_chat_history_payload(limit: int) -> dict[str, Any]:
     return {
         "messages": [],
@@ -472,7 +483,9 @@ async def _handle_chat_history(params: dict | None, ctx: RpcContext) -> dict:
             include_canonical=include_canonical,
         )
     except KeyError:
-        if _is_webchat_session_key(session_key):
+        # A whitelist, not a blanket swallow — a typo'd agent key should still
+        # surface as an error rather than silently render an empty chat.
+        if _is_webchat_session_key(session_key) or _is_cron_session_key(session_key):
             return _empty_chat_history_payload(limit)
         raise
     page_entries, has_more = _chat_history_page(

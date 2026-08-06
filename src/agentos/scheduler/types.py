@@ -106,6 +106,28 @@ class DeliveryConfig:
     failure_destination: FailureDestination | None = None
 
 
+# Two different things used to share one 500-char cap, which meant a script job's
+# stdout was destroyed at write time and the run-history drawer could never show it.
+# They are separated now: what goes out over WS/webhook stays small, what goes into
+# the run record keeps the whole output (up to a sanity ceiling).
+CRON_SUMMARY_PREVIEW_CHARS = 500
+CRON_RUN_OUTPUT_MAX_CHARS = 200_000
+
+
+def clamp_run_output(text: str | None) -> str | None:
+    """Cap output stored on a run record — generous, only a runaway-script backstop."""
+    if not text:
+        return text
+    return text[:CRON_RUN_OUTPUT_MAX_CHARS]
+
+
+def preview_summary(text: str | None) -> str | None:
+    """Short preview for delivery payloads (WS broadcast, webhook POST, list rows)."""
+    if not text:
+        return text
+    return text[:CRON_SUMMARY_PREVIEW_CHARS]
+
+
 @dataclass
 class HandlerResult:
     """Typed return from cron job handlers."""

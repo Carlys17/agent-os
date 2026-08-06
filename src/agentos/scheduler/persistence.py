@@ -191,6 +191,28 @@ def _row_to_job(row: aiosqlite.Row) -> CronJob:
     )
 
 
+def _row_to_execution(row: aiosqlite.Row) -> JobExecution:
+    """Map a ``scheduler_runs`` row, tolerating columns older DBs may lack."""
+
+    def _get(key: str, default: object = None) -> object:
+        try:
+            return row[key]
+        except (IndexError, KeyError):
+            return default
+
+    return JobExecution(
+        id=row["id"],
+        job_id=row["job_id"],
+        started_at=datetime.fromisoformat(row["started_at"]),
+        finished_at=(datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None),
+        success=bool(row["success"]),
+        error=row["error"],
+        summary=_get("summary"),  # type: ignore[arg-type]
+        session_key=_get("session_key", ""),  # type: ignore[arg-type]
+        delivery_status=_get("delivery_status", ""),  # type: ignore[arg-type]
+    )
+
+
 def _parse_wake_mode(raw: object) -> CronWakeMode:
     value = getattr(raw, "value", raw)
     normalized = value.strip().lower() if isinstance(value, str) else ""
@@ -834,29 +856,23 @@ class JobStore:
             (job_id, limit),
         ) as cur:
             rows = await cur.fetchall()
+            return [_row_to_execution(r) for r in rows]
 
-            def _safe_get(row, key, default=None):
-                try:
-                    return row[key]
-                except (IndexError, KeyError):
-                    return default
+    async def get_execution(self, job_id: str, run_id: str | None = None) -> JobExecution | None:
+        """One run record, scoped to its job. Without *run_id*, the most recent run.
 
-            return [
-                JobExecution(
-                    id=r["id"],
-                    job_id=r["job_id"],
-                    started_at=datetime.fromisoformat(r["started_at"]),
-                    finished_at=(
-                        datetime.fromisoformat(r["finished_at"]) if r["finished_at"] else None
-                    ),
-                    success=bool(r["success"]),
-                    error=r["error"],
-                    summary=_safe_get(r, "summary"),
-                    session_key=_safe_get(r, "session_key", ""),
-                    delivery_status=_safe_get(r, "delivery_status", ""),
-                )
-                for r in rows
-            ]
+        The run-history drawer shows a preview per row and fetches the full output
+        only for the row someone opens, so this reads one record at a time.
+        """
+        if run_id:
+            query = "SELECT * FROM scheduler_runs WHERE job_id = ? AND id = ?"
+            params: tuple[str, ...] = (job_id, run_id)
+        else:
+            query = "SELECT * FROM scheduler_runs WHERE job_id = ? ORDER BY started_at DESC LIMIT 1"
+            params = (job_id,)
+        async with self._db().execute(query, params) as cur:
+            row = await cur.fetchone()
+            return _row_to_execution(row) if row is not None else None
 
     async def prune_runs(self, max_age_days: int = 30, max_per_job: int = 100) -> int:
         """Delete old execution records. Returns total rows deleted."""
