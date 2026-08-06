@@ -469,7 +469,7 @@ would buy the token back if the price came down, and this deliberately gives tha
 ```bash
 python3 "$S"/ratchet.py arm --token-id <id> [--steps 30,60,100]
 python3 "$S"/ratchet.py arm --token-id <id> --steps 30,60,100 --confirm <MANDATE_HASH>
-python3 "$S"/ratchet.py tick --all --broadcast --json     # what cron runs
+python3 "$S"/ratchet.py tick --all --broadcast --json --alert-only   # what cron runs
 python3 "$S"/ratchet.py status --id <m>   |   list   |   disarm --id <m>
 ```
 
@@ -614,6 +614,25 @@ cron(action="add", schedule={"kind": "every", "every_seconds": 600},
      job_kind="script", script="ratchet-tick.sh", session_target="isolated")
 ```
 
+Write `--alert-only` into that script, alongside `--json`. Without it every tick delivers the
+full result of every mandate, which on a healthy ratchet is a block of JSON saying nothing
+happened, every ten minutes, until nobody reads it any more. With it a tick that found
+nothing still prints the whole payload — the run history keeps it — but ends on the line
+`{"wakeAgent": false}`, which the cron runner reads as "no news" and delivers nothing:
+
+```bash
+#!/bin/sh
+exec python3 ~/.agentos/skills/senior-unilp-manager/scripts/ratchet.py \
+  tick --all --broadcast --json --alert-only
+```
+
+A tick that fired, adopted a landed fire, halted, was rejected, expired, or built a plan on a
+dry run prints a one-line summary above that JSON and is delivered as usual. So does a
+mandate sitting in `NEEDS_ATTENTION`, on **every** tick until a human clears it: that state
+reports the same `noop` as a healthy mandate, and going quiet on it would be the one silence
+that costs money. `--alert-only` only changes `--json` output; run by hand without it and the
+command prints exactly what it always did.
+
 A script job runs the file itself and never starts an agent turn, so it takes **no**
 `tool_policy` — `tool_policy.elevated` belongs to the `agent_turn` shape above and is
 rejected here. Both shapes need an interactive CLI or Web caller; neither can be scheduled
@@ -658,6 +677,7 @@ different branches at every layer, and a hook can answer differently on each.
 | `mandate … does not hash to its own filename` | The state file was edited or truncated. Do not repair it by hand — `disarm` and arm a fresh mandate |
 | ratchet state `NEEDS_ATTENTION` | It refused to resolve an ambiguity alone. `status --id <m>` for the record, then `clear-attention --id <m>` once the position is confirmed — add `--token-id <new>` if the note says the replacement could not be identified |
 | ratchet action `deferred` | The node could not be read, so nothing was decided and nothing changed. Normal on a flaky RPC; investigate only if it repeats for hours |
+| a `--alert-only` cron job has said nothing for hours | Expected — that is the flag working. The runs are still there: Cron → Run History holds the full JSON of every tick. A job that had actually stopped would show no runs at all, not quiet ones |
 | `journal holds an unreplayed … record` | The log has an event this build does not know. Almost always a downgrade — run the version that wrote it |
 | `… line N is corrupt … not a torn tail` | The write-ahead log was damaged mid-file. `status --id <m> --json` still reads the mandate; the log needs a human before the runner will move |
 | `… is not a mandate id` | `--id` takes the 32 hex characters `list` prints, nothing else |

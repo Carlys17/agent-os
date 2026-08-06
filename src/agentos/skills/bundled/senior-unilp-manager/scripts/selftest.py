@@ -2217,6 +2217,57 @@ def _tier7_arm_is_idempotent(r) -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _tier7_alert_gate(r) -> None:
+    """Which tick outcomes reach a channel under ``--alert-only``.
+
+    Getting this wrong is silent in both directions: too loud and the watchdog is
+    ignored, too quiet and a mandate waiting for a human waits forever. The
+    NEEDS_ATTENTION row is the one that matters — it reports ``noop`` like every
+    other terminal state, and only the state tells it apart.
+    """
+    import ratchet
+
+    quiet = [
+        ("a disarmed mandate", {"action": "noop", "state": "DISARMED"}),
+        ("a completed mandate", {"action": "noop", "state": "COMPLETE"}),
+        ("an armed mandate below its next threshold",
+         {"action": "noop", "state": "ARMED", "reason": "no milestone due"}),
+        ("a fire still waiting on a receipt", {"action": "waiting", "state": "FIRE_SENT"}),
+        ("a tick that lost the lock", {"action": "skipped", "state": None}),
+        ("a tick that could not read the node", {"action": "deferred", "state": "FIRE_SENT"}),
+    ]
+    for label, outcome in quiet:
+        r.check(f"alert gate stays silent for {label}", ratchet.is_notable(outcome), False)
+
+    loud = [
+        ("a mandate waiting for a human", {"action": "noop", "state": "NEEDS_ATTENTION"}),
+        ("a milestone that fired", {"action": "fired", "state": "ARMED"}),
+        ("a landed fire reconciled", {"action": "adopted", "state": "ARMED"}),
+        ("a mandate that halted", {"action": "halted", "state": "NEEDS_ATTENTION"}),
+        ("a plan the mandate refused", {"action": "rejected", "state": "ARMED"}),
+        ("a milestone due on a dry run", {"action": "dry-run", "state": "ARMED"}),
+        ("a mandate that expired", {"action": "expired", "state": "EXPIRED"}),
+        ("a mandate that vanished", {"action": "missing"}),
+        ("a tick that raised", {"action": "error"}),
+    ]
+    for label, outcome in loud:
+        r.check(f"alert gate speaks up for {label}", ratchet.is_notable(outcome), True)
+
+    line = ratchet.tick_summary_line({
+        "mandateId": "7857cce24384e26fb6bdcad73e68ee9a", "action": "fired",
+        "state": "ARMED", "tokenId": 476498, "txHash": "0xdead",
+    })
+    r.check("a summary line names the mandate, position and transaction",
+            ("7857cce2" in line and "#476498" in line and "0xdead" in line
+             and line.startswith("FIRED")), True)
+    # The gate reads the last line of stdout; a summary that ended in one would
+    # silence the very alert it is announcing.
+    r.check("a summary line is not itself a gate line",
+            ratchet.tick_summary_line({"mandateId": "a" * 32, "action": "noop",
+                                       "state": "NEEDS_ATTENTION",
+                                       "note": "check the position"}).startswith("{"), False)
+
+
 def tier7(g: dict, r: Results) -> None:
     try:
         import lp_write  # noqa: F401
@@ -2234,6 +2285,7 @@ def tier7(g: dict, r: Results) -> None:
     _tier7_state_machine(r)
     _tier7_duplicate_arm(r)
     _tier7_arm_is_idempotent(r)
+    _tier7_alert_gate(r)
 
 
 TIERS = (

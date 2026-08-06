@@ -94,9 +94,13 @@ senior-unilp-manager — ratchet: unattended take-profit on a one-sided position
           [--max-principal-per-fire <human>] [--max-fee-per-gas <wei>] [--expires-days <n>]
           Dry run prints the mandate table and a MANDATE_HASH; re-run with
           --confirm <MANDATE_HASH> to arm it.
-  tick    [--id <m> | --all] [--broadcast] [--json]
+  tick    [--id <m> | --all] [--broadcast] [--json] [--alert-only]
           Reconcile against the chain and fire any milestone that is due. Without
           --broadcast this is a full dry run of the transaction, and sends nothing.
+          --alert-only (with --json) ends a tick that found nothing on the gate line
+          {"wakeAgent": false}, so a cron script job records the run but delivers
+          no message. A tick that fired, halted, or needs a human prints a summary
+          above the JSON and is delivered as usual.
   status  --id <m> [--json]
   list    [--json]
   disarm  --id <m>
@@ -166,6 +170,42 @@ def _principal_info(mandate: dict, info0: dict, info1: dict) -> tuple[dict, dict
 
 def _emit(payload: dict) -> None:
     print(json.dumps(payload, indent=2, default=str))
+
+
+# Actions that mean the mandate is exactly where it was left. A watchdog that
+# reports these is reporting that it has nothing to report.
+QUIET_ACTIONS = frozenset({"noop", "skipped", "waiting", "deferred"})
+
+
+def is_notable(outcome: dict) -> bool:
+    """Whether one tick outcome is worth waking a human for.
+
+    NEEDS_ATTENTION is checked apart from the action on purpose: it is a terminal
+    state, so every tick after the halt reports a plain ``noop`` while the mandate
+    sits there waiting for a person. Filtering on the action alone would silence
+    the one alarm that must never go quiet.
+    """
+    if outcome.get("state") == STATE_NEEDS_ATTENTION:
+        return True
+    return outcome.get("action") not in QUIET_ACTIONS
+
+
+def tick_summary_line(outcome: dict) -> str:
+    """One human-readable line for a notable mandate, for a chat alert.
+
+    The JSON below it carries everything; this is what someone reads on a phone.
+    """
+    parts = [f"{str(outcome.get('action', '?')).upper()} {outcome['mandateId'][:8]}"]
+    state = outcome.get("state")
+    if state and state != STATE_ARMED:
+        parts.append(f"state={state}")
+    if outcome.get("tokenId"):
+        parts.append(f"#{outcome['tokenId']}")
+    if outcome.get("txHash"):
+        parts.append(f"tx {outcome['txHash']}")
+    detail = outcome.get("reason") or outcome.get("note") or ""
+    line = "  ".join(parts)
+    return f"{line} — {detail}" if detail else line
 
 
 def _client(chain: dict, args: dict) -> RpcClient:
@@ -1248,7 +1288,26 @@ def cmd_tick(client, chain: dict, args: dict, signer: dict) -> None:
         results.append(outcome)
 
     if args.get("json"):
-        _emit({"chain": chain["key"], "broadcast": broadcast, "results": results})
+        payload = {"chain": chain["key"], "broadcast": broadcast, "results": results}
+        if not args.get("alert-only"):
+            _emit(payload)
+            return
+        notable = [outcome for outcome in results if is_notable(outcome)]
+        payload["notable"] = len(notable)
+        payload["quiet"] = len(results) - len(notable)
+        if notable:
+            # Summary first, JSON last: the cron gate reads the final line, and an
+            # alert that must be delivered has to end in something that is not one.
+            # Pretty-printed JSON ends in "}", which no gate reader mistakes for a gate.
+            for outcome in notable:
+                print(tick_summary_line(outcome))
+            print()
+            _emit(payload)
+        else:
+            _emit(payload)
+            # The run record keeps the whole payload for whoever goes looking; this
+            # last line is what keeps a tick with no news off the channel.
+            print(json.dumps({"wakeAgent": False}))
         return
 
     if not idents:
