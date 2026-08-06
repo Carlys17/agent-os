@@ -6,6 +6,115 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.6] - 2026-08-06
+
+### Added
+
+- A cron job can run a script instead of a model turn. `--job-kind script`
+  makes the script the job: its stdout is delivered verbatim, empty stdout is a
+  silent tick, and a non-zero exit delivers the error and fails the job so a
+  broken watchdog cannot be mistaken for a quiet one. `--job-kind agent_turn
+  --script` runs the script first as a collector — its stdout is prepended to
+  the prompt as a `## Script output` block, and a tick that prints nothing (or
+  ends with `{"wakeAgent": false}`) skips the turn before the session is
+  touched, leaving no session row, transcript line, or model call behind.
+  Scripts resolve inside `~/.agentos/scripts/`; absolute paths, `~`, `..`, and
+  symlinks out of it are refused, and arguments are exec'd as argv, never handed
+  to a shell. Scheduling one requires an interactive CLI or Web caller — the
+  in-agent `cron` tool refuses it from a chat channel. (Refs #219)
+- New bundled skill `cron-watchers` ships the three script jobs everyone writes
+  first — an RSS/Atom feed, a JSON endpoint, and a GitHub repo — each following
+  the contract the scheduler expects: print what is new, print nothing when
+  nothing is new, exit non-zero on a real failure. Deduplication state lives in
+  `~/.agentos/state/cron-watchers/<name>.json`, outside the scripts directory,
+  and the first run reports nothing by default. (Refs #219)
+- `agentos cron output <job-id> [--run <run-id>]` and the `cron.runOutput` RPC
+  read one run's output in full; the in-agent `cron` tool gains
+  `action="runs"`, so "what did the watcher report?" is a question the model can
+  look up instead of invent.
+- `senior-unilp-manager` can open the pool a position lives in.
+  `lp_write.py create-pool` initializes hook-less Uniswap v4 pools —
+  `hooks` is pinned to `address(0)` with no flag to change it, a dynamic fee is
+  refused, an odd fee/tick-spacing pair needs `--allow-odd-tier` because `pools`
+  only searches the vanilla tiers, and an already-initialized pool prints its
+  poolId and exits without planning. The starting price can never be corrected
+  afterwards, so the plan table prints tick, `sqrtPriceX96`, and the price in
+  both directions under a banner saying so. selftest goes 695 → 716 assertions.
+- `tick --json --alert-only` lets a `senior-unilp-manager` ratchet cron stay
+  quiet. A tick that found nothing still prints the whole payload — the run
+  history keeps it — but ends on `{"wakeAgent": false}`, which
+  `has_actionable_output()` reads as "no news": the run succeeds and nothing is
+  delivered. A tick that fired, adopted a landed fire, halted, was rejected,
+  expired, or built a plan on a dry run is delivered as usual, and
+  `NEEDS_ATTENTION` deliberately alerts on every tick — it is a terminal state,
+  so filtering on the action alone would silence the one alarm that must never
+  go quiet. (Closes #234)
+- `lp_read.py price --tokens` is documented (SKILL.md §6b), with the rule to use
+  it rather than deriving a price from a pool — a session derived a token's
+  price from a zero-TVL dust pool, was off by 3×, and that number would have
+  become the permanent starting tick of a new pool. (Refs #228)
+
+### Fixed
+
+- A bad cron delivery target is rejected at save time instead of failing every
+  run. `validate_channel_target` refuses an id beginning with a session-key
+  prefix (`agent:`, `cron:`, `webchat:`, `session:`) and requires an integer or
+  `@username` for Telegram, suggesting the id that would have worked; `cron.add`
+  and `cron.update` then ask the adapter itself via `TelegramChannel.probe_target`,
+  where only a definite "no" blocks the save. The new `channels.deliveryTargets`
+  RPC lists each channel's paired DMs and configured group chats, so the Web UI
+  renders Recipient as a dropdown with `Enter manually…` as the escape hatch.
+- A cron run record now carries *why* delivery failed. `DeliveryReport.channel_detail`
+  turns one line of "delivery failed" into "delivery to telegram failed: Bad
+  Request: chat not found" in `agentos cron runs`, and an exception escaping the
+  channel leg reports its type instead of vanishing into `asyncio.gather`.
+- `structlog` events reach `~/.agentos/logs/debug.log`. Half this codebase logs
+  through `logging.getLogger` and half through structlog, and only the first half
+  was written to the file — the missing half included every `delivery.*` warning.
+- A cron run's output is stored whole. `clamp_run_output` replaces the scattered
+  `[:500]` slices that truncated a script job's stdout on the way into the
+  database; `preview_summary` is what the delivery layer and the run list get,
+  and the Web UI's expanded row fetches the full text lazily.
+- The "→ Chat" button no longer leads to "Could not load chat history." Each run
+  reports `chatAvailable` and the button is hidden when it is false — script jobs
+  never create a session, and isolated agent sessions are reaped after 24h — while
+  `chat.history` answers an empty transcript for a missing cron session instead of
+  raising.
+- The session reaper is paged. `list_sessions()` returns the 100 most recently
+  updated sessions — precisely the ones that are *not* expired — so expired
+  isolated cron sessions were never reaped on a busy store.
+- A script job's output no longer vanishes. Several skips in the delivery chain
+  encode "the run already wrote this into the session", which holds for an agent
+  turn but not for a script, which has no turn: a job with `sessionTarget=current`
+  from webchat was reported delivered without a byte being written, and a job
+  bound to the chat its run *is* was skipped on `origin == session_key`. A
+  `cron add --script` from the CLI, which genuinely has nowhere to write, now
+  reports `no_session_target` rather than a bare `skipped`.
+- A cron tool refusal reaches the model. Cron raises plain `ToolError` in ~30
+  places with field-naming messages that `envelope.py` discarded, so a call
+  carrying `tool_policy.elevated` on a script job came back as "received an
+  invalid argument" followed by seven retries that dropped the required
+  `schedule` field. Cron's refusals are `SafeToolError` now, and `job_kind='script'`
+  + `tool_policy.elevated` is rejected up front, naming the field. (Refs #228)
+- A quoted script path is unwrapped before it is stored. A model passes
+  `script='"watch-memory.sh"'` often enough that it is the first thing that
+  happens; the job saved cleanly and failed on its first tick. (Refs #219)
+- `/reset` clears the visible conversation on web and CLI. `sessions.reset` keeps
+  the session key and only rotates `session_id`, so the transcript on screen
+  stayed put, which reads as "nothing happened". The Web UI clears on
+  `session.epoch_changed`, which covers the typed `/reset`, the slash menu, the
+  SessionChip button, and a reset issued by another client; the CLI gains
+  `ChatApplication.clear_screen()`, which drops scrollback too.
+- Two `senior-unilp-manager` doc commands were unrunnable — `python3 <S>/ratchet.py`
+  reads as a redirect from a file named `S` in a shell — and the cron examples
+  cannot use `$S` at all, since a cron job runs in a fresh isolated session. Both
+  now spell out `{baseDir}/scripts/ratchet.py`. (Refs #228)
+
+### Changed
+
+- The cron surfaces say "no LLM" instead of "no model", and `agentos cron runs`
+  grows Delivery and Output columns.
+
 ## [2026.8.5] - 2026-08-05
 
 ### Added
