@@ -51,7 +51,25 @@ inline. One more mime renders inline as an interactive chart:
 |------|-------------|
 | `application/vnd.agentos.chart+json` | Candlestick chart with a volume histogram |
 
-Publish a JSON file with that mime and the chat draws it in place of the chip.
+There is nothing to register: any skill gets a chart by publishing a file with
+that mime. Two steps, and both have a failure mode worth knowing.
+
+**1. Write the JSON inside the workspace.** Scripts run with the workspace as
+their working directory, so a bare filename lands in the right place.
+`publish_artifact` rejects anything outside the workspace, so an absolute path
+like `/tmp/chart.json` fails *after* the data has already been fetched.
+
+**2. Publish it with the mime spelled out.**
+
+```
+publish_artifact path=bonk-1h.chart.json mime=application/vnd.agentos.chart+json
+```
+
+Passing `mime` is what makes the chart appear. Omit it and the filename guess
+returns `application/json`, which classifies as a data artifact and renders as
+an ordinary download chip — no error, just no chart. Tell the model to pass it
+explicitly in your SKILL.md.
+
 The body is:
 
 ```json
@@ -71,9 +89,16 @@ candle field is required. Rows may arrive in any order and may repeat a
 timestamp — the renderer sorts them and keeps the last entry per timestamp.
 `title` and `subtitle` are display-only text, never markup.
 
-The `gmgn-market` skill ships `scripts/kline_chart.py`, which converts GMGN
-kline output into this shape; use it as a worked example when adding charts to
-another skill.
+Hovering a candle reveals its open, high, low, close, volume, and the move from
+open to close as a percentage, so there is no need to repeat those numbers in
+the reply.
+
+The `gmgn-market` and `gmgn-token` skills each ship `scripts/kline_chart.py`,
+which converts GMGN kline output into this shape; use it as a worked example
+when adding charts to another skill. Note that they carry a copy each rather
+than sharing one: `{baseDir}` resolves to the skill that is running, so a skill
+cannot reach into another skill's `scripts/` directory — and the skill it
+pointed at may not even be enabled. Give your skill its own copy.
 
 Charts render in the Web UI only. Other surfaces receive the artifact as a
 normal JSON file, so keep a short text summary in the reply alongside the chart.
