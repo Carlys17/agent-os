@@ -20,7 +20,7 @@
 
 // Type-only — erased at compile time, so it does not pull the library into the
 // Chat chunk. The runtime import stays dynamic, inside `draw`.
-import type { UTCTimestamp } from 'lightweight-charts'
+import type { MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts'
 
 import type { Artifact } from './artifacts'
 
@@ -209,6 +209,67 @@ export function priceDecimals(payload: ChartPayload): number {
   return Math.min(12, leadingZeros + 4)
 }
 
+/* ── Crosshair readout ──────────────────────────────────────────────────── */
+
+/** One candle rendered for the readout strip, every field already a string. */
+export interface CandleReadout {
+  time: string
+  open: string
+  high: string
+  low: string
+  close: string
+  /** Close against open, signed and suffixed — "+1.27%". */
+  change: string
+  direction: 'up' | 'down'
+  /** Compact USD volume, or '' when the candle carries none. */
+  volume: string
+}
+
+/** Thousands-grouped short form, so a volume column cannot widen the card. */
+export function compactNumber(value: number): string {
+  const abs = Math.abs(value)
+  if (abs >= 1e9) return `${(value / 1e9).toFixed(1)}B`
+  if (abs >= 1e6) return `${(value / 1e6).toFixed(1)}M`
+  if (abs >= 1e3) return `${(value / 1e3).toFixed(1)}K`
+  return `${Math.round(value)}`
+}
+
+/**
+ * Format a candle timestamp in UTC.
+ *
+ * lightweight-charts plots UTC unless a timezone is configured, so the readout
+ * has to agree with the axis underneath it rather than with the reader's clock.
+ */
+export function formatCandleTime(seconds: number): string {
+  const at = new Date(seconds * 1000)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  const date = `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}`
+  return `${date} ${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())} UTC`
+}
+
+/**
+ * Everything the readout shows for one candle.
+ *
+ * The percentage is close against open — the move *within* the candle, which is
+ * what a candle body draws — not against the previous close.
+ */
+export function candleReadout(candle: ChartCandle, decimals: number): CandleReadout {
+  const price = (value: number): string => value.toFixed(decimals)
+  const delta = candle.open === 0 ? 0 : ((candle.close - candle.open) / candle.open) * 100
+  const rounded = Number(delta.toFixed(2))
+  return {
+    time: formatCandleTime(candle.time),
+    open: price(candle.open),
+    high: price(candle.high),
+    low: price(candle.low),
+    close: price(candle.close),
+    change: `${rounded >= 0 ? '+' : ''}${rounded.toFixed(2)}%`,
+    // A flat candle draws as an up candle (see volumeSeriesData); match it.
+    direction: candle.close >= candle.open ? 'up' : 'down',
+    volume: typeof candle.volume === 'number' ? compactNumber(candle.volume) : '',
+  }
+}
+
 /* ── Injected mounter dependencies ──────────────────────────────────────── */
 
 /**
@@ -223,6 +284,60 @@ let libraryPromise: Promise<typeof import('lightweight-charts')> | null = null
 function loadChartLibrary(): Promise<typeof import('lightweight-charts')> {
   libraryPromise ??= import('lightweight-charts')
   return libraryPromise
+}
+
+/**
+ * Build the readout strip's cells once and return an updater for them.
+ *
+ * The cells are created here rather than in the placeholder markup so the
+ * strip stays empty until a chart actually draws, and every value lands
+ * through `textContent`.
+ */
+function mountReadout(host: HTMLElement, decimals: number): ((candle: ChartCandle) => void) | null {
+  const strip = host.querySelector<HTMLElement>('.msg-artifact-chart__readout')
+  if (!strip) return null
+  strip.replaceChildren()
+
+  const values = new Map<string, HTMLElement>()
+  const cells = new Map<string, HTMLElement>()
+  const addCell = (key: string, label: string): void => {
+    const cell = document.createElement('span')
+    cell.className = 'msg-artifact-chart__readout-cell'
+    if (label) {
+      const tag = document.createElement('span')
+      tag.className = 'msg-artifact-chart__readout-label'
+      tag.textContent = label
+      cell.appendChild(tag)
+    }
+    const value = document.createElement('span')
+    value.className = 'msg-artifact-chart__readout-value'
+    cell.appendChild(value)
+    strip.appendChild(cell)
+    values.set(key, value)
+    cells.set(key, cell)
+  }
+
+  addCell('time', '')
+  addCell('open', 'O')
+  addCell('high', 'H')
+  addCell('low', 'L')
+  addCell('close', 'C')
+  addCell('change', '')
+  addCell('volume', 'Vol')
+
+  return (candle: ChartCandle): void => {
+    const readout = candleReadout(candle, decimals)
+    values.get('time')!.textContent = readout.time
+    values.get('open')!.textContent = readout.open
+    values.get('high')!.textContent = readout.high
+    values.get('low')!.textContent = readout.low
+    values.get('close')!.textContent = readout.close
+    values.get('change')!.textContent = readout.change
+    values.get('volume')!.textContent = readout.volume
+    // Colour the move the same way the candle body is coloured.
+    cells.get('change')!.dataset.direction = readout.direction
+    cells.get('volume')!.hidden = readout.volume === ''
+  }
 }
 
 /** A drawn chart, held by its host element so the mounter can sweep it later. */
@@ -361,6 +476,23 @@ export function createChartMounter(deps: ChartMounterDeps) {
 
     chart.timeScale().fitContent()
 
+    let crosshairUnsubscribe: (() => void) | null = null
+    // lightweight-charts ships no tooltip: a crosshair alone cannot say what a
+    // candle opened at or how far it moved, so the readout strip does. It rests
+    // on the newest candle and follows the cursor while it is over the chart.
+    const updateReadout = mountReadout(host, decimals)
+    const byTime = new Map(payload.candles.map((entry) => [entry.time, entry]))
+    const newest = payload.candles[payload.candles.length - 1]
+    if (updateReadout && newest) {
+      updateReadout(newest)
+      const onCrosshairMove = (param: MouseEventParams<Time>): void => {
+        const at = typeof param.time === 'number' ? param.time : null
+        updateReadout((at === null ? undefined : byTime.get(at)) ?? newest)
+      }
+      chart.subscribeCrosshairMove(onCrosshairMove)
+      crosshairUnsubscribe = (): void => chart.unsubscribeCrosshairMove(onCrosshairMove)
+    }
+
     // Re-theme in place rather than tearing the chart down, so a theme toggle
     // does not reset the user's pan/zoom.
     const applyTheme = (mode: ChartThemeMode): void => {
@@ -402,6 +534,9 @@ export function createChartMounter(deps: ChartMounterDeps) {
     const entry: LiveChart = {
       applyTheme,
       dispose: () => {
+        // Unsubscribe before remove(): the chart tears its internals down and
+        // will not accept the call afterwards.
+        crosshairUnsubscribe?.()
         observer?.disconnect()
         chart.remove()
       },

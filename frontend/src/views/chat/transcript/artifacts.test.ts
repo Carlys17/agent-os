@@ -258,6 +258,8 @@ describe('createArtifactRenderer chart artifacts', () => {
     )
     expect(host?.querySelector('.msg-artifact-chart__canvas')).not.toBeNull()
     expect(host?.querySelector('.msg-artifact-chart__status')).not.toBeNull()
+    // The mounter fills this on draw; it must exist for the crosshair readout.
+    expect(host?.querySelector('.msg-artifact-chart__readout')).not.toBeNull()
     expect(host?.querySelector('.msg-artifact-chart__name')).toHaveTextContent('bonk.chart.json')
     // A chart groups with charts, never into the file-chip row.
     expect(container.querySelector('.msg-artifact-charts')).not.toBeNull()

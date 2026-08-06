@@ -315,6 +315,7 @@ export function createArtifactRenderer(deps: ArtifactRendererDeps) {
             <span class="msg-artifact-chart__name">${esc(name)}</span>
             <a class="msg-artifact-chart__download" href="${escAttr(downloadHref)}" download="${escAttr(name)}" data-artifact-download="${escAttr(downloadUrl)}">Download</a>
           </div>
+          <div class="msg-artifact-chart__readout"></div>
           <div class="msg-artifact-chart__canvas"></div>
           <p class="msg-artifact-chart__status">Loading chart…</p>
         </div>`

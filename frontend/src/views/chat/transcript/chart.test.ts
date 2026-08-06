@@ -12,8 +12,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createArtifactRenderer } from './artifacts'
 import {
   CHART_ARTIFACT_MIME,
+  candleReadout,
   chartTheme,
+  compactNumber,
   createChartMounter,
+  formatCandleTime,
   hasVolume,
   isChartArtifact,
   normalizeChartPayload,
@@ -28,13 +31,18 @@ interface FakeSeries {
   applyOptions: ReturnType<typeof vi.fn>
 }
 
+type CrosshairHandler = (param: { time?: unknown }) => void
+
 interface FakeChart {
   addSeries: ReturnType<typeof vi.fn>
   priceScale: ReturnType<typeof vi.fn>
   timeScale: ReturnType<typeof vi.fn>
   applyOptions: ReturnType<typeof vi.fn>
   remove: ReturnType<typeof vi.fn>
+  subscribeCrosshairMove: ReturnType<typeof vi.fn>
+  unsubscribeCrosshairMove: ReturnType<typeof vi.fn>
   series: FakeSeries[]
+  crosshair: CrosshairHandler[]
 }
 
 const lib = vi.hoisted(() => ({ charts: [] as unknown[], createChart: vi.fn() }))
@@ -48,8 +56,10 @@ vi.mock('lightweight-charts', () => ({
 
 function makeFakeChart(): FakeChart {
   const series: FakeSeries[] = []
+  const crosshair: CrosshairHandler[] = []
   return {
     series,
+    crosshair,
     addSeries: vi.fn(() => {
       const next: FakeSeries = { setData: vi.fn(), applyOptions: vi.fn() }
       series.push(next)
@@ -59,6 +69,13 @@ function makeFakeChart(): FakeChart {
     timeScale: vi.fn(() => ({ fitContent: vi.fn() })),
     applyOptions: vi.fn(),
     remove: vi.fn(),
+    subscribeCrosshairMove: vi.fn((handler: CrosshairHandler) => {
+      crosshair.push(handler)
+    }),
+    unsubscribeCrosshairMove: vi.fn((handler: CrosshairHandler) => {
+      const at = crosshair.indexOf(handler)
+      if (at >= 0) crosshair.splice(at, 1)
+    }),
   }
 }
 
@@ -81,9 +98,22 @@ function placeholder(url: string): HTMLElement {
     '<div class="msg-artifact-chart__header">' +
     '<span class="msg-artifact-chart__name">bonk.chart.json</span>' +
     '</div>' +
+    '<div class="msg-artifact-chart__readout"></div>' +
     '<div class="msg-artifact-chart__canvas"></div>' +
     '<p class="msg-artifact-chart__status">Loading chart…</p>'
   return host
+}
+
+function readoutOf(host: HTMLElement): string {
+  const cells = host.querySelectorAll<HTMLElement>('.msg-artifact-chart__readout-cell')
+  return Array.from(cells)
+    .filter((cell) => !cell.hidden)
+    .map((cell) => {
+      const label = cell.querySelector('.msg-artifact-chart__readout-label')?.textContent ?? ''
+      const value = cell.querySelector('.msg-artifact-chart__readout-value')?.textContent ?? ''
+      return label ? `${label} ${value}` : value
+    })
+    .join(' ')
 }
 
 function mountRoot(...hosts: HTMLElement[]): HTMLElement {
@@ -98,8 +128,8 @@ function statusOf(host: HTMLElement): string {
 }
 
 const CANDLES = [
-  { time: 100, open: 1, high: 2, low: 1, close: 2, volume: 10 },
-  { time: 200, open: 2, high: 3, low: 2, close: 1, volume: 20 },
+  { time: 1785801600, open: 1, high: 2, low: 1, close: 2, volume: 10 },
+  { time: 1785805200, open: 2, high: 3, low: 2, close: 1, volume: 20 },
 ]
 
 function payloadBody(): unknown {
@@ -547,5 +577,152 @@ describe('the artifact renderer and the chart mounter agree on the placeholder',
       '/api/v1/artifacts/art-1?sessionKey=agent%3Amain%3Awebchat%3Atest&token=tok',
     )
     expect(body.querySelector('.msg-artifact-chart__status')?.textContent).toBe('')
+  })
+})
+
+/* ── crosshair readout ──────────────────────────────────────────────────── */
+
+describe('compactNumber', () => {
+  it('shortens thousands, millions and billions so a volume cannot widen the card', () => {
+    expect(compactNumber(842)).toBe('842')
+    expect(compactNumber(10_140)).toBe('10.1K')
+    expect(compactNumber(2_400_000)).toBe('2.4M')
+    expect(compactNumber(3_120_000_000)).toBe('3.1B')
+  })
+  it('rounds sub-unit volumes rather than printing a decimal', () => {
+    expect(compactNumber(0.4)).toBe('0')
+  })
+})
+
+describe('formatCandleTime', () => {
+  it('formats in UTC, matching the axis underneath', () => {
+    // lightweight-charts plots UTC, so a local-time readout would disagree
+    // with the very axis it sits above.
+    expect(formatCandleTime(1785801600)).toBe('2026-08-04 00:00 UTC')
+  })
+})
+
+describe('candleReadout', () => {
+  const base = { time: 1785801600, open: 100, high: 120, low: 90, close: 110 }
+
+  it('reports the move within the candle, close against open', () => {
+    const readout = candleReadout(base, 2)
+    expect(readout.change).toBe('+10.00%')
+    expect(readout.direction).toBe('up')
+    expect([readout.open, readout.high, readout.low, readout.close]).toEqual([
+      '100.00',
+      '120.00',
+      '90.00',
+      '110.00',
+    ])
+  })
+
+  it('signs a fall and colours it down', () => {
+    const readout = candleReadout({ ...base, close: 80 }, 2)
+    expect(readout.change).toBe('-20.00%')
+    expect(readout.direction).toBe('down')
+  })
+
+  it('treats an unchanged close as up, matching the candle body', () => {
+    const readout = candleReadout({ ...base, close: 100 }, 2)
+    expect(readout.change).toBe('+0.00%')
+    expect(readout.direction).toBe('up')
+  })
+
+  it('does not divide by a zero open', () => {
+    expect(candleReadout({ ...base, open: 0, close: 5 }, 2).change).toBe('+0.00%')
+  })
+
+  it('honours the payload price precision, so meme tokens stay readable', () => {
+    const readout = candleReadout({ ...base, open: 1.23e-5, close: 1.24e-5 }, 9)
+    expect(readout.open).toBe('0.000012300')
+    expect(readout.close).toBe('0.000012400')
+  })
+
+  it('leaves volume empty when the candle carries none', () => {
+    expect(candleReadout(base, 2).volume).toBe('')
+    expect(candleReadout({ ...base, volume: 10_140 }, 2).volume).toBe('10.1K')
+  })
+})
+
+describe('createChartMounter readout', () => {
+  it('rests on the newest candle before the cursor arrives', async () => {
+    const host = placeholder('/api/v1/artifacts/art-1')
+    const mounter = createChartMounter({
+      fetchPayload: async () => payloadBody(),
+      getTheme: () => 'dark',
+    })
+
+    mounter.mountCharts(mountRoot(host))
+
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+    // CANDLES[1] is the newest: close 1 against open 2 — a 50% fall.
+    await vi.waitFor(() => expect(readoutOf(host)).toContain('-50.00%'))
+    expect(readoutOf(host)).toContain('Vol 20')
+  })
+
+  it('follows the candle under the crosshair', async () => {
+    const host = placeholder('/api/v1/artifacts/art-1')
+    const mounter = createChartMounter({
+      fetchPayload: async () => payloadBody(),
+      getTheme: () => 'dark',
+    })
+    mounter.mountCharts(mountRoot(host))
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+
+    createdCharts()[0]?.crosshair.forEach((handler) => handler({ time: CANDLES[0]!.time }))
+
+    // The older candle rose from 1 to 2.
+    expect(readoutOf(host)).toContain('+100.00%')
+    expect(readoutOf(host)).toContain('2026-08-04 00:00 UTC')
+  })
+
+  it('falls back to the newest candle when the cursor leaves the chart', async () => {
+    const host = placeholder('/api/v1/artifacts/art-1')
+    const mounter = createChartMounter({
+      fetchPayload: async () => payloadBody(),
+      getTheme: () => 'dark',
+    })
+    mounter.mountCharts(mountRoot(host))
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+    createdCharts()[0]?.crosshair.forEach((handler) => handler({ time: CANDLES[0]!.time }))
+
+    // Off the plot, lightweight-charts reports no time.
+    createdCharts()[0]?.crosshair.forEach((handler) => handler({}))
+
+    expect(readoutOf(host)).toContain('-50.00%')
+  })
+
+  it('hides the volume cell for a payload without volumes', async () => {
+    const host = placeholder('/api/v1/artifacts/art-1')
+    const mounter = createChartMounter({
+      fetchPayload: async () => ({ candles: [{ time: 100, open: 1, high: 2, low: 1, close: 2 }] }),
+      getTheme: () => 'dark',
+    })
+
+    mounter.mountCharts(mountRoot(host))
+
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+    expect(readoutOf(host)).not.toContain('Vol')
+  })
+
+  it('unsubscribes from the crosshair before tearing the chart down', async () => {
+    const host = placeholder('/api/v1/artifacts/art-1')
+    const mounter = createChartMounter({
+      fetchPayload: async () => payloadBody(),
+      getTheme: () => 'dark',
+    })
+    mounter.mountCharts(mountRoot(host))
+    await vi.waitFor(() => expect(createdCharts()).toHaveLength(1))
+
+    mounter.destroyAll()
+
+    const chart = createdCharts()[0]
+    expect(chart?.unsubscribeCrosshairMove).toHaveBeenCalled()
+    expect(chart?.crosshair).toHaveLength(0)
+    // Order matters: remove() tears the internals down and would reject it.
+    const unsubOrder = chart?.unsubscribeCrosshairMove.mock.invocationCallOrder[0] ?? 0
+    const removeOrder = chart?.remove.mock.invocationCallOrder[0] ?? 0
+    expect(unsubOrder).toBeLessThan(removeOrder)
   })
 })

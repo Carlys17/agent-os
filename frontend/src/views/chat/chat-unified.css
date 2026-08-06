@@ -298,7 +298,7 @@
    preview above follows. */
 .chat-surface .msg-artifact-chart {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   gap: 0.5rem;
   width: 100%;
   padding: 0.75rem;
@@ -341,7 +341,7 @@
    successful draw without collapsing a row and shifting the transcript. */
 .chat-surface .msg-artifact-chart__canvas,
 .chat-surface .msg-artifact-chart__status {
-  grid-row: 2;
+  grid-row: 3;
   grid-column: 1;
 }
 
@@ -361,6 +361,65 @@
 
 .chat-surface .msg-artifact-chart__status[hidden] {
   display: none;
+}
+
+/* Crosshair readout. lightweight-charts has no tooltip, so this strip carries
+   the hovered candle's OHLC and its move. It takes its own row above the
+   canvas rather than floating over it, so it can neither be clipped by the
+   card nor cover a candle, and it reserves its height up front so the first
+   hover does not shift the chart. */
+.chat-surface .msg-artifact-chart__readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.0625rem 0.625rem;
+  grid-row: 2;
+  grid-column: 1;
+  min-height: 1.125rem;
+  padding: 0 0.125rem;
+  color: var(--muted-foreground);
+  font: 500 0.6875rem/1.125rem var(--font-mono);
+  pointer-events: none;
+}
+
+.chat-surface .msg-artifact-chart__readout-cell[hidden] {
+  display: none;
+}
+
+.chat-surface .msg-artifact-chart__readout-label {
+  margin-right: 0.1875rem;
+  opacity: 0.65;
+}
+
+.chat-surface .msg-artifact-chart__readout-value {
+  color: var(--foreground);
+}
+
+.chat-surface
+  .msg-artifact-chart__readout-cell[data-direction='up']
+  .msg-artifact-chart__readout-value {
+  color: #26a69a;
+}
+
+.chat-surface
+  .msg-artifact-chart__readout-cell[data-direction='down']
+  .msg-artifact-chart__readout-value {
+  color: #ef5350;
+}
+
+/* Mirror chartTheme()'s light palette so the move reads the same colour as the
+   candle body it describes. */
+:root[data-theme='light']
+  .chat-surface
+  .msg-artifact-chart__readout-cell[data-direction='up']
+  .msg-artifact-chart__readout-value {
+  color: #0f9d81;
+}
+
+:root[data-theme='light']
+  .chat-surface
+  .msg-artifact-chart__readout-cell[data-direction='down']
+  .msg-artifact-chart__readout-value {
+  color: #e03131;
 }
 
 .chat-surface .msg-artifact-card__meta {
