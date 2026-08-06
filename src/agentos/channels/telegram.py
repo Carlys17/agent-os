@@ -58,6 +58,15 @@ FATAL_ERROR_CLASSES: tuple[str, ...] = (
 _DEFAULT_TIMEOUT_S = 30.0
 _POLL_TIMEOUT_HEADROOM_S = 5.0
 _CONNECT_RETRY_DELAYS_S = (0.25, 0.5)
+#: ``TelegramApiError`` covers both "Telegram answered no" and "we never reached
+#: Telegram". These substrings mark the second kind, which is not a verdict on
+#: whatever was asked about — see :meth:`TelegramChannel.probe_target`.
+_TRANSPORT_FAILURE_MARKERS = (
+    "connection failed",
+    "request failed",
+    "returned invalid JSON",
+    "returned an invalid response",
+)
 _DEDUPE_SIZE = 4096
 _ALLOWED_UPDATES = ("message", "edited_message", "channel_post", "edited_channel_post")
 
@@ -827,6 +836,32 @@ class TelegramChannel:
         if (thread_id := inbound.metadata.get("thread_id")) is not None:
             metadata["thread_id"] = thread_id
         return OutgoingMessage(content=content, reply_to=inbound.channel_id, metadata=metadata)
+
+    async def probe_target(self, target: str) -> tuple[bool, str]:
+        """Whether ``getChat`` can see *target*, and why not when it cannot.
+
+        Callers that are about to *store* a chat id use this to fail early —
+        cron does, at save time, because otherwise a mistyped recipient is only
+        discovered by a scheduled run hours later.
+
+        A transport failure is re-raised rather than answered ``False``: the bot
+        being unable to reach Telegram is not evidence about the chat id, and
+        the caller is the one that knows whether to treat "don't know" as fatal.
+        """
+        chat_id = (target or "").strip()
+        if not chat_id:
+            return True, ""
+        try:
+            await self._api("getChat", {"chat_id": chat_id})
+        except TelegramApiError as exc:
+            message = str(exc)
+            if any(marker in message for marker in _TRANSPORT_FAILURE_MARKERS):
+                raise
+            # "Telegram getChat failed: Bad Request: chat not found" reads better
+            # as just the part Telegram said.
+            _, _, detail = message.partition(": ")
+            return False, detail or message
+        return True, ""
 
     async def send_typing(
         self,

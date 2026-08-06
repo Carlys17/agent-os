@@ -11,7 +11,10 @@ import {
   parseCron,
   resolveTarget,
   seedForm,
+  targetsForChannel,
   type CronForm,
+  type DeliveryTarget,
+  type DeliveryTargetMap,
   type DeliveryMode,
   type FailureDestMode,
   type PayloadKind,
@@ -121,11 +124,78 @@ function CronExplain({ expr }: { expr: string }) {
   )
 }
 
+/** Sentinel option value: "the recipient I want is not in this list". */
+const MANUAL_RECIPIENT = '__manual__'
+
+/**
+ * The delivery recipient — a picker when the channel's chats are known, a text
+ * box otherwise.
+ *
+ * A free-text box here is what let a *session* key
+ * (`agent:main:telegram:direct:1245463966`) be saved as a Telegram chat id; the
+ * job then failed at delivery time with nothing but "delivery failed" to show
+ * for it. Where the pairing store knows the real chats, offer those instead of
+ * asking someone to remember an id.
+ */
+function RecipientField({
+  value,
+  targets,
+  placeholder,
+  onChange,
+}: {
+  value: string
+  targets: DeliveryTarget[]
+  placeholder: string
+  onChange: (next: string) => void
+}) {
+  // An id that is not in the list — a group chat outside `group_chat_ids`, or a
+  // job saved before this field existed — has to stay editable.
+  const [manual, setManual] = useState(() => !!value && !targets.some((t) => t.id === value))
+  const asPicker = targets.length > 0 && !manual
+
+  return (
+    <label className="cron-field">
+      <span className="t-label">Recipient</span>
+      {asPicker ? (
+        <select
+          className="cron-input"
+          value={value}
+          onChange={(e) => {
+            if (e.target.value === MANUAL_RECIPIENT) {
+              setManual(true)
+              onChange('')
+              return
+            }
+            onChange(e.target.value)
+          }}
+        >
+          <option value="">Select a chat…</option>
+          {targets.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.label}
+            </option>
+          ))}
+          <option value={MANUAL_RECIPIENT}>Enter manually…</option>
+        </select>
+      ) : (
+        <input
+          className="cron-input"
+          type="text"
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </label>
+  )
+}
+
 export function CronPanel({
   job,
   template,
   activeSessionKey,
   saving,
+  deliveryTargets,
   onCancel,
   onSubmit,
 }: {
@@ -133,6 +203,8 @@ export function CronPanel({
   template: Partial<RawJob> | null
   activeSessionKey: string
   saving: boolean
+  /** Known recipients per channel; absent channels keep the free-text input. */
+  deliveryTargets?: DeliveryTargetMap
   onCancel: () => void
   onSubmit: (build: Extract<SaveBuild, { ok: true }>) => void
 }) {
@@ -498,16 +570,12 @@ export function CronPanel({
                       onChange={(e) => set('deliveryChannel', e.target.value)}
                     />
                   </label>
-                  <label className="cron-field">
-                    <span className="t-label">Recipient</span>
-                    <input
-                      className="cron-input"
-                      type="text"
-                      placeholder="C-team-alerts"
-                      value={form.deliveryTo}
-                      onChange={(e) => set('deliveryTo', e.target.value)}
-                    />
-                  </label>
+                  <RecipientField
+                    value={form.deliveryTo}
+                    targets={targetsForChannel(deliveryTargets, form.deliveryChannel)}
+                    placeholder="C-team-alerts"
+                    onChange={(next) => set('deliveryTo', next)}
+                  />
                   <label className="cron-field">
                     <span className="t-label">Account id</span>
                     <input
@@ -586,16 +654,12 @@ export function CronPanel({
                           onChange={(e) => set('fdChannel', e.target.value)}
                         />
                       </label>
-                      <label className="cron-field">
-                        <span className="t-label">Recipient</span>
-                        <input
-                          className="cron-input"
-                          type="text"
-                          placeholder="C-ops-alerts"
-                          value={form.fdTo}
-                          onChange={(e) => set('fdTo', e.target.value)}
-                        />
-                      </label>
+                      <RecipientField
+                        value={form.fdTo}
+                        targets={targetsForChannel(deliveryTargets, form.fdChannel)}
+                        placeholder="C-ops-alerts"
+                        onChange={(next) => set('fdTo', next)}
+                      />
                       <label className="cron-field">
                         <span className="t-label">Account id</span>
                         <input

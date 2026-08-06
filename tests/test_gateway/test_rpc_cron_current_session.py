@@ -860,7 +860,9 @@ async def test_static_reminder_delivery_failure_fails_job_by_default() -> None:
         DeliveryChain(channel_manager_ref=lambda: _FakeChannelManager())
     )
 
-    with pytest.raises(RuntimeError, match="delivery failed"):
+    # The message is what `agentos cron runs` shows for the failed run, so it
+    # names the destination and the adapter's own reason, not just "failed".
+    with pytest.raises(RuntimeError, match="delivery to feishu failed: channel down"):
         await handler(job)
 
 
@@ -1028,7 +1030,7 @@ async def test_agent_run_delivery_failure_fails_job_by_default() -> None:
         session_manager_ref=lambda: session_manager,
     )
 
-    with pytest.raises(RuntimeError, match="delivery failed"):
+    with pytest.raises(RuntimeError, match="delivery to feishu failed: channel down"):
         await handler(job)
 
 

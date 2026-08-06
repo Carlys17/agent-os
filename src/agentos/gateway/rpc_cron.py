@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 from dataclasses import asdict
 from typing import Any, TypeGuard
 
 from agentos.gateway.rpc import RpcContext, RpcUnavailableError, get_dispatcher
 from agentos.permissions import cron_tool_policy_elevated, normalize_cron_elevated
+from agentos.scheduler.delivery_targets import validate_channel_target
 from agentos.scheduler.payloads import (
     AGENT_TURN_KIND,
     REMINDER_KIND,
@@ -474,6 +476,65 @@ def _ensure_delivery_supported(
         )
 
 
+#: How long a save waits for a channel adapter to confirm a recipient exists.
+#: Generous, because the answer is worth having; bounded, because a slow
+#: provider must not hold up the form.
+_TARGET_PROBE_TIMEOUT_SECONDS = 10.0
+
+
+def _delivery_target_pairs(delivery_raw: Any) -> list[tuple[str, str]]:
+    """The (channel, recipient) pairs a delivery block asks us to send to.
+
+    Both the primary target and the failure destination, since a typo in the
+    failure route is discovered at the worst possible moment otherwise.
+    """
+    if not isinstance(delivery_raw, dict):
+        return []
+    pairs: list[tuple[str, str]] = []
+    for block in (delivery_raw, delivery_raw.get("failureDestination")):
+        if not isinstance(block, dict):
+            continue
+        channel = str(block.get("channelName") or block.get("channel") or "")
+        target = str(block.get("channelId") or block.get("to") or "")
+        if target:
+            pairs.append((channel, target))
+    return pairs
+
+
+async def _probe_channel_target(ctx: RpcContext, channel_name: str, target: str) -> None:
+    """Ask the adapter whether *target* is a chat it can actually reach.
+
+    Only a definite "no" raises. An adapter without the capability, one that is
+    offline, one that errors, and one that is simply slow all leave the save
+    alone — none of them is evidence that the recipient is wrong.
+    """
+    manager = getattr(ctx, "channel_manager", None)
+    if manager is None or not channel_name:
+        return
+    try:
+        adapter = manager.get(channel_name)
+    except Exception:  # noqa: BLE001 - an unknown channel is not a bad recipient
+        return
+    probe = getattr(adapter, "probe_target", None)
+    if not callable(probe):
+        return
+    try:
+        ok, reason = await asyncio.wait_for(probe(target), timeout=_TARGET_PROBE_TIMEOUT_SECONDS)
+    except Exception:  # noqa: BLE001 - timeout, transport error, offline bot: see docstring
+        return
+    if not ok:
+        raise ValueError(
+            f'{channel_name} cannot deliver to "{target}": {reason or "unknown reason"}'
+        )
+
+
+async def _ensure_delivery_targets_valid(ctx: RpcContext, delivery_raw: Any) -> None:
+    """Reject a recipient the channel cannot use, before the job is stored."""
+    for channel_name, target in _delivery_target_pairs(delivery_raw):
+        validate_channel_target(channel_name, target)
+        await _probe_channel_target(ctx, channel_name, target)
+
+
 def _originating_reply_target(ctx: RpcContext) -> ReplyTargetSnapshot | None:
     envelope = getattr(ctx, "originating_envelope", None)
     target = getattr(envelope, "reply_target", None)
@@ -620,6 +681,7 @@ async def _handle_cron_add(params: dict | None, ctx: RpcContext) -> dict[str, An
     origin_session_key = _resolve_origin_session_key(params, session_target)
     delivery_raw = params.get("delivery")
     _ensure_delivery_supported(session_target=session_target, delivery_raw=delivery_raw)
+    await _ensure_delivery_targets_valid(ctx, delivery_raw)
     scheduler = _require_scheduler(ctx)
 
     # Webhook delivery bypasses session-based channel inference entirely.
@@ -916,6 +978,7 @@ async def _handle_cron_update(params: dict | None, ctx: RpcContext) -> dict[str,
         delivery_raw = params.get("delivery")
         effective_target = patch.get("session_target", current_job.session_target)
         _ensure_delivery_supported(session_target=effective_target, delivery_raw=delivery_raw)
+        await _ensure_delivery_targets_valid(ctx, delivery_raw)
         if isinstance(delivery_raw, dict) and delivery_raw.get("mode") == "none":
             patch["delivery"] = DeliveryConfig()
         elif _is_webhook_delivery(delivery_raw):

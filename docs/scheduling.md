@@ -242,6 +242,21 @@ agentos cron add \
 Prefer `--webhook-token-env` or `--webhook-token-file` over inline tokens so
 secrets do not land in shell history.
 
+### Naming a channel recipient
+
+Channel delivery is configured from the Web UI or the RPC API, and its
+**Recipient** is the id the *provider* uses — a Telegram chat id
+(`1245463966`, negative for a group) or `@username`, a Slack channel id. It is
+not an AgentOS session key: `agent:main:telegram:direct:1245463966` names a
+conversation inside AgentOS, and Telegram answers `chat not found` for it.
+
+Both are visible in the UI and the two are easy to confuse, so a save that
+carries a session key is rejected outright, and the gateway asks the channel
+whether the chat exists before storing it. Where the recipients are known —
+Telegram, whose pairing store lists every chat the bot may talk to — the Web UI
+offers them as a dropdown, with an `Enter manually…` escape hatch for a group
+chat that is not in `group_chat_ids`.
+
 ## Inspect and Run Jobs
 
 ```sh

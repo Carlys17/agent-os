@@ -880,6 +880,80 @@ def _remove_debug_file_handlers(root: logging.Logger) -> None:
                 agentos_logger.setLevel(previous_level)
 
 
+#: structlog's own processor chain, saved before the tee is spliced in so
+#: turning file logging off puts it back exactly as it was.
+_structlog_processors_before_tee: list[Any] | None = None
+
+_STRUCTLOG_LEVELS = {
+    "critical": logging.CRITICAL,
+    "exception": logging.ERROR,
+    "error": logging.ERROR,
+    "warn": logging.WARNING,
+    "warning": logging.WARNING,
+    "info": logging.INFO,
+    "debug": logging.DEBUG,
+}
+
+
+def _tee_structlog_to_stdlib(logger: Any, method_name: str, event_dict: dict) -> dict:
+    """Copy a structlog event into stdlib logging, then leave it untouched.
+
+    structlog prints to stderr through its own ``PrintLogger``, which never
+    reaches the stdlib handlers — so the file handler below saw only half the
+    gateway's logs. The half it missed included every ``delivery.*`` warning,
+    which is exactly what you go looking for after a cron run reports "delivery
+    failed".
+
+    Runs as the *last* processor before the renderer, so ``exc_info`` has
+    already been rendered into ``exception`` and the tee copies the traceback
+    rather than re-deriving it.
+
+    Events land under ``agentos.events`` rather than the emitting module:
+    structlog's ``PrintLogger`` does not carry a name, and this codebase already
+    namespaces its event keys (``delivery.channel_failed``), so recovering the
+    module would cost a callsite walk to say what the event already says.
+    """
+    name = str(event_dict.get("logger") or "agentos.events")
+    level = _STRUCTLOG_LEVELS.get(method_name, logging.INFO)
+    target = logging.getLogger(name)
+    if target.isEnabledFor(level):
+        event = str(event_dict.get("event", ""))
+        pairs = " ".join(
+            f"{key}={value}"
+            for key, value in event_dict.items()
+            if key not in ("event", "logger", "level", "timestamp", "exception")
+        )
+        exception = event_dict.get("exception")
+        message = " ".join(part for part in (event, pairs) if part)
+        if exception:
+            message = f"{message}\n{exception}"
+        target.log(level, message)
+    return event_dict
+
+
+def _install_structlog_tee() -> None:
+    """Splice :func:`_tee_structlog_to_stdlib` in ahead of structlog's renderer."""
+    global _structlog_processors_before_tee
+    import structlog
+
+    processors = list(structlog.get_config()["processors"])
+    if _tee_structlog_to_stdlib in processors:
+        return
+    _structlog_processors_before_tee = processors
+    spliced = [*processors[:-1], _tee_structlog_to_stdlib, processors[-1]]
+    structlog.configure(processors=spliced)
+
+
+def _remove_structlog_tee() -> None:
+    global _structlog_processors_before_tee
+    if _structlog_processors_before_tee is None:
+        return
+    import structlog
+
+    structlog.configure(processors=_structlog_processors_before_tee)
+    _structlog_processors_before_tee = None
+
+
 def _setup_file_logging(config: GatewayConfig | None = None) -> None:
     """Configure structlog + stdlib logging to write to a debug.log file."""
     config = config or GatewayConfig()
@@ -890,6 +964,7 @@ def _setup_file_logging(config: GatewayConfig | None = None) -> None:
     if enabled is None:
         enabled = config.log_file_enabled
     if not enabled:
+        _remove_structlog_tee()
         return
 
     log_dir = Path(os.environ.get("AGENTOS_LOG_DIR", str(default_agentos_home() / "logs")))
@@ -916,6 +991,7 @@ def _setup_file_logging(config: GatewayConfig | None = None) -> None:
 
     root.addHandler(file_handler)
     agentos_logger.setLevel(log_level)
+    _install_structlog_tee()
 
 
 @dataclass

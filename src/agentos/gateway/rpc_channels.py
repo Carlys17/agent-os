@@ -190,6 +190,47 @@ async def _handle_channels_status(params: dict | None, ctx: RpcContext) -> dict[
     return {"channels": channels}
 
 
+def _telegram_delivery_targets(row: dict[str, Any]) -> list[dict[str, str]]:
+    """Recipients a Telegram channel can be pointed at, from its access snapshot."""
+    targets: list[dict[str, str]] = []
+    for user in row.get("paired") or []:
+        chat_id = str(user.get("chat_id") or user.get("sender_id") or "").strip()
+        if not chat_id:
+            continue
+        display = str(user.get("display_name") or "").strip()
+        username = str(user.get("username") or "").strip().lstrip("@")
+        if display and username:
+            label = f"{display} (@{username})"
+        else:
+            label = display or (f"@{username}" if username else chat_id)
+        targets.append({"id": chat_id, "label": label, "kind": "dm"})
+    for group_id in row.get("group_chat_ids") or []:
+        chat_id = str(group_id).strip()
+        if chat_id:
+            targets.append({"id": chat_id, "label": chat_id, "kind": "group"})
+    return targets
+
+
+@_d.method("channels.deliveryTargets")
+async def _handle_channels_delivery_targets(
+    params: dict | None,
+    ctx: RpcContext,
+) -> dict[str, Any]:
+    """Recipients that can be offered as a choice, keyed by channel name.
+
+    Only channels whose recipients are actually known appear — today that means
+    Telegram, which has a pairing store. A caller finding its channel absent
+    should ask the operator to type the id rather than pretend the list is
+    exhaustive.
+    """
+    targets: dict[str, list[dict[str, str]]] = {}
+    for row in _telegram_pairing_rows(ctx):
+        rows = _telegram_delivery_targets(row)
+        if rows:
+            targets[str(row.get("name") or "")] = rows
+    return {"targets": targets}
+
+
 @_d.method("channels.pairing.list")
 async def _handle_channels_pairing_list(
     params: dict | None,

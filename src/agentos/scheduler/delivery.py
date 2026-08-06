@@ -74,6 +74,33 @@ ORIGIN_SESSION_GONE = "origin_gone"
 NO_SESSION_TARGET = "no_session_target"
 
 
+class ChannelStatus(str):
+    """A channel-delivery status that can carry the reason behind it.
+
+    A plain ``str`` subclass so every existing ``== "delivery_failed"`` keeps
+    working, while the one thing an operator actually needs — *why* Telegram
+    refused — survives the trip to the run record instead of living only in a
+    log line nobody reads.
+    """
+
+    detail: str
+
+    def __new__(cls, value: str, detail: str = "") -> ChannelStatus:
+        status = super().__new__(cls, value)
+        status.detail = detail
+        return status
+
+
+def _failed(detail: str) -> ChannelStatus:
+    """``delivery_failed``, with the reason attached."""
+    return ChannelStatus("delivery_failed", detail)
+
+
+def status_detail(status: object) -> str:
+    """The reason carried by *status*, if it carries one."""
+    return str(getattr(status, "detail", "") or "")
+
+
 @dataclass
 class DeliveryReport:
     """Result of the delivery pipeline."""
@@ -81,6 +108,8 @@ class DeliveryReport:
     channel_status: str = "skipped"  # "delivered" | "delivery_failed" | "skipped" | "origin_gone"
     ws_status: str = "skipped"  # "delivered" | "no_subscribers" | "skipped"
     session_status: str = "skipped"  # "delivered" | "forward_failed" | "skipped" | "origin_gone"
+    #: Why channel delivery failed, when it did. Empty otherwise.
+    channel_detail: str = ""
 
 
 class DeliveryChain:
@@ -205,7 +234,21 @@ class DeliveryChain:
         )
 
         report = DeliveryReport()
-        report.channel_status = ch_result if isinstance(ch_result, str) else "delivery_failed"
+        if isinstance(ch_result, str):
+            report.channel_status = ch_result
+            report.channel_detail = status_detail(ch_result)
+        else:
+            # An exception escaped the channel leg entirely — gather turned it
+            # into a value. Without this the run would report "delivery failed"
+            # with no trace of what raised, anywhere.
+            report.channel_status = "delivery_failed"
+            report.channel_detail = f"{type(ch_result).__name__}: {ch_result}"
+            log.warning(
+                "delivery.channel_raised",
+                job_id=job.id,
+                error_type=type(ch_result).__name__,
+                error=str(ch_result),
+            )
         report.ws_status = ws_result if isinstance(ws_result, str) else "skipped"
         report.session_status = fwd_result if isinstance(fwd_result, str) else "forward_failed"
         return report
@@ -324,11 +367,11 @@ class DeliveryChain:
         """
         text = strip_reply_directives(text) or ""
         if not self._session_forwarder:
-            return "delivery_failed"
+            return _failed("no session forwarder is wired into the scheduler")
         if not text or not text.strip():
-            return "delivery_failed"
+            return _failed("nothing to mirror: the output was empty")
         if not target_session_key:
-            return "delivery_failed"
+            return _failed("no session to mirror into")
         try:
             forwarded = await self._session_forwarder(
                 origin_session_key=target_session_key,
@@ -346,7 +389,7 @@ class DeliveryChain:
                 origin_session_key=target_session_key,
                 exc_info=True,
             )
-            return "delivery_failed"
+            return _failed(f"forwarding into {target_session_key} raised")
         # ``False`` means the origin webchat session is gone. This target was
         # *inferred* from the ambient turn, not chosen by the operator: the cron
         # tool synthesises ``mode=ORIGIN`` + ``channel=webchat`` from the live
@@ -386,7 +429,7 @@ class DeliveryChain:
                 job_id=job_id,
                 channel=channel_name,
             )
-            return "delivery_failed"
+            return _failed(f"no adapter is registered for channel {channel_name!r}")
         try:
             from agentos.channels.types import OutgoingMessage
 
@@ -408,9 +451,11 @@ class DeliveryChain:
             await asyncio.wait_for(adapter.send(msg), timeout=30.0)
             log.info("delivery.channel_sent", job_id=job_id, channel=channel_name)
             return "delivered"
-        except Exception:
+        except Exception as exc:
             log.warning("delivery.channel_failed", job_id=job_id, exc_info=True)
-            return "delivery_failed"
+            # The provider's own words ("Bad Request: chat not found") are what
+            # make the run record actionable, so they go on the report too.
+            return _failed(str(exc) or type(exc).__name__)
 
     async def _post_to_webhook(
         self,
@@ -425,12 +470,12 @@ class DeliveryChain:
         text = strip_reply_directives(text) or ""
         if not url:
             log.warning("delivery.webhook_url_missing", job_id=job_id)
-            return "delivery_failed"
+            return _failed("no webhook URL is configured")
         try:
             validate_webhook_url(url)
         except ValueError as exc:
             log.warning("delivery.webhook_url_invalid", job_id=job_id, reason=str(exc))
-            return "delivery_failed"
+            return _failed(f"invalid webhook URL: {exc}")
 
         import httpx
 
@@ -449,9 +494,9 @@ class DeliveryChain:
                 response.raise_for_status()
             log.info("delivery.webhook_sent", job_id=job_id)
             return "delivered"
-        except Exception:
+        except Exception as exc:
             log.warning("delivery.webhook_failed", job_id=job_id, exc_info=True)
-            return "delivery_failed"
+            return _failed(str(exc) or type(exc).__name__)
 
     async def _deliver_webhook(self, job: CronJob, text: str) -> str:
         """Primary webhook delivery — POST to ``delivery.webhook_url``."""
