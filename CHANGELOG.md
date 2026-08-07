@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.7] - 2026-08-07
+
 ### Fixed
 
 - Switching from a cloud LLM provider back to a local one no longer disables the
@@ -29,6 +31,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   rather than frozen, so upgrades still move you onto the current recommended
   models. Credentials are never copied into a profile. See
   [docs/configuration.md](docs/configuration.md). (Refs #188)
+- Token price charts render inline in Web UI chat. An artifact published as
+  `application/vnd.agentos.chart+json` draws as an interactive candlestick chart
+  in the transcript instead of a download chip, and both `gmgn-market` and
+  `gmgn-token` ship the converter that emits one alongside their text summaries.
+  A readout strip above the canvas carries the hovered candle's time, OHLC,
+  volume, and close-against-open as a signed percentage at the payload's own
+  precision. The chart rides the existing artifact seam, so history replay
+  redraws it with no separate path; `lightweight-charts` loads dynamically and
+  never enters a chat that has no chart. Payload strings are attacker-controlled
+  on-chain metadata and reach the DOM only through `textContent`. See
+  [docs/artifacts-and-media.md](docs/artifacts-and-media.md) for the contract a
+  skill has to meet to publish one.
+- The Web UI has one keyboard shortcut registry and a `?` overlay that lists
+  every binding. Components declare a shortcut instead of attaching their own
+  document listener, so the editable-target and overlay guards live in one place
+  and dialogs register themselves as layers rather than being matched by a
+  hardcoded selector list. Combos match on both `e.key` and `e.code`, and the
+  New chat tooltip renders the right keycaps per platform instead of a hardcoded
+  `⌘⇧O`. The sheet loads lazily. (Closes #137)
+- Agent settings → Router Tiers picks tier models from a catalog instead of
+  free text. The provider cell is a read-only chip — requests always go through
+  `llm.provider`, and save writes it on every tier — while the model cell is a
+  combobox over the union of the live `models.list` catalog and the shipped
+  `onboarding.catalog.routerProfiles`, so neither an offline install nor a
+  provider the gateway has no catalog for produces a false warning. The image
+  tier is offered only vision-capable models. Save warns and never blocks, and
+  distinguishes an unknown id, an image tier pointed at a model with no vision
+  capability, and having no catalog to check against. Context window and price
+  per 1M render under the entered model. (Closes #142)
+
+### Documentation
+
+- `features/skills.md` and the tools reference now name the mimes that render
+  inline and link to the artifact contract, so a skill author can find out that
+  publishing one mime rather than another is the difference between a chart and
+  a download chip. Both chart sections say to keep `--output` a bare filename,
+  since `publish_artifact` only accepts files under the active workspace.
 
 ## [2026.8.6] - 2026-08-06
 
