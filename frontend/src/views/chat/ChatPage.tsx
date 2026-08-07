@@ -8,6 +8,7 @@ import { AnimatePresence } from 'motion/react'
 import { useRpc } from '@/app/providers'
 import { ShellHeaderPortal, ShellPrimaryActionPortal } from '@/app/ShellHeaderSlot'
 import { ModalShell } from '@/components/ModalShell'
+import { formatCombo, useKeyboardShortcut } from '@/components/KeyboardShortcuts'
 import { Attachments, useAttachments } from './Attachments'
 import { Composer, type ComposerHandle } from './Composer'
 import {
@@ -32,6 +33,11 @@ import { useApprovalPending } from './useApprovalPending'
 import { usePendingQueue, type PendingComposerBridge } from './usePendingQueue'
 import { useSlashCommands } from './useSlashCommands'
 import { useTranscript } from './useTranscript'
+
+// chat.js:2519 — Cmd/Ctrl+Shift+O mirrors the New chat button from anywhere in
+// the app. The registry matches on the physical key too, so this keeps working
+// on layouts where KeyO does not produce "o".
+const NEW_CHAT_COMBO = 'mod+shift+o'
 
 // chat.js:1155-1157 `_genKey` — a fresh webchat key in the CURRENT agent, with a
 // random suffix, so `/new` (and the new-chat button) start an empty session.
@@ -548,37 +554,39 @@ export function ChatPage() {
     toast.info('Exported as Markdown')
   }, [containerRef, sessionKey])
 
-  const shortcutHint = /mac/i.test(navigator.userAgent) ? '⌘⇧O' : 'Ctrl+Shift+O'
+  const shortcutHint = formatCombo(NEW_CHAT_COMBO)
 
-  // chat.js:2518-2539 `_onDocKeydown` — document-level keyboard shortcuts.
-  // Cmd/Ctrl+Shift+O mirrors the New chat button from anywhere in the app,
-  // while Escape keeps the legacy priority chain:
+  // chat.js:2518-2539 `_onDocKeydown` — the two document-level chat shortcuts,
+  // now registered rather than bound here. The registry owns the overlay guard
+  // (no dialog or popover is on screen) and the editable-target guard; what
+  // stays local is the behaviour and which guards each key opts out of.
+  //
+  // New chat intentionally fires even when focus is inside the composer or
+  // another editable field; Escape does not, because editable targets handle
+  // their own Escape (the composer's rung chain lives in Composer.tsx).
+  useKeyboardShortcut(
+    {
+      combo: NEW_CHAT_COMBO,
+      description: 'Start a new chat',
+      category: 'Chat',
+      allowInInputs: true,
+    },
+    (e) => {
+      e.preventDefault()
+      startNewChat()
+    },
+  )
+
+  // Escape keeps the legacy priority chain:
   //   1. streaming         → abort the turn (which recovers pending).
   //   2. pending non-empty → recover the whole queue into the composer.
-  // Visible overlays own their shortcuts, and Escape inside other editable
-  // targets remains handled by those elements. Unlike Escape, the New chat
-  // shortcut intentionally works even when focus is inside the composer or
-  // another editable field.
-  useEffect(() => {
-    const onDocKeydown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return
-      const isNewChatShortcut = (e.metaKey || e.ctrlKey) && e.shiftKey && e.code === 'KeyO'
-      const isEscape = e.key === 'Escape'
-      if (!isNewChatShortcut && !isEscape) return
-      const hasOverlay = !!document.querySelector(
-        '.modal-backdrop, .chat-session-popover, .chat-session-actions-menu',
-      )
-      if (hasOverlay) return
-      if (isNewChatShortcut) {
-        e.preventDefault()
-        startNewChat()
-        return
-      }
-      const target = e.target as HTMLElement | null
-      const isEditable =
-        !!target &&
-        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
-      if (isEditable) return
+  useKeyboardShortcut(
+    {
+      combo: 'escape',
+      description: 'Abort the streaming turn, else recover the queue into the composer',
+      category: 'Chat',
+    },
+    (e) => {
       if (busy) {
         e.preventDefault()
         abortAndRecover('webui_escape')
@@ -588,10 +596,8 @@ export function ChatPage() {
         e.preventDefault()
         pending.popAllIntoComposer()
       }
-    }
-    document.addEventListener('keydown', onDocKeydown)
-    return () => document.removeEventListener('keydown', onDocKeydown)
-  }, [busy, abortAndRecover, pending, startNewChat])
+    },
+  )
 
   return (
     <div className="chat-stage" onDrop={onDrop} onDragOver={onDragOver} onPaste={onPaste}>

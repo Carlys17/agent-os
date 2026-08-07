@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { routeChildren, VIEWS } from './routes'
 import { AppProviders } from './providers'
 import { AppShell, SIDEBAR_COLLAPSED_STORAGE_KEY } from './AppShell'
+import { KeyboardShortcutProvider } from '@/components/KeyboardShortcuts'
 import { useConnection } from '@/stores/connection'
 import { useApprovals } from '@/services/approval-monitor'
 import type { Bootstrap } from '@/lib/bootstrap'
@@ -650,5 +651,46 @@ describe('AppProviders effect cleanup', () => {
       </AppProviders>,
     )
     expect(() => second.unmount()).not.toThrow()
+  })
+})
+
+// #137 — the cheat-sheet has to be reachable without a keyboard. '?' is
+// deliberately inert while focus is in an editable field (the chat composer
+// autofocuses on desktop), and touch devices have no keyboard at all, so the
+// shell carries a visible entry point.
+describe('keyboard shortcuts entry point', () => {
+  function renderShellAt(path: string) {
+    const router = createMemoryRouter([{ element: <AppShell />, children: routeChildren }], {
+      initialEntries: [path],
+    })
+    return render(
+      <QueryClientProvider client={new QueryClient()}>
+        <KeyboardShortcutProvider>
+          <RouterProvider router={router} />
+        </KeyboardShortcutProvider>
+      </QueryClientProvider>,
+    )
+  }
+
+  it('opens the shortcut overlay from the sidebar', async () => {
+    renderShellAt('/overview')
+    const button = screen.getByRole('button', { name: 'Keyboard shortcuts' })
+    expect(button).toHaveAttribute('title', expect.stringContaining('?'))
+
+    fireEvent.click(button)
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByText('Show this list')).toBeInTheDocument()
+  })
+
+  it('renders nothing rather than a dead button when no registry is mounted', () => {
+    const router = createMemoryRouter([{ element: <AppShell />, children: routeChildren }], {
+      initialEntries: ['/overview'],
+    })
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    )
+    expect(screen.queryByRole('button', { name: 'Keyboard shortcuts' })).toBeNull()
   })
 })

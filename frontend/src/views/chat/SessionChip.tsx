@@ -12,6 +12,16 @@ import {
   type SessionGroup,
   type SessionListItem,
 } from './logic'
+import { useShortcutDocs } from '@/components/KeyboardShortcuts'
+import { useOverlayLayer } from '@/components/overlay-layer'
+
+// #137 — the switcher popover and the actions menu bind these to their own
+// elements (`onKey` / `onActionsKeyDown` below), so they are documented here.
+const SESSION_SHORTCUTS = [
+  { combo: 'arrowdown', description: 'Move to the next action' },
+  { combo: 'arrowup', description: 'Move to the previous action' },
+  { combo: 'escape', description: 'Close the switcher and restore focus' },
+] as const
 
 /**
  * Session chip + switcher (React) — ported from the legacy topbar-center chip
@@ -122,6 +132,12 @@ export function SessionChip({
   const rootRef = useRef<HTMLDivElement>(null)
   const actionsTriggerRef = useRef<HTMLButtonElement>(null)
   const actionsMenuRef = useRef<HTMLDivElement>(null)
+
+  useShortcutDocs('Session switcher', SESSION_SHORTCUTS)
+  // Neither of these is a ModalShell, but both are dismissible layers that own
+  // Escape while they are up — so document-level shortcuts must stand down for
+  // them, exactly as they did for the old `.chat-session-popover` selector.
+  useOverlayLayer(open || actionsOpen)
 
   const getSessionTrigger = useCallback(
     () => document.querySelector<HTMLButtonElement>('#chat-session-switcher-trigger'),

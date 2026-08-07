@@ -378,7 +378,8 @@
 }
 
 .shell[data-design='unified'] .shell-nav-link:focus-visible,
-.shell[data-design='unified'] :is(.shell-sidebar__collapse, .shell-sidebar__theme):focus-visible {
+.shell[data-design='unified']
+  :is(.shell-sidebar__collapse, .shell-sidebar__theme, .shell-sidebar__shortcuts):focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
@@ -405,13 +406,13 @@
   font-size: 0.625rem;
 }
 
-.shell[data-design='unified'] .shell-sidebar__theme {
+.shell[data-design='unified'] :is(.shell-sidebar__theme, .shell-sidebar__shortcuts) {
   flex: none;
   border-radius: var(--radius-control);
   color: var(--dim);
 }
 
-.shell[data-design='unified'] .shell-sidebar__theme:hover {
+.shell[data-design='unified'] :is(.shell-sidebar__theme, .shell-sidebar__shortcuts):hover {
   background: var(--sidebar-accent);
   color: var(--foreground);
 }

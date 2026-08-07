@@ -3,6 +3,23 @@ import { ArrowUpIcon, PaperclipIcon, SlidersHorizontalIcon, SquareIcon, XIcon } 
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { toast } from 'sonner'
 import { MAX_PENDING, sendButtonState, shouldAutofocusComposer } from './logic'
+import { useShortcutDocs } from '@/components/KeyboardShortcuts'
+
+// #137 — what the composer binds, in the order `onTextareaKeyDown` tests it, so
+// the `?` overlay reports the composer accurately without the handler leaving
+// the element it has to be bound to.
+const COMPOSER_SHORTCUTS = [
+  { combo: 'enter', description: 'Send the message' },
+  { combo: 'shift+enter', description: 'Insert a newline' },
+  {
+    combo: 'escape',
+    description: 'Abort the turn, else recover the queue, else clear the composer',
+  },
+  { combo: 'alt+arrowup', description: 'Pop the most recent queued message back for editing' },
+  { combo: 'alt+arrowdown', description: 'Queue the composer text behind the running turn' },
+  { combo: 'arrowup', description: 'Walk back through sent history' },
+  { combo: 'arrowdown', description: 'Walk forward through sent history' },
+] as const
 
 /**
  * The chat command line (React).
@@ -167,6 +184,12 @@ export function Composer({
   const toolbarTriggerRef = useRef<HTMLButtonElement>(null)
   const toolbarCloseRef = useRef<HTMLButtonElement>(null)
   const reduceMotion = useReducedMotion()
+
+  // The composer binds its own keys on the textarea (it needs them before the
+  // document sees them, and the slash menu has to be able to consume them), so
+  // these are documented rather than dispatched. Descriptions are written from
+  // `onTextareaKeyDown` below — keep them in step with it.
+  useShortcutDocs('Composer', COMPOSER_SHORTCUTS)
 
   // Close the composer-settings popover on an outside click / Escape (it
   // previously stayed open until the toolbar trigger was clicked again). Bound only

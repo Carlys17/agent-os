@@ -1,0 +1,126 @@
+@layer components {
+  /* The shortcut cheat-sheet is a route-owned dialog, so it sits on the same
+     layer as the agents / sessions / skills / env dialogs (60) — NOT on
+     --z-critical-approval, which is reserved for the blocking approval prompt
+     and must stay above everything, this sheet included. */
+  .shortcut-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: color-mix(in srgb, var(--background) 72%, transparent);
+    backdrop-filter: blur(2px);
+  }
+
+  .shortcut-sheet {
+    width: 100%;
+    max-width: 520px;
+    max-height: calc(100dvh - 48px);
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  }
+
+  .shortcut-sheet__head {
+    flex: none;
+  }
+
+  .shortcut-sheet__title {
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+  }
+
+  .shortcut-sheet__close {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--dim);
+    cursor: pointer;
+    transition:
+      color 150ms ease,
+      background-color 150ms ease;
+  }
+
+  .shortcut-sheet__close:hover {
+    color: var(--foreground);
+    background: var(--elevated);
+  }
+
+  .shortcut-sheet__body {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+  }
+
+  .shortcut-sheet__group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .shortcut-sheet__group-title {
+    margin-bottom: 6px;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--dim);
+  }
+
+  .shortcut-sheet__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 6px 0;
+  }
+
+  .shortcut-sheet__row + .shortcut-sheet__row {
+    border-top: 1px solid var(--hairline);
+  }
+
+  .shortcut-sheet__desc {
+    min-width: 0;
+    font-size: 0.8125rem;
+    color: var(--foreground);
+  }
+
+  .shortcut-sheet__keys {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .shortcut-sheet__kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    background: var(--elevated);
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 650;
+    color: var(--foreground);
+  }
+
+  .shortcut-sheet__plus {
+    font-size: 0.6875rem;
+    color: var(--dim);
+  }
+}

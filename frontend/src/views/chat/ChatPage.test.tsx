@@ -5,6 +5,7 @@ import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 import { ChatPage } from './ChatPage'
+import { KeyboardShortcutProvider } from '@/components/KeyboardShortcuts'
 import * as logicModule from './logic'
 
 vi.mock('sonner', () => ({
@@ -94,8 +95,12 @@ function renderPage(initialEntry = '/chat') {
       <QueryClientProvider
         client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
       >
-        <ChatPage />
-        <LocationProbe />
+        {/* The shortcut registry is wired in AppProviders in the real app;
+            ChatPage registers its document shortcuts into it (#137). */}
+        <KeyboardShortcutProvider>
+          <ChatPage />
+          <LocationProbe />
+        </KeyboardShortcutProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   )
@@ -1219,16 +1224,18 @@ describe('ChatPage', () => {
     expect(mockRpc.call.mock.calls.length).toBe(before)
   })
 
-  it('does not start new chat when a modal is open', () => {
+  it('does not start new chat while an overlay owns the keyboard', async () => {
     mockRpc = makeRpc()
     renderPage()
 
+    // A real layer, not a fabricated `.modal-backdrop` node: the guard is
+    // registration-based now (#137), so what it must stand down for is an
+    // overlay that actually mounted — here the session actions menu.
+    const trigger = screen.getByRole('button', { name: 'Chat actions' })
+    fireEvent.click(trigger)
+    expect(await screen.findByRole('menu', { name: 'Chat actions' })).toBeInTheDocument()
+
     const before = mockRpc.call.mock.calls.length
-
-    const modal = document.createElement('div')
-    modal.className = 'modal-backdrop'
-
-    document.body.appendChild(modal)
 
     fireEvent.keyDown(document, {
       ctrlKey: true,
@@ -1237,8 +1244,30 @@ describe('ChatPage', () => {
     })
 
     expect(mockRpc.call.mock.calls.length).toBe(before)
+  })
 
-    modal.remove()
+  // #137 acceptance: the overlay must report what the console actually binds.
+  // The issue named four files as the places shortcuts hide in; this asserts
+  // each of them reaches the registry from a real ChatPage render.
+  it('lists chat, composer, slash-menu and session-switcher keys in the ? overlay', async () => {
+    mockRpc = makeRpc()
+    renderPage()
+
+    // The composer autofocuses; '?' is inert there on purpose, so move focus out
+    // the way an operator clicking the page background would.
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    fireEvent.keyDown(document, { key: '?', code: 'Slash', shiftKey: true })
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    const groups = Array.from(document.querySelectorAll('.shortcut-sheet__group-title')).map(
+      (el) => el.textContent,
+    )
+    expect(groups).toEqual(['Global', 'Chat', 'Composer', 'Slash commands', 'Session switcher'])
+
+    expect(screen.getByText('Start a new chat')).toBeInTheDocument()
+    expect(screen.getByText('Insert a newline')).toBeInTheDocument()
+    expect(screen.getByText('Run the highlighted command')).toBeInTheDocument()
+    expect(screen.getByText('Close the switcher and restore focus')).toBeInTheDocument()
   })
 
   it('shows the keyboard shortcut in the New chat tooltip', () => {

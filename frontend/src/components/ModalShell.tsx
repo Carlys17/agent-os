@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { SUBTLE_SPRING, overlayVariants, panelVariants } from '@/lib/motion'
+import { useOverlayLayer } from '@/components/overlay-layer'
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -54,6 +55,11 @@ export function ModalShell({
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
   const reduce = useReducedMotion()
+
+  // Every tokenised dialog goes through this shell, so registering here is what
+  // lets document-level key handlers ask "is a dialog up?" without maintaining
+  // a selector list of every dialog in the app.
+  useOverlayLayer()
 
   useEffect(() => {
     const previousFocus =

@@ -8,6 +8,16 @@ import {
   useState,
 } from 'react'
 import { parseSlashInput, type SlashCommand } from './logic'
+import { useShortcutDocs } from '@/components/KeyboardShortcuts'
+
+// #137 — the menu consumes these from the composer's keydown (`handleKeyDown`
+// below) while it is open, so they are documented, not dispatched.
+const SLASH_SHORTCUTS = [
+  { combo: 'arrowdown', description: 'Move to the next command' },
+  { combo: 'arrowup', description: 'Move to the previous command' },
+  { combo: 'enter', description: 'Run the highlighted command' },
+  { combo: 'escape', description: 'Dismiss the menu for this input' },
+] as const
 
 /**
  * The slash-command menu (React).
@@ -79,6 +89,9 @@ export function SlashMenu({
 }: SlashMenuProps) {
   const generatedId = useId()
   const resolvedListboxId = listboxId ?? `chat-slash-${generatedId}`
+  // Registered from the always-mounted component (it renders null when closed),
+  // so the overlay lists these whether or not the menu happens to be open.
+  useShortcutDocs('Slash commands', SLASH_SHORTCUTS)
   // The active index into the filtered list (chat.js:2646 `_slashIdx`).
   const [activeIdx, setActiveIdx] = useState(0)
   // Escape dismisses the menu for the CURRENT input (chat.js:2675 sets

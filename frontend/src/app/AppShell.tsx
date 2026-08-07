@@ -22,6 +22,7 @@ import {
   Moon,
   Network,
   KeyRound,
+  Keyboard,
   Puzzle,
   Radio,
   ScrollText,
@@ -34,6 +35,12 @@ import {
 import { Toaster } from '@/components/ui/sonner'
 import { Button } from '@/components/ui/button'
 import { AsciiField } from '@/components/AsciiField'
+import {
+  formatCombo,
+  HELP_COMBO,
+  useKeyboardShortcut,
+  useShortcutOverlay,
+} from '@/components/KeyboardShortcuts'
 import { useTheme } from '@/stores/theme'
 import { useConnection } from '@/stores/connection'
 import { useApprovals } from '@/services/approval-monitor'
@@ -137,6 +144,20 @@ export function AppShell() {
   const hasPendingApprovals = useApprovals((s) => s.pending.length > 0)
   const bootstrap = useBootstrap()
   const location = useLocation()
+  const shortcutOverlay = useShortcutOverlay()
+
+  // Documented, not dispatched: the drawer binds Escape itself (below) because
+  // it has to run while focus is inside the drawer, which the global editable
+  // guard would otherwise skip.
+  useKeyboardShortcut(
+    {
+      combo: 'escape',
+      description: 'Close the navigation drawer (mobile)',
+      category: 'Global',
+      documentationOnly: true,
+    },
+    () => {},
+  )
 
   // app.js:119-171 — mobile sidebar drawer: hamburger toggle, close on
   // nav-click / outside-click / Escape, aria-expanded + aria-hidden/inert sync.
@@ -454,6 +475,23 @@ export function AppShell() {
             </span>
             {version ? <span className="shell-sidebar__version ml-auto">v{version}</span> : null}
           </div>
+          {/* #137: the overlay needs a way in that is not a keyboard shortcut.
+              '?' is deliberately inert while focus sits in the composer (which
+              autofocuses on desktop) and on touch devices there is no keyboard
+              at all, so a discoverability feature reachable only by key would
+              not be discoverable. */}
+          {shortcutOverlay.available ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="shell-sidebar__shortcuts"
+              onClick={shortcutOverlay.open}
+              title={`Keyboard shortcuts (${formatCombo(HELP_COMBO)})`}
+              aria-label="Keyboard shortcuts"
+            >
+              <Keyboard className="size-4" />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon-sm"
