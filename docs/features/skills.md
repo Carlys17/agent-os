@@ -190,6 +190,25 @@ agentos skills tap remove <owner/repo>
 
 Use taps when your team maintains its own skill catalog.
 
+## What a Skill Can Put in the Chat
+
+Besides text, a skill hands files to the surface with `publish_artifact`. Most
+arrive in Web UI chat as a download chip, but some mimes render inline instead:
+
+| Mime | Rendered as |
+| --- | --- |
+| `image/*` | Inline preview |
+| `audio/*` | Inline player |
+| `application/vnd.agentos.chart+json` | Interactive candlestick chart |
+
+Nothing has to be registered for this: the mime a skill publishes decides how
+its output is drawn, so any skill can render a chart without a frontend change.
+
+[`artifacts-and-media.md`](../artifacts-and-media.md#inline-charts) carries the
+payload shape, the workspace rule `publish_artifact` enforces, and the two
+mistakes that produce no error and no chart — omitting the mime, and writing the
+file outside the workspace.
+
 ## Publish and Inspect
 
 Publish a skill directory:
