@@ -563,8 +563,11 @@
 }
 .setup-tier-table__row {
   display: grid;
+  /* The model column carries the longest value in the row by far
+     ('anthropic/claude-opus-4.8'); the provider column is now a read-only
+     chip and needs only enough width for a provider id. */
   grid-template-columns:
-    4.5rem minmax(7rem, 0.85fr) minmax(10rem, 1.45fr) minmax(7rem, 0.75fr)
+    4.5rem minmax(5.5rem, 0.6fr) minmax(14rem, 2fr) minmax(7rem, 0.75fr)
     5rem;
   gap: 0.5rem;
   align-items: center;
@@ -592,6 +595,19 @@
 .setup-tier-table__cell > input,
 .setup-tier-table__cell > .setup-select {
   width: 100%;
+}
+.setup-provider-chip {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.setup-hint--field {
+  display: block;
+  margin-top: 0.3rem;
 }
 .setup-tier-table__cell--tier code {
   color: var(--foreground);

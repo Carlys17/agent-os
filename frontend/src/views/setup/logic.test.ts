@@ -12,12 +12,17 @@ import {
   capabilityBadge,
   capabilityIsPrimary,
   configCliArg,
+  classifyRouterModels,
   configuredProvider,
   credentialNeedList,
   detailStepStatus,
   effectiveProvider,
   envFixCommands,
   envRecoveryCommand,
+  mergeModelOptions,
+  modelOptionLabel,
+  modelOptionMeta,
+  offlineTierModels,
   envReferenceSaveAdvisory,
   finishSummary,
   handoffCommands,
@@ -708,5 +713,108 @@ describe('capability badge / primary (setup.js:959-969)', () => {
   it('capabilityBadge tone + label', () => {
     const status: OnboardingStatus = { sectionDetails: { audio: detail({ status: 'ok' }) } }
     expect(capabilityBadge(status, 'audio')).toEqual({ tone: 'is-ok', label: 'Ready' })
+  })
+})
+
+// ── router tier model catalog (#142) ────────────────────────────────────────
+
+describe('router tier model options', () => {
+  // The real onboarding.catalog profile shape: every tier carries its
+  // recommended model, and image_model is one of them.
+  const PROFILE_TIERS = {
+    c0: { provider: 'openai', model: 'gpt-4o-mini' },
+    c1: { provider: 'openai', model: 'gpt-4o' },
+    c2: { provider: 'openai', model: 'gpt-4o' },
+    image_model: { provider: 'openai', model: 'gpt-image-1', supports_image: true },
+  }
+
+  it('offers every tier model offline, deduped', () => {
+    expect(offlineTierModels(PROFILE_TIERS).map((o) => o.id)).toEqual([
+      'gpt-4o-mini',
+      'gpt-4o',
+      'gpt-image-1',
+    ])
+  })
+
+  it('offers only image tiers to the image row — not the text tiers', () => {
+    // The offline list must never present a text model as vision-capable: the
+    // image tier is the one place that distinction decides whether a turn works.
+    expect(offlineTierModels(PROFILE_TIERS, { visionOnly: true }).map((o) => o.id)).toEqual([
+      'gpt-image-1',
+    ])
+  })
+
+  it('unions the live list with the offline one, live winning on metadata', () => {
+    const live = [
+      {
+        id: 'gpt-4o',
+        name: 'GPT-4o',
+        provider: 'openai',
+        contextWindow: 128000,
+        capabilities: ['chat', 'tools'],
+        pricing: { inputPer1k: 0.0025, outputPer1k: 0.01 },
+      },
+    ]
+    const merged = mergeModelOptions(live, offlineTierModels(PROFILE_TIERS))
+    expect(merged.map((o) => o.id)).toEqual(['gpt-4o', 'gpt-4o-mini', 'gpt-image-1'])
+    expect(modelOptionMeta(merged[0]!)).toBe('128k ctx · $2.50/$10.00 per 1M')
+    // Offline entries carry no numbers, and must not invent any.
+    expect(modelOptionMeta(merged[1]!)).toBe('')
+    expect(modelOptionLabel(merged[1]!)).toBe('gpt-4o-mini')
+  })
+
+  it('degrades to the offline list when models.list answers with a non-array', () => {
+    // An older gateway, or a handler that errored into an object.
+    expect(mergeModelOptions({} as unknown, offlineTierModels(PROFILE_TIERS))).toHaveLength(3)
+    expect(mergeModelOptions(undefined, [])).toEqual([])
+  })
+})
+
+describe('classifyRouterModels', () => {
+  const text = [
+    { id: 'gpt-4o', name: 'GPT-4o' },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+  ]
+  const vision = [{ id: 'gpt-image-1', name: 'gpt-image-1', supportsVision: true }]
+
+  it('says nothing about a form seeded from the catalog', () => {
+    const rows = [
+      { tier: 'c0', model: 'gpt-4o-mini' },
+      { tier: 'c1', model: 'gpt-4o' },
+      { tier: 'image_model', model: 'gpt-image-1' },
+    ]
+    expect(classifyRouterModels(rows, text, vision)).toEqual({
+      noCatalog: false,
+      unknown: [],
+      nonVision: [],
+    })
+  })
+
+  it('flags an id neither source knows, once', () => {
+    const rows = [
+      { tier: 'c0', model: 'z-ai/glm-5.2-turbo-max' },
+      { tier: 'c1', model: 'z-ai/glm-5.2-turbo-max' },
+    ]
+    expect(classifyRouterModels(rows, text, vision).unknown).toEqual(['z-ai/glm-5.2-turbo-max'])
+  })
+
+  it('separates "no such model" from "that model cannot do images"', () => {
+    const rows = [{ tier: 'image_model', model: 'gpt-4o' }]
+    expect(classifyRouterModels(rows, text, vision)).toEqual({
+      noCatalog: false,
+      unknown: [],
+      nonVision: ['gpt-4o'],
+    })
+  })
+
+  it('reports that it could not check rather than accepting silently', () => {
+    const rows = [{ tier: 'c0', model: 'anything' }]
+    expect(classifyRouterModels(rows, [], [])).toEqual({
+      noCatalog: true,
+      unknown: [],
+      nonVision: [],
+    })
+    // Nothing entered, nothing to say.
+    expect(classifyRouterModels([{ tier: 'c0', model: '' }], [], []).noCatalog).toBe(false)
   })
 })

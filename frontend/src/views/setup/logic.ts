@@ -1138,3 +1138,168 @@ export function capabilityBadge(
   const detail = (status.sectionDetails || {})[name] || {}
   return { tone: readinessTone(detail, name), label: readinessStatusLabel(detail, name) }
 }
+
+// ── router tier model catalog (#142) ────────────────────────────────────────
+//
+// Two sources, and they have to be unioned rather than chosen between:
+//
+//   `models.list` (rpc_models.py:33) is live but partial — it aggregates the
+//   currently configured provider chain, and a full `ModelCatalog` is only
+//   fetched for some providers. It answers nothing at all before an API key is
+//   saved, which is exactly when this form is being filled in.
+//
+//   `onboarding.catalog.routerProfiles` ships with the package, is per
+//   provider, and carries the recommended model for every tier including
+//   `image_model`. It is small, and it is the source the tier rows are seeded
+//   from — so treating it as authoritative on its own would flag ids the
+//   gateway does know, and treating it as absent would flag the form's own
+//   defaults.
+
+/** A model the tier picker can offer, from either source. */
+export interface ModelOption {
+  id: string
+  name: string
+  contextWindow?: number
+  inputPer1k?: number
+  outputPer1k?: number
+  supportsVision?: boolean
+}
+
+/** A `models.list` row (rpc_models.py:13-30). */
+export interface ModelListEntry {
+  id?: string
+  name?: string
+  provider?: string
+  contextWindow?: number
+  capabilities?: string[]
+  pricing?: { inputPer1k?: number; outputPer1k?: number }
+}
+
+/**
+ * The models the offline catalog knows for a provider, from its router profile
+ * tiers. `visionOnly` keeps just the tiers that generate images — the image row
+ * must not be offered text models, which is what the tier table is for.
+ */
+export function offlineTierModels(
+  profileTiers: Record<string, TierSpec> | undefined,
+  opts: { visionOnly?: boolean } = {},
+): ModelOption[] {
+  const seen = new Set<string>()
+  const options: ModelOption[] = []
+  for (const [name, tier] of Object.entries(profileTiers || {})) {
+    const id = String(tier?.model || '').trim()
+    if (!id || seen.has(id)) continue
+    const isImageTier = name === 'image_model'
+    const supportsVision = isImageTier || Boolean(tier?.supportsImage ?? tier?.supports_image)
+    if (opts.visionOnly && !supportsVision) continue
+    seen.add(id)
+    options.push({ id, name: id, supportsVision })
+  }
+  return options
+}
+
+/**
+ * Live rows first (they carry context window and pricing), then offline.
+ *
+ * `live` is whatever the RPC returned — an older gateway, or a handler that
+ * errored into an object, must degrade to the offline list rather than throw
+ * inside a render.
+ */
+export function mergeModelOptions(
+  live: ModelListEntry[] | undefined | unknown,
+  offline: ModelOption[],
+): ModelOption[] {
+  const byId = new Map<string, ModelOption>()
+  for (const entry of Array.isArray(live) ? (live as ModelListEntry[]) : []) {
+    const id = String(entry?.id || '').trim()
+    if (!id || byId.has(id)) continue
+    byId.set(id, {
+      id,
+      name: entry.name || id,
+      contextWindow: entry.contextWindow,
+      inputPer1k: entry.pricing?.inputPer1k,
+      outputPer1k: entry.pricing?.outputPer1k,
+      supportsVision: (entry.capabilities || []).includes('vision'),
+    })
+  }
+  for (const option of offline) {
+    if (!byId.has(option.id)) byId.set(option.id, option)
+  }
+  return [...byId.values()]
+}
+
+/**
+ * "128k ctx · $2.50/$10.00 per 1M" — the numbers that decide a tier choice.
+ * Empty when the offline catalog is the only source, which carries neither.
+ */
+export function modelOptionMeta(option: ModelOption): string {
+  const parts: string[] = []
+  const ctx = Number(option.contextWindow || 0)
+  if (ctx > 0) parts.push(`${Math.round(ctx / 1000)}k ctx`)
+  const input = Number(option.inputPer1k || 0) * 1000
+  const output = Number(option.outputPer1k || 0) * 1000
+  if (input > 0 || output > 0) {
+    parts.push(`$${input.toFixed(2)}/$${output.toFixed(2)} per 1M`)
+  }
+  return parts.join(' · ')
+}
+
+/** A datalist option's visible label. */
+export function modelOptionLabel(option: ModelOption): string {
+  const meta = modelOptionMeta(option)
+  const base = option.name || option.id
+  return meta ? `${base} (${meta})` : base
+}
+
+export interface RouterModelWarnings {
+  /** Nothing to check against — say so instead of silently accepting. */
+  noCatalog: boolean
+  /** Entered ids no source knows. */
+  unknown: string[]
+  /** The image tier pointed at a model the catalog says is not vision-capable. */
+  nonVision: string[]
+}
+
+/**
+ * Warn-only validation for Save (#142: "Warn, don't block — unknown ids are
+ * legitimate; silently accepting a typo is not").
+ *
+ * Membership is checked against every known id, not per-row: typing a text
+ * model into the image row is a different mistake from typing a model that
+ * does not exist, and conflating them reports the wrong one.
+ */
+export function classifyRouterModels(
+  rows: Array<{ tier: string; model: string }>,
+  textOptions: ModelOption[],
+  visionOptions: ModelOption[],
+): RouterModelWarnings {
+  const known = new Set<string>()
+  const vision = new Set<string>()
+  for (const option of textOptions) {
+    known.add(option.id)
+    if (option.supportsVision) vision.add(option.id)
+  }
+  for (const option of visionOptions) {
+    known.add(option.id)
+    vision.add(option.id)
+  }
+
+  const entered = rows.filter((row) => row.model.trim())
+  if (known.size === 0) {
+    return { noCatalog: entered.length > 0, unknown: [], nonVision: [] }
+  }
+
+  const unknown: string[] = []
+  const nonVision: string[] = []
+  for (const row of entered) {
+    const model = row.model.trim()
+    if (!known.has(model)) {
+      if (!unknown.includes(model)) unknown.push(model)
+      continue
+    }
+    if (row.tier === 'image_model' && !vision.has(model) && !nonVision.includes(model)) {
+      nonVision.push(model)
+    }
+  }
+  return { noCatalog: false, unknown, nonVision }
+}
