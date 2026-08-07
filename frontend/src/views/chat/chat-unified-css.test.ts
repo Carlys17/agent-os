@@ -46,6 +46,34 @@ describe('unified Chat CSS contract', () => {
     )
   })
 
+  it('reserves chart geometry and overlays the status so a drawn chart cannot shift the transcript', () => {
+    // The canvas is filled after a lazy import plus a payload fetch, so its
+    // height must exist before either resolves.
+    expect(css).toMatch(/\.chat-surface \.msg-artifact-chart__canvas \{[\s\S]*?height: 20rem;/)
+    // Canvas and status share one grid cell — hiding the status must not
+    // collapse a row.
+    expect(css).toMatch(
+      /\.chat-surface \.msg-artifact-chart__canvas,[\s\S]*?\.chat-surface \.msg-artifact-chart__status \{[\s\S]*?grid-row: 3;[\s\S]*?grid-column: 1;/,
+    )
+    expect(css).toMatch(/\.chat-surface \.msg-artifact-charts \{[\s\S]*?max-width: 100%;/)
+  })
+
+  it('reserves the crosshair readout its own row so the first hover cannot shift the chart', () => {
+    // The strip is empty until a chart draws, so its height has to exist
+    // before the first crosshair move fills it.
+    expect(css).toMatch(
+      /\.chat-surface \.msg-artifact-chart__readout \{[\s\S]*?grid-row: 2;[\s\S]*?min-height: 1\.125rem;/,
+    )
+    // Three rows: header, readout, then the canvas cell.
+    expect(css).toMatch(
+      /\.chat-surface \.msg-artifact-chart \{[\s\S]*?grid-template-rows: auto auto 1fr;/,
+    )
+    // The strip must not swallow the crosshair it is reporting on.
+    expect(css).toMatch(
+      /\.chat-surface \.msg-artifact-chart__readout \{[\s\S]*?pointer-events: none;/,
+    )
+  })
+
   it('reserves portalled header geometry before reactive controls mount', () => {
     expect(css).toMatch(
       /\.shell-chat-header__context \{[\s\S]*?min-height: 2\.5rem;[\s\S]*?overflow: visible;/,

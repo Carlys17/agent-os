@@ -81,6 +81,22 @@ def write_frontend_fixture(root: Path) -> tuple[Path, bytes]:
     return frontend, license_bytes
 
 
+def add_licenseless_package(frontend: Path, name: str, version: str) -> Path:
+    """Install a runtime package that ships no license file, like fancy-canvas."""
+    package_dir = frontend / "node_modules" / name
+    package_dir.mkdir(parents=True)
+    (package_dir / "index.js").write_text("export default null\n", encoding="utf-8")
+    (package_dir / "package.json").write_text(
+        json.dumps({"name": name, "version": version}),
+        encoding="utf-8",
+    )
+    lock_path = frontend / "package-lock.json"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock["packages"][f"node_modules/{name}"] = {"version": version, "license": "MIT"}
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    return package_dir
+
+
 def write_dist_fixture(root: Path) -> Path:
     dist = root / DIST_REL
     assets = dist / "assets"
@@ -122,6 +138,66 @@ def test_license_bundle_is_deterministic_verbatim_and_runtime_only(tmp_path: Pat
     assert b"dev-package" not in first
     assert b"Inter font license fixture." in first
     assert b"JetBrains Mono font license fixture." in first
+
+
+def test_a_package_shipping_no_license_falls_back_to_the_vendored_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # fancy-canvas publishes a `files` allowlist that omits its LICENSE, so the
+    # verbatim text has to come from the repository copy instead.
+    module = load_script()
+    frontend, _ = write_frontend_fixture(tmp_path)
+    add_licenseless_package(frontend, "chartlib", "2.1.0")
+    monkeypatch.setitem(module.VENDORED_PACKAGE_LICENSES, "chartlib", "chartlib-LICENSE.txt")
+    vendored_dir = frontend / module.VENDORED_LICENSE_DIRNAME
+    vendored_dir.mkdir()
+    (vendored_dir / "chartlib-LICENSE.txt").write_bytes(b"Vendored MIT text, byte-for-byte.\n")
+
+    bundle = module.render_third_party_licenses(frontend)
+
+    assert b"Package: chartlib@2.1.0\n" in bundle
+    assert b"Vendored MIT text, byte-for-byte.\n" in bundle
+    # The bundle must not pass vendored text off as something the tarball carried.
+    assert b"chartlib-LICENSE.txt (vendored from the upstream repository)\n" in bundle
+
+
+def test_a_package_shipping_no_license_and_no_vendored_entry_still_fails(
+    tmp_path: Path,
+) -> None:
+    # The fallback is an allowlist, not a blanket escape hatch: a new dependency
+    # without a license must stay a deliberate decision.
+    module = load_script()
+    frontend, _ = write_frontend_fixture(tmp_path)
+    add_licenseless_package(frontend, "unreviewed-package", "1.0.0")
+
+    with pytest.raises(module.ControlUIError, match="No upstream LICENSE file found"):
+        module.render_third_party_licenses(frontend)
+
+
+def test_a_declared_vendored_license_that_is_missing_fails_the_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script()
+    frontend, _ = write_frontend_fixture(tmp_path)
+    add_licenseless_package(frontend, "chartlib", "2.1.0")
+    monkeypatch.setitem(module.VENDORED_PACKAGE_LICENSES, "chartlib", "chartlib-LICENSE.txt")
+
+    with pytest.raises(module.ControlUIError, match="Vendored license for chartlib@2.1.0"):
+        module.render_third_party_licenses(frontend)
+
+
+def test_every_vendored_license_in_the_repo_exists_and_carries_a_copyright() -> None:
+    # Guards the real checked-in files, which the fixture tests cannot see.
+    module = load_script()
+    vendored_dir = REPO_ROOT / "frontend" / module.VENDORED_LICENSE_DIRNAME
+
+    assert module.VENDORED_PACKAGE_LICENSES
+    for package_name, filename in module.VENDORED_PACKAGE_LICENSES.items():
+        text = (vendored_dir / filename).read_text(encoding="utf-8")
+        assert "Copyright" in text, f"{package_name} vendored license has no copyright line"
+        assert "Permission is hereby granted" in text
 
 
 def test_verify_requires_license_bundle_and_runtime_relative_assets(tmp_path: Path) -> None:

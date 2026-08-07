@@ -27,6 +27,8 @@
 
 export { publishArtifactTargetName } from './tools'
 
+import { isChartArtifact } from './chart'
+
 /* ── Artifact shape ─────────────────────────────────────────────────────── */
 
 /** The artifact payload the gateway emits (open-ended; only cited fields used). */
@@ -97,9 +99,12 @@ export function artifactExtension(name: string): string {
   return trimmed.slice(idx + 1)
 }
 
-// chat.js:7538-7549 — category: visual | audio | data | document | code | file.
+// chat.js:7538-7549 — category: visual | audio | data | document | code | file,
+// plus the AgentOS-native 'chart' category (chart.ts) which has no legacy
+// counterpart: it renders an inline chart rather than a download chip.
 // NOTE: image/* maps to 'visual' (NOT 'image' — the brief example was wrong).
 export function artifactCategory(artifact: Artifact | null | undefined): string {
+  if (isChartArtifact(artifact)) return 'chart'
   const mime = artifactMime(artifact)
   if (mime.startsWith('image/')) return 'visual'
   if (mime.startsWith('audio/')) return 'audio'
@@ -115,6 +120,8 @@ export function artifactCategory(artifact: Artifact | null | undefined): string 
 // chat.js:7551-7559 — category → chip glyph label.
 export function artifactCategoryLabel(category: string): string {
   switch (category) {
+    case 'chart':
+      return 'chart'
     case 'data':
       return 'data'
     case 'document':
@@ -228,6 +235,12 @@ export interface ArtifactRendererDeps {
   toast?: (message: string, kind?: string, durationMs?: number) => void
   /** chat.js `_chatDiag` — the diagnostics ring. Default: no-op. */
   diag?: (event: string, detail: Record<string, unknown>) => void
+  /**
+   * Draw any chart placeholders that just entered `container` (chart.ts
+   * `mountCharts`). AgentOS-native — no legacy counterpart. Default: no-op, so
+   * a controller that never composes a mounter simply renders inert cards.
+   */
+  mountCharts?: (container: HTMLElement) => void
 }
 
 /* ── Factory ────────────────────────────────────────────────────────────── */
@@ -245,6 +258,7 @@ export function createArtifactRenderer(deps: ArtifactRendererDeps) {
   const escAttr = deps.escAttr ?? deps.esc
   const toast = deps.toast ?? (() => {})
   const diag = deps.diag ?? (() => {})
+  const mountCharts = deps.mountCharts ?? ((): void => {})
 
   const urlContext = (): ArtifactUrlContext => ({
     sessionKey: deps.getSessionKey() || '',
@@ -265,13 +279,15 @@ export function createArtifactRenderer(deps: ArtifactRendererDeps) {
     }
     artifacts.forEach((artifact) => {
       const category = artifactCategory(artifact)
-      const groupKind = category === 'visual' ? 'visual' : 'file'
+      const groupKind = category === 'visual' ? 'visual' : category === 'chart' ? 'chart' : 'file'
       if (groupKind !== openGroup) {
         closeGroup()
         html +=
           groupKind === 'visual'
             ? '<div class="msg-artifact-gallery">'
-            : '<div class="msg-artifact-files">'
+            : groupKind === 'chart'
+              ? '<div class="msg-artifact-charts">'
+              : '<div class="msg-artifact-files">'
         openGroup = groupKind
       }
       const name = artifactName(artifact)
@@ -283,7 +299,27 @@ export function createArtifactRenderer(deps: ArtifactRendererDeps) {
       const downloadUrl = artifactDownloadUrl(artifact || {})
       const downloadHref = artifactAuthenticatedDownloadUrl(downloadUrl, { sessionKey, token })
       const meta = [mime, size].filter(Boolean).join(' · ')
-      if (isImageArtifact(artifact)) {
+      if (category === 'chart') {
+        // A mount placeholder, not a finished card: the chart mounter fetches
+        // `data-chart-src` and draws into `__canvas`. Geometry is reserved in
+        // CSS so the transcript does not jump when the chart lands.
+        //
+        // `data-artifact-download` stays OFF the host and lives only on the
+        // Download anchor below — same as the audio card. The transcript's
+        // delegated click handler downloads any non-anchor element carrying
+        // that attribute, so stamping it here would turn every pan, zoom and
+        // crosshair click on the canvas into a file download.
+        const payloadUrl = artifactPreviewUrl(artifact || {}, { sessionKey, token })
+        html += `<div class="msg-artifact-chart" data-chart-src="${escAttr(payloadUrl)}" data-artifact-category="${escAttr(category)}" data-artifact-id="${escAttr(artifact?.id || '')}" data-artifact-name="${escAttr(name)}">
+          <div class="msg-artifact-chart__header">
+            <span class="msg-artifact-chart__name">${esc(name)}</span>
+            <a class="msg-artifact-chart__download" href="${escAttr(downloadHref)}" download="${escAttr(name)}" data-artifact-download="${escAttr(downloadUrl)}">Download</a>
+          </div>
+          <div class="msg-artifact-chart__readout"></div>
+          <div class="msg-artifact-chart__canvas"></div>
+          <p class="msg-artifact-chart__status">Loading chart…</p>
+        </div>`
+      } else if (isImageArtifact(artifact)) {
         const previewUrl = artifactPreviewUrl(artifact || {}, { sessionKey, token })
         html += `<a class="msg-artifact-card msg-artifact-card--image" href="${escAttr(downloadHref)}" download="${escAttr(name)}" data-artifact-category="${escAttr(category)}" data-artifact-download="${escAttr(downloadUrl)}" data-artifact-id="${escAttr(artifact?.id || '')}" data-artifact-name="${escAttr(name)}" title="Download ${escAttr(name)}">
           ${previewUrl ? `<img class="msg-artifact-preview" src="${esc(previewUrl)}" alt="${esc(name)}" loading="lazy">` : '<span class="msg-artifact-preview msg-artifact-preview--empty" aria-hidden="true"></span>'}
@@ -324,7 +360,10 @@ export function createArtifactRenderer(deps: ArtifactRendererDeps) {
     const bubble = deps.ensureStreamBubble()
     deps.markVisibleStreamEvent('artifact')
     const body = bubble.querySelector('.msg-body')
-    if (body) body.insertAdjacentHTML('beforeend', renderArtifacts([payload]))
+    if (body) {
+      body.insertAdjacentHTML('beforeend', renderArtifacts([payload]))
+      mountCharts(body as HTMLElement)
+    }
     if (deps.getAutoScroll()) deps.scrollToBottom()
     diag('artifact.append.done', { name: payload.name, mime: payload.mime })
   }
@@ -340,6 +379,7 @@ export function createArtifactRenderer(deps: ArtifactRendererDeps) {
     const artifacts = deps.getStreamArtifacts()
     if (artifacts.length > 0) {
       body.insertAdjacentHTML('beforeend', renderArtifacts(artifacts))
+      mountCharts(body as HTMLElement)
       if (deps.getAutoScroll()) deps.scrollToBottom()
     }
   }

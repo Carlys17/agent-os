@@ -473,8 +473,10 @@ when multiple packages use the same license.
 - `clsx@2.1.1` — MIT
 - `cookie@1.1.1` — MIT
 - `dompurify@3.4.12` — MPL-2.0 or Apache-2.0
+- `fancy-canvas@2.1.0` — MIT
 - `framer-motion@12.42.2` — MIT
 - `highlight.js@11.11.1` — BSD-3-Clause
+- `lightweight-charts@5.2.0` — Apache-2.0
 - `lucide-react@1.25.0` — ISC
 - `marked@18.0.7` — MIT
 - `motion@12.42.2` — MIT
@@ -493,6 +495,16 @@ when multiple packages use the same license.
 The type-only `@types/*` and `csstype` packages installed to compile the
 TypeScript source do not enter the browser bundle and are intentionally
 omitted from this production list.
+
+### Vendored dependency licenses
+
+`fancy-canvas@2.1.0` (a dependency of `lightweight-charts`) publishes a `files`
+allowlist covering only its compiled JavaScript and type declarations, so its
+MIT text is absent from the npm tarball. The upstream license from
+https://github.com/tradingview/fancy-canvas is kept verbatim at
+`frontend/vendor-licenses/fancy-canvas-LICENSE.txt`, and the Control UI builder
+appends it to the generated ledger marked as vendored. Packages that ship no
+license and have no vendored copy still fail the build.
 
 ### React Control UI fonts
 

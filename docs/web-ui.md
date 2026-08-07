@@ -196,7 +196,12 @@ cards for:
 - exported data files;
 - PDFs, slide decks, images, and other generated outputs.
 
-For channel delivery limits and artifact recovery, see
+Images and audio play inline in the card. An artifact published as
+`application/vnd.agentos.chart+json` renders as an interactive candlestick
+chart instead of a download chip — the `gmgn-market` and `gmgn-token` skills use
+this for token price charts.
+
+For the chart payload shape, channel delivery limits, and artifact recovery, see
 [`artifacts-and-media.md`](artifacts-and-media.md).
 
 ## Approvals

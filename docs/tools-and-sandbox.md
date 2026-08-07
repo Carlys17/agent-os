@@ -20,7 +20,7 @@ For a focused permissions guide, see
 | Web | `web_search`, `web_fetch`, `http_request`. |
 | Memory | `memory_search`, `memory_save`, `memory_get`, `memory_delete`, `memory`. |
 | Sessions | `sessions_send`, `sessions_spawn`, `sessions_list`, `sessions_history`, `session_status`. |
-| Artifacts | `publish_artifact`. |
+| Artifacts | `publish_artifact`. The mime decides the rendering: some draw inline in chat rather than as a download chip — see [artifacts-and-media.md](artifacts-and-media.md#inline-charts). |
 | Media | image generation, PDF, TTS, and media helpers. |
 | Skills | `skill_list`, `skill_view`, `skill_create`, `skill_edit`, `install_skill_deps`, `meta_invoke`. |
 | Control | cron scheduling and gateway control operations. |

@@ -162,6 +162,12 @@ export interface HistoryRenderDeps {
   renderMessageAttachmentHtml: (attachment: Record<string, unknown>) => string
   /** chat.js:5691-5694/7595 — render persisted artifact cards as escaped HTML. */
   renderArtifacts: (artifacts: Artifact[]) => string
+  /**
+   * chart.ts `mountCharts` — draw chart placeholders in a replayed row.
+   * AgentOS-native (no legacy counterpart); optional so focused history tests
+   * need not supply it.
+   */
+  mountCharts?: (container: HTMLElement) => void
   /** chat.js:5611-5616 — remove foreign/unstamped dock residue before a rebuild. */
   prepareHistoryRouterFx: () => void
   /** chat.js:5712-5741 — rebuild a settled dock receipt from persisted usage. */
@@ -585,7 +591,10 @@ export function createHistoryRenderer(deps: HistoryRenderDeps) {
       const artifacts = historyMessageArtifacts(msg)
       if (artifacts.length > 0) {
         const body = div.querySelector<HTMLElement>('.msg-body')
-        if (body) body.insertAdjacentHTML('beforeend', deps.renderArtifacts(artifacts))
+        if (body) {
+          body.insertAdjacentHTML('beforeend', deps.renderArtifacts(artifacts))
+          deps.mountCharts?.(body)
+        }
       }
 
       // Tool reconstruction and the user-attachment body rewrite above remove

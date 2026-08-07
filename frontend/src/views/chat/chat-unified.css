@@ -228,7 +228,8 @@
 }
 
 .chat-surface .msg-artifact-gallery,
-.chat-surface .msg-artifact-files {
+.chat-surface .msg-artifact-files,
+.chat-surface .msg-artifact-charts {
   display: grid;
   gap: 0.625rem;
 }
@@ -239,6 +240,12 @@
 
 .chat-surface .msg-artifact-files {
   max-width: min(36rem, 100%);
+}
+
+/* Charts take the full transcript column — a candlestick series is unreadable
+   at gallery-card width. */
+.chat-surface .msg-artifact-charts {
+  max-width: 100%;
 }
 
 .chat-surface .msg-artifact-card {
@@ -283,6 +290,136 @@
 .chat-surface .msg-artifact-card__name {
   font-size: 0.8125rem;
   font-weight: 600;
+}
+
+/* Chart artifacts (chart.ts). The canvas is drawn asynchronously by
+   lightweight-charts after a lazy import plus a payload fetch, so the card
+   reserves its full height up front — same no-layout-shift contract the image
+   preview above follows. */
+.chat-surface .msg-artifact-chart {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  color: var(--foreground);
+}
+
+.chat-surface .msg-artifact-chart__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.chat-surface .msg-artifact-chart__name {
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-surface .msg-artifact-chart__download {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  text-decoration: none;
+}
+
+.chat-surface .msg-artifact-chart__download:hover {
+  color: var(--foreground);
+}
+
+/* Canvas and status share one grid cell so the status can disappear on a
+   successful draw without collapsing a row and shifting the transcript. */
+.chat-surface .msg-artifact-chart__canvas,
+.chat-surface .msg-artifact-chart__status {
+  grid-row: 3;
+  grid-column: 1;
+}
+
+.chat-surface .msg-artifact-chart__canvas {
+  width: 100%;
+  height: 20rem;
+}
+
+.chat-surface .msg-artifact-chart__status {
+  place-self: center;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  pointer-events: none;
+}
+
+.chat-surface .msg-artifact-chart__status[hidden] {
+  display: none;
+}
+
+/* Crosshair readout. lightweight-charts has no tooltip, so this strip carries
+   the hovered candle's OHLC and its move. It takes its own row above the
+   canvas rather than floating over it, so it can neither be clipped by the
+   card nor cover a candle, and it reserves its height up front so the first
+   hover does not shift the chart. */
+.chat-surface .msg-artifact-chart__readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.0625rem 0.625rem;
+  grid-row: 2;
+  grid-column: 1;
+  min-height: 1.125rem;
+  padding: 0 0.125rem;
+  color: var(--muted-foreground);
+  font: 500 0.6875rem/1.125rem var(--font-mono);
+  pointer-events: none;
+}
+
+.chat-surface .msg-artifact-chart__readout-cell[hidden] {
+  display: none;
+}
+
+.chat-surface .msg-artifact-chart__readout-label {
+  margin-right: 0.1875rem;
+  opacity: 0.65;
+}
+
+.chat-surface .msg-artifact-chart__readout-value {
+  color: var(--foreground);
+}
+
+.chat-surface
+  .msg-artifact-chart__readout-cell[data-direction='up']
+  .msg-artifact-chart__readout-value {
+  color: #26a69a;
+}
+
+.chat-surface
+  .msg-artifact-chart__readout-cell[data-direction='down']
+  .msg-artifact-chart__readout-value {
+  color: #ef5350;
+}
+
+/* Mirror chartTheme()'s light palette so the move reads the same colour as the
+   candle body it describes. */
+:root[data-theme='light']
+  .chat-surface
+  .msg-artifact-chart__readout-cell[data-direction='up']
+  .msg-artifact-chart__readout-value {
+  color: #0f9d81;
+}
+
+:root[data-theme='light']
+  .chat-surface
+  .msg-artifact-chart__readout-cell[data-direction='down']
+  .msg-artifact-chart__readout-value {
+  color: #e03131;
 }
 
 .chat-surface .msg-artifact-card__meta {

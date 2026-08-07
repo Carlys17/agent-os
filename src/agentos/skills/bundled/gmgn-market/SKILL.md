@@ -977,6 +977,55 @@ Total volume: ${sum of all volume fields} USD
 Trend: [brief description — e.g. "steady uptrend", "sharp drop then recovery", "sideways"]
 ```
 
+## Rendering the Candlestick Chart
+
+Whenever you run `market kline`, also publish a chart artifact so the user sees a
+real candlestick chart, not just the text summary. Pipe the raw response through
+the bundled converter and publish what it writes:
+
+```bash
+gmgn-cli market kline --chain sol --address <addr> --resolution 1h \
+  --from <unix_ts> --to <unix_ts> --raw \
+  | python3 {baseDir}/scripts/kline_chart.py \
+      --symbol <SYMBOL> --chain sol --resolution 1h \
+      --output <symbol>-1h.chart.json
+```
+
+Keep `--output` a bare filename as shown. Scripts run with the workspace as
+their working directory, and `publish_artifact` only accepts files inside that
+workspace — writing to `/tmp` or any other absolute path outside it makes the
+publish fail.
+
+Then call `publish_artifact` with that path and
+`mime=application/vnd.agentos.chart+json`. The surface draws the chart inline;
+do not describe the artifact as a download or put a URL in your reply.
+
+Keep the text Price Summary as well — the chart shows the shape, the summary
+carries the numbers.
+
+### Choosing a resolution
+
+Pick the window from how old the token is (`creation_timestamp` from
+`gmgn-cli token info`, Unix seconds) unless the user asked for a specific range.
+The aim is roughly 30–100 candles: fewer looks empty, more turns to noise.
+
+| Token age | Range | `--resolution` |
+|-----------|-------|----------------|
+| < 6 hours | since creation | `1m` |
+| < 3 days | 24 hours | `15m` |
+| < 30 days | 7 days | `1h` |
+| ≥ 30 days | 30 days | `4h` |
+
+When the user names a range ("last hour", "this week"), honor it and pick the
+resolution that keeps the candle count in that same 30–100 band.
+
+### Failure handling
+
+The converter exits non-zero and explains itself on stderr when the response has
+no usable candles. If that happens, skip the chart, still present the text
+summary, and do not retry the CLI call — an empty candle list means the token
+has no trades in that window, not that the request failed.
+
 ### `market trending` — Top Tokens Table
 
 Present the top results (default: top 10, or as requested) as a table:

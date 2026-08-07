@@ -33,6 +33,17 @@ BUNDLED_FONT_LICENSES = (
     "Inter-LICENSE.txt",
     "JetBrainsMono-LICENSE.txt",
 )
+# A few npm packages publish a tarball that carries no license file at all —
+# `fancy-canvas` sets a `files` allowlist of .js/.mjs/.d.ts and nothing else, so
+# its MIT text never leaves the source repository. The bundle still owes every
+# dependency its license verbatim, so the upstream text is vendored here and
+# used *only* when the installed package ships none. Keyed by package name; a
+# package missing from this map keeps failing the build, so a new dependency
+# without a license is still a deliberate decision rather than a silent gap.
+VENDORED_LICENSE_DIRNAME = "vendor-licenses"
+VENDORED_PACKAGE_LICENSES = {
+    "fancy-canvas": "fancy-canvas-LICENSE.txt",
+}
 REQUIRED_DIST_FILES = ("theme-bootstrap.js",)
 TYPE_ONLY_PACKAGES = frozenset({"csstype"})
 RUNTIME_TEXT_SUFFIXES = frozenset({".css", ".html", ".js", ".json", ".map", ".mjs"})
@@ -164,7 +175,11 @@ def _package_directory(frontend_dir: Path, package: ProductionPackage) -> Path:
     return package_dir
 
 
-def _license_files(package_dir: Path) -> tuple[Path, ...]:
+def _license_files(
+    frontend_dir: Path,
+    package: ProductionPackage,
+    package_dir: Path,
+) -> tuple[Path, ...]:
     prefixes = ("copying", "licence", "license")
     candidates = tuple(
         sorted(
@@ -176,9 +191,18 @@ def _license_files(package_dir: Path) -> tuple[Path, ...]:
             key=lambda path: path.name.casefold(),
         )
     )
-    if not candidates:
+    if candidates:
+        return candidates
+
+    vendored_name = VENDORED_PACKAGE_LICENSES.get(package.name)
+    if vendored_name is None:
         raise ControlUIError(f"No upstream LICENSE file found in {package_dir}")
-    return candidates
+    vendored_path = frontend_dir / VENDORED_LICENSE_DIRNAME / vendored_name
+    if not vendored_path.is_file():
+        raise ControlUIError(
+            f"Vendored license for {package.identifier} is missing: {vendored_path}"
+        )
+    return (vendored_path,)
 
 
 def render_third_party_licenses(frontend_dir: Path) -> bytes:
@@ -191,8 +215,14 @@ def render_third_party_licenses(frontend_dir: Path) -> bytes:
         output.extend(b"\n" + b"=" * 80 + b"\n")
         output.extend(f"Package: {package.identifier}\n".encode())
         output.extend(f"Declared license: {package.license_expression}\n".encode())
-        for license_path in _license_files(package_dir):
-            output.extend(f"License file: {license_path.name}\n".encode())
+        for license_path in _license_files(frontend_dir, package, package_dir):
+            label = license_path.name
+            if license_path.parent.name == VENDORED_LICENSE_DIRNAME:
+                # Say plainly where the text came from, so a reader of the
+                # bundle can tell it was taken from the upstream source
+                # repository rather than the published tarball.
+                label = f"{label} (vendored from the upstream repository)"
+            output.extend(f"License file: {label}\n".encode())
             output.extend(b"-" * 80 + b"\n")
             license_bytes = license_path.read_bytes()
             if not license_bytes:

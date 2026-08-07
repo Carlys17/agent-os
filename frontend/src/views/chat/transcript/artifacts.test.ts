@@ -5,20 +5,29 @@
 // DOM (appendArtifact / renderArtifacts / renderStreamArtifacts / downloadArtifact)
 // is verified by a live-browser sweep (parity matrix), NOT here — it needs the
 // live streaming controller + a real gateway serving the download.
+//
+// The one exception is the chart placeholder, which has no legacy counterpart:
+// it renders no visible card of its own, so a broken placeholder shows the user
+// nothing at all rather than a wrong-looking chip. Its hooks and its handoff to
+// the chart mounter are pinned below.
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   artifactMime,
   artifactName,
   artifactExtension,
   artifactCategory,
   artifactCategoryLabel,
+  createArtifactRenderer,
   isImageArtifact,
   isAudioArtifact,
   artifactDownloadUrl,
   artifactPreviewUrl,
   artifactAuthenticatedDownloadUrl,
+  type Artifact,
+  type ArtifactRendererDeps,
 } from './artifacts'
+import { CHART_ARTIFACT_MIME } from './chart'
 
 /* ── artifactMime / artifactName (chat.js:7523-7529) ────────────────────── */
 
@@ -93,6 +102,14 @@ describe('artifactCategory (parity chat.js:7538)', () => {
     )
     expect(artifactCategory({} as never)).toBe('file')
   })
+  it('classifies the AgentOS chart mime as "chart" (no legacy counterpart)', () => {
+    // Wins over the +json extension fallback, which would otherwise land the
+    // chart payload in 'data' and render it as a download chip.
+    expect(artifactCategory({ mime: CHART_ARTIFACT_MIME, name: 'bonk.chart.json' } as never)).toBe(
+      'chart',
+    )
+    expect(artifactCategory({ mime: 'application/json', name: 'x.json' } as never)).toBe('data')
+  })
 })
 
 /* ── artifactCategoryLabel (chat.js:7551) ───────────────────────────────── */
@@ -103,6 +120,7 @@ describe('artifactCategoryLabel (parity chat.js:7551)', () => {
     expect(artifactCategoryLabel('document')).toBe('doc')
     expect(artifactCategoryLabel('code')).toBe('code')
     expect(artifactCategoryLabel('audio')).toBe('audio')
+    expect(artifactCategoryLabel('chart')).toBe('chart')
   })
   it('defaults unknown / visual / file categories to "file"', () => {
     expect(artifactCategoryLabel('visual')).toBe('file')
@@ -191,5 +209,130 @@ describe('artifactAuthenticatedDownloadUrl (parity chat.js:7583)', () => {
     expect(
       artifactAuthenticatedDownloadUrl('/api/v1/artifacts/5', { sessionKey: 'k', token: '' }),
     ).toBe('/api/v1/artifacts/5?sessionKey=k')
+  })
+})
+
+/* ── chart placeholder + mounter handoff (AgentOS-native) ───────────────── */
+
+const CHART_ARTIFACT: Artifact = {
+  id: 'art-1',
+  name: 'bonk.chart.json',
+  mime: CHART_ARTIFACT_MIME,
+  download_url: '/api/v1/artifacts/art-1',
+}
+
+function chartRendererDeps(overrides: Partial<ArtifactRendererDeps> = {}) {
+  const bubble = document.createElement('div')
+  const body = document.createElement('div')
+  body.className = 'msg-body'
+  bubble.appendChild(body)
+  const streamArtifacts: Artifact[] = []
+  const deps: ArtifactRendererDeps = {
+    ensureStreamBubble: () => bubble,
+    markVisibleStreamEvent: () => {},
+    scrollToBottom: () => {},
+    getAutoScroll: () => false,
+    getStreamBubble: () => bubble,
+    pushStreamArtifact: (artifact) => streamArtifacts.push(artifact),
+    getStreamArtifacts: () => streamArtifacts,
+    getSessionKey: () => 'agent:main:webchat:test',
+    getAuthToken: () => 'tok',
+    esc: (value) => value,
+    ...overrides,
+  }
+  return { deps, body, streamArtifacts }
+}
+
+describe('createArtifactRenderer chart artifacts', () => {
+  it('renders a mount placeholder carrying the hooks the mounter looks for', () => {
+    const { deps } = chartRendererDeps()
+
+    const container = document.createElement('div')
+    container.innerHTML = createArtifactRenderer(deps).renderArtifacts([CHART_ARTIFACT])
+
+    const host = container.querySelector<HTMLElement>('[data-chart-src]')
+    expect(host).not.toBeNull()
+    // The payload URL must be authenticated the same way a download is.
+    expect(host?.dataset.chartSrc).toBe(
+      '/api/v1/artifacts/art-1?sessionKey=agent%3Amain%3Awebchat%3Atest&token=tok',
+    )
+    expect(host?.querySelector('.msg-artifact-chart__canvas')).not.toBeNull()
+    expect(host?.querySelector('.msg-artifact-chart__status')).not.toBeNull()
+    // The mounter fills this on draw; it must exist for the crosshair readout.
+    expect(host?.querySelector('.msg-artifact-chart__readout')).not.toBeNull()
+    expect(host?.querySelector('.msg-artifact-chart__name')).toHaveTextContent('bonk.chart.json')
+    // A chart groups with charts, never into the file-chip row.
+    expect(container.querySelector('.msg-artifact-charts')).not.toBeNull()
+    expect(container.querySelector('.msg-artifact-files')).toBeNull()
+  })
+
+  it('does not turn a click on the chart itself into a download', () => {
+    // useTranscript delegates clicks: any non-anchor element that resolves to
+    // [data-artifact-download] downloads the file. A chart is interactive, so
+    // the host must not carry it — otherwise every pan, zoom and crosshair
+    // click fetches the JSON instead of moving the chart.
+    const { deps } = chartRendererDeps()
+
+    const container = document.createElement('div')
+    container.innerHTML = createArtifactRenderer(deps).renderArtifacts([CHART_ARTIFACT])
+
+    const canvas = container.querySelector<HTMLElement>('.msg-artifact-chart__canvas')
+    expect(canvas?.closest('[data-artifact-download]')).toBeNull()
+    expect(container.querySelector('.msg-artifact-chart')).not.toHaveAttribute(
+      'data-artifact-download',
+    )
+  })
+
+  it('keeps the download on the anchor, which the click handler steps aside for', () => {
+    const { deps } = chartRendererDeps()
+
+    const container = document.createElement('div')
+    container.innerHTML = createArtifactRenderer(deps).renderArtifacts([CHART_ARTIFACT])
+
+    const link = container.querySelector<HTMLElement>('.msg-artifact-chart__download')
+    // Resolving to itself and being an anchor is exactly what makes the
+    // delegated handler leave it to the browser's native download.
+    expect(link?.closest('[data-artifact-download]')).toBe(link)
+    expect(link?.tagName).toBe('A')
+  })
+
+  it('still offers the raw payload as a download', () => {
+    const { deps } = chartRendererDeps()
+
+    const container = document.createElement('div')
+    container.innerHTML = createArtifactRenderer(deps).renderArtifacts([CHART_ARTIFACT])
+
+    expect(container.querySelector('.msg-artifact-chart__download')).toHaveAttribute(
+      'download',
+      'bonk.chart.json',
+    )
+  })
+
+  it('hands a streamed chart artifact to the mounter as soon as it lands', () => {
+    const mountCharts = vi.fn()
+    const { deps, body } = chartRendererDeps({ mountCharts })
+
+    createArtifactRenderer(deps).appendArtifact(CHART_ARTIFACT)
+
+    // Without this call the placeholder sits at "Loading chart…" forever.
+    expect(mountCharts).toHaveBeenCalledWith(body)
+    expect(body.querySelector('[data-chart-src]')).not.toBeNull()
+  })
+
+  it('hands flushed stream artifacts to the mounter on the settle pass', () => {
+    const mountCharts = vi.fn()
+    const { deps, body, streamArtifacts } = chartRendererDeps({ mountCharts })
+    streamArtifacts.push(CHART_ARTIFACT)
+
+    createArtifactRenderer(deps).renderStreamArtifacts()
+
+    expect(mountCharts).toHaveBeenCalledWith(body)
+  })
+
+  it('renders inert cards when no mounter is composed in', () => {
+    const { deps, body } = chartRendererDeps()
+
+    expect(() => createArtifactRenderer(deps).appendArtifact(CHART_ARTIFACT)).not.toThrow()
+    expect(body.querySelector('[data-chart-src]')).not.toBeNull()
   })
 })

@@ -1070,7 +1070,17 @@ def create_skill_tools(loader: SkillLoader) -> None:
         _loader.invalidate_cache()
 
         logger.info("skill_create.success", name=name)
-        return f"Skill '{name}' created at {skill_file}"
+        # Say this at creation time rather than in the tool description, which
+        # would cost tokens on every turn: a skill author has no way to guess
+        # that the mime alone decides whether output draws inline or arrives as
+        # a download chip.
+        return (
+            f"Skill '{name}' created at {skill_file}. "
+            "For output that should draw inline in Web chat instead of as a "
+            "download chip, have the skill publish_artifact with an inline mime "
+            "(application/vnd.agentos.chart+json renders a candlestick chart); "
+            "docs/artifacts-and-media.md documents the payload."
+        )
 
     @tool(
         name="skill_edit",
