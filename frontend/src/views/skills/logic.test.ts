@@ -182,7 +182,9 @@ describe('skillRank / skillGroupKey / groupSkills', () => {
     expect(isGmgnSkill(acquired('local', gmgn))).toBe(false)
     expect(isGmgnSkill(acquired('hub', gmgn))).toBe(false)
     // A partner's skill wears its partner's mark, not this one.
-    expect(isGmgnSkill(acquired('shipped', { ...gmgn, publisher: { id: 'robinhood' } }))).toBe(false)
+    expect(isGmgnSkill(acquired('shipped', { ...gmgn, publisher: { id: 'robinhood' } }))).toBe(
+      false,
+    )
     // The name proves nothing either way.
     expect(isGmgnSkill(acquired('shipped', { name: 'gmgn-token', category: 'crypto' }))).toBe(false)
     // Another AgentOS crypto skill keeps the AgentOS mark.
