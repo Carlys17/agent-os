@@ -14,8 +14,33 @@ export const DEFAULT_LOCALE = 'en'
  */
 const CATALOGS = new Map<string, PartialMessages>([[DEFAULT_LOCALE, en]])
 
+/**
+ * Fold a tag onto the key catalogs are stored under, or `null` if it is not a
+ * well-formed BCP 47 tag. `Intl.getCanonicalLocales` accepts exactly what
+ * `Intl.PluralRules` accepts, so a key that survives this is safe to hand to
+ * `tPlural()` later; canonicalising rather than merely lowercasing also folds
+ * `pt-br`/`PT-BR` and deprecated aliases (`iw` -> `he`) onto one entry.
+ */
+function localeKey(tag: string): string | null {
+  try {
+    return Intl.getCanonicalLocales(tag.trim())[0]?.toLowerCase() ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Catalogs are registered at module load by our own code, so a malformed tag is
+ * a programming error and throws here — loudly, at the source. Accepting it
+ * would surface instead as a `RangeError` from `new Intl.PluralRules()` at the
+ * first pluralised string of some unrelated view.
+ */
 export function registerCatalog(tag: string, messages: PartialMessages): void {
-  CATALOGS.set(tag.trim().toLowerCase(), messages)
+  const key = localeKey(tag)
+  if (key === null) {
+    throw new RangeError(`registerCatalog: ${JSON.stringify(tag)} is not a valid BCP 47 locale tag`)
+  }
+  CATALOGS.set(key, messages)
 }
 
 export function catalogFor(locale: Locale): PartialMessages {
@@ -39,12 +64,13 @@ export function getLocale(): Locale {
  * error — it resolves to the default.
  */
 export function resolveLocale(candidate?: string | null): Locale {
-  const raw = String(candidate ?? '')
-    .trim()
-    .toLowerCase()
-  if (!raw) return DEFAULT_LOCALE
-  if (CATALOGS.has(raw)) return raw
-  const primary = raw.split(/[-_]/)[0] ?? ''
+  // `_` is tolerated here but not in `registerCatalog`: a candidate arrives from
+  // outside (a POSIX-style `pt_BR`, a browser, the gateway) and must resolve
+  // rather than throw, while a registered tag is ours to get right.
+  const key = localeKey(String(candidate ?? '').replace(/_/g, '-'))
+  if (key === null) return DEFAULT_LOCALE
+  if (CATALOGS.has(key)) return key
+  const primary = key.split('-')[0] ?? ''
   return CATALOGS.has(primary) ? primary : DEFAULT_LOCALE
 }
 

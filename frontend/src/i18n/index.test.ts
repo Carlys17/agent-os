@@ -61,6 +61,38 @@ describe('t', () => {
   })
 })
 
+describe('registerCatalog', () => {
+  it('rejects a tag Intl.PluralRules would reject, and registers nothing', () => {
+    // The issue's exact case: an underscore instead of a hyphen used to register
+    // cleanly and then kill the first pluralised string in an unrelated view.
+    expect(() => registerCatalog('pt_BR', {})).toThrow(RangeError)
+    expect(() => registerCatalog('', {})).toThrow(RangeError)
+    expect(() => registerCatalog('nope', {})).toThrow(RangeError)
+    expect(resolveLocale('pt_BR')).toBe('en')
+  })
+
+  it('folds non-canonical casing onto a single entry', () => {
+    registerCatalog('YY-zz', { common: { save: 'first' } })
+    registerCatalog('yy-ZZ', { common: { save: 'second' } })
+    // A second entry would have left the first one reachable.
+    setLocale('yy-ZZ')
+    expect(t('common.save')).toBe('second')
+    expect(resolveLocale('YY-ZZ')).toBe('yy-zz')
+    expect(resolveLocale('yy_zz')).toBe('yy-zz')
+  })
+
+  it('canonicalises a deprecated tag to its modern form', () => {
+    registerCatalog('iw', {})
+    expect(resolveLocale('he')).toBe('he')
+  })
+
+  it('leaves every registered tag safe for Intl.PluralRules', () => {
+    registerCatalog('zh-hant-cn', {})
+    setLocale('zh-Hant-CN')
+    expect(() => tPlural('overview.eventsCount', 3)).not.toThrow()
+  })
+})
+
 describe('resolveLocale', () => {
   it('defaults to English for empty, nullish, and unknown input', () => {
     expect(resolveLocale('')).toBe('en')
