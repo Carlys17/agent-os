@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.9] - 2026-08-09
+
 ### Added
 
 - Telegram replies now stream: AgentOS posts one message and edits it as the
@@ -35,6 +37,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   fail open in opposite directions, a forgotten entry produced a plausible wrong
   number rather than an error. Shipping a tier default whose model is not
   declared now fails at import. No prices or windows change. (Fixes #140)
+
+### Fixed
+
+- Shell workspace lockdown no longer misses a redirection whose operator has no
+  whitespace around it. `echo x>/etc/passwd` and `cat<in>/etc/x` used to parse as
+  having no write target at all, because the scan required a space or
+  start-of-string before `>`; the same anchor bug was in the `tee` parser. File
+  descriptor duplications (`2>&1`, `>&2`, `2>&-`) are blanked before the scan, so
+  dropping the anchor does not turn every `2>&1` into a write to a file named
+  `1`. (Fixes #197)
 
 ## [2026.8.7] - 2026-08-07
 
