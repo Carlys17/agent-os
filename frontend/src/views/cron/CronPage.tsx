@@ -19,6 +19,8 @@ import {
 import { toast } from 'sonner'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
+import '@/i18n/en/cron'
 import { copyWithFallback } from '@/lib/clipboard'
 import { MotionListItem } from '@/lib/motion'
 import { useRpc } from '@/app/providers'
@@ -82,29 +84,31 @@ type PanelState =
 
 // cron.js:832-843 — the three empty-state quick-start presets (seed the create
 // panel). `hint` is UI-only; the rest is the template seed for seedForm.
-const EMPTY_TEMPLATES: Array<Partial<RawJob> & { expression: string; hint: string }> = [
-  {
-    name: 'Daily standup nudge',
-    expression: '0 9 * * 1-5',
-    payloadKind: 'reminder',
-    message: 'Good morning! Time for standup.',
-    hint: 'Weekday morning reminder',
-  },
-  {
-    name: 'Hourly health check',
-    expression: '0 * * * *',
-    payloadKind: 'agent_turn',
-    message: 'Run a quick system health check and report any anomalies.',
-    hint: 'Hourly agent check',
-  },
-  {
-    name: 'Friday wrap-up',
-    expression: '0 17 * * 5',
-    payloadKind: 'agent_turn',
-    message: "Summarize this week's work and propose next week's priorities.",
-    hint: 'Friday agent wrap-up',
-  },
-]
+function emptyTemplates(): Array<Partial<RawJob> & { expression: string; hint: string }> {
+  return [
+    {
+      name: t('cron.templateStandupName'),
+      expression: '0 9 * * 1-5',
+      payloadKind: 'reminder',
+      message: t('cron.templateStandupMessage'),
+      hint: t('cron.templateStandupHint'),
+    },
+    {
+      name: t('cron.templateHealthName'),
+      expression: '0 * * * *',
+      payloadKind: 'agent_turn',
+      message: t('cron.templateHealthMessage'),
+      hint: t('cron.templateHealthHint'),
+    },
+    {
+      name: t('cron.templateWrapName'),
+      expression: '0 17 * * 5',
+      payloadKind: 'agent_turn',
+      message: t('cron.templateWrapMessage'),
+      hint: t('cron.templateWrapHint'),
+    },
+  ]
+}
 
 // cron.js:341-342 — cron.list may return a bare array or {jobs:[…]}.
 interface CronListResult {
@@ -190,10 +194,10 @@ function RunsDrawer({
   })
 
   return (
-    <div className="cron-detail panel" aria-label={`Run history for ${jobName}`}>
+    <div className="cron-detail panel" aria-label={t('cron.runsLandmark', { name: jobName })}>
       <div className="cron-detail__head">
         <div>
-          <span className="cron-detail__eyebrow t-label">Run history</span>
+          <span className="cron-detail__eyebrow t-label">{t('cron.runsEyebrow')}</span>
           <strong className="cron-detail__name">{jobName}</strong>
         </div>
         <Button
@@ -201,28 +205,33 @@ function RunsDrawer({
           variant="ghost"
           size="sm"
           onClick={onClose}
-          aria-label="Close run history"
+          aria-label={t('cron.runsClose')}
         >
-          Close
+          {t('common.close')}
         </Button>
       </div>
 
       {runsQuery.isError ? (
-        <p className="cron-muted">Failed to load run history.</p>
+        <p className="cron-muted">{t('cron.runsLoadFailed')}</p>
       ) : runsQuery.isLoading ? (
-        <p className="cron-muted">Loading…</p>
+        <p className="cron-muted">{t('cron.runsLoading')}</p>
       ) : runs.length === 0 ? (
-        <p className="cron-muted">No run history yet.</p>
+        <p className="cron-muted">{t('cron.runsEmpty')}</p>
       ) : (
-        <div className="cron-runs-scroll" role="region" aria-label="Run history table" tabIndex={0}>
+        <div
+          className="cron-runs-scroll"
+          role="region"
+          aria-label={t('cron.runsTableLandmark')}
+          tabIndex={0}
+        >
           <table className="cron-runs">
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Status</th>
-                <th>Duration</th>
-                <th>Delivery</th>
-                <th>Output</th>
+                <th>{t('cron.runsColTime')}</th>
+                <th>{t('cron.runsColStatus')}</th>
+                <th>{t('cron.runsColDuration')}</th>
+                <th>{t('cron.runsColDelivery')}</th>
+                <th>{t('cron.runsColOutput')}</th>
                 <th />
               </tr>
             </thead>
@@ -247,7 +256,7 @@ function RunsDrawer({
                             type="button"
                             className="cron-runs__reply-toggle"
                             aria-expanded={isOpen}
-                            title={isOpen ? 'Hide full output' : 'Show full output'}
+                            title={isOpen ? t('cron.runsHideOutput') : t('cron.runsShowOutput')}
                             onClick={() => setExpanded(isOpen ? null : i)}
                           >
                             {row.reply}
@@ -266,7 +275,7 @@ function RunsDrawer({
                               navigate('/chat?session=' + encodeURIComponent(row.sessionKey))
                             }
                           >
-                            → Chat
+                            {t('cron.runsToChat')}
                           </Button>
                         ) : null}
                       </td>
@@ -278,11 +287,9 @@ function RunsDrawer({
                             {outputQuery.data?.output ?? row.replyFull}
                           </pre>
                           {outputQuery.isLoading ? (
-                            <p className="cron-muted">Loading full output…</p>
+                            <p className="cron-muted">{t('cron.runsLoadingOutput')}</p>
                           ) : outputQuery.isError ? (
-                            <p className="cron-muted">
-                              Failed to load full output — showing preview.
-                            </p>
+                            <p className="cron-muted">{t('cron.runsOutputFailed')}</p>
                           ) : null}
                         </td>
                       </tr>
@@ -340,7 +347,7 @@ function JobCard({
   return (
     <article
       className={`panel cron-card ${dotTone(dot)}${selected ? ' is-selected' : ''}`}
-      aria-label={`Cron job ${name}`}
+      aria-label={t('cron.cardLandmark', { name })}
     >
       <header className="cron-card__head">
         <span
@@ -350,7 +357,7 @@ function JobCard({
         <button
           type="button"
           className="cron-card__name"
-          title="Show run history"
+          title={t('cron.cardRunHistoryTitle')}
           onClick={() => onOpen(id)}
         >
           {name}
@@ -359,12 +366,9 @@ function JobCard({
         {elevated ? (
           <span
             className="cron-pill cron-pill--elevated tone-danger"
-            title={
-              `This job runs shell commands on the host unattended (${elevated}) — ` +
-              'no approval prompt, no sandbox, with your environment variables.'
-            }
+            title={t('cron.cardElevatedTitle', { mode: elevated })}
           >
-            Elevated {elevated}
+            {t('cron.cardElevated', { mode: elevated })}
           </span>
         ) : null}
       </header>
@@ -377,15 +381,15 @@ function JobCard({
       <dl className="cron-card__meta">
         {id ? (
           <div className="cron-card__id">
-            <dt className="t-label">Cron ID</dt>
+            <dt className="t-label">{t('cron.cardCronId')}</dt>
             <dd className="t-data cron-mono" title={id}>
               <span className="cron-card__id-value">{shortCronId(id)}</span>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                title="Copy cron ID"
-                aria-label={`Copy cron ID ${id}`}
+                title={t('cron.cardCopyId')}
+                aria-label={t('cron.cardCopyIdFor', { id })}
                 onClick={() => onCopyId(id)}
               >
                 <CopyIcon />
@@ -394,21 +398,21 @@ function JobCard({
           </div>
         ) : null}
         <div>
-          <dt className="t-label">Target</dt>
+          <dt className="t-label">{t('cron.cardTarget')}</dt>
           <dd className="t-data" title={target}>
             {target}
           </dd>
         </div>
         {createdFrom ? (
           <div>
-            <dt className="t-label">Created from</dt>
+            <dt className="t-label">{t('cron.cardCreatedFrom')}</dt>
             <dd className="t-data cron-mono" title={createdFrom}>
               {createdFrom}
             </dd>
           </div>
         ) : null}
         <div>
-          <dt className="t-label">Last run</dt>
+          <dt className="t-label">{t('cron.cardLastRun')}</dt>
           <dd className="t-data">
             {lastRun}
             {lastStatus ? (
@@ -424,7 +428,7 @@ function JobCard({
           </dd>
         </div>
         <div>
-          <dt className="t-label">Next run</dt>
+          <dt className="t-label">{t('cron.cardNextRun')}</dt>
           <dd className="t-data">
             {enabled ? (
               <>
@@ -432,13 +436,13 @@ function JobCard({
                 {nextAbs ? <span className="cron-card__abs"> · {nextAbs}</span> : null}
               </>
             ) : (
-              <span className="cron-muted">paused</span>
+              <span className="cron-muted">{t('cron.cardPaused')}</span>
             )}
           </dd>
         </div>
         {message ? (
           <div className="cron-card__message">
-            <dt className="t-label">Prompt</dt>
+            <dt className="t-label">{t('cron.cardPrompt')}</dt>
             <dd className="t-data">
               {message.length > 140 ? message.slice(0, 140) + '…' : message}
             </dd>
@@ -452,39 +456,42 @@ function JobCard({
           size="sm"
           variant="outline"
           disabled={busy}
-          aria-label={`Run ${name} now`}
+          aria-label={t('cron.cardRunNow', { name })}
           onClick={() => onRun(id)}
         >
           <SendIcon />
-          <span>Run</span>
+          <span>{t('cron.cardRun')}</span>
         </Button>
         <Button
           type="button"
           size="sm"
           variant="outline"
           disabled={busy}
-          aria-label={`${enabled ? 'Pause' : 'Resume'} ${name}`}
+          aria-label={t('cron.cardToggleAria', {
+            action: enabled ? t('cron.cardPause') : t('cron.cardResume'),
+            name,
+          })}
           onClick={() => onToggle(job)}
         >
           {enabled ? <SquareIcon /> : <SendIcon />}
-          <span>{enabled ? 'Pause' : 'Resume'}</span>
+          <span>{enabled ? t('cron.cardPause') : t('cron.cardResume')}</span>
         </Button>
         <Button
           type="button"
           size="sm"
           variant="outline"
-          aria-label={`Edit ${name}`}
+          aria-label={t('cron.cardEditAria', { name })}
           onClick={() => onEdit(job)}
         >
           <PencilIcon />
-          <span>Edit</span>
+          <span>{t('cron.cardEdit')}</span>
         </Button>
         <Button
           type="button"
           size="sm"
           variant="destructive"
           disabled={busy}
-          aria-label={`Delete ${name}`}
+          aria-label={t('cron.cardDeleteAria', { name })}
           onClick={() => onDelete(job)}
         >
           <Trash2Icon />
@@ -518,17 +525,18 @@ function DeleteConfirm({
       className="cron-modal panel"
     >
       <h2 id={titleId} className="cron-modal__title">
-        Delete schedule
+        {t('cron.deleteTitle')}
       </h2>
       <p className="cron-modal__body">
-        Delete <strong>{jobName}</strong>? This cannot be undone.
+        {t('cron.deleteLead')} <strong>{jobName}</strong>
+        {t('cron.deleteTail')}
       </p>
       <footer className="cron-modal__foot">
         <Button type="button" variant="ghost" disabled={busy} onClick={onCancel}>
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button type="button" variant="destructive" disabled={busy} onClick={onConfirm}>
-          Delete
+          {t('cron.deleteConfirm')}
         </Button>
       </footer>
     </ModalShell>
@@ -722,36 +730,34 @@ export function CronPage() {
     <div className="cron-stage">
       <header className="cron-stage__header">
         <div className="cron-stage__title-block">
-          <span className="t-label">Control · Schedule</span>
-          <h1 className="t-display">Cron</h1>
-          <p className="cron-stage__subtitle">
-            Time-driven tasks — orchestrate reminders, agent turns, and recurring work.
-          </p>
+          <span className="t-label">{t('cron.eyebrow')}</span>
+          <h1 className="t-display">{t('cron.title')}</h1>
+          <p className="cron-stage__subtitle">{t('cron.subtitle')}</p>
         </div>
         <div className="cron-stage__actions">
           <Button
             variant="outline"
-            title="Refresh"
+            title={t('cron.refresh')}
             className="text-xs uppercase tracking-[0.14em]"
             disabled={jobsQuery.isFetching}
             onClick={() => void invalidate()}
           >
             <RefreshCwIcon className={jobsQuery.isFetching ? 'cron-refresh-spin' : undefined} />
-            <span>{jobsQuery.isFetching ? 'Refreshing…' : 'Refresh'}</span>
+            <span>{jobsQuery.isFetching ? t('cron.refreshBusy') : t('cron.refresh')}</span>
           </Button>
           <Button
             className="text-xs uppercase tracking-[0.14em]"
             onClick={() => setPanel({ kind: 'create', template: null })}
           >
             <PlusIcon />
-            <span>New job</span>
+            <span>{t('cron.newJob')}</span>
           </Button>
         </div>
       </header>
 
       <section
         className={`cron-command${jobsQuery.isFetching ? ' is-loading' : ''}`}
-        aria-label="Schedule operations"
+        aria-label={t('cron.operationsLandmark')}
         aria-busy={jobsQuery.isFetching}
       >
         <div className="cron-command__toolbar">
@@ -760,16 +766,16 @@ export function CronPage() {
               <CalendarClockIcon />
             </span>
             <div>
-              <span className="t-label">Automation clock</span>
-              <strong>Schedule posture</strong>
+              <span className="t-label">{t('cron.clockEyebrow')}</span>
+              <strong>{t('cron.clockTitle')}</strong>
             </div>
           </div>
           <span className="cron-command__meta t-data">
             <span className={enabledCount ? 'tone-ok' : 'tone-dim'} aria-hidden="true" />
-            {enabledCount ? `${enabledCount} active` : 'Scheduler idle'}
+            {enabledCount ? t('cron.clockActive', { count: enabledCount }) : t('cron.clockIdle')}
           </span>
         </div>
-        <div className="cron-stats" aria-label="Cron summary">
+        <div className="cron-stats" aria-label={t('cron.statsLandmark')}>
           <StatTile
             label="Active schedules"
             hero
@@ -789,7 +795,9 @@ export function CronPage() {
       <section className="cron-list">
         <div className="cron-list__head">
           <div className="cron-list__heading">
-            <h2 className="cron-list__title">{search ? 'Matching schedules' : 'All schedules'}</h2>
+            <h2 className="cron-list__title">
+              {search ? t('cron.listMatching') : t('cron.listAll')}
+            </h2>
             <span className="cron-list__count t-data">
               {visible.length}
               {search ? ` of ${total}` : ''}
@@ -801,27 +809,27 @@ export function CronPage() {
               <input
                 className="cron-search t-data"
                 type="search"
-                placeholder="Search jobs…"
+                placeholder={t('cron.searchPlaceholder')}
                 autoComplete="off"
-                aria-label="Search jobs"
+                aria-label={t('cron.searchLabel')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
             <label className="cron-sort">
-              <span className="t-label">Sort</span>
+              <span className="t-label">{t('cron.sortLabel')}</span>
               <select
                 className="cron-sort__select t-data"
-                aria-label="Sort jobs"
+                aria-label={t('cron.sortAria')}
                 value={sortCol}
                 onChange={(e) => setSortCol(e.target.value as SortCol)}
               >
-                <option value="next_run">Next run</option>
-                <option value="name">Name</option>
-                <option value="last_run">Last run</option>
-                <option value="payloadKind">Kind</option>
-                <option value="sessionTarget">Target</option>
-                <option value="expression">Schedule</option>
+                <option value="next_run">{t('cron.sortNextRun')}</option>
+                <option value="name">{t('cron.sortName')}</option>
+                <option value="last_run">{t('cron.sortLastRun')}</option>
+                <option value="payloadKind">{t('cron.sortKind')}</option>
+                <option value="sessionTarget">{t('cron.sortTarget')}</option>
+                <option value="expression">{t('cron.sortSchedule')}</option>
               </select>
             </label>
             <Button
@@ -838,20 +846,17 @@ export function CronPage() {
 
         {jobs.length === 0 ? (
           <div className="cron-empty">
-            <div className="cron-empty__title">No schedules yet.</div>
-            <p className="cron-empty__msg">
-              Create your first cron job to wake an agent, fire a reminder, or kick off recurring
-              work — all on time, all on your terms.
-            </p>
+            <div className="cron-empty__title">{t('cron.emptyTitle')}</div>
+            <p className="cron-empty__msg">{t('cron.emptyMsg')}</p>
             <div className="cron-empty__actions">
               <Button type="button" onClick={() => setPanel({ kind: 'create', template: null })}>
                 <PlusIcon />
-                <span>Create your first schedule</span>
+                <span>{t('cron.emptyAction')}</span>
               </Button>
             </div>
             <div className="cron-empty__hints">
-              <span className="cron-empty__hints-label t-label">Try a preset</span>
-              {EMPTY_TEMPLATES.map((tpl) => (
+              <span className="cron-empty__hints-label t-label">{t('cron.presetsLabel')}</span>
+              {emptyTemplates().map((tpl) => (
                 <button
                   key={tpl.name}
                   type="button"
@@ -866,10 +871,8 @@ export function CronPage() {
           </div>
         ) : visible.length === 0 ? (
           <div className="cron-empty">
-            <div className="cron-empty__title">No matches</div>
-            <p className="cron-empty__msg">
-              No schedules match your search. Try a different query, or clear it to see everything.
-            </p>
+            <div className="cron-empty__title">{t('cron.noMatchTitle')}</div>
+            <p className="cron-empty__msg">{t('cron.noMatchMsg')}</p>
           </div>
         ) : (
           <div className="cron-cards">

@@ -7,6 +7,9 @@
 // formatters).
 
 /** A raw cron job row from cron.list (all fields optional; snake or camel). */
+import { t } from '@/i18n'
+import '@/i18n/en/cron'
+
 export interface RawJob {
   id?: string
   name?: string
@@ -114,10 +117,10 @@ export interface RawRun {
 /** cron.js:600-605 — the human kind label for a job (reminder / system / agent). */
 export function jobKindLabel(job: RawJob): string {
   const kind = job.payloadKind || job.payload_kind
-  if (kind === 'reminder') return 'Reminder'
-  if (kind === 'system_event') return 'System event'
-  if (kind === 'script') return 'Script'
-  return 'Agent task'
+  if (kind === 'reminder') return t('cron.kindReminder')
+  if (kind === 'system_event') return t('cron.kindSystemEvent')
+  if (kind === 'script') return t('cron.kindScript')
+  return t('cron.kindAgentTask')
 }
 
 /**
@@ -206,12 +209,12 @@ export function isOkStatus(status: string | undefined | null): boolean {
  * the past, else a human countdown ("in 5m 0s").
  */
 export function nextRunText(job: RawJob, now: number = Date.now()): string {
-  if (!job || !job.enabled) return '—'
-  if (job.status === 'running') return 'running'
-  if (!job.next_run) return '—'
+  if (!job || !job.enabled) return t('common.dash')
+  if (job.status === 'running') return t('cron.nextRunning')
+  if (!job.next_run) return t('common.dash')
   const ts = new Date(job.next_run as string | number)
-  if (Number.isNaN(ts.getTime())) return '—'
-  if (ts.getTime() <= now) return 'awaiting update'
+  if (Number.isNaN(ts.getTime())) return t('common.dash')
+  if (ts.getTime() <= now) return t('cron.nextAwaiting')
   return humanCountdown(ts, now)
 }
 
@@ -345,29 +348,29 @@ export function runRow(run: RawRun, relTime: (ts: string | number) => string): R
 /** cron.js:1463-1472 — coarse duration: s / m+s / h+m / d+h. */
 export function formatDuration(ms: number): string {
   const s = Math.floor(ms / 1000)
-  if (s < 60) return s + 's'
+  if (s < 60) return t('cron.durationSeconds', { seconds: s })
   const m = Math.floor(s / 60)
-  if (m < 60) return m + 'm ' + (s % 60) + 's'
+  if (m < 60) return t('cron.durationMinutes', { minutes: m, seconds: s % 60 })
   const h = Math.floor(m / 60)
-  if (h < 24) return h + 'h ' + (m % 60) + 'm'
+  if (h < 24) return t('cron.durationHours', { hours: h, minutes: m % 60 })
   const d = Math.floor(h / 24)
-  return d + 'd ' + (h % 24) + 'h'
+  return t('cron.durationDays', { days: d, hours: h % 24 })
 }
 
 /** cron.js:1446-1454 — signed countdown: "now" / "in <dur>" / "<dur> ago". */
 export function humanCountdown(date: Date, now: number = Date.now()): string {
   const diff = date.getTime() - now
-  if (diff < 0) return formatDuration(-diff) + ' ago'
-  if (diff < 1000) return 'now'
-  return 'in ' + formatDuration(diff)
+  if (diff < 0) return t('cron.countdownAgo', { duration: formatDuration(-diff) })
+  if (diff < 1000) return t('cron.countdownNow')
+  return t('cron.countdownIn', { duration: formatDuration(diff) })
 }
 
 /** cron.js:1456-1461 — past-facing: "just now" / "<dur> ago" / "in <dur>". */
 export function humanCountdownPast(date: Date, now: number = Date.now()): string {
   const diff = now - date.getTime()
-  if (diff < 0) return 'in ' + formatDuration(-diff)
-  if (diff < 1000) return 'just now'
-  return formatDuration(diff) + ' ago'
+  if (diff < 0) return t('cron.countdownIn', { duration: formatDuration(-diff) })
+  if (diff < 1000) return t('cron.countdownJustNow')
+  return t('cron.countdownAgo', { duration: formatDuration(diff) })
 }
 
 /** cron.js:1474-1483 — friendly clock: today/tomorrow HH:MM else weekday date. */
@@ -376,10 +379,12 @@ export function humanTime(date: Date, now: number = Date.now()): string {
   today.setHours(0, 0, 0, 0)
   const tomorrow = new Date(today.getTime() + 86400000)
   const dayAfter = new Date(today.getTime() + 2 * 86400000)
-  const t = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  if (date >= today && date < tomorrow) return `today ${t}`
-  if (date >= tomorrow && date < dayAfter) return `tomorrow ${t}`
-  return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) + ' ' + t
+  const clock = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  if (date >= today && date < tomorrow) return t('cron.timeToday', { time: clock })
+  if (date >= tomorrow && date < dayAfter) return t('cron.timeTomorrow', { time: clock })
+  return (
+    date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) + ' ' + clock
+  )
 }
 
 // ── cron expression parser (cron.js:1255-1343) ──────────────────────────────
@@ -551,11 +556,14 @@ export function nextRuns(parsed: ParsedCron | null, count: number, fromTs?: numb
 function humanizeFieldList(field: CronField, allLabel: string, names?: string[]): string {
   if (field.all) return allLabel
   const arr = [...field.set!].sort((a, b) => a - b)
-  if (arr.length === 0) return '—'
+  if (arr.length === 0) return t('common.dash')
   const display = arr.map((v) => (names ? names[v]! : String(v).padStart(2, '0')))
   if (display.length === 1) return display[0]!
   if (display.length <= 4) return display.join(', ')
-  return display.slice(0, 3).join(', ') + ` & ${display.length - 3} more`
+  return t('cron.explainMore', {
+    shown: display.slice(0, 3).join(', '),
+    count: display.length - 3,
+  })
 }
 
 /**
@@ -567,43 +575,54 @@ function humanizeFieldList(field: CronField, allLabel: string, names?: string[])
 export function explainCron(expr: string): string {
   const p = parseCron(expr)
   if (!p) return ''
-  const dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const dowNames = [
+    t('cron.dowSun'),
+    t('cron.dowMon'),
+    t('cron.dowTue'),
+    t('cron.dowWed'),
+    t('cron.dowThu'),
+    t('cron.dowFri'),
+    t('cron.dowSat'),
+  ]
   const monNames = [
     '',
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
+    t('cron.monJan'),
+    t('cron.monFeb'),
+    t('cron.monMar'),
+    t('cron.monApr'),
+    t('cron.monMay'),
+    t('cron.monJun'),
+    t('cron.monJul'),
+    t('cron.monAug'),
+    t('cron.monSep'),
+    t('cron.monOct'),
+    t('cron.monNov'),
+    t('cron.monDec'),
   ]
 
-  if (p.minute.all && p.hour.all) return 'Every minute'
+  if (p.minute.all && p.hour.all) return t('cron.explainEveryMinute')
   if (!p.minute.all && p.minute.set!.size === 1 && p.hour.all) {
     const m = [...p.minute.set!][0]!
-    return `Every hour at :${String(m).padStart(2, '0')}`
+    return t('cron.explainEveryHourAt', { minute: String(m).padStart(2, '0') })
   }
   if (!p.minute.all && p.minute.set!.size === 1 && !p.hour.all && p.hour.set!.size === 1) {
     const m = [...p.minute.set!][0]!
     const h = [...p.hour.set!][0]!
     const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
-    if (p.dom.all && p.dow.all && p.month.all) return `Every day at ${time}`
+    if (p.dom.all && p.dow.all && p.month.all) return t('cron.explainEveryDayAt', { time })
     if (!p.dow.all && p.dom.all && p.month.all) {
       const days = [...p.dow.set!].sort((a, b) => a - b).map((v) => dowNames[v]!)
-      if (days.length === 5 && days[0] === 'Mon' && days[4] === 'Fri') return `Weekdays at ${time}`
-      if (days.length === 2 && days.includes('Sat') && days.includes('Sun'))
-        return `Weekends at ${time}`
-      return `${days.join(', ')} at ${time}`
+      // Compared against the resolved names so the shape check still holds in
+      // any locale — dowNames is the same array these were mapped from.
+      if (days.length === 5 && days[0] === dowNames[1] && days[4] === dowNames[5])
+        return t('cron.explainWeekdaysAt', { time })
+      if (days.length === 2 && days.includes(dowNames[6]!) && days.includes(dowNames[0]!))
+        return t('cron.explainWeekendsAt', { time })
+      return t('cron.explainDaysAt', { days: days.join(', '), time })
     }
     if (!p.dom.all && p.dow.all && p.month.all) {
       const days = [...p.dom.set!].sort((a, b) => a - b).join(', ')
-      return `Day ${days} of every month at ${time}`
+      return t('cron.explainDayOfMonthAt', { days, time })
     }
     if (!p.dom.all && p.dow.all && !p.month.all) {
       const months = [...p.month.set!]
@@ -611,20 +630,20 @@ export function explainCron(expr: string): string {
         .map((v) => monNames[v]!)
         .join(', ')
       const days = [...p.dom.set!].sort((a, b) => a - b).join(', ')
-      return `${months} ${days} at ${time}`
+      return t('cron.explainMonthsDaysAt', { months, days, time })
     }
   }
   if (!p.minute.all && p.minute.set!.size > 1 && p.hour.all) {
     const arr = [...p.minute.set!].sort((a, b) => a - b)
     const diffs = arr.slice(1).map((v, i) => v - arr[i]!)
     if (diffs.length && diffs.every((d) => d === diffs[0]) && arr[0]! % diffs[0]! === 0) {
-      return `Every ${diffs[0]} minutes`
+      return t('cron.explainEveryNMinutes', { count: diffs[0]! })
     }
   }
 
-  const minPart = humanizeFieldList(p.minute, 'every minute')
-  const hourPart = humanizeFieldList(p.hour, 'every hour')
-  return `at minute ${minPart}, hour ${hourPart}`
+  const minPart = humanizeFieldList(p.minute, t('cron.explainAllMinutes'))
+  const hourPart = humanizeFieldList(p.hour, t('cron.explainAllHours'))
+  return t('cron.explainFallback', { minute: minPart, hour: hourPart })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -909,12 +928,12 @@ export function joinScriptArgs(value: unknown): string {
  */
 export function validateScriptPath(raw: string): string {
   const script = (raw || '').trim()
-  if (!script) return 'Script path is required'
+  if (!script) return t('cron.scriptRequired')
   if (/^[/~\\]/.test(script) || /^[A-Za-z]:/.test(script)) {
-    return 'Script path must be relative to ~/.agentos/scripts/ — use just the file name'
+    return t('cron.scriptMustBeRelative')
   }
   if (script.split(/[/\\]/).includes('..')) {
-    return 'Script path must stay inside ~/.agentos/scripts/'
+    return t('cron.scriptMustStayInside')
   }
   return ''
 }
@@ -932,13 +951,18 @@ export function resolveTarget(
   activeSessionKey: string,
 ): TargetResolution {
   if (payloadKind === 'system_event') {
-    return { target: 'main', locked: true, messageLabel: 'Event text', showTargetSessionRow: false }
+    return {
+      target: 'main',
+      locked: true,
+      messageLabel: t('cron.messageLabelEvent'),
+      showTargetSessionRow: false,
+    }
   }
   if (payloadKind === 'reminder') {
     return {
       target: 'isolated',
       locked: true,
-      messageLabel: 'Reminder text',
+      messageLabel: t('cron.messageLabelReminder'),
       showTargetSessionRow: false,
     }
   }
@@ -947,7 +971,7 @@ export function resolveTarget(
     return {
       target: 'isolated',
       locked: true,
-      messageLabel: 'Note (not sent)',
+      messageLabel: t('cron.messageLabelNote'),
       showTargetSessionRow: false,
     }
   }
@@ -957,7 +981,7 @@ export function resolveTarget(
   return {
     target,
     locked: false,
-    messageLabel: 'Task prompt',
+    messageLabel: t('cron.messageLabelTask'),
     showTargetSessionRow: target === 'current' || target === 'session',
   }
 }
@@ -977,7 +1001,7 @@ export function buildFailureDest(form: CronForm): DeliveryBuild {
   if (!mode) return { ok: true, delivery: null }
   if (mode === 'webhook') {
     const url = form.fdWebhookUrl.trim()
-    if (!url) return { ok: false, error: 'Failure-destination webhook URL is required' }
+    if (!url) return { ok: false, error: t('cron.errFailureWebhookUrl') }
     const out: Record<string, unknown> = { mode: 'webhook', webhookUrl: url }
     const tok = form.fdWebhookToken.trim()
     if (tok) out.webhookToken = tok
@@ -987,8 +1011,7 @@ export function buildFailureDest(form: CronForm): DeliveryBuild {
   const ch = form.fdChannel.trim()
   const to = form.fdTo.trim()
   const acct = form.fdAccount.trim()
-  if (!ch && !to)
-    return { ok: false, error: 'Failure destination channel needs a channel or recipient' }
+  if (!ch && !to) return { ok: false, error: t('cron.errFailureChannel') }
   const out: Record<string, unknown> = { mode: 'channel' }
   if (ch) out.channelName = ch.toLowerCase()
   if (to) out.to = to
@@ -1018,7 +1041,7 @@ export function buildDelivery(form: CronForm): DeliveryBuild {
   }
   if (mode === 'webhook') {
     const url = form.deliveryWebhookUrl.trim()
-    if (!url) return { ok: false, error: 'Webhook URL is required for webhook delivery' }
+    if (!url) return { ok: false, error: t('cron.errWebhookUrl') }
     const out: Record<string, unknown> = { mode: 'webhook', webhookUrl: url }
     const tok = form.deliveryWebhookToken.trim()
     if (tok) out.webhookToken = tok
@@ -1064,7 +1087,7 @@ export function buildSavePayload(
   activeSessionKey: string,
 ): SaveBuild {
   const name = form.name.trim()
-  if (!name) return { ok: false, error: 'Name is required' }
+  if (!name) return { ok: false, error: t('cron.errName') }
 
   const message = form.message.trim()
   const enabled = form.enabled
@@ -1106,7 +1129,7 @@ export function buildSavePayload(
   } else if (form.scheduleKind === 'every') {
     const everySeconds = Number(form.every)
     if (!Number.isInteger(everySeconds) || everySeconds < 1) {
-      return { ok: false, error: 'Interval must be an integer number of seconds' }
+      return { ok: false, error: t('cron.errInterval') }
     }
     payload.schedule = { kind: 'every', every_seconds: everySeconds }
   } else if (form.scheduleKind === 'at') {
@@ -1128,7 +1151,7 @@ export function buildSavePayload(
   if (form.elevated && payloadKind !== 'agent_turn') {
     return {
       ok: false,
-      error: 'Elevated tools require an agent turn — reminder and system-event jobs never run one',
+      error: t('cron.errElevatedNeedsTurn'),
     }
   }
   // Always sent, so the toggle is authoritative on edit: the backend merges this
@@ -1141,7 +1164,7 @@ export function buildSavePayload(
 
   if (sessionTarget === 'current') {
     const boundSessionKey = targetSessionKey || activeSessionKey || jobSessionKey(editingJob)
-    if (!boundSessionKey) return { ok: false, error: 'Current session key is required' }
+    if (!boundSessionKey) return { ok: false, error: t('cron.errCurrentSessionKey') }
     payload.sessionKey = boundSessionKey
     payload.targetSessionKey = boundSessionKey
     payload.originSessionKey = boundSessionKey
@@ -1150,7 +1173,7 @@ export function buildSavePayload(
     payload.originSessionKey = activeSessionKey
   }
   if (sessionTarget === 'session') {
-    if (!targetSessionKey) return { ok: false, error: 'Named session key is required' }
+    if (!targetSessionKey) return { ok: false, error: t('cron.errNamedSessionKey') }
     payload.targetSessionKey = targetSessionKey
   }
 
