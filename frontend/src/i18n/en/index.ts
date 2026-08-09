@@ -3,6 +3,7 @@ import { approvals } from './approvals'
 import { channels } from './channels'
 import { common } from './common'
 import { config } from './config'
+import { cron } from './cron'
 import { env } from './env'
 import { health } from './health'
 import { logs } from './logs'
@@ -35,6 +36,7 @@ export const en = {
   channels,
   common,
   config,
+  cron,
   env,
   health,
   logs,

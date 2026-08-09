@@ -2,6 +2,8 @@ import { useId, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
+import '@/i18n/en/cron'
 import {
   buildSavePayload,
   explainCron,
@@ -96,14 +98,12 @@ function CronExplain({ expr }: { expr: string }) {
   }, [summary])
 
   if (!trimmed) {
-    return (
-      <div className="cron-explain__human t-data">Enter a 5-field cron expression to preview</div>
-    )
+    return <div className="cron-explain__human t-data">{t('cron.explainPrompt')}</div>
   }
   if (summary?.invalid) {
     return (
       <div className="cron-explain__human cron-explain--invalid t-data">
-        Could not parse expression — expected 5 fields (m h dom mon dow).
+        {t('cron.explainInvalid')}
       </div>
     )
   }
@@ -155,7 +155,7 @@ function RecipientField({
 
   return (
     <label className="cron-field">
-      <span className="t-label">Recipient</span>
+      <span className="t-label">{t('cron.fieldRecipient')}</span>
       {asPicker ? (
         <select
           className="cron-input"
@@ -169,13 +169,13 @@ function RecipientField({
             onChange(e.target.value)
           }}
         >
-          <option value="">Select a chat…</option>
+          <option value="">{t('cron.recipientSelect')}</option>
           {targets.map((t) => (
             <option key={t.id} value={t.id}>
               {t.label}
             </option>
           ))}
-          <option value={MANUAL_RECIPIENT}>Enter manually…</option>
+          <option value={MANUAL_RECIPIENT}>{t('cron.recipientManual')}</option>
         </select>
       ) : (
         <input
@@ -261,28 +261,30 @@ export function CronPanel({
             intercept submit before our validators run. */}
       <form className="cron-panel__form" noValidate onSubmit={submit}>
         <header className="cron-panel__head">
-          <span className="t-label">{isEdit ? 'Edit schedule' : 'New schedule'}</span>
+          <span className="t-label">
+            {isEdit ? t('cron.panelEyebrowEdit') : t('cron.panelEyebrowNew')}
+          </span>
           <h2 id={titleId} className="cron-panel__title">
-            {isEdit ? 'Edit Schedule' : 'Create a job'}
+            {isEdit ? t('cron.panelTitleEdit') : t('cron.panelTitleNew')}
           </h2>
         </header>
 
         <div className="cron-panel__body">
           <label className="cron-field">
-            <span className="t-label">Name</span>
+            <span className="t-label">{t('cron.fieldName')}</span>
             <input
               id="cp-name"
               className="cron-input"
               type="text"
               autoComplete="off"
-              placeholder="my-job"
+              placeholder={t('cron.fieldNamePlaceholder')}
               value={form.name}
               onChange={(e) => set('name', e.target.value)}
             />
           </label>
 
           <label className="cron-field">
-            <span className="t-label">Schedule type</span>
+            <span className="t-label">{t('cron.fieldScheduleType')}</span>
             <select
               className="cron-input"
               value={form.scheduleKind}
@@ -299,7 +301,7 @@ export function CronPanel({
           {form.scheduleKind === 'cron' ? (
             <div className="cron-field">
               <label className="t-label" htmlFor="cp-cron">
-                Cron expression
+                {t('cron.fieldCronExpression')}
               </label>
               <input
                 id="cp-cron"
@@ -313,7 +315,7 @@ export function CronPanel({
               />
               <CronExplain expr={form.cron} />
               <div className="cron-presets">
-                <span className="cron-presets__label t-label">Presets</span>
+                <span className="cron-presets__label t-label">{t('cron.fieldPresets')}</span>
                 {PRESETS.map((p) => (
                   <button
                     key={p.cron}
@@ -330,7 +332,7 @@ export function CronPanel({
 
           {form.scheduleKind === 'every' ? (
             <label className="cron-field">
-              <span className="t-label">Interval (seconds)</span>
+              <span className="t-label">{t('cron.fieldInterval')}</span>
               <input
                 className="cron-input"
                 type="number"
@@ -344,7 +346,7 @@ export function CronPanel({
 
           {form.scheduleKind === 'at' ? (
             <label className="cron-field">
-              <span className="t-label">ISO time</span>
+              <span className="t-label">{t('cron.fieldIsoTime')}</span>
               <input
                 className="cron-input cron-input--mono"
                 type="text"
@@ -356,23 +358,21 @@ export function CronPanel({
           ) : null}
 
           <label className="cron-field">
-            <span className="t-label">Timezone (IANA)</span>
+            <span className="t-label">{t('cron.fieldTimezone')}</span>
             <input
               className="cron-input cron-input--mono"
               type="text"
               autoComplete="off"
               spellCheck={false}
-              placeholder="America/Los_Angeles"
+              placeholder={t('cron.fieldTimezonePlaceholder')}
               value={form.tz}
               onChange={(e) => set('tz', e.target.value)}
             />
-            <span className="cron-field__hint">
-              Leave empty to evaluate the cron expression in UTC.
-            </span>
+            <span className="cron-field__hint">{t('cron.fieldTimezoneHint')}</span>
           </label>
 
           <label className="cron-field">
-            <span className="t-label">Job mode</span>
+            <span className="t-label">{t('cron.fieldJobMode')}</span>
             <select
               className="cron-input"
               value={form.payloadKind}
@@ -387,18 +387,18 @@ export function CronPanel({
           </label>
 
           <label className="cron-field">
-            <span className="t-label">Agent ID</span>
+            <span className="t-label">{t('cron.fieldAgentId')}</span>
             <input
               className="cron-input"
               type="text"
-              placeholder="main"
+              placeholder={t('cron.fieldAgentIdPlaceholder')}
               value={form.agentId}
               onChange={(e) => set('agentId', e.target.value)}
             />
           </label>
 
           <label className="cron-field">
-            <span className="t-label">Session target</span>
+            <span className="t-label">{t('cron.fieldSessionTarget')}</span>
             <select
               className="cron-input"
               value={targetRes.target}
@@ -416,12 +416,12 @@ export function CronPanel({
           {targetRes.showTargetSessionRow ? (
             <label className="cron-field">
               <span className="t-label">
-                {targetRes.target === 'current' ? 'Current session key' : 'Named session key'}
+                {targetRes.target === 'current' ? t('cron.targetCurrent') : t('cron.targetNamed')}
               </span>
               <input
                 className="cron-input"
                 type="text"
-                placeholder="agent:main:webchat:abc123"
+                placeholder={t('cron.fieldSessionPlaceholder')}
                 value={form.targetSessionKey}
                 onChange={(e) => set('targetSessionKey', e.target.value)}
               />
@@ -434,7 +434,7 @@ export function CronPanel({
               <textarea
                 className="cron-input cron-input--textarea"
                 rows={4}
-                placeholder="Run daily report…"
+                placeholder={t('cron.fieldMessagePlaceholder')}
                 value={form.message}
                 onChange={(e) => set('message', e.target.value)}
               />
@@ -444,7 +444,9 @@ export function CronPanel({
           {canRunScript ? (
             <>
               <label className="cron-field">
-                <span className="t-label">{isScriptJob ? 'Script' : 'Pre-run script'}</span>
+                <span className="t-label">
+                  {isScriptJob ? t('cron.fieldScript') : t('cron.fieldPreRunScript')}
+                </span>
                 <input
                   className="cron-input"
                   type="text"
@@ -455,39 +457,33 @@ export function CronPanel({
                   onChange={(e) => set('script', e.target.value)}
                 />
                 <span className="cron-field__hint">
-                  Relative to ~/.agentos/scripts/. .sh and .bash run under bash, anything else under
-                  python.{' '}
-                  {isScriptJob
-                    ? 'Its stdout is delivered as-is; no output means nothing is sent.'
-                    : 'Its stdout becomes context for the turn; no output means the turn is skipped.'}
+                  {t('cron.scriptHintLead')}{' '}
+                  {isScriptJob ? t('cron.scriptHintDelivered') : t('cron.scriptHintContext')}
                 </span>
               </label>
 
               <label className="cron-field">
-                <span className="t-label">Script arguments</span>
+                <span className="t-label">{t('cron.fieldScriptArgs')}</span>
                 <input
                   className="cron-input"
                   type="text"
                   autoComplete="off"
                   spellCheck={false}
-                  placeholder="--url https://example.com/feed.xml"
+                  placeholder={t('cron.fieldScriptArgsPlaceholder')}
                   value={form.scriptArgs}
                   onChange={(e) => set('scriptArgs', e.target.value)}
                 />
-                <span className="cron-field__hint">
-                  Split the way a shell would, then passed straight to the script — never run
-                  through a shell. Quote a value that contains spaces.
-                </span>
+                <span className="cron-field__hint">{t('cron.scriptArgsHint')}</span>
               </label>
 
               <label className="cron-field">
-                <span className="t-label">Working directory</span>
+                <span className="t-label">{t('cron.fieldWorkingDir')}</span>
                 <input
                   className="cron-input"
                   type="text"
                   autoComplete="off"
                   spellCheck={false}
-                  placeholder="(the script's own directory)"
+                  placeholder={t('cron.fieldWorkingDirPlaceholder')}
                   value={form.workdir}
                   onChange={(e) => set('workdir', e.target.value)}
                 />
@@ -497,11 +493,7 @@ export function CronPanel({
 
           {isScriptJob || (canRunScript && form.script.trim()) ? (
             <div className="cron-field cron-elevated tone-danger">
-              <p className="cron-elevated__warning">
-                This script runs on this host as you, on schedule, with nobody watching and no
-                approval prompt. Nothing reviews what it does before it runs — keep the scripts
-                directory as trusted as your own shell profile.
-              </p>
+              <p className="cron-elevated__warning">{t('cron.scriptWarning')}</p>
             </div>
           ) : null}
 
@@ -513,23 +505,17 @@ export function CronPanel({
                   checked={form.elevated}
                   onChange={(e) => set('elevated', e.target.checked)}
                 />
-                <span className="t-label">Let this job run shell-based skills</span>
+                <span className="t-label">{t('cron.fieldElevated')}</span>
               </label>
-              <p className="cron-elevated__warning">
-                Every time this job fires, with nobody watching, the agent&apos;s shell commands run
-                on this host as you — no approval prompt, no sandbox, with your environment
-                variables and API keys. Anything the job reads from the network is one reasoning
-                step away from that shell. Only turn this on for a job scoped to one skill and one
-                narrow task.
-              </p>
+              <p className="cron-elevated__warning">{t('cron.elevatedWarning')}</p>
             </div>
           ) : null}
 
           <details className="cron-advanced">
-            <summary className="cron-advanced__summary">Advanced delivery &amp; wake</summary>
+            <summary className="cron-advanced__summary">{t('cron.advancedDelivery')}</summary>
             <div className="cron-advanced__body">
               <label className="cron-field">
-                <span className="t-label">Wake mode</span>
+                <span className="t-label">{t('cron.fieldWakeMode')}</span>
                 <select
                   className="cron-input"
                   value={form.wakeMode}
@@ -544,7 +530,7 @@ export function CronPanel({
               </label>
 
               <label className="cron-field">
-                <span className="t-label">Delivery mode</span>
+                <span className="t-label">{t('cron.fieldDeliveryMode')}</span>
                 <select
                   className="cron-input"
                   value={form.deliveryMode}
@@ -561,11 +547,11 @@ export function CronPanel({
               {isAnnounce ? (
                 <>
                   <label className="cron-field">
-                    <span className="t-label">Channel</span>
+                    <span className="t-label">{t('cron.fieldChannel')}</span>
                     <input
                       className="cron-input"
                       type="text"
-                      placeholder="slack"
+                      placeholder={t('cron.fieldChannelPlaceholder')}
                       value={form.deliveryChannel}
                       onChange={(e) => set('deliveryChannel', e.target.value)}
                     />
@@ -573,11 +559,11 @@ export function CronPanel({
                   <RecipientField
                     value={form.deliveryTo}
                     targets={targetsForChannel(deliveryTargets, form.deliveryChannel)}
-                    placeholder="C-team-alerts"
+                    placeholder={t('cron.fieldChatPlaceholder')}
                     onChange={(next) => set('deliveryTo', next)}
                   />
                   <label className="cron-field">
-                    <span className="t-label">Account id</span>
+                    <span className="t-label">{t('cron.fieldAccountId')}</span>
                     <input
                       className="cron-input"
                       type="text"
@@ -591,21 +577,21 @@ export function CronPanel({
               {isWebhook ? (
                 <>
                   <label className="cron-field">
-                    <span className="t-label">Webhook URL</span>
+                    <span className="t-label">{t('cron.fieldWebhookUrl')}</span>
                     <input
                       className="cron-input cron-input--mono"
                       type="url"
-                      placeholder="https://hooks.example/cron"
+                      placeholder={t('cron.fieldWebhookUrlPlaceholder')}
                       value={form.deliveryWebhookUrl}
                       onChange={(e) => set('deliveryWebhookUrl', e.target.value)}
                     />
                   </label>
                   <label className="cron-field">
-                    <span className="t-label">Webhook bearer token</span>
+                    <span className="t-label">{t('cron.fieldWebhookToken')}</span>
                     <input
                       className="cron-input"
                       type="password"
-                      placeholder="optional bearer token"
+                      placeholder={t('cron.fieldWebhookTokenPlaceholder')}
                       value={form.deliveryWebhookToken}
                       onChange={(e) => set('deliveryWebhookToken', e.target.value)}
                     />
@@ -620,15 +606,15 @@ export function CronPanel({
                     checked={form.deliveryBestEffort}
                     onChange={(e) => set('deliveryBestEffort', e.target.checked)}
                   />
-                  <span>Best-effort delivery (do not fail the job when delivery fails)</span>
+                  <span>{t('cron.fieldBestEffort')}</span>
                 </label>
               ) : null}
 
               <details className="cron-advanced cron-advanced--nested">
-                <summary className="cron-advanced__summary">Failure destination</summary>
+                <summary className="cron-advanced__summary">{t('cron.failureDestination')}</summary>
                 <div className="cron-advanced__body">
                   <label className="cron-field">
-                    <span className="t-label">Route failures to</span>
+                    <span className="t-label">{t('cron.fieldRouteFailures')}</span>
                     <select
                       className="cron-input"
                       value={form.fdMode}
@@ -645,11 +631,11 @@ export function CronPanel({
                   {isFdChannel ? (
                     <>
                       <label className="cron-field">
-                        <span className="t-label">Channel</span>
+                        <span className="t-label">{t('cron.fieldChannel')}</span>
                         <input
                           className="cron-input"
                           type="text"
-                          placeholder="slack"
+                          placeholder={t('cron.fieldChannelPlaceholder')}
                           value={form.fdChannel}
                           onChange={(e) => set('fdChannel', e.target.value)}
                         />
@@ -657,11 +643,11 @@ export function CronPanel({
                       <RecipientField
                         value={form.fdTo}
                         targets={targetsForChannel(deliveryTargets, form.fdChannel)}
-                        placeholder="C-ops-alerts"
+                        placeholder={t('cron.fieldFailureChatPlaceholder')}
                         onChange={(next) => set('fdTo', next)}
                       />
                       <label className="cron-field">
-                        <span className="t-label">Account id</span>
+                        <span className="t-label">{t('cron.fieldAccountId')}</span>
                         <input
                           className="cron-input"
                           type="text"
@@ -675,21 +661,21 @@ export function CronPanel({
                   {isFdWebhook ? (
                     <>
                       <label className="cron-field">
-                        <span className="t-label">Webhook URL</span>
+                        <span className="t-label">{t('cron.fieldWebhookUrl')}</span>
                         <input
                           className="cron-input cron-input--mono"
                           type="url"
-                          placeholder="https://hooks.example/alert"
+                          placeholder={t('cron.fieldFailureWebhookPlaceholder')}
                           value={form.fdWebhookUrl}
                           onChange={(e) => set('fdWebhookUrl', e.target.value)}
                         />
                       </label>
                       <label className="cron-field">
-                        <span className="t-label">Webhook bearer token</span>
+                        <span className="t-label">{t('cron.fieldWebhookToken')}</span>
                         <input
                           className="cron-input"
                           type="password"
-                          placeholder="optional bearer token"
+                          placeholder={t('cron.fieldWebhookTokenPlaceholder')}
                           value={form.fdWebhookToken}
                           onChange={(e) => set('fdWebhookToken', e.target.value)}
                         />
@@ -707,7 +693,7 @@ export function CronPanel({
               checked={form.enabled}
               onChange={(e) => set('enabled', e.target.checked)}
             />
-            <span>Enabled</span>
+            <span>{t('cron.fieldEnabled')}</span>
           </label>
 
           {error ? (
@@ -719,10 +705,10 @@ export function CronPanel({
 
         <footer className="cron-panel__foot">
           <Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="submit" disabled={saving}>
-            Save schedule
+            {t('cron.saveSchedule')}
           </Button>
         </footer>
       </form>

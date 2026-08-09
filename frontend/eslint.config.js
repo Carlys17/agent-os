@@ -13,6 +13,7 @@ const I18N_MIGRATED = [
   'src/views/approvals/**/*.tsx',
   'src/views/channels/**/*.tsx',
   'src/views/config/**/*.tsx',
+  'src/views/cron/**/*.tsx',
   'src/views/env/**/*.tsx',
   'src/views/health/**/*.tsx',
   'src/views/logs/**/*.tsx',
