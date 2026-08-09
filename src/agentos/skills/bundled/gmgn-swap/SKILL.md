@@ -11,7 +11,7 @@ metadata:
   cliHelp: "gmgn-cli swap --help"
   agentos:
     emoji: "💱"
-    category: trading
+    category: crypto
     homepage: https://github.com/GMGNAI/gmgn-skills
     risk: high
     capabilities: [network-read, network-write, signing]

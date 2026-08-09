@@ -18,6 +18,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the manifest and the Channels page reflect what they actually do.
   (Fixes #141)
 
+### Changed
+
+- The seven bundled GMGN skills now declare `category: crypto`, so the Skills
+  page files them under **AgentOS Crypto Skills** instead of "AgentOS Normal
+  Skills", and each card and detail dialog wears the GMGN mark badged with that
+  skill's own emoji rather than the generic package glyph. The mark is chosen on
+  `provenance.origin` behind the same shipped/bundled gate as the group itself,
+  so a local drop-in cannot mint it, and it ships with the client, so no card
+  fetches a remote image. Skill names are unchanged. (Fixes #246)
+
 ## [2026.8.7] - 2026-08-07
 
 ### Fixed

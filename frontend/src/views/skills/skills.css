@@ -1244,6 +1244,35 @@
   object-fit: cover;
 }
 
+/* Wrapper for a mark that carries a per-skill emoji badge. It takes its size
+   from the mark inside it, so one pair of rules fits both the 2rem card box and
+   the 2.25rem dialog box, and `flex: 0 0 auto` keeps the row from squeezing it
+   the way it cannot squeeze a bare mark. */
+.control-surface .sk-brandmark {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  line-height: 0;
+}
+
+/* On the corner of the mark rather than beside it: the row header has no spare
+   width, and the emoji marks a variant of one brand, not a second logo. The ring
+   lifts it off the artwork whatever colours the mark itself uses. */
+.control-surface .sk-brandmark__emoji {
+  position: absolute;
+  right: -0.1875rem;
+  bottom: -0.1875rem;
+  display: grid;
+  width: 1.0625rem;
+  height: 1.0625rem;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--elevated);
+  box-shadow: 0 0 0 1px var(--hairline);
+  font-size: 0.625rem;
+  line-height: 1;
+}
+
 .control-surface .sk-card__brand--fallback {
   display: grid;
   place-items: center;

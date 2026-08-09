@@ -128,6 +128,22 @@ records where the *text* came from and under what licence. A skill can be
 AgentOS-original text published by a partner, or upstream text with no
 publisher at all.
 
+**Category** (`metadata.agentos.category`) is subject matter, not trust — what a
+skill is about, where `capabilities` says what it can reach. The Web UI reads one
+value from it: a shipped skill declaring `category: crypto` is split out of
+"AgentOS Normal Skills" into its own **AgentOS Crypto Skills** heading. The split
+is gated on acquisition exactly the way publishers are, so a directory dropped
+into a writable skills path cannot claim a heading carrying the AgentOS name just
+by writing a category into its own frontmatter.
+
+Cards in that group carry a mark instead of the generic glyph. The seven bundled
+GMGN skills (`gmgn-token`, `gmgn-market`, `gmgn-portfolio`, `gmgn-track`,
+`gmgn-holder-analysis`, `gmgn-swap`, `gmgn-cooking`) wear the GMGN mark — chosen
+on `provenance.origin: gmgn-mit`, badged with each skill's own
+`metadata.agentos.emoji` so seven siblings stay tellable apart — and the rest of
+the group wears the AgentOS mark. Every mark ships with the client; no manifest
+field points the UI at an image, remote or local.
+
 ## Whether the Agent Is Offered a Skill
 
 Installed, eligible, and offered are three different states. A skill can be
