@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +24,13 @@ from agentos.channels._attachment_io import (
     preferred_attachment_mime,
 )
 from agentos.channels._telegram_formatting import render_telegram_html
-from agentos.channels._util import AccessDecision, ChannelAccessPolicy, EventDedupeCache
+from agentos.channels._util import (
+    AccessDecision,
+    ChannelAccessPolicy,
+    EventDedupeCache,
+    FloodStrikeBackoff,
+    StreamThrottle,
+)
 from agentos.channels.contract import (
     ChannelCapabilities,
     ChannelCapabilityProfile,
@@ -69,10 +76,31 @@ _TRANSPORT_FAILURE_MARKERS = (
 )
 _DEDUPE_SIZE = 4096
 _ALLOWED_UPDATES = ("message", "edited_message", "channel_post", "edited_channel_post")
+#: Hard ceiling Telegram enforces on ``sendMessage``/``editMessageText`` text.
+#: Measured on the *rendered* HTML, which is longer than the markdown it came from.
+_MESSAGE_TEXT_LIMIT = 4096
+#: Telegram tolerates roughly one edit per second per chat — well below Slack's
+#: 500ms default, so streaming updates get their own slower cadence.
+_STREAM_UPDATE_INTERVAL_MS = 1200
+_STREAM_FLOOD_STRIKE_CAP = 3
+_STREAM_FLOOD_DECAY_S = 30.0
 
 
 class TelegramApiError(RuntimeError):
     """Raised when the Telegram Bot API returns ``ok: false``."""
+
+
+class TelegramFloodError(TelegramApiError):
+    """Raised when Telegram rate-limits a call (HTTP 429 / ``retry_after``).
+
+    A subclass so every existing ``except TelegramApiError`` site keeps working;
+    callers that care about flood control catch this one and read
+    :attr:`retry_after`.
+    """
+
+    def __init__(self, message: str, retry_after: float = 1.0) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class TelegramChannelConfig(BaseModel):
@@ -339,6 +367,7 @@ class TelegramChannel:
             group_chat=True,
             mentions=True,
             typing_indicator=True,
+            streaming=True,
             native_file_upload=True,
             media=True,
             reply=True,
@@ -395,13 +424,36 @@ class TelegramChannel:
             detail = detail.replace(self.config.token, "[REDACTED]")
         return detail[:1000]
 
+    @staticmethod
+    def _retry_after_seconds(payload: Any) -> float | None:
+        """Pull ``parameters.retry_after`` out of a Bot API error body."""
+        if not isinstance(payload, dict):
+            return None
+        parameters = payload.get("parameters")
+        if not isinstance(parameters, dict):
+            return None
+        try:
+            return float(parameters["retry_after"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
     def _parse_api_response(self, response: Any, method: str) -> Any:
         """Validate a Bot API response without exposing the token-bearing URL."""
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError:
             status_code = getattr(response, "status_code", "unknown")
-            raise TelegramApiError(f"Telegram {method} failed with HTTP {status_code}") from None
+            message = f"Telegram {method} failed with HTTP {status_code}"
+            if status_code == 429:
+                try:
+                    body = response.json()
+                except (TypeError, ValueError):
+                    body = None
+                raise TelegramFloodError(
+                    message,
+                    retry_after=self._retry_after_seconds(body) or 1.0,
+                ) from None
+            raise TelegramApiError(message) from None
         try:
             data = response.json()
         except (TypeError, ValueError):
@@ -410,7 +462,11 @@ class TelegramChannel:
             raise TelegramApiError(f"Telegram {method} returned an invalid response")
         if data.get("ok") is not True:
             fallback = f"Telegram {method} failed"
-            raise TelegramApiError(self._safe_api_error_detail(data.get("description"), fallback))
+            detail = self._safe_api_error_detail(data.get("description"), fallback)
+            # Telegram also answers ``ok: false`` with a 200 for some floods.
+            if (retry_after := self._retry_after_seconds(data)) is not None:
+                raise TelegramFloodError(detail, retry_after=retry_after)
+            raise TelegramApiError(detail)
         return data.get("result")
 
     async def _api(self, method: str, payload: dict[str, Any] | None = None) -> Any:
@@ -837,6 +893,18 @@ class TelegramChannel:
             metadata["thread_id"] = thread_id
         return OutgoingMessage(content=content, reply_to=inbound.channel_id, metadata=metadata)
 
+    def streaming_reply_kwargs(self, inbound: IncomingMessage) -> dict[str, Any]:
+        """Stream the reply into the chat (and forum topic) that triggered it.
+
+        Without this hook dispatch calls ``send_streaming`` with no kwargs, so a
+        bot with no ``default_chat_id`` — the normal deployment — would have
+        nowhere to stream to.
+        """
+        kwargs: dict[str, Any] = {"chat_id": inbound.channel_id}
+        if (thread_id := inbound.metadata.get("thread_id")) is not None:
+            kwargs["thread_id"] = thread_id
+        return kwargs
+
     async def probe_target(self, target: str) -> tuple[bool, str]:
         """Whether ``getChat`` can see *target*, and why not when it cannot.
 
@@ -898,6 +966,208 @@ class TelegramChannel:
             payload.pop("parse_mode", None)
             result = await self._api("sendMessage", payload)
         return result if isinstance(result, dict) else {"result": result}
+
+    @staticmethod
+    def _split_for_limit(segment: str) -> tuple[str, str]:
+        """Split *segment* into the largest prefix that fits one message, plus the rest.
+
+        The 4096 budget applies to the *rendered* HTML, which is longer than the
+        markdown it came from, so the cut point is found by binary search over
+        the raw text and then nudged back to the nearest line/word boundary.
+        """
+        if len(render_telegram_html(segment)) <= _MESSAGE_TEXT_LIMIT:
+            return segment, ""
+        low, high, best = 1, len(segment) - 1, 1
+        while low <= high:
+            mid = (low + high) // 2
+            if len(render_telegram_html(segment[:mid])) <= _MESSAGE_TEXT_LIMIT:
+                best = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+        cut = best
+        for boundary in ("\n", " "):
+            found = segment.rfind(boundary, 0, best)
+            if found >= best // 2:
+                cut = found + 1
+                break
+        return segment[:cut], segment[cut:]
+
+    async def _stream_send(
+        self,
+        chat_id: str,
+        text: str,
+        thread_id: str | None,
+    ) -> int | str:
+        """Post one streaming message and return its Telegram ``message_id``."""
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": render_telegram_html(text),
+            "parse_mode": "HTML",
+        }
+        if thread_id:
+            payload["message_thread_id"] = _coerce_telegram_int(thread_id)
+        try:
+            result = await self._api("sendMessage", payload)
+        except TelegramApiError as exc:
+            if "parse entities" not in str(exc).lower():
+                raise
+            log.warning("telegram.markdown_fallback", error=str(exc))
+            payload["text"] = text
+            payload.pop("parse_mode", None)
+            result = await self._api("sendMessage", payload)
+        if not isinstance(result, dict) or result.get("message_id") is None:
+            raise TelegramApiError("Telegram sendMessage returned no message_id")
+        message_id = result["message_id"]
+        return message_id if isinstance(message_id, int) else str(message_id)
+
+    async def _stream_edit(self, chat_id: str, message_id: int | str, text: str) -> None:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": _coerce_telegram_int(message_id),
+            "text": render_telegram_html(text),
+            "parse_mode": "HTML",
+        }
+        try:
+            await self._api("editMessageText", payload)
+        except TelegramApiError as exc:
+            if "parse entities" not in str(exc).lower():
+                raise
+            log.warning("telegram.markdown_fallback", error=str(exc))
+            payload["text"] = text
+            payload.pop("parse_mode", None)
+            await self._api("editMessageText", payload)
+
+    async def send_streaming(
+        self,
+        chunks: AsyncIterator[str],
+        *,
+        chat_id: str | None = None,
+        thread_id: str | None = None,
+        update_interval_ms: int = _STREAM_UPDATE_INTERVAL_MS,
+    ) -> str | None:
+        """Stream a reply by posting one message and editing it as text arrives.
+
+        Returns the ``"<chat_id>|<message_id>"`` reference of the last message
+        written — the form :meth:`edit` and :meth:`delete` accept — or ``None``
+        when the stream produced no text.
+
+        ``StreamThrottle`` keeps a fast producer from firing two concurrent
+        ``editMessageText`` calls and preserves accumulated text when a flush
+        fails. ``FloodStrikeBackoff`` watches for 429s: once Telegram has said
+        "too many requests" three times in 30s the edit loop stops and the
+        remaining text is delivered as one final message rather than fighting
+        the rate limiter.
+        """
+        target = str(chat_id or self.config.default_chat_id or "").strip()
+        if not target:
+            # Raising (rather than returning a soft "unsupported") is what makes
+            # dispatch replay the answer through ``channel.send``; a quiet return
+            # would drop the user's reply entirely.
+            raise RuntimeError("Telegram stream has no target chat")
+
+        throttle = StreamThrottle(interval_s=update_interval_ms / 1000.0)
+        backoff = FloodStrikeBackoff(
+            cap=_STREAM_FLOOD_STRIKE_CAP,
+            decay_s=_STREAM_FLOOD_DECAY_S,
+            adapter="telegram",
+        )
+        message_id: int | str | None = None
+        segment_start = 0
+        delivered = 0
+
+        async def _post_segments(remaining: str) -> None:
+            """Post *remaining* as one or more new messages, splitting at the cap.
+
+            ``delivered`` advances after each successful send, so a failure part
+            way through never causes already-visible text to be resent.
+            """
+            nonlocal message_id, segment_start, delivered
+            while True:
+                head, tail = self._split_for_limit(remaining)
+                message_id = await self._stream_send(target, head, thread_id)
+                delivered = segment_start + len(head)
+                if not tail:
+                    return
+                segment_start = delivered
+                remaining = tail
+
+        async def _post(text: str) -> int | str | None:
+            await _post_segments(text[segment_start:])
+            log.debug("telegram.stream_start", chat_id=target, message_id=message_id)
+            return message_id
+
+        async def _edit(text: str) -> int | str | None:
+            nonlocal delivered, segment_start
+            current = message_id
+            if current is None:  # pragma: no cover - throttle opens before it edits
+                raise TelegramApiError("Telegram stream edit before the message was opened")
+            head, tail = self._split_for_limit(text[segment_start:])
+            await self._stream_edit(target, current, head)
+            delivered = segment_start + len(head)
+            if tail:
+                # This message is full: freeze it and roll over into a new one.
+                segment_start = delivered
+                await _post_segments(tail)
+            return message_id
+
+        async for chunk in chunks:
+            throttle.add(chunk)
+            if backoff.should_fallback():
+                continue
+            try:
+                if await throttle.maybe_flush(post=_post, edit=_edit) is not None:
+                    backoff.record_success()
+            except TelegramFloodError as exc:
+                backoff.record_429()
+                log.warning(
+                    "telegram.stream_rate_limited",
+                    chat_id=target,
+                    retry_after=exc.retry_after,
+                )
+
+        text = throttle.text
+        if not text:
+            return None
+
+        # ``delivered < len(text)`` skips a final flush that would repeat the
+        # last one verbatim — Telegram rejects an edit that changes nothing.
+        if delivered < len(text) and not backoff.should_fallback():
+            try:
+                await throttle.force_flush(post=_post, edit=_edit)
+            except TelegramFloodError as exc:
+                backoff.record_429()
+                log.warning(
+                    "telegram.stream_rate_limited",
+                    chat_id=target,
+                    retry_after=exc.retry_after,
+                )
+
+        if delivered < len(text):
+            # Either the circuit opened or the last flush was rate-limited.
+            # Everything past the watermark still has to reach the user, as a
+            # plain message rather than another edit.
+            segment_start = delivered
+            await self._deliver_stream_remainder(_post_segments, text[delivered:])
+
+        log.debug("telegram.stream_end", chat_id=target, length=len(text))
+        return f"{target}|{message_id}" if message_id is not None else None
+
+    @staticmethod
+    async def _deliver_stream_remainder(
+        post_segments: Any,
+        remainder: str,
+    ) -> None:
+        """Final-only delivery of text the edit loop could not place.
+
+        One bounded retry: a flood that just tripped the circuit usually clears
+        within ``retry_after``, and there is no consumer left to fall back to.
+        """
+        try:
+            await post_segments(remainder)
+        except TelegramFloodError as exc:
+            await asyncio.sleep(min(exc.retry_after, 5.0))
+            await post_segments(remainder)
 
     async def send_file(
         self,
@@ -1002,4 +1272,5 @@ __all__ = [
     "TelegramApiError",
     "TelegramChannel",
     "TelegramChannelConfig",
+    "TelegramFloodError",
 ]

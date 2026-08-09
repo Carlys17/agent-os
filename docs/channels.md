@@ -187,11 +187,20 @@ interception as the fallback for platforms without native command menus.
 
 ## In-Flight Reply Feedback
 
-Telegram and Discord show their native typing indicator while AgentOS is
-working on a reply. Telegram refreshes `sendChatAction` every four seconds
-because Telegram clients expire the status after at most five seconds. Forum
-topic replies keep the typing indicator scoped to the incoming topic. Typing
-feedback is best-effort and never interrupts the underlying agent turn.
+Slack, Discord, Telegram and Microsoft Teams stream the reply itself: AgentOS
+posts one message as soon as text is available and edits it as the answer
+grows. Telegram edits at most once every 1.2 seconds — its rate limit is far
+stricter than Slack's — and rolls over into a second message when an answer
+passes the 4096-character ceiling. If Telegram starts answering `429`, the
+edit loop stops and the remainder is delivered as one final message instead of
+fighting the limiter; no text is lost either way. Forum topic replies stream
+into the originating topic.
+
+Adapters without a streaming surface fall back to their native typing
+indicator while AgentOS is working. Telegram still refreshes `sendChatAction`
+every four seconds in that mode, because Telegram clients expire the status
+after at most five seconds. Reply feedback is best-effort and never interrupts
+the underlying agent turn.
 
 ## Webhook Channels
 

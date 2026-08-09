@@ -160,6 +160,7 @@ class DiscordChannel:
             group_chat=True,
             mentions=True,
             typing_indicator=True,
+            streaming=True,
             native_file_upload=True,
             media=True,
             reactions=True,

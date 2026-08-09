@@ -95,24 +95,45 @@ async def test_telegram_send_typing_without_target_is_unsupported() -> None:
     assert result.reason == "no chat target"
 
 
-def test_telegram_typing_capability_selects_keepalive_policy() -> None:
+class _TypingOnlyTelegramChannel(TelegramChannel):
+    """Telegram pinned to ``typing_final`` so the keepalive path stays covered.
+
+    The real adapter streams now, and ``_start_typing_keepalive`` returns None
+    for streaming adapters — but the keepalive loop is still live for every
+    ``typing_final`` channel, and this is the only place it is exercised.
+    """
+
+    STREAM_UPDATE_STRATEGY = "typing_final"
+
+
+def test_telegram_streaming_capability_selects_adapter_stream_policy() -> None:
     channel = TelegramChannel(TelegramChannelConfig())
 
     policy = resolve_channel_stream_policy(channel)
 
     assert channel.capability_profile.typing_indicator is True
     assert ChannelCapabilities.TYPING_INDICATOR in channel.capabilities
+    assert policy.mode == "adapter_stream"
+    assert policy.relay_stream is True
+    assert policy.typing_keepalive is False
+    assert 0 < channel.typing_keepalive_interval_s < 5
+
+
+def test_telegram_typing_final_override_selects_keepalive_policy() -> None:
+    channel = _TypingOnlyTelegramChannel(TelegramChannelConfig())
+
+    policy = resolve_channel_stream_policy(channel)
+
     assert policy.mode == "typing_final"
     assert policy.relay_stream is False
     assert policy.typing_keepalive is True
-    assert 0 < channel.typing_keepalive_interval_s < 5
 
 
 @pytest.mark.asyncio
 async def test_telegram_keepalive_uses_inbound_chat_topic_and_adapter_cadence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    channel = TelegramChannel(TelegramChannelConfig(token="token"))
+    channel = _TypingOnlyTelegramChannel(TelegramChannelConfig(token="token"))
     api_calls: list[tuple[str, dict[str, Any] | None]] = []
 
     async def fake_api(method: str, payload: dict[str, Any] | None = None) -> bool:
@@ -153,7 +174,7 @@ async def test_telegram_keepalive_uses_inbound_chat_topic_and_adapter_cadence(
 async def test_telegram_keepalive_treats_api_failure_as_best_effort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    channel = TelegramChannel(TelegramChannelConfig(token="token"))
+    channel = _TypingOnlyTelegramChannel(TelegramChannelConfig(token="token"))
     attempts = 0
 
     async def failing_api(_method: str, _payload: dict[str, Any] | None = None) -> bool:
