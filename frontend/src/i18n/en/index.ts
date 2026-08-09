@@ -1,3 +1,4 @@
+import { agents } from './agents'
 import { approvals } from './approvals'
 import { common } from './common'
 import { config } from './config'
@@ -24,6 +25,7 @@ import { shell } from './shell'
  * views that register their own namespace in the browser.
  */
 export const en = {
+  agents,
   approvals,
   common,
   config,

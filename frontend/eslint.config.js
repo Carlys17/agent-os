@@ -9,6 +9,7 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 const I18N_MIGRATED = [
   'src/app/**/*.tsx',
   'src/components/**/*.tsx',
+  'src/views/agents/**/*.tsx',
   'src/views/approvals/**/*.tsx',
   'src/views/config/**/*.tsx',
   'src/views/env/**/*.tsx',

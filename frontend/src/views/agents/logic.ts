@@ -5,6 +5,9 @@
 // owns the pure derivations (stats, card display, form seed/diff, validation).
 
 /** A raw agent row from agents.list (all fields optional). */
+import { t } from '@/i18n'
+import '@/i18n/en/agents'
+
 export interface RawAgent {
   id?: string
   name?: string
@@ -135,7 +138,7 @@ export interface CreateInput {
 
 /** agents.js:226,228 — the agent ID is required (trimmed, non-empty). */
 export function validateAgentId(id: string): string | null {
-  return id.trim() ? null : 'Agent ID is required.'
+  return id.trim() ? null : t('agents.fieldIdRequired')
 }
 
 /** Field-keyed validation errors for the create dialog (empty = valid). */

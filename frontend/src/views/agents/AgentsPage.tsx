@@ -9,6 +9,8 @@ import { MotionListItem } from '@/lib/motion'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
+import { t } from '@/i18n'
+import '@/i18n/en/agents'
 import {
   agentDisplay,
   agentStats,
@@ -104,21 +106,23 @@ function AgentDialog({
     >
       <form className="ag-dialog" onSubmit={submit}>
         <header className="ag-dialog__head">
-          <span className="t-label">Control · Agents</span>
+          <span className="t-label">{t('agents.eyebrow')}</span>
           <h2 id={titleId} className="ag-dialog__title">
-            {isCreate ? 'New agent' : `Edit agent: ${seed.id}`}
+            {isCreate
+              ? t('agents.dialogCreateTitle')
+              : t('agents.dialogEditTitle', { id: seed.id })}
           </h2>
         </header>
 
         <div className="ag-dialog__body">
           <label className="ag-field">
-            <span className="t-label">Agent ID</span>
+            <span className="t-label">{t('agents.fieldId')}</span>
             <input
               className="ag-input"
               autoComplete="off"
               disabled={idDisabled}
               value={form.id}
-              placeholder="e.g. data-analyst"
+              placeholder={t('agents.fieldIdPlaceholder')}
               aria-invalid={idError ? true : undefined}
               onChange={(e) => {
                 set('id', e.target.value)
@@ -133,30 +137,27 @@ function AgentDialog({
           </label>
 
           <label className="ag-field">
-            <span className="t-label">Display name</span>
+            <span className="t-label">{t('agents.fieldName')}</span>
             <input
               className="ag-input"
               autoComplete="off"
               value={form.name}
-              placeholder="Defaults to ID"
+              placeholder={t('agents.fieldNamePlaceholder')}
               onChange={(e) => set('name', e.target.value)}
             />
           </label>
 
           {isCreate ? (
-            <p className="ag-dialog__hint">
-              Created agents inherit the global default model. Add tools and other capabilities
-              after creating from the agent&apos;s Edit dialog.
-            </p>
+            <p className="ag-dialog__hint">{t('agents.createHint')}</p>
           ) : (
             <>
               <label className="ag-field">
-                <span className="t-label">Description</span>
+                <span className="t-label">{t('agents.fieldDescription')}</span>
                 <input
                   className="ag-input"
                   autoComplete="off"
                   value={form.description}
-                  placeholder="A short one-liner"
+                  placeholder={t('agents.fieldDescriptionPlaceholder')}
                   onChange={(e) => set('description', e.target.value)}
                 />
               </label>
@@ -167,34 +168,34 @@ function AgentDialog({
                   form.workspace || form.agentDir || form.tools.length || !form.enabled,
                 )}
               >
-                <summary>Capabilities · Advanced</summary>
+                <summary>{t('agents.advancedSummary')}</summary>
                 <label className="ag-field">
-                  <span className="t-label">Tools (comma-separated)</span>
+                  <span className="t-label">{t('agents.fieldTools')}</span>
                   <input
                     className="ag-input"
                     autoComplete="off"
                     value={toolsText}
-                    placeholder="Leave blank to inherit defaults"
+                    placeholder={t('agents.fieldToolsPlaceholder')}
                     onChange={(e) => setToolsText(e.target.value)}
                   />
                 </label>
                 <label className="ag-field">
-                  <span className="t-label">Workspace</span>
+                  <span className="t-label">{t('agents.fieldWorkspace')}</span>
                   <input
                     className="ag-input"
                     autoComplete="off"
                     value={form.workspace}
-                    placeholder="Leave blank to use the default path"
+                    placeholder={t('agents.fieldWorkspacePlaceholder')}
                     onChange={(e) => set('workspace', e.target.value)}
                   />
                 </label>
                 <label className="ag-field">
-                  <span className="t-label">Agent dir</span>
+                  <span className="t-label">{t('agents.fieldAgentDir')}</span>
                   <input
                     className="ag-input"
                     autoComplete="off"
                     value={form.agentDir}
-                    placeholder="Optional"
+                    placeholder={t('agents.fieldAgentDirPlaceholder')}
                     onChange={(e) => set('agentDir', e.target.value)}
                   />
                 </label>
@@ -204,7 +205,7 @@ function AgentDialog({
                     checked={form.enabled}
                     onChange={(e) => set('enabled', e.target.checked)}
                   />
-                  <span>Enabled</span>
+                  <span>{t('agents.fieldEnabled')}</span>
                 </label>
               </details>
             </>
@@ -213,20 +214,20 @@ function AgentDialog({
 
         <footer className="ag-dialog__foot">
           <Button type="button" variant="ghost" disabled={saving} onClick={attemptClose}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="submit" disabled={saving}>
-            {isCreate ? 'Create agent' : 'Save changes'}
+            {isCreate ? t('agents.submitCreate') : t('agents.submitSave')}
           </Button>
         </footer>
       </form>
 
       {showDiscard ? (
         <ConfirmDialog
-          title="Discard unsaved changes?"
-          body="You have unsaved edits. Closing now will lose them."
-          confirmLabel="Discard"
-          cancelLabel="Keep editing"
+          title={t('agents.discardTitle')}
+          body={t('agents.discardBody')}
+          confirmLabel={t('agents.discardConfirm')}
+          cancelLabel={t('agents.discardCancel')}
           onCancel={() => setShowDiscard(false)}
           onConfirm={() => {
             setShowDiscard(false)
@@ -243,7 +244,7 @@ function ConfirmDialog({
   title,
   body,
   confirmLabel,
-  cancelLabel = 'Cancel',
+  cancelLabel = t('common.cancel'),
   busy = false,
   onCancel,
   onConfirm,
@@ -307,7 +308,10 @@ function AgentCard({
 }) {
   const d = agentDisplay(agent)
   return (
-    <article className={`panel ag-card ${toneClass(d.tone)}`} aria-label={`Agent ${d.id}`}>
+    <article
+      className={`panel ag-card ${toneClass(d.tone)}`}
+      aria-label={t('agents.cardLandmark', { id: d.id })}
+    >
       <header className="ag-card__head">
         <span
           className={`ag-card__dot tone-${d.tone === 'ok' ? 'ok' : 'info'}`}
@@ -325,19 +329,19 @@ function AgentCard({
       <dl className="ag-card__meta">
         {d.model ? (
           <div>
-            <dt className="t-label">Model</dt>
+            <dt className="t-label">{t('agents.cardModel')}</dt>
             <dd className="t-data ag-mono">{d.model}</dd>
           </div>
         ) : null}
         {d.toolCount ? (
           <div>
-            <dt className="t-label">Tools</dt>
+            <dt className="t-label">{t('agents.cardTools')}</dt>
             <dd className="t-data">{d.toolCount}</dd>
           </div>
         ) : null}
         {d.skillCount ? (
           <div>
-            <dt className="t-label">Skills</dt>
+            <dt className="t-label">{t('agents.cardSkills')}</dt>
             <dd className="t-data">{d.skillCount}</dd>
           </div>
         ) : null}
@@ -345,7 +349,7 @@ function AgentCard({
 
       {d.toolChips.length ? (
         <div className="ag-card__chips">
-          <span className="ag-card__chips-label t-label">Tools</span>
+          <span className="ag-card__chips-label t-label">{t('agents.cardTools')}</span>
           {d.toolChips.map((t) => (
             <span key={t} className="ag-chip t-data">
               {t}
@@ -358,24 +362,24 @@ function AgentCard({
       <footer className="ag-card__actions">
         <Button type="button" size="sm" variant="outline" onClick={() => onChat(d.id)}>
           <MessageSquareIcon />
-          <span>Chat</span>
+          <span>{t('agents.cardChat')}</span>
         </Button>
         {d.isBuiltin ? (
           <Button
             type="button"
             size="sm"
             variant="outline"
-            title="Use as a starting point for a new agent"
+            title={t('agents.cardCustomizeTitle')}
             onClick={() => onCustomize(d.id)}
           >
             <PlusIcon />
-            <span>Customize</span>
+            <span>{t('agents.cardCustomize')}</span>
           </Button>
         ) : (
           <>
             <Button type="button" size="sm" variant="outline" onClick={() => onEdit(agent)}>
               <PencilIcon />
-              <span>Edit</span>
+              <span>{t('agents.cardEdit')}</span>
             </Button>
             <Button
               type="button"
@@ -385,7 +389,7 @@ function AgentCard({
               onClick={() => onDelete(d.id)}
             >
               <Trash2Icon />
-              <span>Delete</span>
+              <span>{t('agents.cardDelete')}</span>
             </Button>
           </>
         )}
@@ -438,7 +442,7 @@ export function AgentsPage() {
   const [dialog, setDialog] = useState<DialogState>({ kind: 'none' })
 
   useEffect(() => {
-    document.title = 'Agents - AgentOS Control'
+    document.title = t('agents.documentTitle')
   }, [])
 
   const agentsQuery = useQuery<RawAgent[]>({
@@ -456,7 +460,7 @@ export function AgentsPage() {
     if (agentsQuery.isError) {
       const err = agentsQuery.error
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to load agents: ' + message, { id: 'agents-load-err' })
+      toast.error(t('agents.toastLoadFailed', { message }), { id: 'agents-load-err' })
     }
   }, [agentsQuery.isError, agentsQuery.error])
 
@@ -467,16 +471,16 @@ export function AgentsPage() {
     mutationFn: (input: { id: string; name: string }) =>
       rpc.call('agents.create', buildCreatePayload(input)),
     onSuccess: (_data, input) => {
-      toast.success('Agent created: ' + input.id.trim(), { id: 'agents-create' })
+      toast.success(t('agents.toastCreated', { id: input.id.trim() }), { id: 'agents-create' })
       setDialog({ kind: 'none' })
       void invalidate()
     },
     onError: (err, input) => {
       const e = err as AgentsListError
       if (e.code === 'agent.exists') {
-        toast.warning(`Agent "${input.id.trim()}" already exists`, { id: 'agents-create' })
+        toast.warning(t('agents.toastExists', { id: input.id.trim() }), { id: 'agents-create' })
       } else {
-        toast.error('Failed to create agent: ' + (e.message || String(err)), {
+        toast.error(t('agents.toastCreateFailed', { message: e.message || String(err) }), {
           id: 'agents-create-err',
         })
       }
@@ -488,16 +492,16 @@ export function AgentsPage() {
     mutationFn: (vars: { id: string; payload: Record<string, unknown> }) =>
       rpc.call('agents.update', vars.payload),
     onSuccess: (_data, vars) => {
-      toast.success('Agent updated: ' + vars.id, { id: 'agents-update' })
+      toast.success(t('agents.toastUpdated', { id: vars.id }), { id: 'agents-update' })
       setDialog({ kind: 'none' })
       void invalidate()
     },
     onError: (err, vars) => {
       const e = err as AgentsListError
-      let friendly = 'Failed to save: ' + (e.message || String(err))
-      if (e.code === 'agent.not_found') friendly = `Agent "${vars.id}" no longer exists.`
+      let friendly = t('agents.toastSaveFailed', { message: e.message || String(err) })
+      if (e.code === 'agent.not_found') friendly = t('agents.toastNotFound', { id: vars.id })
       if (e.code === 'agent.builtin_immutable')
-        friendly = `"${vars.id}" is a built-in agent and cannot be modified.`
+        friendly = t('agents.toastBuiltinImmutable', { id: vars.id })
       toast.error(friendly, { id: 'agents-update-err' })
     },
   })
@@ -506,13 +510,13 @@ export function AgentsPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => rpc.call('agents.delete', { id }),
     onSuccess: (_data, id) => {
-      toast.success('Agent deleted: ' + id, { id: 'agents-delete' })
+      toast.success(t('agents.toastDeleted', { id }), { id: 'agents-delete' })
       setDialog({ kind: 'none' })
       void invalidate()
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to delete agent: ' + message, { id: 'agents-delete-err' })
+      toast.error(t('agents.toastDeleteFailed', { message }), { id: 'agents-delete-err' })
     },
   })
 
@@ -524,7 +528,11 @@ export function AgentsPage() {
   const openCustomize = (builtinId: string) => {
     setDialog({
       kind: 'create',
-      seed: { ...EMPTY_FORM, id: (builtinId || 'main') + '-copy', name: builtinId + ' (copy)' },
+      seed: {
+        ...EMPTY_FORM,
+        id: (builtinId || 'main') + '-copy',
+        name: t('agents.copyName', { id: builtinId }),
+      },
     })
   }
 
@@ -532,68 +540,71 @@ export function AgentsPage() {
     <div className="ag-stage">
       <header className="ag-stage__header">
         <div className="ag-stage__title-block">
-          <span className="t-label">Control · Agents</span>
-          <h1 className="t-display">Agents</h1>
-          <p className="ag-stage__subtitle">
-            Custom personalities and skill sets you can chat with.
-          </p>
+          <span className="t-label">{t('agents.eyebrow')}</span>
+          <h1 className="t-display">{t('agents.title')}</h1>
+          <p className="ag-stage__subtitle">{t('agents.subtitle')}</p>
         </div>
         <div className="ag-stage__actions">
           <Button
             variant="outline"
-            title="Refresh"
+            title={t('agents.refresh')}
             className="text-xs uppercase tracking-[0.14em]"
             onClick={() => void invalidate()}
           >
             <RefreshCwIcon />
-            <span>Refresh</span>
+            <span>{t('agents.refresh')}</span>
           </Button>
           <Button
             className="text-xs uppercase tracking-[0.14em]"
             onClick={() => setDialog({ kind: 'create', seed: { ...EMPTY_FORM } })}
           >
             <PlusIcon />
-            <span>New agent</span>
+            <span>{t('agents.newAgent')}</span>
           </Button>
         </div>
       </header>
 
-      <section className="ag-stats" aria-label="Agents summary">
+      <section className="ag-stats" aria-label={t('agents.statsLandmark')}>
         <StatTile
-          label="Total agents"
+          label={t('agents.statTotal')}
           hero
           value={stats.total}
           hint={
             [
-              stats.builtins ? `${stats.builtins} built-in` : '',
-              stats.customs ? `${stats.customs} custom` : '',
+              stats.builtins ? t('agents.statBuiltinCount', { count: stats.builtins }) : '',
+              stats.customs ? t('agents.statCustomCount', { count: stats.customs }) : '',
             ]
               .filter(Boolean)
-              .join(' · ') || 'none configured'
+              .join(' · ') || t('agents.statNoneConfigured')
           }
         />
         <StatTile
-          label="Models in use"
-          value={stats.models || '—'}
-          hint={stats.models ? 'distinct models' : 'unset'}
+          label={t('agents.statModels')}
+          value={stats.models || t('common.dash')}
+          hint={stats.models ? t('agents.statModelsHint') : t('agents.statModelsUnset')}
         />
-        <StatTile label="Tools wired" value={stats.tools} hint="across all agents" />
+        <StatTile
+          label={t('agents.statTools')}
+          value={stats.tools}
+          hint={t('agents.statToolsHint')}
+        />
       </section>
 
       <section className="ag-list">
         <div className="ag-list__head">
           <h2 className="ag-list__title t-label">
-            Configured agents{' '}
+            {t('agents.listTitle')}{' '}
             {agents.length ? <span className="ag-list__count t-data">{agents.length}</span> : null}
           </h2>
         </div>
 
         {agents.length === 0 ? (
           <div className="ag-empty">
-            <div className="ag-empty__title">No agents configured.</div>
+            <div className="ag-empty__title">{t('agents.emptyTitle')}</div>
             <p className="ag-empty__msg">
-              Use <strong>New agent</strong> above to add one. The default <code>main</code> agent
-              is always available.
+              {t('agents.emptyMsgLead')} <strong>{t('agents.newAgent')}</strong>{' '}
+              {/* The default agent id is an identifier, not copy — never translated. */}
+              {t('agents.emptyMsgMiddle')} <code>{'main'}</code> {t('agents.emptyMsgTail')}
             </p>
           </div>
         ) : (
@@ -632,7 +643,7 @@ export function AgentsPage() {
               // agents.js:432-437 — no-op save: nothing changed → skip the RPC,
               // toast 'Nothing to save', and keep the dialog open.
               if (isNoOpUpdate(payload)) {
-                toast.info('Nothing to save', { id: 'agents-update' })
+                toast.info(t('agents.toastNothingToSave'), { id: 'agents-update' })
                 return
               }
               updateMutation.mutate({ id: current.id, payload })
@@ -642,14 +653,14 @@ export function AgentsPage() {
 
         {dialog.kind === 'delete' ? (
           <ConfirmDialog
-            title="Delete agent"
+            title={t('agents.deleteTitle')}
             body={
               <>
-                Delete agent <strong>{dialog.id}</strong>? Existing chats with this agent will keep
-                working but become unmanaged.
+                {t('agents.deleteBodyLead')} <strong>{dialog.id}</strong>
+                {t('agents.deleteBodyTail')}
               </>
             }
-            confirmLabel="Delete agent"
+            confirmLabel={t('agents.deleteConfirm')}
             busy={deleteMutation.isPending}
             onCancel={() => setDialog({ kind: 'none' })}
             onConfirm={() => deleteMutation.mutate(dialog.id)}
