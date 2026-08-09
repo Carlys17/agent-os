@@ -5,6 +5,7 @@ import { CommandLine } from '@/components/CommandLine'
 import { useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { useBootstrap, useRpc } from '@/app/providers'
+import { t } from '@/i18n'
 import {
   evidenceLabel,
   evidenceValue,
@@ -26,10 +27,10 @@ const WS_URL_KEY = 'agentos.wsUrl'
 
 // health.js:422-430 — impact -> human label for the finding meta line.
 const IMPACT_LABELS: Record<Impact, string> = {
-  blocks_ready: 'Blocks readiness',
-  degrades: 'Degrades',
-  optional: 'Optional',
-  none: 'Reference',
+  blocks_ready: t('health.impactBlocksReady'),
+  degrades: t('health.impactDegrades'),
+  optional: t('health.impactOptional'),
+  none: t('health.impactNone'),
 }
 
 // health.js:432-437 — finding kind -> tone token used for the card accent.
@@ -42,9 +43,9 @@ const FINDING_TONE: Record<GroupKind, string> = {
 
 // health.js:397-401 — steps heading by group kind.
 function stepsHeading(kind: GroupKind): string {
-  if (kind === 'optional') return 'Optional setup steps'
-  if (kind === 'ready') return 'Reference steps'
-  return 'Recovery steps'
+  if (kind === 'optional') return t('health.stepsOptional')
+  if (kind === 'ready') return t('health.stepsReference')
+  return t('health.stepsRecovery')
 }
 
 // health.js:485-487 — normalize a value into a CSS-safe class token.
@@ -57,9 +58,9 @@ function classToken(value: string): string {
 // health.js:356-368 — id-derived badge for known finding families.
 function findingBadge(finding: Finding): string | null {
   const id = String(finding?.id || '')
-  if (id.endsWith('.diagnostic.incomplete')) return 'Diagnostics incomplete'
-  if (id.endsWith('.repair.pending')) return 'Repair pending'
-  if (id === 'gateway.config.mismatch') return 'Config mismatch'
+  if (id.endsWith('.diagnostic.incomplete')) return t('health.badgeDiagnosticsIncomplete')
+  if (id.endsWith('.repair.pending')) return t('health.badgeRepairPending')
+  if (id === 'gateway.config.mismatch') return t('health.badgeConfigMismatch')
   return null
 }
 
@@ -67,7 +68,7 @@ function findingBadge(finding: Finding): string | null {
 function gatewayUnavailableDetail(gatewayUrl: string, err: unknown): string {
   const reason = err instanceof Error ? err.message : String(err)
   if (!gatewayUrl) return reason
-  return `Cannot load doctor.status from ${gatewayUrl}. ${reason}`
+  return t('health.gatewayUnavailableDetail', { url: gatewayUrl, reason })
 }
 
 // health.js:35-62 + components.js UI.toast — copy handling now lives in the
@@ -91,7 +92,7 @@ function StepsList({ steps, kind }: { steps: NonNullable<Finding['fixSteps']>; k
           <li className="health-step" key={index}>
             <span className="health-step__number">{index + 1}</span>
             <span className="health-step__body">
-              <b>{step.label || 'Step'}</b>
+              <b>{step.label || t('health.stepFallbackLabel')}</b>
               {step.command ? <CommandRow command={step.command} /> : null}
               {step.detail ? <span className="health-step__detail">{step.detail}</span> : null}
             </span>
@@ -107,7 +108,7 @@ function EvidenceTags({ evidence }: { evidence?: Record<string, unknown> }) {
   const entries = visibleEvidenceEntries(evidence).slice(0, 6)
   if (!entries.length) return null
   return (
-    <div className="health-evidence" aria-label="Finding evidence">
+    <div className="health-evidence" aria-label={t('health.findingEvidence')}>
       {entries.map(([key, value]) => (
         <span key={key}>
           <b>{evidenceLabel(key)}</b>
@@ -138,11 +139,11 @@ function FindingCard({ finding, index }: { finding: Finding; index: number }) {
           <span className="health-surface">{surface}</span>
           {badge ? <span className="health-chip health-chip--badge">{badge}</span> : null}
           {finding.restartRequired ? (
-            <span className="health-chip">Recovery requires restart</span>
+            <span className="health-chip">{t('health.findingRestart')}</span>
           ) : null}
         </div>
         <div className="health-finding__title">
-          {finding.title || finding.id || `Finding ${index + 1}`}
+          {finding.title || finding.id || t('health.findingFallbackTitle', { index: index + 1 })}
         </div>
         <div className="health-finding__detail">{finding.detail || ''}</div>
         <EvidenceTags evidence={finding.evidence} />
@@ -156,30 +157,30 @@ const GROUPS: Array<{ kind: GroupKind; title: string; note: string }> = [
   // health.js:281-301
   {
     kind: 'action',
-    title: 'Needs action',
-    note: 'Fix these first to make AgentOS ready.',
+    title: t('health.groupActionTitle'),
+    note: t('health.groupActionNote'),
   },
   {
     kind: 'degraded',
-    title: 'Degraded capabilities',
-    note: 'AgentOS can run, but these capabilities need attention.',
+    title: t('health.groupDegradedTitle'),
+    note: t('health.groupDegradedNote'),
   },
   {
     kind: 'optional',
-    title: 'Optional setup',
-    note: 'These improve capability or posture but do not block readiness.',
+    title: t('health.groupOptionalTitle'),
+    note: t('health.groupOptionalNote'),
   },
   {
     kind: 'ready',
-    title: 'Ready checks',
-    note: 'These surfaces are already working.',
+    title: t('health.groupReadyTitle'),
+    note: t('health.groupReadyNote'),
   },
 ]
 
 function FindingsSection({ findings }: { findings: Finding[] }) {
   // health.js:277-313 — empty state else grouped sections.
   if (!findings.length) {
-    return <article className="health-empty">No findings returned.</article>
+    return <article className="health-empty">{t('health.findingsEmpty')}</article>
   }
   const groups = GROUPS.map((group) => ({
     ...group,
@@ -224,12 +225,16 @@ function CountTile({
   return (
     <div
       className={`health-count is-${classToken(kind)}${loading ? ' is-loading' : ''}`}
-      aria-label={`${label}: ${Number(value || 0)}`}
+      aria-label={t('health.railCountValue', { label, value: Number(value || 0) })}
     >
       <span className="health-count__dot" aria-hidden="true" />
       <span className="health-count__label">{label}</span>
-      <strong>{loading ? '—' : Number(value || 0)}</strong>
-      <span className="health-count__share">{loading ? 'checking' : `${percentage}%`}</span>
+      <strong>{loading ? t('common.dash') : Number(value || 0)}</strong>
+      <span className="health-count__share">
+        {loading
+          ? t('health.railCountChecking')
+          : t('health.railCountShare', { percent: percentage })}
+      </span>
     </div>
   )
 }
@@ -250,15 +255,15 @@ function ReportContext({
   // health.js:152-170 — gateway/config/agent context row.
   const items: Array<[string, string]> = []
   const gatewayUrl = report.gatewayUrl || fallbackGatewayUrl
-  if (gatewayUrl) items.push(['Gateway', gatewayUrl])
-  if (report.configPath) items.push(['Config', report.configPath])
+  if (gatewayUrl) items.push([t('health.contextGateway'), gatewayUrl])
+  if (report.configPath) items.push([t('health.contextConfig'), report.configPath])
   if (report.requestedConfigPath && report.requestedConfigPath !== report.configPath) {
-    items.push(['Requested config', report.requestedConfigPath])
+    items.push([t('health.contextRequestedConfig'), report.requestedConfigPath])
   }
-  if (report.agentId) items.push(['Agent', report.agentId])
+  if (report.agentId) items.push([t('health.contextAgent'), report.agentId])
   if (!items.length) return null
   return (
-    <div className="health-report-context" aria-label="Health report context">
+    <div className="health-report-context" aria-label={t('health.contextLandmark')}>
       {items.map(([label, value]) => (
         <span className="health-report-context__item" key={label}>
           <b>{label}</b>
@@ -280,33 +285,42 @@ function StatusRail({
   const impactCounts = report.impactCounts || impactCountsFromSeverity(report.counts || {})
   const status = report.status || 'unknown'
   const counts = [
-    { label: 'Needs action', value: impactCounts.blocks_ready || 0, kind: 'blocks_ready' },
-    { label: 'Degraded', value: impactCounts.degrades || 0, kind: 'degrades' },
-    { label: 'Optional', value: impactCounts.optional || 0, kind: 'optional' },
-    { label: 'Ready', value: impactCounts.none || 0, kind: 'none' },
+    {
+      label: t('health.countBlocksReady'),
+      value: impactCounts.blocks_ready || 0,
+      kind: 'blocks_ready',
+    },
+    { label: t('health.countDegrades'), value: impactCounts.degrades || 0, kind: 'degrades' },
+    { label: t('health.countOptional'), value: impactCounts.optional || 0, kind: 'optional' },
+    { label: t('health.countNone'), value: impactCounts.none || 0, kind: 'none' },
   ]
   const total = counts.reduce((sum, item) => sum + item.value, 0)
   return (
-    <section className={`health-status__rail is-${classToken(status)}`} aria-label="Health summary">
+    <section
+      className={`health-status__rail is-${classToken(status)}`}
+      aria-label={t('health.railLandmark')}
+    >
       <div className="health-score">
         <span className="health-score__icon" aria-hidden="true">
           <StatusIcon status={status} />
         </span>
         <div className="health-score__copy">
-          <span className="health-score__label">System readiness</span>
+          <span className="health-score__label">{t('health.railReadiness')}</span>
           <strong>{statusLabel(status, report.ready)}</strong>
           <span className="health-score__summary">{report.summary || status}</span>
         </div>
       </div>
       <div className="health-impact-profile">
         <div className="health-impact-profile__head">
-          <span>Impact distribution</span>
-          <strong>{total} checks</strong>
+          <span>{t('health.railImpactHead')}</span>
+          <strong>{t('health.railImpactChecks', { count: total })}</strong>
         </div>
         <div
           className={`health-impact-meter${total === 0 ? ' is-empty' : ''}`}
           role="img"
-          aria-label={`Impact distribution: ${counts.map((item) => `${item.label} ${item.value}`).join(', ')}`}
+          aria-label={t('health.railImpactMeter', {
+            breakdown: counts.map((item) => `${item.label} ${item.value}`).join(', '),
+          })}
         >
           {counts
             .filter((item) => item.value > 0)
@@ -332,30 +346,48 @@ function StatusRail({
 function LoadingRail() {
   // health.js:118-130 — loading strip.
   return (
-    <section className="health-status__rail is-loading" aria-label="Health summary">
+    <section className="health-status__rail is-loading" aria-label={t('health.railLandmark')}>
       <div className="health-score">
         <span className="health-score__icon" aria-hidden="true">
           <ActivityIcon />
         </span>
         <div className="health-score__copy">
-          <span className="health-score__label">System readiness</span>
-          <strong>Checking</strong>
-          <span className="health-score__summary">Waiting for doctor.status</span>
+          <span className="health-score__label">{t('health.railReadiness')}</span>
+          <strong>{t('health.checking')}</strong>
+          <span className="health-score__summary">{t('health.railWaiting')}</span>
         </div>
       </div>
       <div className="health-impact-profile">
         <div className="health-impact-profile__head">
-          <span>Impact distribution</span>
-          <strong>Running checks</strong>
+          <span>{t('health.railImpactHead')}</span>
+          <strong>{t('health.railImpactRunning')}</strong>
         </div>
         <div className="health-impact-meter is-loading" aria-hidden="true">
           <span />
         </div>
         <div className="health-count-grid">
-          <CountTile label="Needs action" value={0} kind="blocks_ready" total={0} loading />
-          <CountTile label="Degraded" value={0} kind="degrades" total={0} loading />
-          <CountTile label="Optional" value={0} kind="optional" total={0} loading />
-          <CountTile label="Ready" value={0} kind="none" total={0} loading />
+          <CountTile
+            label={t('health.countBlocksReady')}
+            value={0}
+            kind="blocks_ready"
+            total={0}
+            loading
+          />
+          <CountTile
+            label={t('health.countDegrades')}
+            value={0}
+            kind="degrades"
+            total={0}
+            loading
+          />
+          <CountTile
+            label={t('health.countOptional')}
+            value={0}
+            kind="optional"
+            total={0}
+            loading
+          />
+          <CountTile label={t('health.countNone')} value={0} kind="none" total={0} loading />
         </div>
       </div>
     </section>
@@ -367,7 +399,7 @@ export function HealthPage() {
   const bootstrap = useBootstrap()
 
   useEffect(() => {
-    document.title = 'Health - AgentOS Control'
+    document.title = t('health.documentTitle')
   }, [])
 
   // Simplification (parity matrix): legacy _gatewayContextUrl() read
@@ -413,18 +445,18 @@ export function HealthPage() {
   const showLoading = query.isFetching
 
   const summaryText = showLoading
-    ? 'Checking readiness'
+    ? t('health.summaryChecking')
     : query.isError
-      ? 'Health report unavailable'
+      ? t('health.summaryUnavailable')
       : query.data
-        ? query.data.summary || query.data.status || 'Health report loaded'
-        : 'Checking readiness'
+        ? query.data.summary || query.data.status || t('health.summaryLoaded')
+        : t('health.summaryChecking')
 
   let railNode
   let findingsNode
   if (showLoading) {
     railNode = <LoadingRail />
-    findingsNode = <article className="health-empty">Loading health report</article>
+    findingsNode = <article className="health-empty">{t('health.findingsLoading')}</article>
   } else if (query.isError) {
     // health.js:86-115 — synthetic gateway.unavailable report + finding.
     // health.js:227-238 — usesDefault is URL-equality against the default RPC
@@ -441,7 +473,7 @@ export function HealthPage() {
       // report, so the readiness rail reads a human sentence rather than the raw
       // "unavailable" status token. (The header #health-summary line stays the
       // distinct "Health report unavailable" per health.js:89.)
-      summary: 'Gateway health report unavailable',
+      summary: t('health.gatewayUnavailableTitle'),
       gatewayUrl,
       configPath: errorConfigPath,
       counts: { error: 1, warn: 0, info: 0, ok: 0 },
@@ -452,7 +484,7 @@ export function HealthPage() {
       severity: 'error',
       readinessImpact: 'blocks_ready',
       surface: 'gateway',
-      title: 'Gateway health report unavailable',
+      title: t('health.gatewayUnavailableTitle'),
       detail: gatewayUnavailableDetail(gatewayUrl, query.error),
       evidence: errorConfigPath ? { gatewayUrl, configPath: errorConfigPath } : { gatewayUrl },
       fixSteps: gatewayUnavailableFixSteps(gatewayUrl, errorConfigPath, usesDefault),
@@ -465,37 +497,37 @@ export function HealthPage() {
     findingsNode = <FindingsSection findings={query.data.findings || []} />
   } else {
     railNode = <LoadingRail />
-    findingsNode = <article className="health-empty">Loading health report</article>
+    findingsNode = <article className="health-empty">{t('health.findingsLoading')}</article>
   }
 
   return (
     <div className="health-layout health-stage">
       <header className="health-stage__header">
         <div className="health-stage__title-block">
-          <span className="health-eyebrow">Control · Health</span>
-          <h1>Health</h1>
+          <span className="health-eyebrow">{t('health.eyebrow')}</span>
+          <h1>{t('health.title')}</h1>
           <p id="health-summary">{summaryText}</p>
         </div>
         <Button
           variant="outline"
           id="health-refresh"
-          title="Refresh health report"
+          title={t('health.refreshTitle')}
           className="btn-refresh btn-term"
           disabled={showLoading}
           onClick={() => void query.refetch()}
         >
           <RefreshCwIcon className={showLoading ? 'health-spin' : undefined} />
-          <span>{showLoading ? 'Checking' : 'Refresh'}</span>
+          <span>{showLoading ? t('health.checking') : t('health.refresh')}</span>
         </Button>
       </header>
       {railNode}
       <section className="health-findings" aria-labelledby="health-findings-title">
         <div className="health-findings__intro">
           <div>
-            <span className="health-findings__eyebrow">Diagnostics</span>
-            <h2 id="health-findings-title">What needs attention</h2>
+            <span className="health-findings__eyebrow">{t('health.findingsEyebrow')}</span>
+            <h2 id="health-findings-title">{t('health.findingsTitle')}</h2>
           </div>
-          <p>Ordered by readiness impact so the next useful action stays obvious.</p>
+          <p>{t('health.findingsIntro')}</p>
         </div>
         <div className="health-findings__stack">{findingsNode}</div>
       </section>

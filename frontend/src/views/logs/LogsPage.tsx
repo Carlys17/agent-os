@@ -5,6 +5,7 @@ import { ActivityIcon, DownloadIcon, ScrollTextIcon, SearchIcon } from 'lucide-r
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
+import { t } from '@/i18n'
 import {
   DEFAULT_LEVELS,
   LEVELS,
@@ -51,8 +52,8 @@ function StatusPill({ label, tone }: { label: string; tone?: 'warn' }) {
 function StatusPills({ status }: { status: LogsStatus | null }) {
   if (!status) {
     return (
-      <div className="lg-status-pills" aria-label="Log status">
-        <StatusPill label="Log status unavailable" tone="warn" />
+      <div className="lg-status-pills" aria-label={t('logs.statusLandmark')}>
+        <StatusPill label={t('logs.statusUnavailable')} tone="warn" />
       </div>
     )
   }
@@ -61,18 +62,19 @@ function StatusPills({ status }: { status: LogsStatus | null }) {
   const diagnostics = status.diagnostics_enabled || {}
   const diagnosticsLabel =
     diagnostics.detail === 'raw'
-      ? 'Diagnostics raw'
+      ? t('logs.statusDiagnosticsRaw')
       : diagnostics.effective
-        ? 'Diagnostics standard'
-        : 'Diagnostics off'
+        ? t('logs.statusDiagnosticsStandard')
+        : t('logs.statusDiagnosticsOff')
+  const onOff = (enabled?: boolean) => (enabled ? t('logs.statusOn') : t('logs.statusOff'))
   return (
-    <div className="lg-status-pills" aria-label="Log status">
+    <div className="lg-status-pills" aria-label={t('logs.statusLandmark')}>
       <StatusPill
-        label={`File log ${fileLog.enabled ? 'on' : 'off'}`}
+        label={t('logs.statusFileLog', { state: onOff(fileLog.enabled) })}
         tone={fileLog.enabled ? undefined : 'warn'}
       />
       <StatusPill
-        label={`Raw turn-call ${rawLog.enabled ? 'on' : 'off'}`}
+        label={t('logs.statusRawTurnCall', { state: onOff(rawLog.enabled) })}
         tone={rawLog.enabled ? undefined : 'warn'}
       />
       <StatusPill label={diagnosticsLabel} tone="warn" />
@@ -114,7 +116,7 @@ export function LogsPage() {
   const rpc = useRpc()
 
   useEffect(() => {
-    document.title = 'Logs - AgentOS Control'
+    document.title = t('logs.documentTitle')
   }, [])
 
   // Accumulated tail buffer is React state (rendered data): the poll appends to
@@ -183,8 +185,8 @@ export function LogsPage() {
       // logs.js:209-213 — one warn toast per error run, suppressed until a
       // successful poll clears the flag.
       if (!pollErrorShownRef.current) {
-        const message = err instanceof Error ? err.message : 'unknown error'
-        toast.warning('Log refresh failed: ' + message, {
+        const message = err instanceof Error ? err.message : t('logs.toastUnknownError')
+        toast.warning(t('logs.toastRefreshFailed', { message }), {
           id: 'logs-refresh-err',
           duration: 2500,
         })
@@ -259,7 +261,7 @@ export function LogsPage() {
     streamBody = (
       <div className="lg-display__placeholder">
         <span className="lg-spinner" aria-hidden="true" />
-        Loading logs…
+        {t('logs.streamLoading')}
       </div>
     )
   } else if (filtered.length === 0) {
@@ -269,7 +271,7 @@ export function LogsPage() {
         <span className="lg-display__placeholder-icon" aria-hidden="true">
           <ScrollTextIcon />
         </span>
-        {hasAnyLines ? 'No lines match the current filter.' : 'No logs yet.'}
+        {hasAnyLines ? t('logs.streamNoMatch') : t('logs.streamEmpty')}
       </div>
     )
   } else {
@@ -282,74 +284,84 @@ export function LogsPage() {
     <div className="lg-stage">
       <header className="lg-stage__header">
         <div className="lg-stage__title-block">
-          <span className="t-label">Control · Logs</span>
-          <h1 className="t-display">Logs</h1>
-          <p className="lg-stage__subtitle">
-            Live gateway log stream — filter, follow, and export.
-          </p>
+          <span className="t-label">{t('logs.eyebrow')}</span>
+          <h1 className="t-display">{t('logs.title')}</h1>
+          <p className="lg-stage__subtitle">{t('logs.subtitle')}</p>
         </div>
         <div className="lg-stage__actions">
           <Button
             variant="outline"
-            title="Download filtered log lines"
+            title={t('logs.exportTitle')}
             className="text-xs uppercase tracking-[0.14em]"
             onClick={onExport}
           >
             <DownloadIcon />
-            <span>Export</span>
+            <span>{t('logs.export')}</span>
           </Button>
         </div>
       </header>
 
-      <section className="lg-console" aria-label="Live log console">
+      <section className="lg-console" aria-label={t('logs.consoleLandmark')}>
         <div className="lg-console__head">
           <div className="lg-console__heading">
             <span className="lg-console__icon" aria-hidden="true">
               <ActivityIcon />
             </span>
             <div>
-              <span className="t-label">Observability stream</span>
-              <strong>Gateway output</strong>
+              <span className="t-label">{t('logs.consoleEyebrow')}</span>
+              <strong>{t('logs.consoleTitle')}</strong>
             </div>
           </div>
           <div className="lg-console__status">
             <StatusPills status={statusQuery.data ?? null} />
             <span className="lg-console__cadence t-data">
-              <span aria-hidden="true" /> Polling every 3s
+              <span aria-hidden="true" /> {t('logs.consoleCadence')}
             </span>
           </div>
         </div>
 
-        <div className="lg-stats" aria-label="Log summary">
-          <div className="lg-stat lg-stat--hero" aria-label="In view">
-            <span className="lg-stat__label t-label">In view</span>
+        <div className="lg-stats" aria-label={t('logs.statsLandmark')}>
+          <div className="lg-stat lg-stat--hero" aria-label={t('logs.statInView')}>
+            <span className="lg-stat__label t-label">{t('logs.statInView')}</span>
             <strong className="lg-stat__value t-data">{filtered.length.toLocaleString()}</strong>
-            <span className="lg-stat__hint">of {counts.total.toLocaleString()} loaded</span>
+            <span className="lg-stat__hint">
+              {t('logs.statInViewHint', { total: counts.total.toLocaleString() })}
+            </span>
           </div>
-          <div className={`lg-stat${counts.errors ? ' tone-danger' : ''}`} aria-label="Errors">
-            <span className="lg-stat__label t-label">Errors</span>
+          <div
+            className={`lg-stat${counts.errors ? ' tone-danger' : ''}`}
+            aria-label={t('logs.statErrors')}
+          >
+            <span className="lg-stat__label t-label">{t('logs.statErrors')}</span>
             <strong className="lg-stat__value t-data">{counts.errors}</strong>
-            <span className="lg-stat__hint">{counts.errors ? 'review needed' : 'all clear'}</span>
+            <span className="lg-stat__hint">
+              {counts.errors ? t('logs.statErrorsReview') : t('logs.statErrorsClear')}
+            </span>
           </div>
-          <div className={`lg-stat${counts.warns ? ' tone-warn' : ''}`} aria-label="Warnings">
-            <span className="lg-stat__label t-label">Warnings</span>
+          <div
+            className={`lg-stat${counts.warns ? ' tone-warn' : ''}`}
+            aria-label={t('logs.statWarnings')}
+          >
+            <span className="lg-stat__label t-label">{t('logs.statWarnings')}</span>
             <strong className="lg-stat__value t-data">{counts.warns}</strong>
-            <span className="lg-stat__hint">{counts.warns ? 'recent advisories' : 'none'}</span>
+            <span className="lg-stat__hint">
+              {counts.warns ? t('logs.statWarningsRecent') : t('logs.statWarningsNone')}
+            </span>
           </div>
-          <div className="lg-stat" aria-label="Info and Debug">
-            <span className="lg-stat__label t-label">Info / Debug</span>
+          <div className="lg-stat" aria-label={t('logs.statInfoDebugLandmark')}>
+            <span className="lg-stat__label t-label">{t('logs.statInfoDebug')}</span>
             <strong className="lg-stat__value t-data">
               {counts.infos}
               <span className="lg-stat__sep">/</span>
               {counts.debug}
             </strong>
-            <span className="lg-stat__hint">routine output</span>
+            <span className="lg-stat__hint">{t('logs.statInfoDebugHint')}</span>
           </div>
         </div>
 
         <div className="lg-toolbar">
           <div className="lg-levels">
-            <span className="lg-toolbar__label t-label">Levels</span>
+            <span className="lg-toolbar__label t-label">{t('logs.toolbarLevels')}</span>
             <div className="lg-levels__row">
               {LEVELS.map((level) => {
                 const isActive = activeLevels.has(level)
@@ -358,7 +370,7 @@ export function LogsPage() {
                     type="button"
                     key={level}
                     className={`lg-level-btn lg-level-btn--${level.toLowerCase()}${isActive ? ' is-active' : ''}`}
-                    aria-label={`Toggle ${level} level`}
+                    aria-label={t('logs.toolbarToggleLevel', { level })}
                     aria-pressed={isActive}
                     onClick={() => toggleLevel(level)}
                   >
@@ -376,8 +388,8 @@ export function LogsPage() {
             <input
               className="lg-search-input"
               type="search"
-              aria-label="Filter log messages"
-              placeholder="Filter messages…"
+              aria-label={t('logs.toolbarSearchLabel')}
+              placeholder={t('logs.toolbarSearchPlaceholder')}
               autoComplete="off"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -392,7 +404,7 @@ export function LogsPage() {
             <span className="lg-toggle__track" aria-hidden="true">
               <span className="lg-toggle__thumb" />
             </span>
-            <span className="lg-toggle__label">Auto-follow</span>
+            <span className="lg-toggle__label">{t('logs.toolbarAutoFollow')}</span>
           </label>
         </div>
 

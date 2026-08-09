@@ -8,6 +8,7 @@ import { Fragment } from 'react'
 import { AnimatePresence } from 'motion/react'
 import { X } from 'lucide-react'
 import { ModalShell } from '@/components/ModalShell'
+import { t } from '@/i18n'
 import { comboParts, groupByCategory, isMac, type RegisteredShortcut } from './shortcut-combo'
 import './KeyboardShortcuts.css'
 
@@ -45,13 +46,13 @@ function Sheet({ shortcuts, onClose }: { shortcuts: RegisteredShortcut[]; onClos
     >
       <div className="panel__head shortcut-sheet__head">
         <h2 id="shortcut-overlay-title" className="shortcut-sheet__title">
-          Keyboard shortcuts
+          {t('shell.shortcutsLabel')}
         </h2>
         <button
           type="button"
           className="shortcut-sheet__close"
           onClick={onClose}
-          aria-label="Close dialog"
+          aria-label={t('shell.shortcutClose')}
         >
           <X size={18} />
         </button>

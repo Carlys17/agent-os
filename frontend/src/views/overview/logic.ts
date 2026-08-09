@@ -5,6 +5,8 @@
 // RPC calls, event subscriptions, and rendering live in OverviewPage.tsx; this
 // module owns the pure derivations (label mapping, formatting, session sort).
 
+import { t } from '@/i18n'
+
 /** A recent session row as returned by sessions.list (all fields optional). */
 export interface OverviewSession {
   key?: string
@@ -19,11 +21,11 @@ export interface OverviewSession {
  *  nullish falls back to "Unknown". */
 export function readinessStatusLabel(status?: string | null): string {
   const labels: Record<string, string> = {
-    ready: 'Ready',
-    degraded: 'Degraded',
-    action_required: 'Action required',
-    unavailable: 'Unavailable',
-    unknown: 'Unknown',
+    ready: t('overview.readyReady'),
+    degraded: t('overview.readyDegraded'),
+    action_required: t('overview.readyActionRequired'),
+    unavailable: t('overview.readyUnavailable'),
+    unknown: t('overview.readyUnknown'),
   }
   const key = String(status || 'unknown').toLowerCase()
   if (labels[key]) return labels[key]
@@ -32,11 +34,11 @@ export function readinessStatusLabel(status?: string | null): string {
 
 /** overview.js:234-242 — uptime_ms -> "Hh Mm Ss"; null/undefined -> "—". */
 export function formatUptime(ms?: number | null): string {
-  if (ms == null) return '—'
+  if (ms == null) return t('common.dash')
   const s = Math.floor(ms / 1000)
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
-  return `${h}h ${m}m ${s % 60}s`
+  return t('overview.uptime', { hours: h, minutes: m, seconds: s % 60 })
 }
 
 // components.js:249-269 — session status -> dot color variant / tooltip label.
@@ -48,11 +50,11 @@ const SESSION_STATUS_DOT: Record<string, string> = {
   timeout: 'warn',
 }
 const SESSION_STATUS_LABEL: Record<string, string> = {
-  running: 'Running',
-  done: 'Completed',
-  failed: 'Failed',
-  killed: 'Aborted by operator',
-  timeout: 'Timed out',
+  running: t('overview.sessionRunning'),
+  done: t('overview.sessionDone'),
+  failed: t('overview.sessionFailed'),
+  killed: t('overview.sessionKilled'),
+  timeout: t('overview.sessionTimeout'),
 }
 
 /** components.js:272-275 — dot color variant ("ok"/"warn"/"err"/"off"). */
@@ -64,7 +66,7 @@ export function sessionStatusClass(status?: string | null): string {
 /** components.js:284-287 — tooltip label; raw string else "Unknown" when empty. */
 export function sessionStatusLabel(status?: string | null): string {
   const k = String(status || '').toLowerCase()
-  return SESSION_STATUS_LABEL[k] || (status ? String(status) : 'Unknown')
+  return SESSION_STATUS_LABEL[k] || (status ? String(status) : t('overview.sessionUnknown'))
 }
 
 /** components.js:228-241 — relative time. Numeric input is treated as an epoch
@@ -79,12 +81,12 @@ export function relTime(isoOrTs: string | number): string {
   const d = Number.isFinite(numeric)
     ? new Date(Math.abs(numeric) < 10_000_000_000 ? numeric * 1000 : numeric)
     : new Date(isoOrTs)
-  if (Number.isNaN(d.getTime())) return '—'
+  if (Number.isNaN(d.getTime())) return t('common.dash')
   const diff = (Date.now() - d.getTime()) / 1000
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86_400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86_400)}d ago`
+  if (diff < 60) return t('overview.relJustNow')
+  if (diff < 3600) return t('overview.relMinutes', { count: Math.floor(diff / 60) })
+  if (diff < 86_400) return t('overview.relHours', { count: Math.floor(diff / 3600) })
+  return t('overview.relDays', { count: Math.floor(diff / 86_400) })
 }
 
 /** overview.js:320-326 — JSON-stringify a payload, truncating at 80 chars with
@@ -120,10 +122,10 @@ export function sortRecentSessions(sessions: OverviewSession[]): OverviewSession
 
 /** overview.js:263 — localized token count; null/undefined -> "—". */
 export function formatTokens(total?: number | null): string {
-  return total != null ? total.toLocaleString() : '—'
+  return total != null ? total.toLocaleString() : t('common.dash')
 }
 
 /** overview.js:266-268 — total cost as "$X.XXXX"; null/undefined -> "—". */
 export function formatCost(usd?: number | null): string {
-  return usd != null ? '$' + Number(usd).toFixed(4) : '—'
+  return usd != null ? '$' + Number(usd).toFixed(4) : t('common.dash')
 }

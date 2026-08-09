@@ -2,6 +2,8 @@
 // (src/agentos/gateway/static/js/views/health.js). Each function below carries
 // the legacy line range it mirrors so the parity matrix stays auditable.
 
+import { t } from '@/i18n'
+
 export type Impact = 'blocks_ready' | 'degrades' | 'optional' | 'none'
 export type GroupKind = 'action' | 'degraded' | 'optional' | 'ready'
 
@@ -55,13 +57,13 @@ export function impactCountsFromSeverity(counts: Record<string, number>): Record
 
 /** health.js:462-472 — readiness label incl. "Ready with warnings". */
 export function statusLabel(status: string, ready?: boolean): string {
-  if (ready && status === 'degraded') return 'Ready with warnings'
-  if (ready) return 'Ready'
+  if (ready && status === 'degraded') return t('health.statusReadyWithWarnings')
+  if (ready) return t('health.statusReady')
   const labels: Record<string, string> = {
-    action_required: 'Action required',
-    degraded: 'Degraded',
-    unavailable: 'Unavailable',
-    ready: 'Ready',
+    action_required: t('health.statusActionRequired'),
+    degraded: t('health.statusDegraded'),
+    unavailable: t('health.statusUnavailable'),
+    ready: t('health.statusReady'),
   }
   return labels[status] || status
 }
@@ -147,12 +149,12 @@ export function gatewayUnavailableFixSteps(
   if (!isLocalGatewayUrl(url)) {
     return [
       {
-        label: 'Inspect remote gateway',
+        label: t('health.stepInspectRemote'),
         command: `agentos gateway status --gateway ${shellArg(url)} --json`,
       },
       {
-        label: 'Repair remote deployment',
-        detail: 'Start or repair the remote AgentOS gateway deployment, then refresh health.',
+        label: t('health.stepRepairRemote'),
+        detail: t('health.stepRepairRemoteDetail'),
       },
     ]
   }
@@ -164,13 +166,16 @@ export function gatewayUnavailableFixSteps(
   const targetArgs = useConfigTarget ? '' : bindArgs
   return [
     {
-      label: 'Run local doctor',
+      label: t('health.stepRunDoctor'),
       command: `agentos doctor${doctorTarget}${configTarget} --json`,
-      detail: 'Checks local config and onboarding before restarting the gateway.',
+      detail: t('health.stepRunDoctorDetail'),
     },
-    { label: 'Start local gateway', command: `agentos gateway start${targetArgs}${configTarget}` },
     {
-      label: 'Inspect local gateway',
+      label: t('health.stepStartGateway'),
+      command: `agentos gateway start${targetArgs}${configTarget}`,
+    },
+    {
+      label: t('health.stepInspectGateway'),
       command: `agentos gateway status${targetArgs} --json${configTarget}`,
     },
   ]

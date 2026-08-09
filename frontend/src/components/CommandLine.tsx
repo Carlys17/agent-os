@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { CheckIcon, CopyIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
 
 // Common terminal command line: `$ <command>` with an integrated copy action.
 // Copy semantics carry the legacy UI.toast contract (health.js:35-62 +
@@ -22,7 +23,7 @@ function copyText(text: string): Promise<void> {
   ta.select()
   const ok = document.execCommand('copy')
   document.body.removeChild(ta)
-  return ok ? Promise.resolve() : Promise.reject(new Error('Copy command failed'))
+  return ok ? Promise.resolve() : Promise.reject(new Error(t('shell.commandCopyError')))
 }
 
 export function CommandLine({
@@ -39,13 +40,16 @@ export function CommandLine({
     if (!command) return
     try {
       await copyText(command)
-      toast.success('Copied command', { id: `${toastIdPrefix}-ok`, duration: 1600 })
+      toast.success(t('shell.commandCopied'), { id: `${toastIdPrefix}-ok`, duration: 1600 })
       setCopied(true)
       if (resetTimer.current) clearTimeout(resetTimer.current)
       resetTimer.current = setTimeout(() => setCopied(false), 1400)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Copy failed: ' + message, { id: `${toastIdPrefix}-err`, duration: 2500 })
+      toast.error(t('shell.commandCopyFailed', { message }), {
+        id: `${toastIdPrefix}-err`,
+        duration: 2500,
+      })
     }
   }
 
@@ -60,8 +64,8 @@ export function CommandLine({
         variant="ghost"
         size="icon-xs"
         className="cmdline__copy"
-        title="Copy command"
-        aria-label="Copy command"
+        title={t('shell.commandCopyLabel')}
+        aria-label={t('shell.commandCopyLabel')}
         onClick={() => void onCopy()}
       >
         {copied ? <CheckIcon className="text-ok" /> : <CopyIcon />}

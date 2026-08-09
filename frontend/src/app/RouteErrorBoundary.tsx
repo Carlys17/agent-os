@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { isRouteErrorResponse, Link, useNavigate, useRouteError } from 'react-router'
 import { LayoutDashboardIcon, RefreshCwIcon, TriangleAlertIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
 import './route-error.css'
 
 const MAX_DEVELOPER_MESSAGE_LENGTH = 240
@@ -27,10 +28,9 @@ export function routeErrorCopy(
   if (isRouteErrorResponse(error)) {
     const unavailable = error.status === 401 || error.status === 403 || error.status === 404
     return {
-      code: `HTTP ${error.status}`,
-      title: unavailable ? 'This view is unavailable' : 'This view hit a snag',
-      message:
-        'AgentOS kept the rest of your workspace intact. Reload this view or return to Overview.',
+      code: t('shell.errorHttpCode', { status: error.status }),
+      title: unavailable ? t('shell.errorUnavailableTitle') : t('shell.errorSnagTitle'),
+      message: t('shell.errorMessage'),
     }
   }
 
@@ -40,10 +40,9 @@ export function routeErrorCopy(
       : undefined
 
   return {
-    code: 'VIEW ERROR',
-    title: 'This view hit a snag',
-    message:
-      'AgentOS kept the rest of your workspace intact. Reload this view or return to Overview.',
+    code: t('shell.errorViewCode'),
+    title: t('shell.errorSnagTitle'),
+    message: t('shell.errorMessage'),
     developerMessage,
   }
 }
@@ -55,7 +54,7 @@ export function RouteErrorBoundary() {
   const copy = routeErrorCopy(error)
 
   useEffect(() => {
-    document.title = 'Recovery - AgentOS Control'
+    document.title = t('shell.errorDocumentTitle')
     headingRef.current?.focus()
   }, [])
 
@@ -67,10 +66,10 @@ export function RouteErrorBoundary() {
             <TriangleAlertIcon />
           </span>
           <div className="route-error__identity">
-            <span className="route-error__eyebrow">Workspace recovery</span>
+            <span className="route-error__eyebrow">{t('shell.errorEyebrow')}</span>
             <span className="route-error__status">
               <span aria-hidden="true" />
-              View paused safely
+              {t('shell.errorStatus')}
             </span>
           </div>
           <code className="route-error__code">{copy.code}</code>
@@ -84,20 +83,20 @@ export function RouteErrorBoundary() {
 
           {copy.developerMessage ? (
             <div className="route-error__developer">
-              <span>Developer detail</span>
+              <span>{t('shell.errorDeveloperDetail')}</span>
               <code>{copy.developerMessage}</code>
             </div>
           ) : null}
 
-          <div className="route-error__actions" aria-label="Recovery actions">
+          <div className="route-error__actions" aria-label={t('shell.errorActions')}>
             <Button type="button" onClick={() => navigate(0)}>
               <RefreshCwIcon />
-              Reload view
+              {t('shell.errorReload')}
             </Button>
             <Button asChild variant="outline">
               <Link to="/overview">
                 <LayoutDashboardIcon />
-                Go to Overview
+                {t('shell.errorGoOverview')}
               </Link>
             </Button>
           </div>
