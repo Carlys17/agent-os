@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { useBootstrap, useRpc } from '@/app/providers'
 // Registers this view's copy; it ships in this chunk, not the entry bundle.
 import '@/i18n/en/health'
-import { t } from '@/i18n'
+import { formatNumber, t } from '@/i18n'
 import {
   evidenceLabel,
   evidenceValue,
@@ -238,7 +238,7 @@ function CountTile({
     >
       <span className="health-count__dot" aria-hidden="true" />
       <span className="health-count__label">{label}</span>
-      <strong>{loading ? t('common.dash') : Number(value || 0)}</strong>
+      <strong>{loading ? t('common.dash') : formatNumber(Number(value || 0))}</strong>
       <span className="health-count__share">
         {loading
           ? t('health.railCountChecking')

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
 // Registers this view's copy; it ships in this chunk, not the entry bundle.
 import '@/i18n/en/logs'
-import { t } from '@/i18n'
+import { formatNumber, t } from '@/i18n'
 import {
   DEFAULT_LEVELS,
   LEVELS,
@@ -325,9 +325,9 @@ export function LogsPage() {
         <div className="lg-stats" aria-label={t('logs.statsLandmark')}>
           <div className="lg-stat lg-stat--hero" aria-label={t('logs.statInView')}>
             <span className="lg-stat__label t-label">{t('logs.statInView')}</span>
-            <strong className="lg-stat__value t-data">{filtered.length.toLocaleString()}</strong>
+            <strong className="lg-stat__value t-data">{formatNumber(filtered.length)}</strong>
             <span className="lg-stat__hint">
-              {t('logs.statInViewHint', { total: counts.total.toLocaleString() })}
+              {t('logs.statInViewHint', { total: counts.total })}
             </span>
           </div>
           <div

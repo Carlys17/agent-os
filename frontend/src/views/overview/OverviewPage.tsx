@@ -418,9 +418,7 @@ export function OverviewPage() {
                 const rel = s.updated_at ? relTime(s.updated_at) : t('common.dash')
                 const msgs =
                   s.message_count != null
-                    ? t('overview.recentMessages', {
-                        count: Number(s.message_count).toLocaleString(),
-                      })
+                    ? t('overview.recentMessages', { count: Number(s.message_count) })
                     : ''
                 return (
                   <button
