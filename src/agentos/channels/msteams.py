@@ -132,6 +132,7 @@ class MSTeamsChannel:
             channel_type="msteams",
             group_chat=True,
             mentions=True,
+            streaming=True,
             reply=True,
             edit=True,
             delete=True,

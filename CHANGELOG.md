@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Telegram replies now stream: AgentOS posts one message and edits it as the
+  answer arrives, instead of showing a typing indicator for the whole run and
+  then dropping the finished answer in at once. Edits are throttled to
+  Telegram's stricter rate limit, answers longer than 4096 characters roll over
+  into a follow-up message, and a burst of `429`s degrades to a single final
+  send with the full text intact. Adapters that implement streaming (Slack,
+  Discord, Telegram, Microsoft Teams) now declare the `streaming` capability, so
+  the manifest and the Channels page reflect what they actually do.
+  (Fixes #141)
+
 ## [2026.8.7] - 2026-08-07
 
 ### Fixed

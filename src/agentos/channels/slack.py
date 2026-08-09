@@ -134,6 +134,7 @@ class SlackChannel:
             channel_type="slack",
             group_chat=True,
             mentions=True,
+            streaming=True,
             native_file_upload=True,
             media=True,
             reactions=self.status_reactions_enabled,

@@ -174,6 +174,7 @@ class ChannelCapabilityProfile:
     group_chat: bool = False
     mentions: bool = False
     typing_indicator: bool = False
+    streaming: bool = False
     native_file_upload: bool = False
     media: bool = False
     reactions: bool = False
@@ -205,6 +206,8 @@ class ChannelCapabilityProfile:
             tags.add(ChannelCapabilities.MENTIONS)
         if self.typing_indicator:
             tags.add(ChannelCapabilities.TYPING_INDICATOR)
+        if self.streaming:
+            tags.add(ChannelCapabilities.STREAMING)
         if self.artifact_delivery or self.native_file_upload or self.media:
             tags.add(ChannelCapabilities.ARTIFACT_DELIVERY)
         if self.native_file_upload:
