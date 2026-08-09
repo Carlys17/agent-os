@@ -9,6 +9,7 @@ import { overview } from './overview'
 import { settings } from './settings'
 import { sessions } from './sessions'
 import { shell } from './shell'
+import { usage } from './usage'
 
 /**
  * Every English namespace in one object.
@@ -37,4 +38,5 @@ export const en = {
   sessions,
   settings,
   shell,
+  usage,
 } as const

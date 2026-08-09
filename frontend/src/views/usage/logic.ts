@@ -7,6 +7,9 @@
 
 /** A per-model breakdown entry (usage.status sessions[].modelBreakdown[]).
  *  Backend emits camelCase here; snake variants tolerated defensively. */
+import { t, tPlural } from '@/i18n'
+import '@/i18n/en/usage'
+
 export interface ModelBreakdownEntry {
   model?: string
   inputTokens?: number
@@ -144,21 +147,21 @@ export function undatedHiddenCount(rows: UsageRow[], range: UsageRange): number 
 export function rangeHiddenHint(rows: UsageRow[], range: UsageRange): string {
   const hidden = undatedHiddenCount(rows, range)
   if (hidden <= 0) return ''
-  return `${hidden} undated legacy session${hidden === 1 ? '' : 's'} hidden`
+  return tPlural('usage.hiddenSessions', hidden)
 }
 
 // ── Formatting (usage.js:187-192,515-521,228-241 relTime) ────────────────────
 
 /** usage.js:187-192 — "$"+toFixed(decimals) (default 4); null → em dash. */
 export function formatCost(usd: number | null | undefined, opts?: { decimals?: number }): string {
-  if (usd == null) return '—'
+  if (usd == null) return t('common.dash')
   const decimals = opts?.decimals != null ? opts.decimals : 4
   return '$' + Number(usd).toFixed(decimals)
 }
 
 /** usage.js:515-521 — abbreviate a token count (M/K one-decimal); null → dash. */
 export function formatNum(n: number | null | undefined): string {
-  if (n == null) return '—'
+  if (n == null) return t('common.dash')
   const v = Number(n)
   if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M'
   if (v >= 1_000) return (v / 1_000).toFixed(1) + 'K'
@@ -178,12 +181,12 @@ export function formatRelTime(isoOrTs: string | number): string {
   const d = Number.isFinite(numeric)
     ? new Date(Math.abs(numeric) < 10_000_000_000 ? numeric * 1000 : numeric)
     : new Date(isoOrTs)
-  if (Number.isNaN(d.getTime())) return '—'
+  if (Number.isNaN(d.getTime())) return t('common.dash')
   const diff = (Date.now() - d.getTime()) / 1000
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86_400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86_400)}d ago`
+  if (diff < 60) return t('usage.relJustNow')
+  if (diff < 3600) return t('usage.relMinutes', { count: Math.floor(diff / 60) })
+  if (diff < 86_400) return t('usage.relHours', { count: Math.floor(diff / 3600) })
+  return t('usage.relDays', { count: Math.floor(diff / 86_400) })
 }
 
 // ── Metrics (usage.js:243-252,385-423) ───────────────────────────────────────
@@ -246,41 +249,56 @@ function costSourceClass(source: string): string {
   return KNOWN_COST_SOURCES.includes(source) ? source : 'none'
 }
 
-/** usage.js:276-290 — the human label for a source; ephemeral wins. */
-function costSourceLabel(source: string, ephemeral: boolean): string {
-  if (ephemeral) return 'Ephemeral'
+/** The locale-independent identity of a cost source; ephemeral wins. */
+type CostSourceToken = 'ephemeral' | 'actual' | 'estimated' | 'mixed' | 'unpriced' | 'none'
+
+function costSourceToken(source: string, ephemeral: boolean): CostSourceToken {
+  if (ephemeral) return 'ephemeral'
   switch (source) {
     case 'provider_billed':
-      return 'Actual'
+      return 'actual'
     case 'provider_billed_prorated':
-      return 'Actual'
+      return 'actual'
     case 'agentos_estimate':
-      return 'Estimated'
+      return 'estimated'
     case 'mixed':
-      return 'Mixed'
+      return 'mixed'
     case 'unavailable':
-      return 'Unpriced'
+      return 'unpriced'
     default:
-      return 'None'
+      return 'none'
   }
+}
+
+/** usage.js:276-290 — the human label for a source; ephemeral wins. */
+function costSourceLabel(source: string, ephemeral: boolean): string {
+  const labels: Record<CostSourceToken, string> = {
+    ephemeral: t('usage.sourceEphemeral'),
+    actual: t('usage.sourceActual'),
+    estimated: t('usage.sourceEstimated'),
+    mixed: t('usage.sourceMixed'),
+    unpriced: t('usage.sourceUnpriced'),
+    none: t('usage.sourceNone'),
+  }
+  return labels[costSourceToken(source, ephemeral)]
 }
 
 /** usage.js:292-302 — the tooltip for a source; ephemeral wins. */
 function costSourceTooltip(source: string, ephemeral: boolean): string {
-  if (ephemeral) return 'Ephemeral session — cost not yet persisted'
+  if (ephemeral) return t('usage.tipEphemeral')
   switch (source) {
     case 'provider_billed':
-      return 'Actual — cost billed by the provider'
+      return t('usage.tipActual')
     case 'provider_billed_prorated':
-      return 'Total is real billed; per-model split is estimated.'
+      return t('usage.tipProrated')
     case 'agentos_estimate':
-      return 'Estimated — derived locally from token counts'
+      return t('usage.tipEstimated')
     case 'mixed':
-      return 'Mixed — partial billing data, rest estimated'
+      return t('usage.tipMixed')
     case 'unavailable':
-      return 'Unpriced — no pricing table entry for this model'
+      return t('usage.tipUnpriced')
     default:
-      return 'No cost recorded'
+      return t('usage.tipNone')
   }
 }
 
@@ -307,24 +325,33 @@ export function costSourceBadge(row: Record<string, unknown>): CostSourceBadge {
 /** usage.js:312-322 — the cost-composition hint ("actual 2 · estimated 1 · …")
  *  over the given rows; only the five counted labels contribute. */
 export function sourceCompositionHint(rows: UsageRow[]): string {
+  // Counted by token, not by the rendered label: keying on English wording
+  // would stop matching the moment the badge label is translated.
   const counts: Record<string, number> = {
-    Actual: 0,
-    Estimated: 0,
-    Mixed: 0,
-    Unpriced: 0,
-    Ephemeral: 0,
+    actual: 0,
+    estimated: 0,
+    mixed: 0,
+    unpriced: 0,
+    ephemeral: 0,
   }
   rows.forEach((row) => {
     const r = row as Record<string, unknown>
-    const label = costSourceLabel(
+    const token = costSourceToken(
       costSource(r),
       Boolean(rowVal(r, 'cost_ephemeral', 'costEphemeral')),
     )
-    if (counts[label] != null) counts[label] += 1
+    if (counts[token] != null) counts[token] += 1
   })
+  const words: Record<string, string> = {
+    actual: t('usage.compositionActual'),
+    estimated: t('usage.compositionEstimated'),
+    mixed: t('usage.compositionMixed'),
+    unpriced: t('usage.compositionUnpriced'),
+    ephemeral: t('usage.compositionEphemeral'),
+  }
   return Object.entries(counts)
     .filter(([, n]) => n > 0)
-    .map(([label, n]) => `${label.toLowerCase()} ${n}`)
+    .map(([token, n]) => t('usage.compositionEntry', { label: words[token]!, count: n }))
     .join(' · ')
 }
 
