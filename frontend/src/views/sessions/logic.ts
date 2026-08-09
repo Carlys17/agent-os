@@ -13,6 +13,9 @@ interface RunTask {
 
 /** A raw session row from sessions.list (all fields optional; both snake_case
  *  and camelCase variants appear across backend/CLI payloads). */
+import { t } from '@/i18n'
+import '@/i18n/en/sessions'
+
 export interface RawSession {
   key?: string
   status?: string
@@ -123,12 +126,14 @@ const SESSION_STATUS_CHIP: Record<string, Tone> = {
   killed: 'dim',
   timeout: 'warn',
 }
-const SESSION_STATUS_LABEL: Record<string, string> = {
-  running: 'Running',
-  done: 'Completed',
-  failed: 'Failed',
-  killed: 'Aborted by operator',
-  timeout: 'Timed out',
+function sessionStatusLabels(): Record<string, string> {
+  return {
+    running: t('sessions.statusRunning'),
+    done: t('sessions.statusDone'),
+    failed: t('sessions.statusFailed'),
+    killed: t('sessions.statusKilled'),
+    timeout: t('sessions.statusTimeout'),
+  }
 }
 
 /** components.js:272-275 — dot color variant ("ok"/"warn"/"err"/"off"). */
@@ -140,7 +145,7 @@ export function sessionStatusClass(status?: string | null): string {
 /** components.js:284-287 — tooltip label; raw string else "Unknown" when empty. */
 export function sessionStatusLabel(status?: string | null): string {
   const k = String(status || '').toLowerCase()
-  return SESSION_STATUS_LABEL[k] || (status ? String(status) : 'Unknown')
+  return sessionStatusLabels()[k] || (status ? String(status) : t('sessions.statusUnknown'))
 }
 
 /** components.js:278-281 — chip color modifier mapped to a --tone token. The
@@ -174,23 +179,25 @@ export function relTimeLabel(isoOrTs: string | number): string {
   const d = Number.isFinite(numeric)
     ? new Date(Math.abs(numeric) < 10_000_000_000 ? numeric * 1000 : numeric)
     : new Date(isoOrTs)
-  if (Number.isNaN(d.getTime())) return '—'
+  if (Number.isNaN(d.getTime())) return t('common.dash')
   const diff = (Date.now() - d.getTime()) / 1000
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86_400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86_400)}d ago`
+  if (diff < 60) return t('sessions.relJustNow')
+  if (diff < 3600) return t('sessions.relMinutes', { count: Math.floor(diff / 60) })
+  if (diff < 86_400) return t('sessions.relHours', { count: Math.floor(diff / 3600) })
+  return t('sessions.relDays', { count: Math.floor(diff / 86_400) })
 }
 
 // ── Run-status badge (sessions.js:763-790) ───────────────────────────────────
 
-const RUN_STATUS_LABEL: Record<string, string> = {
-  queued: 'Task queued',
-  running: 'Task running',
-  interrupted: 'Interrupted',
-  failed: 'Last task failed',
-  timeout: 'Last task timed out',
-  cancelled: 'Last task cancelled',
+function runStatusLabels(): Record<string, string> {
+  return {
+    queued: t('sessions.runQueued'),
+    running: t('sessions.runRunning'),
+    interrupted: t('sessions.runInterrupted'),
+    failed: t('sessions.runFailed'),
+    timeout: t('sessions.runTimeout'),
+    cancelled: t('sessions.runCancelled'),
+  }
 }
 const RUN_STATUS_CHIP: Record<string, Tone> = {
   queued: 'warn',
@@ -210,7 +217,7 @@ export interface RunBadge {
  *  chip class in the legacy map → still shown, tone falls back to dim). */
 export function runStatusBadge(row: RawSession): RunBadge | null {
   const runStatus = sessionRunStatus(row)
-  const label = RUN_STATUS_LABEL[runStatus]
+  const label = runStatusLabels()[runStatus]
   if (!label) return null
   return { label, tone: RUN_STATUS_CHIP[runStatus] || 'dim' }
 }

@@ -16,6 +16,7 @@ const I18N_MIGRATED = [
   'src/views/health/**/*.tsx',
   'src/views/logs/**/*.tsx',
   'src/views/overview/**/*.tsx',
+  'src/views/sessions/**/*.tsx',
   'src/views/settings/**/*.tsx',
 ]
 

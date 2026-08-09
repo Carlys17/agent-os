@@ -7,6 +7,7 @@ import { health } from './health'
 import { logs } from './logs'
 import { overview } from './overview'
 import { settings } from './settings'
+import { sessions } from './sessions'
 import { shell } from './shell'
 
 /**
@@ -33,6 +34,7 @@ export const en = {
   health,
   logs,
   overview,
+  sessions,
   settings,
   shell,
 } as const

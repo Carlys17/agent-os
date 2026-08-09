@@ -20,6 +20,8 @@ import { listItemVariants, SUBTLE_EASE } from '@/lib/motion'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
+import { t, tPlural } from '@/i18n'
+import '@/i18n/en/sessions'
 import {
   agentIdFromKey,
   agentSubline,
@@ -59,7 +61,7 @@ function ConfirmDialog({
   title,
   body,
   confirmLabel,
-  cancelLabel = 'Cancel',
+  cancelLabel = t('common.cancel'),
   busy = false,
   onCancel,
   onConfirm,
@@ -147,33 +149,38 @@ function NewSessionDialog({
     >
       <form className="sess-dialog" onSubmit={submit}>
         <header className="sess-dialog__head">
-          <span className="t-label">Control · Sessions</span>
+          <span className="t-label">{t('sessions.eyebrow')}</span>
           <h2 id={titleId} className="sess-dialog__title">
-            Start a new chat
+            {t('sessions.dialogTitle')}
           </h2>
         </header>
         <div className="sess-dialog__body">
           <label className="sess-field">
-            <span className="t-label">Agent</span>
+            <span className="t-label">{t('sessions.dialogAgent')}</span>
             <input
               className="sess-input"
               list={listId}
               autoComplete="off"
               value={value}
-              placeholder="Pick an agent or type a new ID"
+              placeholder={t('sessions.dialogAgentPlaceholder')}
               onChange={(e) => setValue(e.target.value)}
             />
             <datalist id={listId}>
               {agents.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.sublabel ? `${a.label} — ${a.sublabel}` : a.label}
+                  {a.sublabel
+                    ? t('sessions.dialogOptionWithSublabel', {
+                        label: a.label,
+                        sublabel: a.sublabel,
+                      })
+                    : a.label}
                 </option>
               ))}
             </datalist>
             <small className="sess-field__hint">
               {createPending
-                ? `↵ Create a new agent "${typed}" and start a chat.`
-                : 'Pick an agent or type a new ID to create it.'}
+                ? t('sessions.dialogHintCreate', { id: typed })
+                : t('sessions.dialogHintPick')}
             </small>
           </label>
           {error ? (
@@ -184,10 +191,14 @@ function NewSessionDialog({
         </div>
         <footer className="sess-dialog__foot">
           <Button type="button" variant="ghost" disabled={submitting} onClick={onCancel}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="submit" disabled={!canSubmit}>
-            {submitting ? (createPending ? 'Creating…' : 'Starting…') : 'Start chat'}
+            {submitting
+              ? createPending
+                ? t('sessions.dialogSubmitCreating')
+                : t('sessions.dialogSubmitStarting')
+              : t('sessions.dialogSubmit')}
           </Button>
         </footer>
       </form>
@@ -245,7 +256,7 @@ export function SessionsPage() {
   const [createError, setCreateError] = useState<string | null>(null)
 
   useEffect(() => {
-    document.title = 'Sessions - AgentOS Control'
+    document.title = t('sessions.documentTitle')
   }, [])
 
   // sessions.js:84-97 — debounce the search input (180ms); a new query resets
@@ -302,7 +313,7 @@ export function SessionsPage() {
     if (sessionsQuery.isError) {
       const err = sessionsQuery.error
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to load sessions: ' + message, { id: 'sessions-load-err' })
+      toast.error(t('sessions.toastLoadFailed', { message }), { id: 'sessions-load-err' })
     }
   }, [sessionsQuery.isError, sessionsQuery.error])
 
@@ -335,14 +346,19 @@ export function SessionsPage() {
     onSuccess: (data, keys) => {
       if (keys.length === 1) {
         const outcome = parseSingleDeleteResult(data as never, keys[0]!)
-        if (outcome.ok) toast.success('Session deleted', { id: 'sessions-delete' })
-        else toast.error('Delete failed: ' + outcome.reason, { id: 'sessions-delete-err' })
+        if (outcome.ok) toast.success(t('sessions.toastDeleted'), { id: 'sessions-delete' })
+        else
+          toast.error(t('sessions.toastDeleteFailed', { message: outcome.reason }), {
+            id: 'sessions-delete-err',
+          })
       } else {
         const { okCount, errCount } = parseBulkDeleteResult(data as never, keys.length)
         if (errCount > 0)
-          toast.warning(`Deleted ${okCount}, ${errCount} failed`, { id: 'sessions-delete' })
+          toast.warning(t('sessions.toastBulkPartial', { ok: okCount, failed: errCount }), {
+            id: 'sessions-delete',
+          })
         else
-          toast.success(`Deleted ${okCount} session${okCount === 1 ? '' : 's'}`, {
+          toast.success(tPlural('sessions.toastBulkDeleted', okCount), {
             id: 'sessions-delete',
           })
       }
@@ -352,7 +368,7 @@ export function SessionsPage() {
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Delete failed: ' + message, { id: 'sessions-delete-err' })
+      toast.error(t('sessions.toastDeleteFailed', { message }), { id: 'sessions-delete-err' })
       setDialog({ kind: 'none' })
       invalidate()
     },
@@ -376,7 +392,9 @@ export function SessionsPage() {
     },
     onSuccess: (res, vars) => {
       toast.success(
-        res.createdAgent ? `Created agent "${vars.agentId}" and started chat` : 'Session created',
+        res.createdAgent
+          ? t('sessions.toastCreatedWithAgent', { id: vars.agentId })
+          : t('sessions.toastCreated'),
         { id: 'sessions-create' },
       )
       setDialog({ kind: 'none' })
@@ -388,13 +406,12 @@ export function SessionsPage() {
       // sessions.js:698-708 — friendly inline errors; dialog stays open.
       const e = err as RpcError
       const code = e.code || ''
-      let friendly = 'Failed to start chat: ' + (e.message || String(err))
+      let friendly = t('sessions.toastCreateFailed', { message: e.message || String(err) })
       if (code === 'UNAUTHORIZED' && vars.createPending)
-        friendly = 'This connection does not have permission to create agents.'
+        friendly = t('sessions.toastCreateUnauthorized')
       if (code === 'agent.not_found')
-        friendly = `Agent "${vars.agentId}" doesn't exist. Type a new ID and it will be created.`
-      if (code === 'agent.exists')
-        friendly = `Agent "${vars.agentId}" already exists — pick it from the list instead.`
+        friendly = t('sessions.toastAgentNotFound', { id: vars.agentId })
+      if (code === 'agent.exists') friendly = t('sessions.toastAgentExists', { id: vars.agentId })
       setCreateError(friendly)
     },
   })
@@ -407,7 +424,8 @@ export function SessionsPage() {
           id: a.id ?? '',
           label: a.name || a.id || '',
           sublabel:
-            withMeta.model || (withMeta.isBuiltin || withMeta.type === 'builtin' ? 'built-in' : ''),
+            withMeta.model ||
+            (withMeta.isBuiltin || withMeta.type === 'builtin' ? t('sessions.agentBuiltin') : ''),
         }
       }),
     [agentsQuery.data],
@@ -442,10 +460,13 @@ export function SessionsPage() {
   async function copyKey(key: string) {
     try {
       await copyWithFallback(key)
-      toast.success('Copied session key', { id: 'sessions-copy-ok', duration: 1600 })
+      toast.success(t('sessions.toastCopied'), { id: 'sessions-copy-ok', duration: 1600 })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      toast.warning('Copy failed: ' + message, { id: 'sessions-copy-err', duration: 2500 })
+      toast.warning(t('sessions.toastCopyFailed', { message }), {
+        id: 'sessions-copy-err',
+        duration: 2500,
+      })
     }
   }
 
@@ -458,23 +479,22 @@ export function SessionsPage() {
     <div className="sess-stage">
       <header className="sess-stage__header">
         <div className="sess-stage__title-block">
-          <span className="t-label">Control · Sessions</span>
-          <h1 className="t-display">Sessions</h1>
-          <p className="sess-stage__subtitle">
-            Session history, current task activity, and agent runs — open one to chat, or clean up
-            old state.
-          </p>
+          <span className="t-label">{t('sessions.eyebrow')}</span>
+          <h1 className="t-display">{t('sessions.title')}</h1>
+          <p className="sess-stage__subtitle">{t('sessions.subtitle')}</p>
         </div>
         <div className="sess-stage__actions">
           <Button
             variant="outline"
-            title="Refresh"
+            title={t('sessions.refresh')}
             className="text-xs uppercase tracking-[0.14em]"
             disabled={sessionsQuery.isFetching}
             onClick={invalidate}
           >
             <RefreshCwIcon className={sessionsQuery.isFetching ? 'sess-refresh-spin' : undefined} />
-            <span>{sessionsQuery.isFetching ? 'Refreshing…' : 'Refresh'}</span>
+            <span>
+              {sessionsQuery.isFetching ? t('sessions.refreshBusy') : t('sessions.refresh')}
+            </span>
           </Button>
           <Button
             className="text-xs uppercase tracking-[0.14em]"
@@ -484,14 +504,14 @@ export function SessionsPage() {
             }}
           >
             <PlusIcon />
-            <span>New session</span>
+            <span>{t('sessions.newSession')}</span>
           </Button>
         </div>
       </header>
 
       <section
         className={`sess-command${sessionsQuery.isFetching ? ' is-loading' : ''}`}
-        aria-label="Session activity overview"
+        aria-label={t('sessions.overviewLandmark')}
         aria-busy={sessionsQuery.isFetching}
       >
         <div className="sess-command__toolbar">
@@ -500,32 +520,41 @@ export function SessionsPage() {
               <ActivityIcon />
             </span>
             <div>
-              <span className="t-label">Activity ledger</span>
-              <strong>Session pulse</strong>
+              <span className="t-label">{t('sessions.overviewEyebrow')}</span>
+              <strong>{t('sessions.overviewTitle')}</strong>
             </div>
           </div>
           <span className="sess-command__meta">
             <span className={stats.activeRuns ? 'tone-ok' : 'tone-dim'} aria-hidden="true" />
-            {stats.activeRuns ? `${stats.activeRuns} executing now` : 'No active runs'}
+            {stats.activeRuns
+              ? t('sessions.overviewExecuting', { count: stats.activeRuns })
+              : t('sessions.overviewIdle')}
           </span>
         </div>
-        <div className="sess-stats" aria-label="Sessions summary">
+        <div className="sess-stats" aria-label={t('sessions.statsLandmark')}>
           <StatTile
-            label="Total sessions"
+            label={t('sessions.statTotal')}
             hero
             value={stats.total}
-            hint={`${stats.lifecycleOpen} open · ${stats.done} completed · ${stats.failedOrTimedOut} failed/timed out · ${stats.aborted} aborted`}
+            hint={t('sessions.statTotalHint', {
+              open: stats.lifecycleOpen,
+              done: stats.done,
+              failed: stats.failedOrTimedOut,
+              aborted: stats.aborted,
+            })}
           />
           <StatTile
-            label="Executing"
+            label={t('sessions.statExecuting')}
             value={stats.activeRuns}
             active={stats.activeRuns > 0}
-            hint={stats.activeRuns ? 'tasks queued/running' : 'none executing'}
+            hint={
+              stats.activeRuns ? t('sessions.statExecutingHint') : t('sessions.statExecutingIdle')
+            }
           />
           <StatTile
-            label="Messages"
+            label={t('sessions.statMessages')}
             value={stats.totalMessages.toLocaleString()}
-            hint={`${stats.agents} agent${stats.agents === 1 ? '' : 's'} · across all sessions`}
+            hint={tPlural('sessions.statMessagesHint', stats.agents)}
           />
         </div>
       </section>
@@ -533,9 +562,13 @@ export function SessionsPage() {
       <section className="sess-list">
         <div className="sess-list__head">
           <div className="sess-list__heading">
-            <h2 className="sess-list__title">{debounced ? 'Matching sessions' : 'All sessions'}</h2>
+            <h2 className="sess-list__title">
+              {debounced ? t('sessions.listMatching') : t('sessions.listAll')}
+            </h2>
             <span className="sess-list__count t-data">
-              {debounced ? `${filtered.length} of ${stats.total}` : `${stats.total} total`}
+              {debounced
+                ? t('sessions.countFiltered', { shown: filtered.length, total: stats.total })
+                : t('sessions.countTotal', { total: stats.total })}
             </span>
           </div>
           <div className="sess-list__tools">
@@ -544,18 +577,18 @@ export function SessionsPage() {
               <input
                 type="text"
                 className="sess-search-input"
-                placeholder="Search sessions…"
+                placeholder={t('sessions.searchPlaceholder')}
                 autoComplete="off"
-                aria-label="Search sessions"
+                aria-label={t('sessions.searchLabel')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
             <label className="sess-page-size t-label">
-              <span>Rows</span>
+              <span>{t('sessions.rowsLabel')}</span>
               <select
                 value={pageSize}
-                aria-label="Rows per page"
+                aria-label={t('sessions.rowsPerPage')}
                 onChange={(e) => {
                   setPageSize(Number(e.target.value))
                   setPage(0)
@@ -572,12 +605,12 @@ export function SessionsPage() {
         </div>
 
         {selected.size > 0 ? (
-          <div className="sess-bulk-bar" role="region" aria-label="Bulk actions">
+          <div className="sess-bulk-bar" role="region" aria-label={t('sessions.bulkLandmark')}>
             <span className="sess-bulk-bar__count">
-              <strong>{selected.size}</strong> selected
+              <strong>{selected.size}</strong> {t('sessions.bulkSelected')}
             </span>
             <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
-              Clear
+              {t('sessions.bulkClear')}
             </Button>
             <span className="sess-bulk-bar__spacer" />
             <Button
@@ -586,18 +619,15 @@ export function SessionsPage() {
               onClick={() => setDialog({ kind: 'bulk', keys: Array.from(selected) })}
             >
               <Trash2Icon />
-              <span>Delete selected</span>
+              <span>{t('sessions.bulkDelete')}</span>
             </Button>
           </div>
         ) : null}
 
         {!hasSessions ? (
           <div className="sess-empty">
-            <div className="sess-empty__title">No sessions yet.</div>
-            <p className="sess-empty__msg">
-              Sessions appear here as soon as you chat with an agent or schedule a cron job. Start
-              one and pick up the conversation any time.
-            </p>
+            <div className="sess-empty__title">{t('sessions.emptyTitle')}</div>
+            <p className="sess-empty__msg">{t('sessions.emptyMsg')}</p>
             <Button
               onClick={() => {
                 setCreateError(null)
@@ -605,15 +635,13 @@ export function SessionsPage() {
               }}
             >
               <PlusIcon />
-              <span>Start a new session</span>
+              <span>{t('sessions.emptyAction')}</span>
             </Button>
           </div>
         ) : slice.length === 0 ? (
           <div className="sess-empty sess-empty--search">
-            <div className="sess-empty__title">No matches</div>
-            <p className="sess-empty__msg">
-              No sessions match your search. Try a different query, or clear it to see everything.
-            </p>
+            <div className="sess-empty__title">{t('sessions.noMatchTitle')}</div>
+            <p className="sess-empty__msg">{t('sessions.noMatchMsg')}</p>
           </div>
         ) : (
           <div className="sess-table-wrap">
@@ -624,7 +652,7 @@ export function SessionsPage() {
                     <label className="sess-check-target">
                       <input
                         type="checkbox"
-                        aria-label="Select all sessions on this page"
+                        aria-label={t('sessions.selectAll')}
                         checked={allOnPageSelected}
                         onChange={(e) => toggleAllOnPage(e.target.checked)}
                       />
@@ -632,17 +660,19 @@ export function SessionsPage() {
                   </th>
                   <th aria-sort={ariaSort('key')}>
                     <button type="button" className="sess-th-sort" onClick={() => onSort('key')}>
-                      Session key<span aria-hidden="true">{sortArrow('key')}</span>
+                      {t('sessions.colKey')}
+                      <span aria-hidden="true">{sortArrow('key')}</span>
                     </button>
                   </th>
-                  <th>Status</th>
+                  <th>{t('sessions.colStatus')}</th>
                   <th aria-sort={ariaSort('message_count')}>
                     <button
                       type="button"
                       className="sess-th-sort"
                       onClick={() => onSort('message_count')}
                     >
-                      Msgs<span aria-hidden="true">{sortArrow('message_count')}</span>
+                      {t('sessions.colMessages')}
+                      <span aria-hidden="true">{sortArrow('message_count')}</span>
                     </button>
                   </th>
                   <th aria-sort={ariaSort('updated_at')}>
@@ -651,7 +681,8 @@ export function SessionsPage() {
                       className="sess-th-sort"
                       onClick={() => onSort('updated_at')}
                     >
-                      Modified<span aria-hidden="true">{sortArrow('updated_at')}</span>
+                      {t('sessions.colModified')}
+                      <span aria-hidden="true">{sortArrow('updated_at')}</span>
                     </button>
                   </th>
                   <th className="sess-table__cell--actions" />
@@ -676,7 +707,7 @@ export function SessionsPage() {
                           <label className="sess-check-target">
                             <input
                               type="checkbox"
-                              aria-label={`Select session ${key}`}
+                              aria-label={t('sessions.selectRow', { key })}
                               checked={isSel}
                               onChange={(e) => toggleRow(key, e.target.checked)}
                             />
@@ -692,7 +723,7 @@ export function SessionsPage() {
                             <button
                               type="button"
                               className="sess-key-link t-data"
-                              title="Open chat"
+                              title={t('sessions.openChat')}
                               onClick={() => navigate('/chat?session=' + encodeURIComponent(key))}
                             >
                               {key}
@@ -702,13 +733,15 @@ export function SessionsPage() {
                                 className={`sess-key__agent${sub.orphan ? ' sess-key__agent--orphan' : ''}`}
                                 title={
                                   sub.orphan
-                                    ? `Agent '${sub.name}' is no longer registered`
+                                    ? t('sessions.orphanTitle', { name: sub.name })
                                     : undefined
                                 }
                               >
                                 {sub.name}
                                 {sub.orphan ? (
-                                  <span className="sess-chip tone-warn">⚠ Orphaned</span>
+                                  <span className="sess-chip tone-warn">
+                                    {t('sessions.orphanChip')}
+                                  </span>
                                 ) : null}
                               </span>
                             ) : null}
@@ -727,17 +760,17 @@ export function SessionsPage() {
                         <td className="t-data sess-dim">
                           {row.message_count != null
                             ? Number(row.message_count).toLocaleString()
-                            : '—'}
+                            : t('common.dash')}
                         </td>
                         <td className="t-data sess-dim">
-                          {row.updated_at != null ? relTimeLabel(row.updated_at) : '—'}
+                          {row.updated_at != null ? relTimeLabel(row.updated_at) : t('common.dash')}
                         </td>
                         <td className="sess-table__cell--actions">
                           <Button
                             variant="ghost"
                             size="icon-xs"
-                            title="Open chat"
-                            aria-label={`Open chat for ${key}`}
+                            title={t('sessions.openChat')}
+                            aria-label={t('sessions.openChatFor', { key })}
                             onClick={() => navigate('/chat?session=' + encodeURIComponent(key))}
                           >
                             <MessageSquareIcon />
@@ -745,8 +778,8 @@ export function SessionsPage() {
                           <Button
                             variant="ghost"
                             size="icon-xs"
-                            title="Copy session key"
-                            aria-label={`Copy session key ${key}`}
+                            title={t('sessions.copyKeyTitle')}
+                            aria-label={t('sessions.copyKeyFor', { key })}
                             onClick={() => void copyKey(key)}
                           >
                             <CopyIcon />
@@ -755,8 +788,8 @@ export function SessionsPage() {
                             variant="ghost"
                             size="icon-xs"
                             className="sess-iconbtn--danger"
-                            title="Delete"
-                            aria-label={`Delete session ${key}`}
+                            title={t('sessions.deleteTitle')}
+                            aria-label={t('sessions.deleteFor', { key })}
                             onClick={() => setDialog({ kind: 'delete', key })}
                           >
                             <Trash2Icon />
@@ -795,22 +828,24 @@ export function SessionsPage() {
               variant="ghost"
               size="icon-xs"
               disabled={safePage === 0}
-              title="Previous page"
-              aria-label="Previous page"
+              title={t('sessions.prevPage')}
+              aria-label={t('sessions.prevPage')}
               onClick={() => setPage((p) => Math.max(0, p - 1))}
             >
               <ChevronLeftIcon />
             </Button>
             <span className="sess-page-info t-data">
               {safePage + 1} / {totalPages}{' '}
-              <span className="sess-dim">· {filtered.length} total</span>
+              <span className="sess-dim">
+                {t('sessions.pageTotal', { total: filtered.length })}
+              </span>
             </span>
             <Button
               variant="ghost"
               size="icon-xs"
               disabled={safePage >= totalPages - 1}
-              title="Next page"
-              aria-label="Next page"
+              title={t('sessions.nextPage')}
+              aria-label={t('sessions.nextPage')}
               onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
             >
               <ChevronRightIcon />
@@ -838,19 +873,20 @@ export function SessionsPage() {
 
         {dialog.kind === 'delete' ? (
           <ConfirmDialog
-            title="Delete session"
+            title={t('sessions.confirmDeleteTitle')}
             body={
               <>
                 <p>
-                  Delete session <strong>{dialog.key}</strong>? This cannot be undone.
+                  {t('sessions.confirmDeleteLead')} <strong>{dialog.key}</strong>
+                  {t('sessions.confirmDeleteTail')}
                 </p>
                 <p className="sess-confirm__warn">
-                  The transcript will not be flushed to disk; use <code>/reset</code> first if you
-                  want a backup.
+                  {t('sessions.confirmWarnLead')} <code>{'/reset'}</code>{' '}
+                  {t('sessions.confirmWarnTail')}
                 </p>
               </>
             }
-            confirmLabel="Delete"
+            confirmLabel={t('sessions.confirmDelete')}
             busy={deleteMutation.isPending}
             onCancel={() => setDialog({ kind: 'none' })}
             onConfirm={() => deleteMutation.mutate([dialog.key])}
@@ -859,20 +895,22 @@ export function SessionsPage() {
 
         {dialog.kind === 'bulk' ? (
           <ConfirmDialog
-            title="Delete sessions"
+            title={t('sessions.confirmBulkTitle')}
             body={
               <>
                 <p>
-                  Delete <strong>{dialog.keys.length}</strong> session
-                  {dialog.keys.length === 1 ? '' : 's'}? This cannot be undone.
+                  {t('sessions.confirmBulkLead')} <strong>{dialog.keys.length}</strong>{' '}
+                  {dialog.keys.length === 1
+                    ? t('sessions.confirmBulkTailSingular')
+                    : t('sessions.confirmBulkTailPlural')}
                 </p>
                 <p className="sess-confirm__warn">
-                  The transcript will not be flushed to disk; use <code>/reset</code> first if you
-                  want a backup.
+                  {t('sessions.confirmWarnLead')} <code>{'/reset'}</code>{' '}
+                  {t('sessions.confirmWarnTail')}
                 </p>
               </>
             }
-            confirmLabel="Delete all"
+            confirmLabel={t('sessions.confirmDeleteAll')}
             busy={deleteMutation.isPending}
             onCancel={() => setDialog({ kind: 'none' })}
             onConfirm={() => deleteMutation.mutate(dialog.keys)}
