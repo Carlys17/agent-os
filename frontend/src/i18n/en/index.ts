@@ -1,5 +1,6 @@
 import { approvals } from './approvals'
 import { common } from './common'
+import { config } from './config'
 import { env } from './env'
 import { health } from './health'
 import { logs } from './logs'
@@ -25,6 +26,7 @@ import { shell } from './shell'
 export const en = {
   approvals,
   common,
+  config,
   env,
   health,
   logs,

@@ -7,6 +7,9 @@
 // dirty/no-op diff (the core of the sticky bar + save gating), value parsing +
 // JSON validation, YAML serialisation and the diff/summary formatting.
 
+import { t } from '@/i18n'
+import '@/i18n/en/config'
+
 /** The raw config object returned by config.get (a nested JSON tree). */
 export type ConfigData = Record<string, unknown>
 
@@ -24,10 +27,14 @@ export interface TabDef {
 // that matching contract, but classifies the complete GatewayConfig surface so
 // newly added runtime/safety/capability fields cannot silently disappear from
 // Form mode. `other` is a forward-compatible catch-all for future top-level keys.
+// `label` is a getter: a tab table is a module constant, so a label resolved
+// here would freeze at module-evaluation time and keep the boot locale (#258).
 export const TABS: readonly TabDef[] = [
   {
     id: 'core',
-    label: 'Core',
+    get label() {
+      return t('config.tabCore')
+    },
     prefixes: [
       'general',
       'host',
@@ -45,7 +52,9 @@ export const TABS: readonly TabDef[] = [
   },
   {
     id: 'ai',
-    label: 'AI & Agents',
+    get label() {
+      return t('config.tabAi')
+    },
     prefixes: [
       'provider',
       'model',
@@ -75,15 +84,25 @@ export const TABS: readonly TabDef[] = [
       'subagents',
     ],
   },
-  { id: 'memory', label: 'Memory', prefixes: ['memory'] },
+  {
+    id: 'memory',
+    get label() {
+      return t('config.tabMemory')
+    },
+    prefixes: ['memory'],
+  },
   {
     id: 'capabilities',
-    label: 'Capabilities',
+    get label() {
+      return t('config.tabCapabilities')
+    },
     prefixes: ['tools', 'skills', 'attachments', 'search', 'image_generation', 'audio', 'mcp'],
   },
   {
     id: 'connections',
-    label: 'Connections',
+    get label() {
+      return t('config.tabConnections')
+    },
     prefixes: [
       'channel',
       'channels',
@@ -97,12 +116,16 @@ export const TABS: readonly TabDef[] = [
   },
   {
     id: 'safety',
-    label: 'Safety',
+    get label() {
+      return t('config.tabSafety')
+    },
     prefixes: ['auth', 'cors', 'tls', 'permissions', 'safety', 'sandbox', 'rate_limit'],
   },
   {
     id: 'runtime',
-    label: 'Runtime',
+    get label() {
+      return t('config.tabRuntime')
+    },
     prefixes: [
       'task_runtime',
       'log',
@@ -115,103 +138,78 @@ export const TABS: readonly TabDef[] = [
       'scheduler',
     ],
   },
-  { id: 'other', label: 'Other', prefixes: [] },
+  {
+    id: 'other',
+    get label() {
+      return t('config.tabOther')
+    },
+    prefixes: [],
+  },
 ]
 
 // config.js:32-125 — per-field help, keyed by config path. Falls back to a
 // generic message (config.js:127-130).
-const HELP: Record<string, string> = {
-  host: 'Network interface the gateway binds to. Read-only here — set via agentos gateway run --bind (CLI only). Defaults to 127.0.0.1 (loopback); 0.0.0.0 exposes on all interfaces and requires auth.',
-  port: 'TCP port for the ASGI gateway. Read-only here — set via agentos gateway run --port (CLI only). Default 18791; the WebSocket and REST endpoints share it.',
-  debug:
-    'Security-sensitive developer mode. Starlette debug, uvicorn log level, and some startup wiring need a gateway restart. Keep it off in shared deployments.',
-  diagnostics_enabled:
-    'Default standard diagnostics mode at gateway startup. Raw turn-call capture stays off unless AGENTOS_TURN_CALL_LOG=1 or the running gateway is switched with agentos diagnostics on --raw.',
-  log_file_enabled:
-    'Writes gateway debug.log records for operator troubleshooting. This is separate from raw turn-call capture, which requires AGENTOS_TURN_CALL_LOG=1 or agentos diagnostics on --raw.',
-  log_level: 'Minimum gateway file log level. AGENTOS_LOG_LEVEL can override this at runtime.',
-  log_file_max_bytes:
-    'Maximum debug.log size before rotation. Set to 0 to disable rotation in the stdlib handler.',
-  log_file_backup_count: 'Number of rotated debug.log backups to retain.',
-  'agent_token_saving.tool_result_projection_max_inline_chars':
-    'Maximum inline size for canonical tokenjuice tool-result projections. Raw tool output is transient and is not stored.',
-  'agentos_router.enabled':
-    'Turn the auto tier router on or off. When off, every request uses the default model regardless of complexity.',
-  'agentos_router.rollout_phase':
-    'Rollout stage for new router model versions. Higher phases enable more aggressive routing decisions.',
-  'agentos_router.strategy':
-    '"pilot-v1" (default) classifies each turn with the local Pilot ML router (MiniLM+ONNX bundle, no LLM call); "llm_judge" classifies via a small LLM call instead. The pilot bundle ships in the wheel and degrades to the default tier if absent.',
-  'agentos_router.judge_model':
-    'Explicit LLM-judge model. Leave unset for Auto: the judge follows the tier profile’s cheapest text tier (c0 first), so profile switches auto-update it.',
-  'agentos_router.judge_provider':
-    'Optional provider for judge_model. Must match llm.provider — tier entries carry no credentials, so a cross-provider judge has no credential source.',
-  'agentos_router.judge_base_url':
-    'Local OpenAI-compatible judge endpoint (Ollama / LM Studio / llama.cpp / vLLM). Only takes effect when judge_model is set; the judge client is then built against this base URL with judge_api_key, bypassing the provider-match constraint (a local endpoint needs no cloud credentials).',
-  'agentos_router.judge_api_key':
-    'API key for the local judge endpoint (judge_base_url). Optional — local endpoints usually accept any token; a placeholder is used when unset. Redacted in logs.',
-  'agentos_router.judge_input_max_chars':
-    'Character budget for the message body sent to the judge (head/tail truncation with an elision marker). Signals are computed before truncation.',
-  'agentos_router.judge_short_circuit_enabled':
-    'Skip the judge call for trivial short greetings/acknowledgements (exact allowlist match) and route them to the cheapest tier directly.',
-  'agentos_router.judge_short_circuit_allowlist':
-    'Extra exact greeting/ack phrases (case-insensitive) that skip the judge. These are ADDED to the built-in default allowlist (en/vi/zh), not a replacement — leave empty to use just the defaults.',
-  'memory.embedding':
-    'Long-term memory embedding provider. Auto mode prefers a downloaded EmbeddingGemma model, then the bundled BGE ONNX, then a configured remote key, then FTS-only. Run `agentos memory embedding-download` to fetch the EmbeddingGemma upgrade; switching the local model triggers a full reindex. Remote embeddings require explicit memory embedding configuration.',
-  'memory.embedding.provider':
-    'Canonical memory embedding provider: auto, none, local, openai/openai-compatible, or ollama. This is independent from the chat LLM provider.',
-  'memory.embedding.remote.api_key':
-    'API key for the memory embedding endpoint. This does not inherit the chat/OpenRouter key in auto mode.',
-  'memory.embedding.remote.base_url':
-    'OpenAI-compatible API root for memory indexing, for example https://api.openai.com/v1. The provider appends /embeddings.',
-  'memory.embedding.local.model':
-    'Optional local embedding model id to pin. Leave empty for auto (a downloaded EmbeddingGemma export when present, otherwise the bundled BGE-small). Set "google/embeddinggemma-300m" or "BAAI/bge-small-zh-v1.5" to force one. Changing this triggers a full reindex.',
-  'memory.embedding.local.onnx_dir':
-    'Optional ONNX directory for a custom local embedding model. Leave empty to use the resolved model’s export (downloaded EmbeddingGemma or bundled BGE-small).',
-  'memory.retrieval_mode':
-    'Memory retrieval mode. "hybrid" uses vectors when an embedding provider is available; "fts_only" disables vectors.',
-  'memory.curated_memory_char_limit':
-    'Character budget for MEMORY.md, the agent’s curated notes file. When full, the agent consolidates existing entries via the memory tool instead of growing the file further.',
-  'memory.curated_user_char_limit': 'Character budget for USER.md, the curated user profile file.',
-  'memory.inject_limit':
-    'Cap on the combined curated MEMORY.md + USER.md blocks injected into every system prompt. Keep it above the sum of the two char-limit budgets plus roughly 310 chars of header/separator overhead, or the user-profile block is dropped whole to stay under budget.',
-  'memory.provider.name':
-    'Optional external memory provider layered on top of built-in memory. Empty (the default) keeps built-in memory only; "mem0" enables the mem0 provider (prompt recall block, fenced recall, per-turn sync, write mirror). The provider is built once at boot, so changing this requires a gateway restart. mem0 needs the extra: pip install "use-agent-os[mem0]".',
-  'memory.provider.mem0.llm_provider':
-    'Backend the mem0 provider uses for its extraction/summarization LLM. Defaults to "ollama" for a fully local stack. Requires a gateway restart.',
-  'memory.provider.mem0.llm_model':
-    'mem0 extraction/summarization model. Default "qwen3:4b" (a small local Ollama model). Requires a gateway restart.',
-  'memory.provider.mem0.llm_base_url':
-    'Base URL for the mem0 LLM backend. Defaults to the local Ollama endpoint http://localhost:11434. Requires a gateway restart.',
-  'memory.provider.mem0.embedder_provider':
-    'Backend for mem0 embeddings. Defaults to "ollama" so embeddings stay local. Requires a gateway restart.',
-  'memory.provider.mem0.embedder_model':
-    'mem0 embedding model. Default "embeddinggemma" (local via Ollama). Requires a gateway restart.',
-  'memory.provider.mem0.embedder_base_url':
-    'Base URL for the mem0 embedder backend. Defaults to the local Ollama endpoint http://localhost:11434. Requires a gateway restart.',
-  'memory.provider.mem0.vector_store_path':
-    'On-disk directory for the mem0 vector store. Empty resolves to <agent state dir>/mem0 at boot, keeping all data local. Requires a gateway restart.',
-  'sandbox.sandbox':
-    'Runtime sandbox switch. The out-of-box posture keeps this false; use agentos sandbox on|bypass|full to change sandbox and permission defaults together.',
-  'sandbox.security_grading':
-    'Risk grading and approval gate for tool actions. Keep this paired with sandbox.sandbox unless using the sandbox CLI posture commands.',
-  'permissions.default_mode':
-    'Default interactive Control permission mode: bypass is the out-of-box local posture, off keeps sandboxed execution, on uses host execution with approvals, and full bypasses sensitive-path gates too.',
-  'prompt_cache.mode':
-    'Anthropic prompt cache control. "auto" (default) lets the provider decide; "on" forces caching; "off" disables it entirely.',
-  context_budget_tokens:
-    'Soft cap on the assembled prompt size. When exceeded, the configured overflow policy kicks in (summarize, truncate, or refuse).',
-  context_overflow_policy:
-    '"auto_summarize" compacts older history via a small LLM; "hard_truncate" drops oldest turns; "refuse" rejects the turn with a stable error.',
-  auth_mode:
-    'Gateway auth scheme. "token" requires a static bearer token; "none" is open (loopback only); other modes per deployment.',
-  'control_ui.allowed_origins':
-    'Extra browser origins allowed to open the Control UI WebSocket, call the HTTP API, and send Host headers, beyond loopback (which is always allowed). Add your reverse-proxy origin here (e.g. https://agent.example.com) when serving the UI off another host; default ports 80/443 are normalized. Cross-origin requests are otherwise rejected to block cross-site WebSocket hijacking and DNS rebinding.',
+function helpMap(): Record<string, string> {
+  return {
+    host: t('config.helpHost'),
+    port: t('config.helpPort'),
+    debug: t('config.helpDebug'),
+    diagnostics_enabled: t('config.helpDiagnosticsEnabled'),
+    log_file_enabled: t('config.helpLogFileEnabled'),
+    log_level: t('config.helpLogLevel'),
+    log_file_max_bytes: t('config.helpLogFileMaxBytes'),
+    log_file_backup_count: t('config.helpLogFileBackupCount'),
+    'agent_token_saving.tool_result_projection_max_inline_chars': t(
+      'config.helpAgentTokenSavingToolResultProjectionMaxInlineChars',
+    ),
+    'agentos_router.enabled': t('config.helpAgentosRouterEnabled'),
+    'agentos_router.rollout_phase': t('config.helpAgentosRouterRolloutPhase'),
+    'agentos_router.strategy': t('config.helpAgentosRouterStrategy'),
+    'agentos_router.judge_model': t('config.helpAgentosRouterJudgeModel'),
+    'agentos_router.judge_provider': t('config.helpAgentosRouterJudgeProvider'),
+    'agentos_router.judge_base_url': t('config.helpAgentosRouterJudgeBaseUrl'),
+    'agentos_router.judge_api_key': t('config.helpAgentosRouterJudgeApiKey'),
+    'agentos_router.judge_input_max_chars': t('config.helpAgentosRouterJudgeInputMaxChars'),
+    'agentos_router.judge_short_circuit_enabled': t(
+      'config.helpAgentosRouterJudgeShortCircuitEnabled',
+    ),
+    'agentos_router.judge_short_circuit_allowlist': t(
+      'config.helpAgentosRouterJudgeShortCircuitAllowlist',
+    ),
+    'memory.embedding': t('config.helpMemoryEmbedding'),
+    'memory.embedding.provider': t('config.helpMemoryEmbeddingProvider'),
+    'memory.embedding.remote.api_key': t('config.helpMemoryEmbeddingRemoteApiKey'),
+    'memory.embedding.remote.base_url': t('config.helpMemoryEmbeddingRemoteBaseUrl'),
+    'memory.embedding.local.model': t('config.helpMemoryEmbeddingLocalModel'),
+    'memory.embedding.local.onnx_dir': t('config.helpMemoryEmbeddingLocalOnnxDir'),
+    'memory.retrieval_mode': t('config.helpMemoryRetrievalMode'),
+    'memory.curated_memory_char_limit': t('config.helpMemoryCuratedMemoryCharLimit'),
+    'memory.curated_user_char_limit': t('config.helpMemoryCuratedUserCharLimit'),
+    'memory.inject_limit': t('config.helpMemoryInjectLimit'),
+    'memory.provider.name': t('config.helpMemoryProviderName'),
+    'memory.provider.mem0.llm_provider': t('config.helpMemoryProviderMem0LlmProvider'),
+    'memory.provider.mem0.llm_model': t('config.helpMemoryProviderMem0LlmModel'),
+    'memory.provider.mem0.llm_base_url': t('config.helpMemoryProviderMem0LlmBaseUrl'),
+    'memory.provider.mem0.embedder_provider': t('config.helpMemoryProviderMem0EmbedderProvider'),
+    'memory.provider.mem0.embedder_model': t('config.helpMemoryProviderMem0EmbedderModel'),
+    'memory.provider.mem0.embedder_base_url': t('config.helpMemoryProviderMem0EmbedderBaseUrl'),
+    'memory.provider.mem0.vector_store_path': t('config.helpMemoryProviderMem0VectorStorePath'),
+    'sandbox.sandbox': t('config.helpSandboxSandbox'),
+    'sandbox.security_grading': t('config.helpSandboxSecurityGrading'),
+    'permissions.default_mode': t('config.helpPermissionsDefaultMode'),
+    'prompt_cache.mode': t('config.helpPromptCacheMode'),
+    context_budget_tokens: t('config.helpContextBudgetTokens'),
+    context_overflow_policy: t('config.helpContextOverflowPolicy'),
+    auth_mode: t('config.helpAuthMode'),
+    'control_ui.allowed_origins': t('config.helpControlUiAllowedOrigins'),
+  }
 }
 
 /** config.js:127-130 — per-field help text; generic fallback when unknown. */
 export function helpFor(key: string): string {
-  if (key in HELP) return HELP[key]!
-  return 'No description yet — see the docs.'
+  const help = helpMap()
+  if (key in help) return help[key]!
+  return t('config.helpNone')
 }
 
 // config.js:422 — max object levels to descend before falling back to a
@@ -304,7 +302,7 @@ export function groupIdForKey(k: string, v: unknown): string {
 
 /** config.js:497-500 — a group title: de-cased separators, title-cased words. */
 export function groupTitle(id: string): string {
-  if (id === 'general') return 'General'
+  if (id === 'general') return t('config.groupGeneral')
   const acronyms: Record<string, string> = {
     agentos: 'AgentOS',
     api: 'API',
