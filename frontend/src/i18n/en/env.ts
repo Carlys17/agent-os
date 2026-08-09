@@ -1,4 +1,6 @@
-export const env = {
+import { defineNamespace } from '../registry'
+
+export const env = defineNamespace('env', {
   documentTitle: 'Environment - AgentOS Control',
   eyebrow: 'Configuration',
   title: 'Environment',
@@ -107,4 +109,4 @@ export const env = {
   toastSaved: '{name} saved.',
   toastImported: "{name} imported. It will not follow that source's own rotation.",
   toastRemoved: '{name} removed.',
-} as const
+} as const)

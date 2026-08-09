@@ -2260,3 +2260,151 @@ async def test_runtime_channel_stream_relay_handles_late_failure_gracefully() ->
     # Successfully-yielded chunks must NOT be duplicated.
     assert "alpha" not in fallback
     assert "beta" not in fallback
+
+
+# ── Typing preamble on streaming adapters ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_runtime_relay_releases_typing_preamble_on_first_chunk() -> None:
+    """The relay owns the hand-off: typing stops when the adapter gets text."""
+
+    class StreamingChannel:
+        def __init__(self) -> None:
+            self.chunks: list[str] = []
+
+        async def send_streaming(self, chunks, **kwargs):
+            async for chunk in chunks:
+                self.chunks.append(chunk)
+
+    class FakeTaskRuntime:
+        async def enqueue(self, envelope, message: str, *, stream_event_sink=None):
+            return None
+
+    relay = _RuntimeChannelStreamRelay.maybe_start(
+        StreamingChannel(),
+        _message(),
+        FakeTaskRuntime(),
+    )
+
+    assert relay is not None
+    assert relay.first_chunk_sent.is_set() is False
+
+    await relay.emit(TextDeltaEvent(text="hello"))
+    await asyncio.wait_for(relay.first_chunk_sent.wait(), timeout=1)
+    await relay.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_relay_releases_typing_preamble_when_turn_emits_no_text() -> None:
+    """A silent turn must still drop the indicator rather than hang on it."""
+
+    class StreamingChannel:
+        async def send_streaming(self, chunks, **kwargs):
+            async for _ in chunks:
+                pass
+
+    class FakeTaskRuntime:
+        async def enqueue(self, envelope, message: str, *, stream_event_sink=None):
+            return None
+
+    relay = _RuntimeChannelStreamRelay.maybe_start(
+        StreamingChannel(),
+        _message(),
+        FakeTaskRuntime(),
+    )
+
+    assert relay is not None
+
+    await relay.close()
+
+    assert relay.first_chunk_sent.is_set() is True
+
+
+@pytest.mark.asyncio
+async def test_direct_streaming_path_releases_typing_preamble_on_first_chunk(
+    tmp_path,
+) -> None:
+    """Same hand-off on the turn_runner path, which has no relay to lean on."""
+    seen_while_streaming: list[bool] = []
+
+    class StreamingChannel:
+        def __init__(self) -> None:
+            self.chunks: list[str] = []
+
+        async def send_streaming(self, chunks, **kwargs):
+            async for chunk in chunks:
+                self.chunks.append(chunk)
+                seen_while_streaming.append(first_chunk_sent.is_set())
+
+    class FakeTurnRunner:
+        async def run(self, message: str, session_key: str, **kwargs):
+            yield TextDeltaEvent(text="hello")
+            yield DoneEvent()
+
+    first_chunk_sent = asyncio.Event()
+    msg = _message()
+    config = SimpleNamespace(
+        workspace_dir=str(tmp_path),
+        workspace_strict=True,
+        agent_stream_heartbeat_interval_seconds=0.0,
+        agent_stream_idle_timeout_seconds=1.0,
+    )
+    channel = StreamingChannel()
+
+    await _run_turn_with_streaming(
+        channel,
+        FakeTurnRunner(),
+        msg,
+        "agent:main:telegram:u1",
+        config=config,
+        first_chunk_sent=first_chunk_sent,
+    )
+
+    assert channel.chunks == ["hello"]
+    assert seen_while_streaming == [True]
+    assert first_chunk_sent.is_set() is True
+
+
+@pytest.mark.asyncio
+async def test_batch_path_leaves_typing_running_for_the_whole_turn(tmp_path) -> None:
+    """``typing_final`` adapters are untouched: no early release, no preamble."""
+
+    class TypingOnlyChannel:
+        def __init__(self) -> None:
+            self.sent: list[OutgoingMessage] = []
+
+        async def send_typing(self) -> None:
+            return None
+
+        async def send(self, message: OutgoingMessage) -> None:
+            self.sent.append(message)
+
+    class FakeTurnRunner:
+        async def run(self, message: str, session_key: str, **kwargs):
+            yield TextDeltaEvent(text="hello")
+            yield DoneEvent()
+
+    channel = TypingOnlyChannel()
+    policy = resolve_channel_stream_policy(channel)
+    first_chunk_sent = asyncio.Event()
+    config = SimpleNamespace(
+        workspace_dir=str(tmp_path),
+        workspace_strict=True,
+        agent_stream_heartbeat_interval_seconds=0.0,
+        agent_stream_idle_timeout_seconds=1.0,
+    )
+
+    await _run_turn_with_streaming(
+        channel,
+        FakeTurnRunner(),
+        _message(),
+        "agent:main:feishu:u1",
+        config=config,
+        first_chunk_sent=first_chunk_sent,
+    )
+
+    assert policy.typing_preamble is False
+    assert policy.typing_keepalive is True
+    assert first_chunk_sent.is_set() is False
+    assert channel.sent[-1].content == "hello"

@@ -196,11 +196,18 @@ edit loop stops and the remainder is delivered as one final message instead of
 fighting the limiter; no text is lost either way. Forum topic replies stream
 into the originating topic.
 
+Streaming adapters that also have a typing indicator — Telegram and Discord —
+show it while the model is still thinking, and drop it the moment the first
+chunk reaches the chat. Nothing can be streamed until the first token exists,
+and with tool calls in the loop that wait is often tens of seconds, so the
+indicator covers exactly that gap and then hands the chat over to the
+live-edited message.
+
 Adapters without a streaming surface fall back to their native typing
-indicator while AgentOS is working. Telegram still refreshes `sendChatAction`
-every four seconds in that mode, because Telegram clients expire the status
-after at most five seconds. Reply feedback is best-effort and never interrupts
-the underlying agent turn.
+indicator for the whole turn. Telegram refreshes `sendChatAction` every four
+seconds in either mode, because Telegram clients expire the status after at
+most five seconds. Reply feedback is best-effort and never interrupts the
+underlying agent turn.
 
 ## Webhook Channels
 

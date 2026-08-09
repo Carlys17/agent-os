@@ -16,6 +16,8 @@ import { toast } from 'sonner'
 import { useRpc } from '@/app/providers'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/env'
 import { t } from '@/i18n'
 import {
   ENV_QUERY_KEY,
@@ -32,12 +34,14 @@ import {
   type EnvVarRow,
 } from './logic'
 
-const FILTERS: ReadonlyArray<{ id: EnvFilter; label: string }> = [
-  { id: 'all', label: t('env.filterAll') },
-  { id: 'missing', label: t('env.filterMissing') },
-  { id: 'set', label: t('env.filterSet') },
-  { id: 'custom', label: t('env.filterCustom') },
-]
+function filterOptions(): ReadonlyArray<{ id: EnvFilter; label: string }> {
+  return [
+    { id: 'all', label: t('env.filterAll') },
+    { id: 'missing', label: t('env.filterMissing') },
+    { id: 'set', label: t('env.filterSet') },
+    { id: 'custom', label: t('env.filterCustom') },
+  ]
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -292,7 +296,7 @@ export function EnvPage() {
           aria-label={t('env.search')}
         />
         <div className="env-filters" role="group" aria-label={t('env.filterLandmark')}>
-          {FILTERS.map((entry) => (
+          {filterOptions().map((entry) => (
             <button
               key={entry.id}
               type="button"

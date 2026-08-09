@@ -5,6 +5,8 @@
  * can be tested without a DOM — the same split the Skills and MCP views use.
  */
 
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/env'
 import { t } from '@/i18n'
 
 /** Shared so the Settings glance and the Environment screen hit one cache. */
@@ -50,32 +52,30 @@ export type EnvFilter = 'all' | 'missing' | 'set' | 'custom'
 /** Category order in the UI: what a new install configures first comes first. */
 const CATEGORY_ORDER = ['provider', 'search', 'image', 'audio', 'memory', 'skill', 'custom']
 
-const CATEGORY_LABELS: Record<string, string> = {
-  provider: t('env.categoryProvider'),
-  search: t('env.categorySearch'),
-  image: t('env.categoryImage'),
-  audio: t('env.categoryAudio'),
-  memory: t('env.categoryMemory'),
-  skill: t('env.categorySkill'),
-  custom: t('env.categoryCustom'),
-}
-
-const SOURCE_LABELS: Record<EnvSource, string> = {
-  process: t('env.sourceProcess'),
-  cwd_file: t('env.sourceCwdFile'),
-  home_file: t('env.sourceHomeFile'),
-  unset: '',
-}
-
 /** POSIX-portable variable name — mirrors the server-side gate. */
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 export function categoryLabel(category: string): string {
-  return CATEGORY_LABELS[category] ?? category
+  const labels: Record<string, string> = {
+    provider: t('env.categoryProvider'),
+    search: t('env.categorySearch'),
+    image: t('env.categoryImage'),
+    audio: t('env.categoryAudio'),
+    memory: t('env.categoryMemory'),
+    skill: t('env.categorySkill'),
+    custom: t('env.categoryCustom'),
+  }
+  return labels[category] ?? category
 }
 
 export function sourceLabel(source: EnvSource): string {
-  return SOURCE_LABELS[source] ?? source
+  const labels: Record<EnvSource, string> = {
+    process: t('env.sourceProcess'),
+    cwd_file: t('env.sourceCwdFile'),
+    home_file: t('env.sourceHomeFile'),
+    unset: '',
+  }
+  return labels[source] ?? source
 }
 
 export function isValidEnvName(name: string): boolean {

@@ -15,6 +15,8 @@ import {
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useBootstrap, useRpc } from '@/app/providers'
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/overview'
 import { t, tPlural } from '@/i18n'
 import {
   formatCost,
@@ -416,9 +418,7 @@ export function OverviewPage() {
                 const rel = s.updated_at ? relTime(s.updated_at) : t('common.dash')
                 const msgs =
                   s.message_count != null
-                    ? t('overview.recentMessages', {
-                        count: Number(s.message_count).toLocaleString(),
-                      })
+                    ? t('overview.recentMessages', { count: Number(s.message_count) })
                     : ''
                 return (
                   <button

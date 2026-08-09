@@ -2,6 +2,8 @@
 // (src/agentos/gateway/static/js/views/health.js). Each function below carries
 // the legacy line range it mirrors so the parity matrix stays auditable.
 
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/health'
 import { t } from '@/i18n'
 
 export type Impact = 'blocks_ready' | 'degrades' | 'optional' | 'none'
