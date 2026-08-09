@@ -125,7 +125,7 @@ export function validateServerDraft(
   const name = draft.name.trim()
   if (!name) errors.name = t('mcp.errorName')
   else if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
-    errors.name = 'Use letters, numbers, dots, underscores, or hyphens.'
+    errors.name = t('mcp.errorNameCharset')
   } else if (servers.some((server) => server.name === name && server.name !== draft.originalName)) {
     errors.name = t('mcp.errorNameTaken')
   }
@@ -136,7 +136,7 @@ export function validateServerDraft(
     try {
       const url = new URL(draft.url.trim())
       if (!['http:', 'https:'].includes(url.protocol)) {
-        errors.url = 'Use an HTTP or HTTPS URL.'
+        errors.url = t('mcp.errorUrlScheme')
       }
     } catch {
       errors.url = t('mcp.errorUrl')
