@@ -12,9 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # tier_profile when chosen as the direct provider. It is excluded from the
 # "non-default direct provider auto-selects its matching profile"
 # parametrization; bankr and the rest still auto-select.
-DIRECT_ROUTER_PROFILE_IDS = sorted(
-    ROUTER_TIER_PROFILE_IDS - {"openrouter"}
-)
+DIRECT_ROUTER_PROFILE_IDS = sorted(ROUTER_TIER_PROFILE_IDS - {"openrouter"})
 
 
 def _agentos_router_config_cls():
@@ -294,9 +292,7 @@ def test_each_provider_profile_has_four_text_tiers_without_default_image_model()
         cfg = agentos_router_config_cls(tier_profile=profile)
         assert {"c0", "c1", "c2", "c3"}.issubset(cfg.tiers)
         assert "image_model" not in cfg.tiers
-        assert {cfg.tiers[tier]["provider"] for tier in ("c0", "c1", "c2", "c3")} == {
-            profile
-        }
+        assert {cfg.tiers[tier]["provider"] for tier in ("c0", "c1", "c2", "c3")} == {profile}
 
 
 def test_direct_provider_profiles_have_four_text_tiers_without_default_image_model() -> None:
@@ -306,9 +302,7 @@ def test_direct_provider_profiles_have_four_text_tiers_without_default_image_mod
         cfg = agentos_router_config_cls(tier_profile=profile)
         assert {"c0", "c1", "c2", "c3"}.issubset(cfg.tiers)
         assert "image_model" not in cfg.tiers
-        assert {cfg.tiers[tier]["provider"] for tier in ("c0", "c1", "c2", "c3")} == {
-            profile
-        }
+        assert {cfg.tiers[tier]["provider"] for tier in ("c0", "c1", "c2", "c3")} == {profile}
 
 
 def test_openai_profile_uses_streaming_compatible_models() -> None:
@@ -321,9 +315,7 @@ def test_openai_profile_uses_streaming_compatible_models() -> None:
     assert cfg.tiers["c2"]["model"] == "gpt-5.6-sol"
     assert cfg.tiers["c3"]["model"] == "gpt-5.6-sol"
     assert cfg.tiers["c3"]["thinking_level"] == "high"
-    assert all(
-        cfg.tiers[tier]["model"] != "gpt-5.6-sol-pro" for tier in ("c0", "c1", "c2", "c3")
-    )
+    assert all(cfg.tiers[tier]["model"] != "gpt-5.6-sol-pro" for tier in ("c0", "c1", "c2", "c3"))
 
 
 def test_zhipu_profile_uses_glm_5_2_for_strong_tiers() -> None:
@@ -347,9 +339,7 @@ def test_moonshot_profile_uses_kimi_for_strong_tiers() -> None:
     assert cfg.tiers["c1"]["model"] == "kimi-k2.5"
     assert cfg.tiers["c2"]["model"] == "kimi-k2.6"
     assert cfg.tiers["c3"]["model"] == "kimi-k2.6"
-    assert all(
-        cfg.tiers[tier]["supports_image"] is True for tier in ("c0", "c1", "c2", "c3")
-    )
+    assert all(cfg.tiers[tier]["supports_image"] is True for tier in ("c0", "c1", "c2", "c3"))
 
 
 def test_volcengine_profile_uses_seed_2_capability_ladder() -> None:
@@ -419,7 +409,6 @@ def test_example_toml_enables_runtime_router_defaults() -> None:
     agentos_router = data["agentos_router"]
 
     assert data["llm"]["provider"] == "openrouter"
-    assert data["llm"]["model"] == "openai/gpt-5.6-luna"
     assert agentos_router["enabled"] is True
     assert agentos_router["auto_thinking"] is True
     assert agentos_router["rollout_phase"] == "full"
@@ -443,32 +432,34 @@ def test_example_toml_enables_runtime_router_defaults() -> None:
     assert "v4_bundle_dir" not in agentos_router
     assert "require_router_runtime" not in agentos_router
 
+    # Compared against the shipped openrouter profile rather than restated as
+    # literals. The example is a fifth place a model id is written down, and
+    # literals here would happily agree with themselves while the example drifts
+    # away from what the router actually sends (issue #140).
+    from agentos.gateway.config import _router_tier_profile_defaults
+
+    reference = _router_tier_profile_defaults("openrouter")
     tiers = agentos_router["tiers"]
-    assert tiers["c0"]["model"] == "deepseek/deepseek-v4-flash"
-    assert tiers["c0"]["thinking_level"] == "high"
-    assert tiers["c1"]["model"] == "openai/gpt-5.6-luna"
-    assert tiers["c1"]["thinking_level"] == "high"
-    assert tiers["c2"]["model"] == "z-ai/glm-5.2"
-    assert tiers["c2"]["thinking_level"] == "high"
-    assert tiers["c3"]["model"] == "anthropic/claude-opus-5"
-    assert tiers["c3"]["thinking_level"] == "high"
-    assert tiers["image_model"]["model"] == "minimax/minimax-m3"
-    assert tiers["image_model"]["supports_image"] is True
-    assert tiers["image_model"]["image_only"] is True
+
+    assert set(tiers) == set(reference), (
+        "example TOML and the openrouter profile ship different tier names"
+    )
+    for name, expected in reference.items():
+        shipped = tiers[name]
+        for key in ("provider", "model", "supports_image", "image_only", "thinking_level"):
+            assert shipped.get(key) == expected.get(key), f"{name}.{key}"
+        # Descriptions are prose written for two different audiences, so only
+        # their presence is checked.
+        assert shipped.get("description", "").strip()
+
+    assert data["llm"]["model"] == reference["c1"]["model"]
 
 
 def test_v4_phase3_module_is_removed() -> None:
     # Phase C: the v4_phase3 engine module and its model bundle are gone from
     # the tree. The relocated BGE ONNX export stays (memory embedding).
+    assert not (REPO_ROOT / "src" / "agentos" / "agentos_router" / "v4_phase3.py").exists()
     assert not (
-        REPO_ROOT / "src" / "agentos" / "agentos_router" / "v4_phase3.py"
-    ).exists()
-    assert not (
-        REPO_ROOT
-        / "src"
-        / "agentos"
-        / "agentos_router"
-        / "models"
-        / "v4.2_phase3_inference"
+        REPO_ROOT / "src" / "agentos" / "agentos_router" / "models" / "v4.2_phase3_inference"
     ).exists()
     assert (REPO_ROOT / "src" / "agentos" / "memory" / "models" / "bge_onnx").is_dir()
