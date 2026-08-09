@@ -337,7 +337,16 @@ _FD_DUP_PATTERN = re.compile(r"\d*>&\s*(?:\d+-?|-)(?=$|[\s|&;<>)])")
 # valid shell and must be caught just like ``echo x > file``.
 _REDIRECTION_PATTERN = re.compile(r"(?:&>{1,2}|\d*>{1,2}&?)\|?\s*(['\"]?)([^'\"\s|&;<>()]+)\1")
 
-_TEE_PATTERN = re.compile(r"(?:^|\s)tee(?:\s+-[A-Za-z]+)*\s+(['\"]?)([^'\"\s|&;]+)\1")
+# ``tee`` is the other write primitive this parser covers, and it needs the same
+# treatment as the redirection operators: ``echo x|tee /etc/passwd`` is valid
+# shell, so a preceding ``|``, ``;``, ``&`` or ``(`` has to count just like a
+# space. The lookbehind keeps ``mytee``/``notee`` out while still matching a
+# fully qualified ``/usr/bin/tee``. Options may be short (``-a``), long
+# (``--append``) or long with a value (``--output-error=warn``); all of them are
+# skipped so the first non-option word is the real target.
+_TEE_PATTERN = re.compile(
+    r"(?<![\w-])tee(?:\s+-{1,2}[A-Za-z][\w-]*(?:=[^\s|&;]+)?)*\s+(['\"]?)([^'\"\s|&;]+)\1"
+)
 
 
 def _shell_write_targets(command: str) -> list[str]:

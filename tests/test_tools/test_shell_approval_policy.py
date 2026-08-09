@@ -492,6 +492,38 @@ def test_shell_write_targets_ignores_descriptor_duplication(command: str) -> Non
     assert shell._shell_write_targets(command) == []
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo x|tee /etc/passwd",
+        "echo x|tee -a /etc/passwd",
+        "echo x;tee /etc/passwd",
+        "echo x | tee /etc/passwd",
+        "tee --append /etc/passwd",
+        "tee --output-error=warn /etc/passwd",
+        "tee -a -i /etc/passwd",
+        "echo x | /usr/bin/tee /etc/passwd",
+    ],
+)
+def test_shell_write_targets_detects_tee_without_whitespace_or_short_options(
+    command: str,
+) -> None:
+    assert "/etc/passwd" in shell._shell_write_targets(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "mytee /etc/passwd",
+        "notee /etc/passwd",
+        "committee /etc/passwd",
+        "echo tee",
+    ],
+)
+def test_shell_write_targets_ignores_words_ending_in_tee(command: str) -> None:
+    assert shell._shell_write_targets(command) == []
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "template",
@@ -531,6 +563,94 @@ async def test_workspace_lockdown_blocks_redirection_without_whitespace(
     assert result["status"] == "blocked"
     assert result["reason"] == "workspace_lockdown"
     assert result["resolved_path"] == str(outside)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "template",
+    [
+        "echo ok|tee {target}",
+        "echo ok|tee -a {target}",
+        "echo ok | tee --append {target}",
+        "echo ok | tee --output-error=warn {target}",
+    ],
+)
+async def test_workspace_lockdown_blocks_tee_without_whitespace_or_long_options(
+    tmp_path: Path,
+    template: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    ctx = current_tool_context.get()
+    assert ctx is not None
+    ctx.interaction_mode = InteractionMode.UNATTENDED
+    ctx.elevated = "bypass"
+    ctx.workspace_dir = str(workspace)
+    ctx.workspace_lockdown = True  # type: ignore[attr-defined]
+
+    result = await shell._check_exec_approval(
+        "exec_command",
+        template.format(target=outside),
+        str(workspace),
+        "command requires approval",
+        None,
+        False,
+    )
+
+    assert result is not None
+    assert result["status"] == "blocked"
+    assert result["reason"] == "workspace_lockdown"
+    assert result["resolved_path"] == str(outside)
+
+
+@pytest.mark.asyncio
+async def test_workspace_write_deny_globs_block_tee_without_whitespace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    ctx = current_tool_context.get()
+    assert ctx is not None
+    ctx.interaction_mode = InteractionMode.UNATTENDED
+    ctx.elevated = "bypass"
+    ctx.workspace_dir = str(workspace)
+    ctx.workspace_write_deny_globs = ["reports/*.txt"]  # type: ignore[attr-defined]
+
+    result = await shell._check_exec_approval(
+        "exec_command",
+        "echo ok|tee --append reports/out.txt",
+        str(workspace),
+        "command requires approval",
+        None,
+        False,
+    )
+
+    assert result is not None
+    assert result["status"] == "blocked"
+    assert result["reason"] == "workspace_write_deny"
+    assert result["matched_pattern"] == "reports/*.txt"
+
+
+@pytest.mark.asyncio
+async def test_workspace_lockdown_allows_tee_inside_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    ctx = current_tool_context.get()
+    assert ctx is not None
+    ctx.interaction_mode = InteractionMode.UNATTENDED
+    ctx.elevated = "bypass"
+    ctx.workspace_dir = str(workspace)
+    ctx.workspace_lockdown = True  # type: ignore[attr-defined]
+
+    result = await shell._check_exec_approval(
+        "exec_command",
+        "echo ok|tee -a out.txt",
+        str(workspace),
+        "command requires approval",
+        None,
+        False,
+    )
+
+    assert result is None
 
 
 @pytest.mark.asyncio
