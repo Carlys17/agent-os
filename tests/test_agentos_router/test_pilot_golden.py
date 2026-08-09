@@ -126,6 +126,15 @@ async def test_pilot_meets_golden_accuracy_floor() -> None:
             config = GatewayConfig()
             config.agentos_router.enabled = True
             config.agentos_router.rollout_phase = "full"
+            # ``gold_class`` is a rubric-anchored *reasoning difficulty* label,
+            # and this floor guards the classifier's grasp of that difficulty.
+            # The translation ceiling is a spend policy that deliberately
+            # ignores difficulty — capping a metered-verse translation at c0 is
+            # the feature working, not the classifier regressing. Leaving it on
+            # would score two properties with one number, so every future policy
+            # knob would read here as a classification regression. Production
+            # fidelity for those rows is asserted separately below.
+            config.agentos_router.translate_ceiling_enabled = False
             ctx = TurnContext(
                 message=row["text"],
                 session_key=f"golden-{i}",
@@ -155,3 +164,59 @@ async def test_pilot_meets_golden_accuracy_floor() -> None:
         f"(aspirational target {GOLDEN_ACCURACY_TARGET}) "
         f"({correct}/{len(rows)} correct)"
     )
+
+
+@pytest.mark.asyncio
+async def test_golden_translation_rows_are_capped_under_production_defaults() -> None:
+    """The rows the accuracy run excludes must still be capped in production.
+
+    The accuracy test above disables the translation ceiling so it keeps
+    scoring reasoning difficulty alone. This is the other half: with the
+    shipped defaults, every golden row whose text is a translation request
+    routes to ``c0`` regardless of its difficulty label — including
+    ``r2_translate_poem``, whose gold class is ``R2``.
+    """
+    artifact = _resolve_pilot_artifact()
+    if artifact is None:
+        pytest.skip("no loadable Pilot artifact (shipped bundle absent, staging gitignored)")
+
+    from agentos.agentos_router.pilot import PilotStrategy
+    from agentos.agentos_router.task_type import detect_task_type
+    from agentos.engine.pipeline import TurnContext
+    from agentos.engine.steps import agentos_router as step
+    from agentos.gateway.config import GatewayConfig
+
+    rows = [r for r in _load_golden() if detect_task_type(r["text"]).task_type == "translate"]
+    assert rows, "golden set must retain at least one translation exemplar"
+
+    strategy = PilotStrategy(
+        artifact_dir=str(artifact),
+        safety_net_threshold=0.5,
+        confidence_threshold=0.5,
+    )
+    step._history_store.clear()
+    original = step._get_strategy
+    step._get_strategy = lambda _config, _llm_cfg=None: strategy  # type: ignore[assignment]
+    try:
+        for i, row in enumerate(rows):
+            config = GatewayConfig()
+            config.agentos_router.enabled = True
+            config.agentos_router.rollout_phase = "full"
+            ctx = TurnContext(
+                message=row["text"],
+                session_key=f"golden-translate-{i}",
+                config=config,
+                provider=None,
+                model=config.llm.model,
+                tool_defs=[],
+                system_prompt="system",
+            )
+            routed = await step.apply_agentos_router(ctx)
+            extra = routed.metadata.get("routing_extra") or {}
+            assert routed.metadata["routed_tier"] == "c0", row["id"]
+            assert extra["task_type_ceiling_applied"] is True, row["id"]
+    finally:
+        step._get_strategy = original
+        step._history_store.clear()
+        step._strategy = None
+        step._strategy_key = None
