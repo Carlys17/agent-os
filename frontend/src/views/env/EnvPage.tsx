@@ -16,6 +16,7 @@ import { toast } from 'sonner'
 import { useRpc } from '@/app/providers'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
 import {
   ENV_QUERY_KEY,
   filterVars,
@@ -32,10 +33,10 @@ import {
 } from './logic'
 
 const FILTERS: ReadonlyArray<{ id: EnvFilter; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'missing', label: 'Missing' },
-  { id: 'set', label: 'Set' },
-  { id: 'custom', label: 'Custom' },
+  { id: 'all', label: t('env.filterAll') },
+  { id: 'missing', label: t('env.filterMissing') },
+  { id: 'set', label: t('env.filterSet') },
+  { id: 'custom', label: t('env.filterCustom') },
 ]
 
 function errorMessage(error: unknown): string {
@@ -66,7 +67,7 @@ export function EnvPage() {
   const [expandedTails, setExpandedTails] = useState<Set<string>>(new Set())
 
   useEffect(() => {
-    document.title = 'Environment - AgentOS Control'
+    document.title = t('env.documentTitle')
   }, [])
 
   const listQuery = useQuery<EnvListResponse>({
@@ -102,9 +103,9 @@ export function EnvPage() {
       setDraft('')
       await refresh()
       if (result?.restartRequired) {
-        toast.warning(`${name} saved — restart the gateway for it to take full effect.`)
+        toast.warning(t('env.toastSavedRestart', { name }))
       } else {
-        toast.success(`${name} saved.`)
+        toast.success(t('env.toastSaved', { name }))
       }
       return true
     } catch (error) {
@@ -123,7 +124,7 @@ export function EnvPage() {
     try {
       await rpc.call('env.import', { name, sourceId })
       await refresh()
-      toast.success(`${name} imported. It will not follow that source's own rotation.`)
+      toast.success(t('env.toastImported', { name }))
     } catch (error) {
       toast.error(errorMessage(error))
     } finally {
@@ -136,7 +137,7 @@ export function EnvPage() {
     try {
       await rpc.call('env.unset', { name })
       await refresh()
-      toast.success(`${name} removed.`)
+      toast.success(t('env.toastRemoved', { name }))
     } catch (error) {
       toast.error(errorMessage(error))
     } finally {
@@ -192,14 +193,14 @@ export function EnvPage() {
   const confirmCopy = confirming
     ? confirming.kind === 'reveal'
       ? {
-          title: `Show ${confirming.name}?`,
-          body: 'The real value appears on screen and hides again after 30 seconds.',
-          action: 'Show value',
+          title: t('env.confirmRevealTitle', { name: confirming.name }),
+          body: t('env.confirmRevealBody'),
+          action: t('env.confirmRevealAction'),
         }
       : {
-          title: `Remove ${confirming.name}?`,
-          body: 'It is deleted from the AgentOS .env and from the running gateway.',
-          action: 'Remove',
+          title: t('env.confirmRemoveTitle', { name: confirming.name }),
+          body: t('env.confirmRemoveBody'),
+          action: t('env.confirmRemoveAction'),
         }
     : null
 
@@ -210,11 +211,11 @@ export function EnvPage() {
           <span aria-hidden="true">
             <AlertTriangleIcon />
           </span>
-          <h1>Environment unavailable</h1>
+          <h1>{t('env.loadErrorTitle')}</h1>
           <p>{errorMessage(listQuery.error)}</p>
           <Button type="button" variant="outline" onClick={() => void listQuery.refetch()}>
             <RefreshCwIcon />
-            Retry
+            {t('env.loadErrorRetry')}
           </Button>
         </div>
       </section>
@@ -225,12 +226,9 @@ export function EnvPage() {
     <section className="env-stage" aria-busy={listQuery.isLoading || undefined}>
       <header className="env-stage__header">
         <div className="env-stage__title-block">
-          <div className="t-label">Configuration</div>
-          <h1 className="t-display">Environment</h1>
-          <p className="env-stage__subtitle">
-            Credentials and settings the gateway, its providers, and your skills read from the
-            environment.
-          </p>
+          <div className="t-label">{t('env.eyebrow')}</div>
+          <h1 className="t-display">{t('env.title')}</h1>
+          <p className="env-stage__subtitle">{t('env.subtitle')}</p>
         </div>
         <div className="env-stage__actions">
           <Button
@@ -240,11 +238,11 @@ export function EnvPage() {
             onClick={() => void refresh()}
           >
             <RefreshCwIcon className={listQuery.isFetching ? 'env-spin' : undefined} />
-            Refresh
+            {t('env.refresh')}
           </Button>
           <Button type="button" onClick={openAdd}>
             <PlusIcon />
-            Add variable
+            {t('env.addVariable')}
           </Button>
         </div>
       </header>
@@ -252,23 +250,23 @@ export function EnvPage() {
       <div className="env-meta">
         <dl className="env-stats">
           <div className="env-stat">
-            <dt>Set</dt>
+            <dt>{t('env.statSet')}</dt>
             <dd>
               {summary.setCount}
-              <span>/{summary.totalCount}</span>
+              <span>{t('env.statSetTotal', { total: summary.totalCount })}</span>
             </dd>
           </div>
           <div className={summary.missingCount ? 'env-stat is-warn' : 'env-stat'}>
-            <dt>Missing</dt>
+            <dt>{t('env.statMissing')}</dt>
             <dd>{summary.missingCount}</dd>
           </div>
           <div className={summary.shadowedCount ? 'env-stat is-warn' : 'env-stat'}>
-            <dt>Shadowed</dt>
+            <dt>{t('env.statShadowed')}</dt>
             <dd>{summary.shadowedCount}</dd>
           </div>
         </dl>
         <p className="env-meta__path">
-          <span className="t-label">File</span>
+          <span className="t-label">{t('env.metaFile')}</span>
           <code title={listQuery.data?.envFilePath}>{shortPath(listQuery.data?.envFilePath)}</code>
         </p>
       </div>
@@ -279,14 +277,8 @@ export function EnvPage() {
             <AlertTriangleIcon />
           </span>
           <div>
-            <strong>
-              {summary.shadowedCount} variable(s) are shadowed by the process environment.
-            </strong>
-            <p>
-              The shell that started the gateway exported them, and that value wins over the file.
-              Editing them here will not take effect until the export is removed and the gateway
-              restarts.
-            </p>
+            <strong>{t('env.shadowWarningTitle', { count: summary.shadowedCount })}</strong>
+            <p>{t('env.shadowWarningBody')}</p>
           </div>
         </div>
       ) : null}
@@ -296,10 +288,10 @@ export function EnvPage() {
           className="env-search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search variables"
-          aria-label="Search variables"
+          placeholder={t('env.search')}
+          aria-label={t('env.search')}
         />
-        <div className="env-filters" role="group" aria-label="Filter variables">
+        <div className="env-filters" role="group" aria-label={t('env.filterLandmark')}>
           {FILTERS.map((entry) => (
             <button
               key={entry.id}
@@ -316,7 +308,7 @@ export function EnvPage() {
 
       {groups.length === 0 ? (
         <p className="env-empty">
-          {listQuery.isLoading ? 'Loading variables…' : 'No variables match this filter.'}
+          {listQuery.isLoading ? t('env.loading') : t('env.emptyFiltered')}
         </p>
       ) : (
         groups.map((group) => {
@@ -328,7 +320,7 @@ export function EnvPage() {
               <h2 className="env-group__header">
                 <span className="env-group__label">{group.label}</span>
                 <span className="env-group__count">
-                  {group.setCount}/{group.rows.length} set
+                  {t('env.groupCount', { set: group.setCount, total: group.rows.length })}
                 </span>
               </h2>
               <ul className="env-list">
@@ -338,27 +330,27 @@ export function EnvPage() {
                       <div className="env-row__name">
                         <code>{row.name}</code>
                         {row.writable ? null : (
-                          <span
-                            className="env-row__lock"
-                            title="Blocked by AgentOS security policy — edit ~/.agentos/.env directly if you genuinely need it."
-                          >
-                            <LockIcon aria-label="Not writable through AgentOS" />
+                          <span className="env-row__lock" title={t('env.rowLockTitle')}>
+                            <LockIcon aria-label={t('env.rowLockLabel')} />
                           </span>
                         )}
                         <span className={row.isSet ? 'env-badge is-set' : 'env-badge'}>
-                          {row.isSet ? 'set' : row.missing ? 'missing' : 'unset'}
+                          {row.isSet
+                            ? t('env.badgeSet')
+                            : row.missing
+                              ? t('env.badgeMissing')
+                              : t('env.badgeUnset')}
                         </span>
                         {row.isSet ? (
                           <span className="env-row__source">{sourceLabel(row.source)}</span>
                         ) : null}
                       </div>
                       {row.description ? <p className="env-row__desc">{row.description}</p> : null}
-                      {row.owner ? <p className="env-row__owner">Needed by {row.owner}</p> : null}
+                      {row.owner ? (
+                        <p className="env-row__owner">{t('env.rowOwner', { owner: row.owner })}</p>
+                      ) : null}
                       {isShadowed(row) ? (
-                        <p className="env-row__shadow">
-                          Shadowed by the process environment — changes here take effect only after
-                          the export is removed and the gateway restarts.
-                        </p>
+                        <p className="env-row__shadow">{t('env.rowShadowed')}</p>
                       ) : null}
                       {row.url ? (
                         <a
@@ -367,7 +359,7 @@ export function EnvPage() {
                           target="_blank"
                           rel="noreferrer noopener"
                         >
-                          Where to get this
+                          {t('env.rowLink')}
                         </a>
                       ) : null}
                     </div>
@@ -376,7 +368,7 @@ export function EnvPage() {
                       {revealed[row.name] ? (
                         <code className="env-row__revealed">{revealed[row.name]}</code>
                       ) : (
-                        <code>{row.masked ?? '—'}</code>
+                        <code>{row.masked ?? t('common.dash')}</code>
                       )}
                     </div>
 
@@ -392,9 +384,13 @@ export function EnvPage() {
                               setEditing(editing === row.name ? null : row.name)
                               setDraft('')
                             }}
-                            aria-label={row.isSet ? `Edit ${row.name}` : `Set ${row.name}`}
+                            aria-label={
+                              row.isSet
+                                ? t('env.rowEditLabel', { name: row.name })
+                                : t('env.rowSetLabel', { name: row.name })
+                            }
                           >
-                            {row.isSet ? 'Edit' : 'Set'}
+                            {row.isSet ? t('env.rowEdit') : t('env.rowSet')}
                           </Button>
                           {!row.isSet && row.availableFrom ? (
                             <Button
@@ -404,7 +400,7 @@ export function EnvPage() {
                               disabled={busy === row.name}
                               onClick={() => void importFrom(row.name, row.availableFrom!.id)}
                             >
-                              Use {row.availableFrom.label}
+                              {t('env.rowImport', { source: row.availableFrom.label })}
                             </Button>
                           ) : null}
                           {row.isSet && row.secret ? (
@@ -416,7 +412,9 @@ export function EnvPage() {
                               onClick={() => setConfirming({ kind: 'reveal', name: row.name })}
                             >
                               <EyeIcon />
-                              <span className="sr-only">Reveal {row.name}</span>
+                              <span className="sr-only">
+                                {t('env.rowReveal', { name: row.name })}
+                              </span>
                             </Button>
                           ) : null}
                           {row.isSet ? (
@@ -428,7 +426,9 @@ export function EnvPage() {
                               onClick={() => setConfirming({ kind: 'unset', name: row.name })}
                             >
                               <Trash2Icon />
-                              <span className="sr-only">Remove {row.name}</span>
+                              <span className="sr-only">
+                                {t('env.rowRemove', { name: row.name })}
+                              </span>
                             </Button>
                           ) : null}
                         </>
@@ -447,12 +447,12 @@ export function EnvPage() {
                           type={row.secret ? 'password' : 'text'}
                           value={draft}
                           onChange={(event) => setDraft(event.target.value)}
-                          aria-label={`Value for ${row.name}`}
+                          aria-label={t('env.rowValueLabel', { name: row.name })}
                           autoFocus
                         />
                         <Button type="submit" size="sm" disabled={busy === row.name}>
                           <CheckIcon />
-                          Save
+                          {t('env.rowSave')}
                         </Button>
                         <Button
                           type="button"
@@ -460,7 +460,7 @@ export function EnvPage() {
                           size="sm"
                           onClick={() => setEditing(null)}
                         >
-                          Cancel
+                          {t('env.rowCancel')}
                         </Button>
                       </form>
                     ) : null}
@@ -478,7 +478,9 @@ export function EnvPage() {
                     className={tailOpen ? 'env-group__chevron is-open' : 'env-group__chevron'}
                     aria-hidden="true"
                   />
-                  {tailOpen ? `Hide ${rest.length} unset` : `Show ${rest.length} unset`}
+                  {tailOpen
+                    ? t('env.tailHide', { count: rest.length })
+                    : t('env.tailShow', { count: rest.length })}
                 </button>
               ) : null}
             </section>
@@ -494,9 +496,14 @@ export function EnvPage() {
             overlayClassName="env-modal__overlay"
             className="env-modal panel"
           >
-            <h2 id="env-add-title">Add a variable</h2>
+            <h2 id="env-add-title">{t('env.addTitle')}</h2>
+            {/* Split around the <code> element rather than translated whole: a
+                translator cannot reorder across the element, which is the one
+                place in this view where markup sits inside a sentence. */}
             <p>
-              Stored in the AgentOS <code>.env</code> and applied to the running gateway.
+              {t('env.addBodyLead')}{' '}
+              {/* eslint-disable-next-line no-restricted-syntax -- a filename, not copy */}
+              <code>.env</code> {t('env.addBodyTail')}
             </p>
             <form
               className="env-add"
@@ -506,23 +513,23 @@ export function EnvPage() {
               }}
             >
               <label>
-                Name
+                {t('env.addNameLabel')}
                 <input
                   value={newName}
                   onChange={(event) => setNewName(event.target.value)}
-                  placeholder="MY_SERVICE_TOKEN"
-                  aria-label="New variable name"
+                  placeholder={t('env.addNamePlaceholder')}
+                  aria-label={t('env.addNameField')}
                   aria-invalid={newError ? true : undefined}
                   aria-describedby={newError ? 'env-add-error' : undefined}
                 />
               </label>
               <label>
-                Value
+                {t('env.addValueLabel')}
                 <input
                   type="password"
                   value={newValue}
                   onChange={(event) => setNewValue(event.target.value)}
-                  aria-label="New variable value"
+                  aria-label={t('env.addValueField')}
                 />
               </label>
               {newError ? (
@@ -532,10 +539,10 @@ export function EnvPage() {
               ) : null}
               <div className="env-modal__actions">
                 <Button type="submit" disabled={busy === newName.trim()}>
-                  Save
+                  {t('env.addSave')}
                 </Button>
                 <Button type="button" variant="outline" onClick={closeAdd}>
-                  Cancel
+                  {t('env.addCancel')}
                 </Button>
               </div>
             </form>
@@ -572,7 +579,7 @@ export function EnvPage() {
                 {confirmCopy.action}
               </Button>
               <Button type="button" variant="outline" onClick={() => setConfirming(null)}>
-                Cancel
+                {t('env.confirmCancel')}
               </Button>
             </div>
           </ModalShell>

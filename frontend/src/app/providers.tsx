@@ -4,6 +4,7 @@ import { fallbackBootstrap, fetchBootstrap, resolveWsUrl, type Bootstrap } from 
 import { WsRpcClient } from '@/lib/ws-rpc'
 import { useConnection } from '@/stores/connection'
 import { initTheme } from '@/stores/theme'
+import { initLocale, t } from '@/i18n'
 import { approvalMonitor } from '@/services/approval-monitor'
 import type { RpcState } from '@/lib/ws-rpc'
 import { KeyboardShortcutProvider } from '@/components/KeyboardShortcuts'
@@ -36,6 +37,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     initTheme()
+    // Constant today. When the gateway starts advertising a locale this becomes
+    // setLocale(b.locale) inside the bootstrap .then() below, before setBootstrap.
+    initLocale()
     let cancelled = false
     const unsubscribe = rpc.on('_state', (s) => useConnection.getState().setState(s as RpcState))
     fetchBootstrap()
@@ -85,7 +89,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
     return () => approvalMonitor.stop()
   }, [])
 
-  if (!bootstrap) return <div className="p-8 text-sm">Connecting…</div>
+  if (!bootstrap) return <div className="p-8 text-sm">{t('shell.connecting')}</div>
 
   return (
     <BootstrapContext.Provider value={bootstrap}>

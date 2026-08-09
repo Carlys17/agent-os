@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useBootstrap, useRpc } from '@/app/providers'
+import { t, tPlural } from '@/i18n'
 import {
   formatCost,
   formatEventPayload,
@@ -128,7 +129,7 @@ export function OverviewPage() {
   const queryClient = useQueryClient()
 
   useEffect(() => {
-    document.title = 'Overview - AgentOS Control'
+    document.title = t('overview.documentTitle')
   }, [])
 
   // overview.js:212-311 — four independent reads run in parallel; each tile
@@ -153,7 +154,7 @@ export function OverviewPage() {
     if (statusQuery.isError) {
       const err = statusQuery.error
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to load status: ' + message, { id: 'overview-status-err' })
+      toast.error(t('overview.toastStatusFailed', { message }), { id: 'overview-status-err' })
     }
   }, [statusQuery.isError, statusQuery.error])
 
@@ -263,49 +264,47 @@ export function OverviewPage() {
     <div className="ov-stage">
       <header className="ov-stage__header">
         <div className="ov-stage__title-block">
-          <span className="t-label">Control · Overview</span>
-          <h1 className="t-display">Overview</h1>
-          <p className="ov-stage__subtitle">
-            Live status, recent sessions, and the gateway event stream.
-          </p>
+          <span className="t-label">{t('overview.eyebrow')}</span>
+          <h1 className="t-display">{t('overview.title')}</h1>
+          <p className="ov-stage__subtitle">{t('overview.subtitle')}</p>
         </div>
         <div className="ov-stage__actions">
           <Button
             variant="outline"
-            title="Refresh"
+            title={t('overview.refresh')}
             className="text-xs uppercase tracking-[0.14em]"
             aria-busy={overviewRefreshing}
             disabled={overviewRefreshing}
             onClick={refreshAll}
           >
             <RefreshCwIcon className={overviewRefreshing ? 'ov-refresh-spin' : undefined} />
-            <span>Refresh</span>
+            <span>{t('overview.refresh')}</span>
           </Button>
           <Button
-            title="Open chat"
+            title={t('overview.openChat')}
             className="text-xs uppercase tracking-[0.14em]"
             onClick={() => navigate('/chat')}
           >
             <MessageSquareIcon />
-            <span>Open chat</span>
+            <span>{t('overview.openChat')}</span>
           </Button>
         </div>
       </header>
 
-      <section className="ov-command" aria-label="Gateway summary">
+      <section className="ov-command" aria-label={t('overview.summaryLandmark')}>
         <div className="ov-command__toolbar">
           <div>
-            <span className="ov-command__eyebrow">System pulse</span>
-            <strong>Gateway summary</strong>
+            <span className="ov-command__eyebrow">{t('overview.summaryEyebrow')}</span>
+            <strong>{t('overview.summaryLandmark')}</strong>
           </div>
           <span className="ov-command__cadence">
             <span aria-hidden="true" />
-            Refreshes every 30s
+            {t('overview.summaryCadence')}
           </span>
         </div>
         <div className="ov-command__body">
           <StatTile
-            label="Health"
+            label={t('overview.tileHealth')}
             icon={<StethoscopeIcon />}
             to="/health"
             tone={doctorFailed ? 'err' : readinessTone(doctor?.status)}
@@ -313,51 +312,65 @@ export function OverviewPage() {
             loading={doctorQuery.isFetching}
           >
             <strong className="ov-stat__value ov-stat__value--status t-data">
-              {doctorFailed ? 'Unavailable' : readinessStatusLabel(doctor?.status)}
+              {doctorFailed ? t('overview.readyUnavailable') : readinessStatusLabel(doctor?.status)}
             </strong>
             <span className="ov-stat__hint">
-              {doctorFailed ? 'open health' : (doctor?.summary ?? 'view details')}
+              {doctorFailed
+                ? t('overview.tileHealthOpen')
+                : (doctor?.summary ?? t('overview.tileHealthDetails'))}
             </span>
           </StatTile>
           <div className="ov-command__metrics">
             <StatTile
-              label="Total tokens"
+              label={t('overview.tileTokens')}
               icon={<CoinsIcon />}
               to="/usage"
               loading={usageQuery.isFetching}
             >
               <strong className="ov-stat__value t-data">{formatTokens(usage?.totalTokens)}</strong>
               <span className="ov-stat__hint">
-                {usage ? formatCost(usage.totalCostUsd) + ' spent' : 'view usage'}
+                {usage
+                  ? t('overview.tileSpent', { amount: formatCost(usage.totalCostUsd) })
+                  : t('overview.tileTokensHint')}
               </span>
             </StatTile>
             <StatTile
-              label="Total sessions"
+              label={t('overview.tileSessions')}
               icon={<ActivityIcon />}
               to="/sessions"
               loading={usageQuery.isFetching}
             >
               {/* overview.js:262 — legacy printed the raw integer (data.totalSessions
                   ?? '—'); no toLocaleString grouping, unlike the token tile. */}
-              <strong className="ov-stat__value t-data">{usage?.totalSessions ?? '—'}</strong>
-              <span className="ov-stat__hint">view all</span>
+              <strong className="ov-stat__value t-data">
+                {usage?.totalSessions ?? t('common.dash')}
+              </strong>
+              <span className="ov-stat__hint">{t('overview.tileSessionsHint')}</span>
             </StatTile>
             <StatTile
-              label="Provider"
+              label={t('overview.tileProvider')}
               icon={<BotIcon />}
               to="/agents"
               loading={statusQuery.isFetching}
             >
               <strong className="ov-stat__value ov-stat__value--mono t-data">
-                {status?.provider ?? '—'}
+                {status?.provider ?? t('common.dash')}
               </strong>
-              <span className="ov-stat__hint">manage agents</span>
+              <span className="ov-stat__hint">{t('overview.tileProviderHint')}</span>
             </StatTile>
-            <StatTile label="Uptime" icon={<ClockIcon />} loading={statusQuery.isFetching}>
+            <StatTile
+              label={t('overview.tileUptime')}
+              icon={<ClockIcon />}
+              loading={statusQuery.isFetching}
+            >
               <strong className="ov-stat__value ov-stat__value--mono t-data">
                 {formatUptime(status?.uptime_ms)}
               </strong>
-              <span className="ov-stat__hint">{status?.version ? `v${status.version}` : '—'}</span>
+              <span className="ov-stat__hint">
+                {status?.version
+                  ? t('overview.tileVersion', { version: status.version })
+                  : t('common.dash')}
+              </span>
             </StatTile>
           </div>
         </div>
@@ -369,17 +382,17 @@ export function OverviewPage() {
             <div className="ov-panel__heading">
               <MessageSquareIcon aria-hidden="true" />
               <div>
-                <span>Recent sessions</span>
-                <small>Resume the latest agent work</small>
+                <span>{t('overview.recentTitle')}</span>
+                <small>{t('overview.recentSubtitle')}</small>
               </div>
             </div>
             <button
               type="button"
               className="ov-link"
               onClick={() => navigate('/sessions')}
-              aria-label="View all sessions"
+              aria-label={t('overview.recentViewAllLabel')}
             >
-              View all →
+              {t('overview.recentViewAll')}
             </button>
           </div>
           <div className="panel__body ov-recent">
@@ -388,27 +401,31 @@ export function OverviewPage() {
               // account: keep a neutral placeholder (legacy left the skeleton),
               // never the "No sessions yet" empty CTA.
               <div className="ov-recent__empty" role="status">
-                <span>Recent sessions unavailable.</span>
+                <span>{t('overview.recentUnavailable')}</span>
               </div>
             ) : recent.length === 0 ? (
               <div className="ov-recent__empty">
                 <MessageSquareIcon className="ov-recent__empty-icon" aria-hidden="true" />
-                <span>No sessions yet — open chat to start your first one.</span>
+                <span>{t('overview.recentEmpty')}</span>
               </div>
             ) : (
               recent.map((s) => {
                 const status = (s.status || 'unknown').toLowerCase()
                 const dot = sessionStatusClass(status)
                 const label = sessionStatusLabel(status)
-                const rel = s.updated_at ? relTime(s.updated_at) : '—'
+                const rel = s.updated_at ? relTime(s.updated_at) : t('common.dash')
                 const msgs =
-                  s.message_count != null ? `${Number(s.message_count).toLocaleString()} msg` : ''
+                  s.message_count != null
+                    ? t('overview.recentMessages', {
+                        count: Number(s.message_count).toLocaleString(),
+                      })
+                    : ''
                 return (
                   <button
                     key={s.key}
                     type="button"
                     className="ov-recent__row"
-                    aria-label={`Open session ${s.key}`}
+                    aria-label={t('overview.recentOpenSession', { key: s.key ?? '' })}
                     onClick={() => navigate(`/chat?session=${encodeURIComponent(s.key ?? '')}`)}
                   >
                     <span
@@ -435,20 +452,20 @@ export function OverviewPage() {
             <div className="ov-panel__heading">
               <ActivityIcon aria-hidden="true" />
               <div>
-                <span>Event stream</span>
-                <small>Live gateway activity</small>
+                <span>{t('overview.eventsTitle')}</span>
+                <small>{t('overview.eventsSubtitle')}</small>
               </div>
             </div>
             <span className="ov-panel__meta" data-slot="panel-meta">
               <span className="ov-panel__live" aria-hidden="true" />
-              {events.length} event{events.length === 1 ? '' : 's'}
+              {tPlural('overview.eventsCount', events.length)}
             </span>
           </div>
           <div className="panel__body ov-event-log" role="log" aria-live="polite">
             {events.length === 0 ? (
               <div className="ov-event-log__empty">
                 <span className="ov-event-log__pulse" aria-hidden="true" />
-                Listening for events…
+                {t('overview.eventsEmpty')}
               </div>
             ) : (
               events.map((e, i) => (
@@ -467,18 +484,18 @@ export function OverviewPage() {
             <div className="ov-panel__heading">
               <BotIcon aria-hidden="true" />
               <div>
-                <span>Gateway connection</span>
-                <small>Override the active endpoint for this browser</small>
+                <span>{t('overview.connTitle')}</span>
+                <small>{t('overview.connSubtitle')}</small>
               </div>
             </div>
           </div>
           <div className="panel__body ov-form">
             <label className="ov-field">
-              <span className="ov-field__label t-label">WebSocket URL</span>
+              <span className="ov-field__label t-label">{t('overview.connUrlLabel')}</span>
               <input
                 className="ov-field__input t-data"
                 type="text"
-                placeholder="ws://…"
+                placeholder={t('overview.connUrlPlaceholder')}
                 autoComplete="off"
                 value={wsUrl}
                 onChange={(e) => setWsUrl(e.target.value)}
@@ -486,12 +503,13 @@ export function OverviewPage() {
             </label>
             <label className="ov-field">
               <span className="ov-field__label t-label">
-                Token <span className="ov-field__optional">optional</span>
+                {t('overview.connTokenLabel')}{' '}
+                <span className="ov-field__optional">{t('overview.connTokenOptional')}</span>
               </span>
               <input
                 className="ov-field__input"
                 type="password"
-                placeholder="—"
+                placeholder={t('common.dash')}
                 autoComplete="off"
                 value={wsToken}
                 onChange={(e) => setWsToken(e.target.value)}
@@ -499,10 +517,10 @@ export function OverviewPage() {
             </label>
             <div className="ov-form__actions">
               <Button size="sm" onClick={onConnect}>
-                Connect
+                {t('overview.connConnect')}
               </Button>
               <Button size="sm" variant="outline" onClick={() => rpc.disconnect()}>
-                Disconnect
+                {t('overview.connDisconnect')}
               </Button>
             </div>
           </div>

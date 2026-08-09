@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { CommandLine } from '@/components/CommandLine'
 import { ModalShell } from '@/components/ModalShell'
+import { t } from '@/i18n'
 import {
   approvalCommand,
   approvalDetail,
@@ -75,7 +76,7 @@ export function ApprovalPrompt() {
   const detail = approvalDetail(item)
   const meta = approvalMeta(item, item.mode || mode)
   const showAlways = canAlwaysAllow(item)
-  const toolLabel = item.toolName || item.actionKind || 'Tool execution'
+  const toolLabel = item.toolName || item.actionKind || t('shell.approvalFallbackTool')
 
   async function resolve(action: 'once' | 'always' | 'bypass' | 'deny'): Promise<void> {
     if (busy || !item) return
@@ -108,7 +109,7 @@ export function ApprovalPrompt() {
       className="approval-modal panel tone-warn"
     >
       <div className="panel__head">
-        <span id="approval-modal-title">Approval Required</span>
+        <span id="approval-modal-title">{t('shell.approvalTitle')}</span>
       </div>
       <div className="panel__body approval-modal__body">
         <div className="approval-modal__tool">{toolLabel}</div>
@@ -120,30 +121,30 @@ export function ApprovalPrompt() {
         <Button
           type="button"
           disabled={busy}
-          title="Approve only this pending tool call"
+          title={t('shell.approvalOnceTitle')}
           onClick={() => void resolve('once')}
         >
-          Approve This Time
+          {t('shell.approvalOnce')}
         </Button>
         {showAlways ? (
           <Button
             type="button"
             variant="outline"
             disabled={busy}
-            title="Remember this operation type for future matching intents"
+            title={t('shell.approvalAlwaysTitle')}
             onClick={() => void resolve('always')}
           >
-            Always Allow This Type
+            {t('shell.approvalAlways')}
           </Button>
         ) : null}
         <Button
           type="button"
           variant="outline"
           disabled={busy}
-          title="Enable approval bypass in this browser session and approve this pending tool call"
+          title={t('shell.approvalBypassTitle')}
           onClick={() => void resolve('bypass')}
         >
-          Bypass Approvals
+          {t('shell.approvalBypass')}
         </Button>
         <Button
           type="button"
@@ -151,7 +152,7 @@ export function ApprovalPrompt() {
           disabled={busy}
           onClick={() => void resolve('deny')}
         >
-          Deny
+          {t('shell.approvalDeny')}
         </Button>
       </div>
     </ModalShell>

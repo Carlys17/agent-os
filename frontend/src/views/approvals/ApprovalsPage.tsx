@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { CommandLine } from '@/components/CommandLine'
 import { Button } from '@/components/ui/button'
 import { useBootstrap, useRpc } from '@/app/providers'
+import { t } from '@/i18n'
 import {
   approvalCommand,
   approvalMonitor,
@@ -37,51 +38,54 @@ function ApprovalCard({
   busy: boolean
   onResolve: (item: Approval, action: 'once' | 'always' | 'bypass' | 'deny') => void
 }) {
-  const toolName = item.toolName || item.actionKind || 'Unknown'
+  const toolName = item.toolName || item.actionKind || t('approvals.cardUnknownTool')
   const command = approvalCommand(item)
   // Card renders the FULL args JSON (approvals.js:314-322), not the modal's
   // 900-char-truncated approvalDetail(); see approvalCardDetail in ./logic.
   const detail = approvalCardDetail(item)
   const showAlways = canAlwaysAllow(item)
   return (
-    <article className="ap-card tone-warn" aria-label={`Approval request ${toolName}`}>
+    <article
+      className="ap-card tone-warn"
+      aria-label={t('approvals.cardLandmark', { tool: toolName })}
+    >
       <header className="ap-card__head">
         <div className="ap-card__title-row">
           <span className="ap-card__name">{toolName}</span>
           {item.namespace ? <span className="ap-card__ns t-label">{item.namespace}</span> : null}
         </div>
-        <span className="ap-card__time t-label">awaiting decision</span>
+        <span className="ap-card__time t-label">{t('approvals.cardAwaiting')}</span>
       </header>
       {item.agent || item.sessionKey ? (
         <div className="ap-card__meta t-data">
           {item.agent ? (
             <span>
-              <b>Agent</b> {item.agent}
+              <b>{t('approvals.cardAgent')}</b> {item.agent}
             </span>
           ) : null}
           {item.sessionKey ? (
             <span>
-              <b>Session</b> <code>{item.sessionKey}</code>
+              <b>{t('approvals.cardSession')}</b> <code>{item.sessionKey}</code>
             </span>
           ) : null}
         </div>
       ) : null}
       {command ? (
         <div className="ap-card__block">
-          <div className="ap-card__block-label t-label">Command</div>
+          <div className="ap-card__block-label t-label">{t('approvals.cardCommand')}</div>
           <CommandLine command={command} toastIdPrefix="approvals-copy" />
         </div>
       ) : null}
       {detail ? (
         <div className="ap-card__block">
-          <div className="ap-card__block-label t-label">Details</div>
+          <div className="ap-card__block-label t-label">{t('approvals.cardDetails')}</div>
           <pre className="ap-card__pre">{detail}</pre>
         </div>
       ) : null}
       <div className="ap-card__actions">
         <Button type="button" disabled={busy} onClick={() => onResolve(item, 'once')}>
           <CheckIcon />
-          <span>Approve once</span>
+          <span>{t('approvals.cardApproveOnce')}</span>
         </Button>
         {showAlways ? (
           <Button
@@ -90,17 +94,17 @@ function ApprovalCard({
             disabled={busy}
             onClick={() => onResolve(item, 'always')}
           >
-            Always allow this type
+            {t('approvals.cardAlways')}
           </Button>
         ) : null}
         <Button
           type="button"
           variant="outline"
           disabled={busy}
-          title="Bypass approval prompts while keeping sensitive-path checks"
+          title={t('approvals.cardBypassTitle')}
           onClick={() => onResolve(item, 'bypass')}
         >
-          Bypass approvals
+          {t('approvals.cardBypass')}
         </Button>
         <Button
           type="button"
@@ -109,7 +113,7 @@ function ApprovalCard({
           onClick={() => onResolve(item, 'deny')}
         >
           <XIcon />
-          <span>Deny</span>
+          <span>{t('approvals.cardDeny')}</span>
         </Button>
       </div>
     </article>
@@ -127,7 +131,7 @@ export function ApprovalsPage() {
   const elevatedMode = useApprovals((s) => s.elevatedMode)
 
   useEffect(() => {
-    document.title = 'Approvals - AgentOS Control'
+    document.title = t('approvals.documentTitle')
   }, [])
 
   // The durable pending list + count are published by the always-running
@@ -169,7 +173,7 @@ export function ApprovalsPage() {
       // approvals.js:297-299 — outcome toast (warn for auto-approve, else info)
       // + re-poll the monitor.
       const opts = { id: 'approvals-strategy', duration: 2500 }
-      const message = 'Approval strategy: ' + next
+      const message = t('approvals.toastStrategySaved', { mode: next })
       if (next === 'auto-approve') toast.warning(message, opts)
       else toast.success(message, opts)
       await approvalMonitor.pollNow()
@@ -177,7 +181,7 @@ export function ApprovalsPage() {
       // approvals.js:301 — revert the optimistic selection on failure.
       setPendingMode(null)
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to save strategy: ' + message, {
+      toast.error(t('approvals.toastStrategyFailed', { message }), {
         id: 'approvals-strategy-err',
         duration: 4000,
       })
@@ -213,55 +217,55 @@ export function ApprovalsPage() {
     <div className="ap-stage">
       <header className="ap-stage__header">
         <div className="ap-stage__title-block">
-          <span className="t-label">Control · Approvals</span>
-          <h1 className="t-display">Approvals</h1>
-          <p className="ap-stage__subtitle">
-            Tool execution gate — keep risky actions paused until you say go.
-          </p>
+          <span className="t-label">{t('approvals.eyebrow')}</span>
+          <h1 className="t-display">{t('approvals.title')}</h1>
+          <p className="ap-stage__subtitle">{t('approvals.subtitle')}</p>
         </div>
         <Button
           variant="outline"
-          title="Refresh approvals"
+          title={t('approvals.refreshTitle')}
           className="ap-stage__refresh text-xs uppercase tracking-[0.14em]"
           disabled={refreshing}
           onClick={() => void onRefresh()}
         >
           <RefreshCwIcon className={refreshing ? 'ap-refresh-spin' : undefined} />
-          <span>{refreshing ? 'Refreshing…' : 'Refresh'}</span>
+          <span>{refreshing ? t('approvals.refreshing') : t('approvals.refresh')}</span>
         </Button>
       </header>
 
-      <section className="ap-command" aria-label="Approval operations">
+      <section className="ap-command" aria-label={t('approvals.opsLandmark')}>
         <div className="ap-command__toolbar">
           <div className="ap-command__heading">
             <span className="ap-command__icon" aria-hidden="true">
               <ShieldAlertIcon />
             </span>
             <div>
-              <span className="t-label">Execution gate</span>
-              <strong>Decision posture</strong>
+              <span className="t-label">{t('approvals.opsEyebrow')}</span>
+              <strong>{t('approvals.opsTitle')}</strong>
             </div>
           </div>
           <span className="ap-command__meta">
             <span className={pending.length ? 'tone-warn' : 'tone-ok'} aria-hidden="true" />
-            {pending.length ? `${pending.length} waiting` : 'Queue clear'}
+            {pending.length
+              ? t('approvals.opsWaiting', { count: pending.length })
+              : t('approvals.opsQueueClear')}
           </span>
         </div>
-        <div className="ap-stats" aria-label="Approvals summary">
+        <div className="ap-stats" aria-label={t('approvals.statsLandmark')}>
           <div className={`ap-stat ap-stat--hero tone-${modeStateTone(mode)}`}>
-            <span className="ap-stat__label t-label">Pending</span>
+            <span className="ap-stat__label t-label">{t('approvals.statPending')}</span>
             <strong className="ap-stat__value t-data">{pending.length}</strong>
             <span className="ap-stat__hint">
-              {pending.length ? 'awaiting decision' : 'all clear'}
+              {pending.length ? t('approvals.statPendingHint') : t('approvals.statAllClear')}
             </span>
           </div>
           <div className="ap-stat">
-            <span className="ap-stat__label t-label">Strategy</span>
+            <span className="ap-stat__label t-label">{t('approvals.statStrategy')}</span>
             <strong className="ap-stat__value">{activeOpt.label}</strong>
             <span className="ap-stat__hint">{activeOpt.desc}</span>
           </div>
           <div className="ap-stat">
-            <span className="ap-stat__label t-label">Effective execution mode</span>
+            <span className="ap-stat__label t-label">{t('approvals.statExecution')}</span>
             <strong className="ap-stat__value t-data">{execution.label}</strong>
             <span className="ap-stat__hint">{execution.desc}</span>
           </div>
@@ -274,19 +278,19 @@ export function ApprovalsPage() {
             <div className="ap-empty__signal" aria-hidden="true">
               <CheckIcon />
             </div>
-            <div className="ap-empty__title">No pending approvals.</div>
-            <p className="ap-empty__text">
-              When an agent reaches a risky tool call, it will appear here for your sign-off.
-            </p>
+            <div className="ap-empty__title">{t('approvals.emptyTitle')}</div>
+            <p className="ap-empty__text">{t('approvals.emptyText')}</p>
           </section>
         ) : (
-          <section className="ap-pending" aria-label="Pending approvals">
+          <section className="ap-pending" aria-label={t('approvals.pendingLandmark')}>
             <header className="ap-pending__head">
               <div>
-                <h2>Decision inbox</h2>
-                <p>Review the requested operation and choose the narrowest safe permission.</p>
+                <h2>{t('approvals.pendingTitle')}</h2>
+                <p>{t('approvals.pendingSubtitle')}</p>
               </div>
-              <span className="ap-pending__count t-data">{pending.length} pending</span>
+              <span className="ap-pending__count t-data">
+                {t('approvals.pendingCount', { count: pending.length })}
+              </span>
             </header>
             <div className="ap-pending__list">
               {pending.map((item) => (
@@ -299,12 +303,16 @@ export function ApprovalsPage() {
         <section className="ap-strategy panel">
           <div className="panel__head">
             <div>
-              <span>Approval policy</span>
-              <small>Default response for future requests</small>
+              <span>{t('approvals.policyTitle')}</span>
+              <small>{t('approvals.policySubtitle')}</small>
             </div>
           </div>
           <div className="panel__body">
-            <div className="ap-strategy__options" role="radiogroup" aria-label="Approval strategy">
+            <div
+              className="ap-strategy__options"
+              role="radiogroup"
+              aria-label={t('approvals.policyLandmark')}
+            >
               {MODE_OPTIONS.map((opt) => (
                 <label
                   key={opt.value}

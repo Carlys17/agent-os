@@ -5,6 +5,8 @@
  * can be tested without a DOM — the same split the Skills and MCP views use.
  */
 
+import { t } from '@/i18n'
+
 /** Shared so the Settings glance and the Environment screen hit one cache. */
 export const ENV_QUERY_KEY = ['env', 'list'] as const
 
@@ -49,19 +51,19 @@ export type EnvFilter = 'all' | 'missing' | 'set' | 'custom'
 const CATEGORY_ORDER = ['provider', 'search', 'image', 'audio', 'memory', 'skill', 'custom']
 
 const CATEGORY_LABELS: Record<string, string> = {
-  provider: 'LLM providers',
-  search: 'Search',
-  image: 'Image generation',
-  audio: 'Audio',
-  memory: 'Memory embedding',
-  skill: 'Skills',
-  custom: 'Your own variables',
+  provider: t('env.categoryProvider'),
+  search: t('env.categorySearch'),
+  image: t('env.categoryImage'),
+  audio: t('env.categoryAudio'),
+  memory: t('env.categoryMemory'),
+  skill: t('env.categorySkill'),
+  custom: t('env.categoryCustom'),
 }
 
 const SOURCE_LABELS: Record<EnvSource, string> = {
-  process: 'process env',
-  cwd_file: 'project .env',
-  home_file: 'AgentOS .env',
+  process: t('env.sourceProcess'),
+  cwd_file: t('env.sourceCwdFile'),
+  home_file: t('env.sourceHomeFile'),
   unset: '',
 }
 
@@ -178,13 +180,13 @@ export function summarize(payload: EnvListResponse | undefined): EnvSummary {
  */
 export function validateNewName(name: string, known: EnvVarRow[]): string | null {
   const trimmed = name.trim()
-  if (!trimmed) return 'Enter a variable name.'
+  if (!trimmed) return t('env.validateEmpty')
   if (!isValidEnvName(trimmed)) {
-    return 'Use letters, digits, and underscores, starting with a letter or underscore.'
+    return t('env.validateCharset')
   }
   const existing = known.find((row) => row.name === trimmed)
   if (existing && !existing.writable) {
-    return 'This name cannot be written through AgentOS.'
+    return t('env.validateReadOnly')
   }
   return null
 }
@@ -203,5 +205,5 @@ export function shortPath(path: string | undefined): string {
   if (!path) return ''
   const segments = path.split('/').filter(Boolean)
   if (segments.length <= 2) return path
-  return `…/${segments.slice(-2).join('/')}`
+  return t('env.shortPath', { tail: segments.slice(-2).join('/') })
 }
