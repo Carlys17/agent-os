@@ -141,8 +141,10 @@ export const mcp = defineNamespace('mcp', {
 
   // Validation (logic.ts).
   errorName: 'Enter a server name.',
+  errorNameCharset: 'Use letters, numbers, dots, underscores, or hyphens.',
   errorNameTaken: 'This server name already exists.',
   errorCommand: 'Enter a command.',
+  errorUrlScheme: 'Use an HTTP or HTTPS URL.',
   errorUrl: 'Enter a valid absolute URL.',
   errorHeadersObject: 'Headers must be a JSON object.',
   errorHeaderValues: 'Header values must be strings.',
