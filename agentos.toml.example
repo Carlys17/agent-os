@@ -304,6 +304,16 @@ kv_cache_anti_downgrade_window_seconds = 600
 complaint_upgrade_enabled = true
 complaint_upgrade_steps = 1
 complaint_upgrade_max_chars = 160
+# Translation ceiling. The router scores reasoning difficulty, so an ordinary
+# "translate this" lands on c1 even in English, and drifts further in other
+# languages because they are outside the training corpus. A deterministic
+# detector (14 languages) caps a translation turn at translate_ceiling_tier.
+# Every detected translation is capped, extras and all. A complaint upgrade
+# wins over the cap and the large-context floor still applies after it; the
+# only request that keeps the verb without taking the cap is porting code
+# ("translate this Python module to Rust"), which is a request to write code.
+translate_ceiling_enabled = true
+translate_ceiling_tier = "c0"
 estimated_output_savings_pct = 0.03
 upgrade_to_c3_compaction_enabled = true
 

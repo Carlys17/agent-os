@@ -84,6 +84,15 @@ export function RouterSection({
     router.pilot?.safety_net_threshold != null ? String(router.pilot.safety_net_threshold) : '0.5'
   const [pilotThreshold, setPilotThreshold] = useState(pilotThresholdInitial)
 
+  // The translation cap is an engine guard rather than a strategy setting, so
+  // it stays visible for every mode. An absent key means the default (on).
+  const [translateCeilingEnabled, setTranslateCeilingEnabled] = useState(
+    router.translate_ceiling_enabled !== false,
+  )
+  const [translateCeilingTier, setTranslateCeilingTier] = useState(
+    router.translate_ceiling_tier || 'c0',
+  )
+
   // Judge model catalog: AUTO is judge_model === null → the empty option.
   const judgeCatalog = routerCatalog.judge || {}
   const judgeProfiles =
@@ -215,6 +224,8 @@ export function RouterSection({
       defaultTier,
       judgeModel,
       pilotThresholdRaw: pilotThreshold,
+      translateCeilingEnabled,
+      translateCeilingTier,
       // Tiers select the MODEL; requests always go through llm.provider, and a
       // tier naming a different provider is degraded back to llm.model at boot
       // (boot.py:1106-1120). The cell is a read-only chip for that reason, so
@@ -301,6 +312,34 @@ export function RouterSection({
             </small>
           </label>
         ) : null}
+        <label>
+          <span>Translation cap</span>
+          <SetupSelect
+            aria-label="Translation cap tier"
+            value={translateCeilingEnabled ? translateCeilingTier : 'off'}
+            disabled={!provider}
+            onChange={(e) => {
+              const next = e.target.value
+              if (next === 'off') {
+                setTranslateCeilingEnabled(false)
+                return
+              }
+              setTranslateCeilingEnabled(true)
+              setTranslateCeilingTier(next)
+            }}
+          >
+            <option value="off">Off - route translations normally</option>
+            {TEXT_TIERS.map((t) => (
+              <option key={t} value={t}>
+                {tierLabel(t)}
+              </option>
+            ))}
+          </SetupSelect>
+          <small className="setup-hint">
+            Translation requests are capped at this tier in 14 languages. A complaint upgrade and
+            the large-context floor still override it.
+          </small>
+        </label>
       </div>
 
       {provider ? (

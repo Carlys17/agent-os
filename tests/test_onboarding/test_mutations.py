@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from agentos.gateway.config import GatewayConfig, _router_tier_profile_defaults
 from agentos.gateway.llm_runtime import resolve_llm_runtime_config
@@ -1134,6 +1135,50 @@ def test_upsert_router_auto_judge_clears_previous_local_endpoint():
     assert res.config.agentos_router.judge_model is None
     assert res.config.agentos_router.judge_base_url is None
     assert res.config.agentos_router.judge_api_key is None
+
+
+def test_upsert_router_translate_ceiling_defaults_are_on_at_c0():
+    cfg = GatewayConfig(llm={"provider": "deepseek", "model": "deepseek-chat"})
+    res = upsert_router(cfg, mode="recommended")
+
+    assert res.config.agentos_router.translate_ceiling_enabled is True
+    assert res.config.agentos_router.translate_ceiling_tier == "c0"
+
+
+def test_upsert_router_persists_translate_ceiling_overrides():
+    cfg = GatewayConfig(llm={"provider": "deepseek", "model": "deepseek-chat"})
+    res = upsert_router(
+        cfg,
+        mode="recommended",
+        translate_ceiling_enabled=False,
+        translate_ceiling_tier="c1",
+    )
+
+    assert res.config.agentos_router.translate_ceiling_enabled is False
+    assert res.config.agentos_router.translate_ceiling_tier == "c1"
+
+
+def test_upsert_router_omitted_translate_ceiling_preserves_persisted_values():
+    """The CLI never sends these; an omitted param must not reset the operator's
+    choice back to the default."""
+    cfg = GatewayConfig(llm={"provider": "deepseek", "model": "deepseek-chat"})
+    cfg = upsert_router(
+        cfg,
+        mode="recommended",
+        translate_ceiling_enabled=False,
+        translate_ceiling_tier="c2",
+    ).config
+
+    res = upsert_router(cfg, mode="recommended", default_tier="c1")
+
+    assert res.config.agentos_router.translate_ceiling_enabled is False
+    assert res.config.agentos_router.translate_ceiling_tier == "c2"
+
+
+def test_upsert_router_rejects_an_unknown_translate_ceiling_tier():
+    cfg = GatewayConfig(llm={"provider": "deepseek", "model": "deepseek-chat"})
+    with pytest.raises(ValidationError, match="translate_ceiling_tier"):
+        upsert_router(cfg, mode="recommended", translate_ceiling_tier="c9")
 
 
 def test_upsert_router_cloud_judge_clears_stale_local_endpoint_when_base_url_omitted():

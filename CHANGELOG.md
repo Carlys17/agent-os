@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Translation requests now route to the cheapest tier. The router scores
+  reasoning difficulty rather than task type, so an ordinary "translate this"
+  landed on `c1` even in English — and because the Pilot corpus is English-only,
+  the same request drifted a tier in either direction depending only on the
+  language it was written in: measured against the English baseline, `trivial`
+  moved from `c0` to `c1`/`c2` in 13 of 14 languages, while a genuinely hard
+  request in Chinese, Japanese, or Thai *dropped* to `c1`. A deterministic
+  detector now recognises a translate verb in the first or last paragraph of a
+  turn across English, Vietnamese, Chinese, Japanese, Korean, Thai, Indonesian,
+  French, Spanish, German, Portuguese, Russian, Arabic, and Hindi, and caps the
+  turn at `agentos_router.translate_ceiling_tier` (default `c0`; set
+  `translate_ceiling_enabled = false` to turn it off, or pick the tier in the
+  setup wizard's **Translation cap** field). Every detected translation is
+  capped, extras and all — a complaint upgrade, the large-context floor, and a
+  programming language named as the target ("translate this Python module to
+  Rust", a request to write code) are the only things that override it. Verb
+  matching is word-bounded and guarded against overloaded stems, so Vietnamese
+  `giao dịch`/`dịch vụ`, English "address translation bug", and Thai `แปลก` are
+  not mistaken for translation work.
+
 ### Fixed
 
 - Streaming channels show the typing indicator again while the model is still

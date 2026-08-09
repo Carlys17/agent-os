@@ -25,6 +25,7 @@ from agentos.agentos_router.controller import (
     synthetic_one_hot,
     thinking_mode_to_level,
 )
+from agentos.agentos_router.task_type import TASK_TYPE_TRANSLATE, detect_task_type
 from agentos.engine.pipeline import TurnContext
 from agentos.engine.pricing import lookup_price
 from agentos.provider.context_capabilities import provider_state_continuity_diagnostic
@@ -864,6 +865,85 @@ def _route_class_for_tier(tier: str) -> str | None:
     return _TIER_TO_ROUTE_CLASS.get(normalized)
 
 
+def _apply_task_type_ceiling(
+    decision: RoutingDecision,
+    *,
+    ctx: TurnContext,
+    router_cfg: object,
+    tiers: dict,
+    valid_tiers: list[str],
+    semantic_message: str,
+    extra: dict | None,
+) -> RoutingDecision:
+    """Cap a detected translation turn at the configured ceiling tier.
+
+    The classifier scores reasoning difficulty and puts ordinary translation on
+    ``R1``/``c1`` even for English (its only in-distribution language), while
+    the same request in another language drifts a tier or more in either
+    direction. Whether translation is worth more than the cheapest tier is an
+    operator policy rather than something the model can be trained into, so it
+    is decided here, and it applies to every detected translation — a request
+    that also asks for commentary is still a translation.
+
+    Two guards bound the override. A complaint upgrade wins: when the user has
+    just said the last answer was wrong, they are asking for a *better* model
+    and must not be capped in the same turn. And the large-context floor runs
+    after this, so a document too big for the cheap tier still lands on one
+    that can hold it.
+
+    The KV-cache anti-downgrade guard is deliberately *not* honoured here: it
+    holds a tier up to keep a warm cache, but a translation is self-contained
+    work whose saving outweighs one cache miss. When the cap overrides it,
+    ``task_type_overrode_anti_downgrade`` records that in ``routing_extra``.
+    """
+    if not getattr(router_cfg, "translate_ceiling_enabled", True):
+        return decision
+    if decision.tier not in valid_tiers:
+        return decision
+
+    ceiling = normalize_text_tier(getattr(router_cfg, "translate_ceiling_tier", "c0"))
+    if ceiling is None or ceiling not in valid_tiers or ceiling not in tiers:
+        return decision
+    if _tier_index(decision.tier, valid_tiers) <= _tier_index(ceiling, valid_tiers):
+        return decision
+    if isinstance(extra, dict) and extra.get("complaint_upgrade_applied"):
+        return decision
+
+    verdict = detect_task_type(semantic_message)
+    if verdict.task_type != TASK_TYPE_TRANSLATE:
+        if isinstance(extra, dict) and verdict.blocked_by is not None:
+            # The verb matched but the task turned out to be something else.
+            # Record it so an unexpectedly expensive turn stays explainable.
+            extra["task_type_blocked_by"] = verdict.blocked_by
+            extra["task_type_language"] = verdict.matched_language
+        return decision
+
+    capped = RoutingDecision(
+        tier=ceiling,
+        model=tiers[ceiling].get("model", decision.model),
+        confidence=decision.confidence,
+        source="task_type_ceiling",
+    )
+    ctx.metadata["task_type_ceiling_from_tier"] = decision.tier
+    ctx.metadata["task_type"] = verdict.task_type
+
+    if extra is not None:
+        extra.setdefault("base_tier", decision.tier)
+        extra["task_type"] = verdict.task_type
+        extra["task_type_language"] = verdict.matched_language
+        extra["task_type_evidence"] = verdict.evidence
+        extra["task_type_ceiling_applied"] = True
+        extra["task_type_ceiling_from_tier"] = decision.tier
+        extra["task_type_ceiling_tier"] = ceiling
+        extra["task_type_pre_ceiling_source"] = decision.source
+        if extra.get("anti_downgrade_applied"):
+            extra["task_type_overrode_anti_downgrade"] = True
+        extra["final_tier"] = ceiling
+        extra["final_route_class"] = _route_class_for_tier(ceiling)
+
+    return capped
+
+
 def _apply_large_context_floor(
     decision: RoutingDecision,
     *,
@@ -1422,6 +1502,24 @@ async def apply_agentos_router(ctx: TurnContext) -> TurnContext:
         )
 
     routing_extra = ctx.metadata.get("routing_extra")
+    # Task-type ceiling runs BEFORE the large-context floor so that a document
+    # too large for the cheap tier is still floored back up afterwards.
+    decision = _apply_task_type_ceiling(
+        decision,
+        ctx=ctx,
+        router_cfg=router_cfg,
+        tiers=tiers,
+        valid_tiers=valid_tiers,
+        semantic_message=semantic_message,
+        extra=routing_extra if isinstance(routing_extra, dict) else None,
+    )
+    if decision.source == "task_type_ceiling" and isinstance(routing_extra, dict):
+        thinking_mode, prompt_policy = _reconcile_controller_with_final_tier(
+            thinking_mode,
+            prompt_policy,
+            routing_extra,
+        )
+
     decision = _apply_large_context_floor(
         decision,
         ctx=ctx,
@@ -1546,6 +1644,9 @@ async def apply_agentos_router(ctx: TurnContext) -> TurnContext:
         confidence_threshold=routing_extra.get("confidence_threshold"),
         confidence_gate_applied=routing_extra.get("confidence_gate_applied"),
         anti_downgrade_applied=routing_extra.get("anti_downgrade_applied"),
+        task_type=routing_extra.get("task_type"),
+        task_type_ceiling_applied=routing_extra.get("task_type_ceiling_applied"),
+        task_type_blocked_by=routing_extra.get("task_type_blocked_by"),
         probabilities=routing_extra.get("probabilities"),
         margin=routing_extra.get("margin"),
         provider_state_continuity=ctx.metadata.get("provider_state_continuity"),

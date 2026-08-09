@@ -159,6 +159,8 @@ export interface SetupConfig {
     judge_base_url?: string
     tiers?: Record<string, TierSpec>
     pilot?: { safety_net_threshold?: number | null }
+    translate_ceiling_enabled?: boolean | null
+    translate_ceiling_tier?: string | null
     [key: string]: unknown
   }
   memory?: {
@@ -755,6 +757,8 @@ export interface RouterConfigureParams {
   defaultTier: string
   judgeModel: string | null
   safetyNetThreshold?: number
+  translateCeilingEnabled: boolean
+  translateCeilingTier: string
   tiers: Record<string, Record<string, unknown>>
 }
 
@@ -769,6 +773,8 @@ export function buildRouterConfigureParams(input: {
   defaultTier: string
   judgeModel: string | null
   pilotThresholdRaw: string | undefined
+  translateCeilingEnabled: boolean
+  translateCeilingTier: string
   tiers: RouterTierInput[]
 }): RouterConfigureParams {
   const tiers: Record<string, Record<string, unknown>> = {}
@@ -796,6 +802,10 @@ export function buildRouterConfigureParams(input: {
     defaultTier: input.defaultTier,
     judgeModel: input.judgeModel,
     safetyNetThreshold,
+    // Sent for every mode: the translation cap is an engine guard, not a
+    // property of the selected strategy.
+    translateCeilingEnabled: input.translateCeilingEnabled,
+    translateCeilingTier: input.translateCeilingTier,
     tiers,
   }
 }

@@ -78,12 +78,51 @@ order, and a later one can override an earlier one:
 6. **cache continuity holds a higher tier** — when a recent turn (within
    `kv_cache_anti_downgrade_window_seconds`, default 600) ran higher, the turn
    is not downgraded below it;
-7. **a large context raises a floor** — roughly 25,000 material tokens floors
+7. **a translation request drops to a ceiling** — see
+   [Translation requests](#translation-requests) below;
+8. **a large context raises a floor** — roughly 25,000 material tokens floors
    the turn at `c2`, and roughly 80,000 tokens, or 40% of the model's context
    window, floors it at `c3`.
 
 To see which of these applied to a given turn, turn on diagnostics as described
 in [What the Router Can Affect](#what-the-router-can-affect).
+
+### Translation Requests
+
+The strategies score *reasoning difficulty*, not task type, so an ordinary
+"translate this paragraph" is scored as ordinary work and lands on `c1` — and
+because the Pilot corpus is English-only, the same request written in another
+language drifts a tier in either direction for no reason but its script.
+
+Whether translation deserves more than the cheapest model is a policy question
+rather than something a classifier can be trained into, so it is answered
+deterministically. A translate verb in the first or last paragraph of a turn
+— recognised in English, Vietnamese, Chinese, Japanese, Korean, Thai,
+Indonesian, French, Spanish, German, Portuguese, Russian, Arabic, and Hindi —
+caps the turn at `translate_ceiling_tier` (default `c0`).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `translate_ceiling_enabled` | `true` | Turn the cap off entirely. |
+| `translate_ceiling_tier` | `c0` | Tier a translation turn is capped at. |
+
+Every detected translation is capped, extras and all: asking for commentary
+alongside the translation, or for a poem's rhyme to survive it, does not lift
+the turn. Three things still do:
+
+- **a complaint upgrade**, so a follow-up saying the last answer was wrong is
+  never capped in the same turn;
+- **the large-context floor**, which runs after the cap and lifts a document
+  too big for the cheap tier back to one that can hold it;
+- **a programming language as the target** — "translate this Python module to
+  Rust" is a request to write code, not to translate prose, and is the one
+  phrasing that shares the verb without sharing the task.
+
+Detection reads only the leading and trailing paragraph of a turn, so a pasted
+document that merely mentions translation is not treated as a translation
+request. When a turn is capped, `routing_extra` carries `task_type`,
+`task_type_ceiling_from_tier`, and the matched language; when the verb matched
+but the cap did not apply, `task_type_blocked_by` records why.
 
 ## Strategies
 
