@@ -14,6 +14,7 @@ export {
   registerCatalog,
   resolveLocale,
   setLocale,
+  useLocale,
   type Locale,
 } from './locale'
 export type { MessageKey, PartialMessages } from './types'
@@ -52,10 +53,16 @@ function lookup(key: string): string {
 }
 
 /**
- * Translate a catalog key. A plain function, deliberately not a hook — most of
+ * Translate a catalog key. A plain function, deliberately not a hook — much of
  * the console's copy lives outside components (view `logic.ts` label maps,
- * module-scope route titles, imperative DOM builders in the chat transcript),
- * and a hook could not serve any of them.
+ * imperative DOM builders in the chat transcript), and a hook could not serve
+ * any of them.
+ *
+ * It resolves against the locale that is active *at call time*, so it must be
+ * called from inside a function that re-runs after a locale change, never at
+ * module scope where the result would freeze for the life of the page (#258 —
+ * `no-restricted-syntax` in eslint.config.js enforces this). `useLocale()` is
+ * what makes a component re-run.
  *
  * English is both the default locale and the per-key fallback, so a single
  * locale build behaves exactly as the hardcoded strings did.

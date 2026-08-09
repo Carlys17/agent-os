@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
 import { RouterProvider, createMemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { routeChildren, VIEWS } from './routes'
+import { getViews, routeChildren } from './routes'
 import { AppProviders } from './providers'
 import { AppShell, SIDEBAR_COLLAPSED_STORAGE_KEY } from './AppShell'
 import { KeyboardShortcutProvider } from '@/components/KeyboardShortcuts'
@@ -57,11 +57,12 @@ describe('routes', () => {
   })
 
   it('registers every major view as a route-object lazy module', () => {
+    const views = getViews()
     const registered = routeChildren.filter(
-      (route) => typeof route.path === 'string' && VIEWS.some((view) => view.path === route.path),
+      (route) => typeof route.path === 'string' && views.some((view) => view.path === route.path),
     )
 
-    expect(registered).toHaveLength(VIEWS.length)
+    expect(registered).toHaveLength(views.length)
     expect(registered.every((route) => route.lazy != null)).toBe(true)
     expect(registered.every((route) => route.element == null && route.Component == null)).toBe(true)
   })

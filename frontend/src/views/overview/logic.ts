@@ -51,13 +51,6 @@ const SESSION_STATUS_DOT: Record<string, string> = {
   killed: 'off',
   timeout: 'warn',
 }
-const SESSION_STATUS_LABEL: Record<string, string> = {
-  running: t('overview.sessionRunning'),
-  done: t('overview.sessionDone'),
-  failed: t('overview.sessionFailed'),
-  killed: t('overview.sessionKilled'),
-  timeout: t('overview.sessionTimeout'),
-}
 
 /** components.js:272-275 — dot color variant ("ok"/"warn"/"err"/"off"). */
 export function sessionStatusClass(status?: string | null): string {
@@ -67,8 +60,15 @@ export function sessionStatusClass(status?: string | null): string {
 
 /** components.js:284-287 — tooltip label; raw string else "Unknown" when empty. */
 export function sessionStatusLabel(status?: string | null): string {
+  const labels: Record<string, string> = {
+    running: t('overview.sessionRunning'),
+    done: t('overview.sessionDone'),
+    failed: t('overview.sessionFailed'),
+    killed: t('overview.sessionKilled'),
+    timeout: t('overview.sessionTimeout'),
+  }
   const k = String(status || '').toLowerCase()
-  return SESSION_STATUS_LABEL[k] || (status ? String(status) : t('overview.sessionUnknown'))
+  return labels[k] || (status ? String(status) : t('overview.sessionUnknown'))
 }
 
 /** components.js:228-241 — relative time. Numeric input is treated as an epoch

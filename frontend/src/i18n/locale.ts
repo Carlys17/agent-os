@@ -42,14 +42,24 @@ export function registerCatalog(tag: string, messages: PartialMessages): void {
 }
 
 /**
- * Held in a store rather than a bare module variable so a later
- * `useLocale()` subscription can re-render on change without touching a single
- * `t()` call site. Nothing subscribes today — locale is set once at boot.
+ * Held in a store rather than a bare module variable so `useLocale()` can
+ * re-render subscribers on change without touching a single `t()` call site.
  */
 const useLocaleStore = create<{ locale: Locale }>(() => ({ locale: DEFAULT_LOCALE }))
 
 export function getLocale(): Locale {
   return useLocaleStore.getState().locale
+}
+
+/**
+ * Subscribe to the active locale. `t()` resolves at call time, so a component
+ * shows a new locale only once something re-renders it — this hook is that
+ * something. `AppShell` subscribes on behalf of the console: its own chrome
+ * re-renders, and the routed view is remounted through the view-container key.
+ * A component outside that tree needs its own call.
+ */
+export function useLocale(): Locale {
+  return useLocaleStore((s) => s.locale)
 }
 
 /**
@@ -82,7 +92,8 @@ export function setLocale(candidate?: string | null): Locale {
 /**
  * Called once at boot, alongside `initTheme()`. The locale is a constant today;
  * when the gateway starts advertising one, this becomes
- * `setLocale(bootstrap.locale)` in `AppProviders` and nothing else moves.
+ * `setLocale(bootstrap.locale)` in `AppProviders` and nothing else moves —
+ * `setLocale` is already safe to call after boot (#258).
  */
 export function initLocale(): void {
   setLocale(DEFAULT_LOCALE)

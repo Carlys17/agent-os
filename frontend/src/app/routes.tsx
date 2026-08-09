@@ -1,13 +1,13 @@
 import { lazy as reactLazy, Suspense, useEffect } from 'react'
 import { type RouteObject, useLocation } from 'react-router'
-import { t } from '@/i18n'
+import { t, type MessageKey } from '@/i18n'
 import { RouteErrorBoundary } from './RouteErrorBoundary'
 
 type LazyRoute = NonNullable<RouteObject['lazy']>
 
 interface ViewRoute {
   path: string
-  title: string
+  titleKey: MessageKey
   lazy: LazyRoute
 }
 
@@ -54,31 +54,32 @@ const loadEnv: LazyRoute = async () => ({
   Component: (await import('@/views/env/EnvPage')).EnvPage,
 })
 
-// Titles resolve at module load. That is correct while the locale is chosen
-// once at boot (see i18n/locale.ts); a future runtime locale switch would have
-// to turn `title` into a getter.
+// The table holds catalog *keys*, never resolved strings: a route table is a
+// module constant, so a title resolved here would freeze at module-evaluation
+// time and survive a later locale change (#258).
 const VIEW_ROUTES: ReadonlyArray<ViewRoute> = [
-  { path: 'overview', title: t('shell.viewOverview'), lazy: loadOverview },
-  { path: 'health', title: t('shell.viewHealth'), lazy: loadHealth },
-  { path: 'chat', title: t('shell.viewChat'), lazy: loadChat },
-  { path: 'sessions', title: t('shell.viewSessions'), lazy: loadSessions },
-  { path: 'agents', title: t('shell.viewAgents'), lazy: loadAgents },
-  { path: 'cron', title: t('shell.viewCron'), lazy: loadCron },
-  { path: 'usage', title: t('shell.viewUsage'), lazy: loadUsage },
-  { path: 'settings', title: t('shell.viewSettings'), lazy: loadSettings },
-  { path: 'config', title: t('shell.viewConfig'), lazy: loadSettings },
-  { path: 'setup', title: t('shell.viewSetup'), lazy: loadSettings },
-  { path: 'channels', title: t('shell.viewChannels'), lazy: loadChannels },
-  { path: 'mcp', title: t('shell.viewMcp'), lazy: loadMcp },
-  { path: 'approvals', title: t('shell.viewApprovals'), lazy: loadApprovals },
-  { path: 'skills', title: t('shell.viewSkills'), lazy: loadSkills },
-  { path: 'env', title: t('shell.viewEnv'), lazy: loadEnv },
-  { path: 'logs', title: t('shell.viewLogs'), lazy: loadLogs },
+  { path: 'overview', titleKey: 'shell.viewOverview', lazy: loadOverview },
+  { path: 'health', titleKey: 'shell.viewHealth', lazy: loadHealth },
+  { path: 'chat', titleKey: 'shell.viewChat', lazy: loadChat },
+  { path: 'sessions', titleKey: 'shell.viewSessions', lazy: loadSessions },
+  { path: 'agents', titleKey: 'shell.viewAgents', lazy: loadAgents },
+  { path: 'cron', titleKey: 'shell.viewCron', lazy: loadCron },
+  { path: 'usage', titleKey: 'shell.viewUsage', lazy: loadUsage },
+  { path: 'settings', titleKey: 'shell.viewSettings', lazy: loadSettings },
+  { path: 'config', titleKey: 'shell.viewConfig', lazy: loadSettings },
+  { path: 'setup', titleKey: 'shell.viewSetup', lazy: loadSettings },
+  { path: 'channels', titleKey: 'shell.viewChannels', lazy: loadChannels },
+  { path: 'mcp', titleKey: 'shell.viewMcp', lazy: loadMcp },
+  { path: 'approvals', titleKey: 'shell.viewApprovals', lazy: loadApprovals },
+  { path: 'skills', titleKey: 'shell.viewSkills', lazy: loadSkills },
+  { path: 'env', titleKey: 'shell.viewEnv', lazy: loadEnv },
+  { path: 'logs', titleKey: 'shell.viewLogs', lazy: loadLogs },
 ]
 
-export const VIEWS: ReadonlyArray<{ path: string; title: string }> = VIEW_ROUTES.map(
-  ({ path, title }) => ({ path, title }),
-)
+/** Resolved per call, so the titles follow the active locale. */
+export function getViews(): ReadonlyArray<{ path: string; title: string }> {
+  return VIEW_ROUTES.map(({ path, titleKey }) => ({ path, title: t(titleKey) }))
+}
 
 /**
  * Parity: js/router.js:32 — evaluated per resolve, not once at module load.

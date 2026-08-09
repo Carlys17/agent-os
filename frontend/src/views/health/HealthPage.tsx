@@ -28,11 +28,14 @@ import {
 const WS_URL_KEY = 'agentos.wsUrl'
 
 // health.js:422-430 — impact -> human label for the finding meta line.
-const IMPACT_LABELS: Record<Impact, string> = {
-  blocks_ready: t('health.impactBlocksReady'),
-  degrades: t('health.impactDegrades'),
-  optional: t('health.impactOptional'),
-  none: t('health.impactNone'),
+function impactLabel(impact: Impact): string {
+  const labels: Record<Impact, string> = {
+    blocks_ready: t('health.impactBlocksReady'),
+    degrades: t('health.impactDegrades'),
+    optional: t('health.impactOptional'),
+    none: t('health.impactNone'),
+  }
+  return labels[impact]
 }
 
 // health.js:432-437 — finding kind -> tone token used for the card accent.
@@ -137,7 +140,7 @@ function FindingCard({ finding, index }: { finding: Finding; index: number }) {
       <div className="health-finding__body">
         <div className="health-finding__meta">
           <span>{severity}</span>
-          <span className="health-impact">{IMPACT_LABELS[impact]}</span>
+          <span className="health-impact">{impactLabel(impact)}</span>
           <span className="health-surface">{surface}</span>
           {badge ? <span className="health-chip health-chip--badge">{badge}</span> : null}
           {finding.restartRequired ? (
@@ -155,39 +158,43 @@ function FindingCard({ finding, index }: { finding: Finding; index: number }) {
   )
 }
 
-const GROUPS: Array<{ kind: GroupKind; title: string; note: string }> = [
+function findingGroups(): Array<{ kind: GroupKind; title: string; note: string }> {
   // health.js:281-301
-  {
-    kind: 'action',
-    title: t('health.groupActionTitle'),
-    note: t('health.groupActionNote'),
-  },
-  {
-    kind: 'degraded',
-    title: t('health.groupDegradedTitle'),
-    note: t('health.groupDegradedNote'),
-  },
-  {
-    kind: 'optional',
-    title: t('health.groupOptionalTitle'),
-    note: t('health.groupOptionalNote'),
-  },
-  {
-    kind: 'ready',
-    title: t('health.groupReadyTitle'),
-    note: t('health.groupReadyNote'),
-  },
-]
+  return [
+    {
+      kind: 'action',
+      title: t('health.groupActionTitle'),
+      note: t('health.groupActionNote'),
+    },
+    {
+      kind: 'degraded',
+      title: t('health.groupDegradedTitle'),
+      note: t('health.groupDegradedNote'),
+    },
+    {
+      kind: 'optional',
+      title: t('health.groupOptionalTitle'),
+      note: t('health.groupOptionalNote'),
+    },
+    {
+      kind: 'ready',
+      title: t('health.groupReadyTitle'),
+      note: t('health.groupReadyNote'),
+    },
+  ]
+}
 
 function FindingsSection({ findings }: { findings: Finding[] }) {
   // health.js:277-313 — empty state else grouped sections.
   if (!findings.length) {
     return <article className="health-empty">{t('health.findingsEmpty')}</article>
   }
-  const groups = GROUPS.map((group) => ({
-    ...group,
-    findings: findings.filter((finding) => findingGroupKind(finding) === group.kind),
-  })).filter((group) => group.findings.length)
+  const groups = findingGroups()
+    .map((group) => ({
+      ...group,
+      findings: findings.filter((finding) => findingGroupKind(finding) === group.kind),
+    }))
+    .filter((group) => group.findings.length)
 
   return (
     <>

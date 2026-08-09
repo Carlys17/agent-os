@@ -44,27 +44,30 @@ export interface ModeOption {
 }
 
 // approvals.js:82-86 — the three approval-strategy choices, in legacy order.
-export const MODE_OPTIONS: ReadonlyArray<ModeOption> = [
-  {
-    value: 'prompt',
-    label: t('approvals.modePromptLabel'),
-    desc: t('approvals.modePromptDesc'),
-  },
-  {
-    value: 'auto-approve',
-    label: t('approvals.modeAutoApproveLabel'),
-    desc: t('approvals.modeAutoApproveDesc'),
-  },
-  {
-    value: 'auto-deny',
-    label: t('approvals.modeAutoDenyLabel'),
-    desc: t('approvals.modeAutoDenyDesc'),
-  },
-]
+export function modeOptions(): ReadonlyArray<ModeOption> {
+  return [
+    {
+      value: 'prompt',
+      label: t('approvals.modePromptLabel'),
+      desc: t('approvals.modePromptDesc'),
+    },
+    {
+      value: 'auto-approve',
+      label: t('approvals.modeAutoApproveLabel'),
+      desc: t('approvals.modeAutoApproveDesc'),
+    },
+    {
+      value: 'auto-deny',
+      label: t('approvals.modeAutoDenyLabel'),
+      desc: t('approvals.modeAutoDenyDesc'),
+    },
+  ]
+}
 
 // approvals.js:87 — active option else the first (prompt) as the fallback.
 export function activeModeOption(mode: string): ModeOption {
-  return MODE_OPTIONS.find((m) => m.value === mode) || MODE_OPTIONS[0]!
+  const options = modeOptions()
+  return options.find((m) => m.value === mode) || options[0]!
 }
 
 // approvals.js:310-314 — strategy mode -> status tone. Legacy returned the
