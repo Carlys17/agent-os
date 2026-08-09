@@ -16,7 +16,7 @@ import {
   type Approval,
 } from '@/services/approval-monitor'
 import {
-  MODE_OPTIONS,
+  modeOptions,
   activeModeOption,
   approvalCardDetail,
   modeStateTone,
@@ -313,7 +313,7 @@ export function ApprovalsPage() {
               role="radiogroup"
               aria-label={t('approvals.policyLandmark')}
             >
-              {MODE_OPTIONS.map((opt) => (
+              {modeOptions().map((opt) => (
                 <label
                   key={opt.value}
                   className={`ap-radio${opt.value === mode ? ' is-active' : ''} tone-${modeStateTone(opt.value)}`}

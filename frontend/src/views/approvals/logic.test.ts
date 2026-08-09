@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  MODE_OPTIONS,
+  modeOptions,
   activeModeOption,
   approvalCardDetail,
   executionModeSummary,
@@ -19,16 +19,16 @@ afterEach(() => {
   localStorage.clear()
 })
 
-describe('MODE_OPTIONS / activeModeOption', () => {
+describe('modeOptions / activeModeOption', () => {
   it('lists prompt, auto-approve, auto-deny in legacy order (approvals.js:82-86)', () => {
-    expect(MODE_OPTIONS.map((o) => o.value)).toEqual(['prompt', 'auto-approve', 'auto-deny'])
+    expect(modeOptions().map((o) => o.value)).toEqual(['prompt', 'auto-approve', 'auto-deny'])
   })
   it('selects the option matching the active mode', () => {
     expect(activeModeOption('auto-deny').label).toBe('Auto deny')
   })
   it('falls back to the first option (prompt) for an unknown mode (approvals.js:87)', () => {
-    expect(activeModeOption('nonsense')).toBe(MODE_OPTIONS[0])
-    expect(activeModeOption('')).toBe(MODE_OPTIONS[0])
+    expect(activeModeOption('nonsense')).toEqual(modeOptions()[0])
+    expect(activeModeOption('')).toEqual(modeOptions()[0])
   })
 })
 

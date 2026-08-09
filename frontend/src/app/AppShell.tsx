@@ -41,7 +41,7 @@ import {
   useKeyboardShortcut,
   useShortcutOverlay,
 } from '@/components/KeyboardShortcuts'
-import { t, tPlural } from '@/i18n'
+import { t, tPlural, useLocale } from '@/i18n'
 import { useTheme } from '@/stores/theme'
 import { useConnection } from '@/stores/connection'
 import { useApprovals } from '@/services/approval-monitor'
@@ -56,39 +56,43 @@ const ApprovalPrompt = lazy(async () => ({
 
 // app.js:72-88 — legacy sidebar information architecture: nav items grouped
 // under labels, Chat first, Approvals last under Settings. Order within each
-// group matches the legacy markup exactly.
-const NAV_GROUPS: ReadonlyArray<{
+// group matches the legacy markup exactly. Built per render rather than held in
+// a module constant: labels resolved at module-evaluation time would freeze and
+// keep the boot locale forever (#258).
+function navGroups(): ReadonlyArray<{
   label: string
   items: ReadonlyArray<{ path: string; title: string; icon: LucideIcon }>
-}> = [
-  {
-    label: t('shell.navGroupChat'),
-    items: [{ path: 'chat', title: t('shell.viewChat'), icon: MessageSquare }],
-  },
-  {
-    label: t('shell.navGroupControl'),
-    items: [
-      { path: 'overview', title: t('shell.viewOverview'), icon: LayoutDashboard },
-      { path: 'health', title: t('shell.viewHealth'), icon: Activity },
-      { path: 'channels', title: t('shell.viewChannels'), icon: Radio },
-      { path: 'mcp', title: t('shell.viewMcp'), icon: Network },
-      { path: 'skills', title: t('shell.viewSkills'), icon: Puzzle },
-      { path: 'sessions', title: t('shell.viewSessions'), icon: History },
-      { path: 'agents', title: t('shell.viewAgents'), icon: Bot },
-      { path: 'usage', title: t('shell.viewUsage'), icon: BarChart3 },
-      { path: 'cron', title: t('shell.viewCron'), icon: CalendarClock },
-    ],
-  },
-  {
-    label: t('shell.navGroupSettings'),
-    items: [
-      { path: 'settings', title: t('shell.viewSettings'), icon: Settings2 },
-      { path: 'env', title: t('shell.viewEnv'), icon: KeyRound },
-      { path: 'logs', title: t('shell.viewLogs'), icon: ScrollText },
-      { path: 'approvals', title: t('shell.viewApprovals'), icon: ShieldCheck },
-    ],
-  },
-]
+}> {
+  return [
+    {
+      label: t('shell.navGroupChat'),
+      items: [{ path: 'chat', title: t('shell.viewChat'), icon: MessageSquare }],
+    },
+    {
+      label: t('shell.navGroupControl'),
+      items: [
+        { path: 'overview', title: t('shell.viewOverview'), icon: LayoutDashboard },
+        { path: 'health', title: t('shell.viewHealth'), icon: Activity },
+        { path: 'channels', title: t('shell.viewChannels'), icon: Radio },
+        { path: 'mcp', title: t('shell.viewMcp'), icon: Network },
+        { path: 'skills', title: t('shell.viewSkills'), icon: Puzzle },
+        { path: 'sessions', title: t('shell.viewSessions'), icon: History },
+        { path: 'agents', title: t('shell.viewAgents'), icon: Bot },
+        { path: 'usage', title: t('shell.viewUsage'), icon: BarChart3 },
+        { path: 'cron', title: t('shell.viewCron'), icon: CalendarClock },
+      ],
+    },
+    {
+      label: t('shell.navGroupSettings'),
+      items: [
+        { path: 'settings', title: t('shell.viewSettings'), icon: Settings2 },
+        { path: 'env', title: t('shell.viewEnv'), icon: KeyRound },
+        { path: 'logs', title: t('shell.viewLogs'), icon: ScrollText },
+        { path: 'approvals', title: t('shell.viewApprovals'), icon: ShieldCheck },
+      ],
+    },
+  ]
+}
 
 // app.js:123 — the drawer breakpoint shared with the legacy CSS.
 function mobileQuery(): MediaQueryList | null {
@@ -117,10 +121,13 @@ const PILL_VARIANT: Record<string, string> = {
 // Legacy derived the label by capitalising the state id. Translating it needs a
 // real map; an unmapped state still falls back to the capitalised id so a new
 // RpcState can never render an empty pill.
-const PILL_LABEL: Record<string, string> = {
-  connected: t('shell.connConnected'),
-  connecting: t('shell.connConnecting'),
-  disconnected: t('shell.connDisconnected'),
+function pillLabel(state: string): string {
+  const labels: Record<string, string> = {
+    connected: t('shell.connConnected'),
+    connecting: t('shell.connConnecting'),
+    disconnected: t('shell.connDisconnected'),
+  }
+  return labels[state] ?? state.charAt(0).toUpperCase() + state.slice(1)
 }
 
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'agentos-sidebar-collapsed'
@@ -148,6 +155,11 @@ function normalizedRoutePath(pathname: string): string {
 }
 
 export function AppShell() {
+  // #258 — the shell is the one subscriber the whole console needs. Its own
+  // chrome re-renders here; the routed view is remounted through the container
+  // key below, because `<Outlet/>` hands back the same element object on a
+  // parent re-render and React would otherwise bail out of the subtree.
+  const locale = useLocale()
   const mode = useTheme((s) => s.mode)
   const toggle = useTheme((s) => s.toggle)
   const connState = useConnection((s) => s.state)
@@ -336,7 +348,7 @@ export function AppShell() {
   // reactive state here avoids duplicating the same readout in the header.
   const pillState = connState
   const pillVariant = PILL_VARIANT[pillState] ?? 'err'
-  const pillLabel = PILL_LABEL[pillState] ?? pillState.charAt(0).toUpperCase() + pillState.slice(1)
+  const connectionLabel = pillLabel(pillState)
   const pillOk = pillVariant === 'ok'
 
   const version = sidebarVersion(bootstrap.version)
@@ -414,7 +426,7 @@ export function AppShell() {
           aria-label={t('shell.navLandmark')}
           className="shell-sidebar__nav flex-1 overflow-y-auto px-2.5 py-5"
         >
-          {NAV_GROUPS.map((group) => (
+          {navGroups().map((group) => (
             <div key={group.label} className="shell-nav-group mb-6">
               <div className="shell-nav-group__label nav-group px-2.5 pb-2">{group.label}</div>
               {group.items.map((v) => {
@@ -473,7 +485,11 @@ export function AppShell() {
             className="shell-sidebar__connection t-data"
             data-testid="nav-foot"
             data-variant={pillVariant}
-            title={version ? t('shell.connWithVersion', { state: pillLabel, version }) : pillLabel}
+            title={
+              version
+                ? t('shell.connWithVersion', { state: connectionLabel, version })
+                : connectionLabel
+            }
           >
             <span
               aria-hidden="true"
@@ -486,7 +502,7 @@ export function AppShell() {
                 pillOk ? 'text-ok' : pillVariant === 'warn' ? 'text-warn' : 'text-danger'
               }`}
             >
-              {pillLabel.toUpperCase()}
+              {connectionLabel.toUpperCase()}
             </span>
             {version ? <span className="shell-sidebar__version ml-auto">v{version}</span> : null}
           </div>
@@ -596,7 +612,7 @@ export function AppShell() {
             onPrimaryAction={() => setSidebarOpen(false)}
           >
             <div
-              key={location.pathname}
+              key={`${locale}:${location.pathname}`}
               className={`view-container ${
                 isChat ? 'chat-surface chat-view-enter' : 'control-surface view-enter'
               }`}
