@@ -31,6 +31,8 @@ export interface RawSkill {
   requirements?: SkillRequirements
   /** Subject-matter grouping declared in frontmatter (`metadata.agentos.category`). */
   category?: string
+  /** Where the SKILL.md itself came from, as its own frontmatter declares. */
+  provenance?: SkillProvenance
   /** Allowlisted brand, or all-empty. Absent only on a pre-#130 gateway. */
   publisher?: SkillPublisher
   /** How the skill got here and what an operator may do to it. */
@@ -38,6 +40,22 @@ export interface RawSkill {
   /** Whether the agent is actually being offered the skill. Absent from the CLI. */
   availability?: SkillAvailability
   [key: string]: unknown
+}
+
+/**
+ * The provenance block from a skill row — always present on a current gateway,
+ * defaulted server-side to `origin: unknown`.
+ *
+ * Unlike `publisher`, this passed no allowlist: it is whatever the SKILL.md
+ * wrote. Treat it as a description of an upstream, never as a trust signal, and
+ * pair any read of it with a check the server did resolve (the layer or the
+ * acquisition kind) — see `isGmgnSkill`.
+ */
+export interface SkillProvenance {
+  origin?: string
+  license?: string
+  upstream_url?: string
+  maintained_by?: string
 }
 
 /**
@@ -374,6 +392,26 @@ export function skillGroupKey(skill: RawSkill): SkillGroupKey {
   if (kind === 'hub' || kind === 'local') return kind
   if (skill.layer === 'managed') return 'hub'
   return 'local'
+}
+
+/** The `provenance.origin` every GMGN-derived bundled skill declares. */
+export const GMGN_ORIGIN = 'gmgn-mit'
+
+/**
+ * Whether a skill is one of the bundled GMGN skills, and so may wear the GMGN
+ * mark instead of the generic AgentOS one.
+ *
+ * Reads `provenance.origin`, never the `gmgn-` name prefix — a name is not a
+ * brand, the same rule `skillPublisherId` exists to enforce. Provenance is
+ * self-declared frontmatter, so the group key does the trust work: it only
+ * returns 'crypto' for a shipped/bundled skill, which keeps a directory a user
+ * dropped into their own skills dir from minting the mark. Nothing here routes
+ * through `publisher`; GMGN is a vendored MIT upstream, not an AgentOS partner,
+ * and borrowing that field would move the skills into Partner Skills.
+ */
+export function isGmgnSkill(skill: RawSkill): boolean {
+  if (skillGroupKey(skill) !== 'crypto') return false
+  return (skill.provenance?.origin ?? '').trim().toLowerCase() === GMGN_ORIGIN
 }
 
 /**

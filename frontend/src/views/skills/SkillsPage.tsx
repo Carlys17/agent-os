@@ -23,6 +23,7 @@ import { useRpc } from '@/app/providers'
 import agentosMarkUrl from '@/assets/agentos-mark.png'
 import bankrSymbolUrl from '@/assets/bankr-symbol.svg'
 import capminalSymbolUrl from '@/assets/capminal-symbol.svg'
+import gmgnSymbolUrl from '@/assets/gmgn-symbol.png'
 import robinhoodSymbolUrl from '@/assets/robinhood-symbol.png'
 import {
   CAT_LABEL,
@@ -37,6 +38,7 @@ import {
   installAction,
   installSource,
   installedEmptyMessage,
+  isGmgnSkill,
   isPartnerSkill,
   SKILL_BUCKET_LABEL,
   skillBucket,
@@ -306,6 +308,11 @@ function partnerBrandOf(skill: RawSkill): PartnerBrand | null {
  * "Partners" wearing the same generic package glyph as everything else — the
  * catalog tabs showed the brand and the installed list dropped it, which reads
  * as two different skills.
+ *
+ * Marks resolve most specific first: partner publisher, then the GMGN upstream
+ * (mark plus the skill's own emoji), then the AgentOS mark for the rest of the
+ * crypto group, then the generic glyph. Every mark is a bundled asset; nothing a
+ * SKILL.md carries can point this at a URL.
  */
 function SkillIcon({
   skill,
@@ -318,6 +325,27 @@ function SkillIcon({
 }) {
   const brand = partnerBrandOf(skill)
   if (brand) return <PartnerLogo brand={brand} className={brandClass} />
+  // The GMGN skills all share one upstream and one mark, so the mark alone would
+  // make seven cards identical. The emoji each SKILL.md already declares rides
+  // along as a corner badge — a per-skill icon without seven pieces of artwork.
+  // It is decorative: the card names the skill right beside it.
+  const emoji = (skill.emoji ?? '').trim()
+  if (isGmgnSkill(skill)) {
+    const mark = (
+      <img className={brandClass} src={gmgnSymbolUrl} alt="GMGN logo" width="40" height="40" />
+    )
+    if (!emoji) return mark
+    // The wrapper takes its footprint from the mark it holds, so one pair of
+    // classes serves both the 2rem card box and the 2.25rem dialog box.
+    return (
+      <span className="sk-brandmark">
+        {mark}
+        <span className="sk-brandmark__emoji" aria-hidden="true">
+          {emoji}
+        </span>
+      </span>
+    )
+  }
   // "AgentOS Crypto Skills" is an AgentOS-authored group by construction:
   // `skillGroupKey` only returns 'crypto' for a shipped/bundled skill, the same
   // trust gate that keeps a hand-dropped directory out of a heading carrying the

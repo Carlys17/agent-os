@@ -164,6 +164,20 @@ const AGENTOS_CRYPTO_SKILL = {
   category: 'crypto',
   status: 'ready',
 }
+// One of the bundled GMGN skills: the same crypto group as the one above, but it
+// wears the GMGN mark plus its own emoji so seven sibling cards stay tellable
+// apart. The brand comes off `provenance`, never off the `gmgn-` name.
+const GMGN_SKILL = {
+  name: 'gmgn-token',
+  description: 'Research any crypto or meme token by address.',
+  layer: 'bundled',
+  acquisition: { kind: 'shipped', removable: false, updatable: false },
+  publisher: { id: '', name: '', url: '', logo: '' },
+  provenance: { origin: 'gmgn-mit', license: 'MIT', maintained_by: 'AgentOS' },
+  category: 'crypto',
+  emoji: '🔎',
+  status: 'ready',
+}
 // Ready, eligible, and still never reaching the model.
 const WITHHELD_SKILL = {
   name: 'quiet',
@@ -1062,6 +1076,31 @@ describe('SkillsPage', () => {
     fireEvent.click(card)
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByRole('img', { name: 'AgentOS logo' })).toBeInTheDocument()
+  })
+
+  // Seven GMGN skills under one heading all wearing the generic AgentOS mark
+  // read as one skill listed seven times.
+  it('gives a GMGN skill the GMGN mark badged with its own emoji', async () => {
+    wireRpc({ skills: [GMGN_SKILL, AGENTOS_CRYPTO_SKILL] })
+    renderPage()
+    const card = await screen.findByLabelText('Skill gmgn-token')
+    expect(within(card).getByRole('img', { name: 'GMGN logo' })).toBeInTheDocument()
+    expect(within(card).getByText('🔎')).toBeInTheDocument()
+
+    // It shares the crypto heading with the AgentOS-marked skill rather than
+    // splitting off, and the mark does not promote it to a partner.
+    const group = groupNamed('AgentOS Crypto Skills')
+    expect(within(group).getByLabelText('Skill gmgn-token')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Skill senior-unilp-manager')).toBeInTheDocument()
+    expect(
+      within(within(group).getByLabelText('Skill senior-unilp-manager')).getByRole('img', {
+        name: 'AgentOS logo',
+      }),
+    ).toBeInTheDocument()
+
+    fireEvent.click(card)
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('img', { name: 'GMGN logo' })).toBeInTheDocument()
   })
 
   it('files an allowlisted wallet skill under its partner and still credits the author', async () => {

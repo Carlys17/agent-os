@@ -12,6 +12,7 @@ import {
   installAction,
   installSource,
   installedEmptyMessage,
+  isGmgnSkill,
   isPartnerSkill,
   layerHelp,
   layerLabel,
@@ -166,6 +167,26 @@ describe('skillRank / skillGroupKey / groupSkills', () => {
     // Anything else stays exactly where it was.
     expect(skillGroupKey(acquired('shipped', { category: '' }))).toBe('shipped')
     expect(skillGroupKey(acquired('shipped', { category: 'CRYPTO ' }))).toBe('crypto')
+  })
+
+  it('recognises a bundled GMGN skill by provenance, never by its name', () => {
+    const gmgn = { category: 'crypto', provenance: { origin: 'gmgn-mit' } }
+    expect(isGmgnSkill(acquired('shipped', gmgn))).toBe(true)
+    expect(isGmgnSkill(skill({ layer: 'bundled', ...gmgn }))).toBe(true)
+    expect(isGmgnSkill(acquired('shipped', { ...gmgn, provenance: { origin: 'GMGN-MIT ' } }))).toBe(
+      true,
+    )
+
+    // Provenance passed no allowlist, so the group key carries the trust: a
+    // local or hub drop-in claiming the same origin gets no mark.
+    expect(isGmgnSkill(acquired('local', gmgn))).toBe(false)
+    expect(isGmgnSkill(acquired('hub', gmgn))).toBe(false)
+    // A partner's skill wears its partner's mark, not this one.
+    expect(isGmgnSkill(acquired('shipped', { ...gmgn, publisher: { id: 'robinhood' } }))).toBe(false)
+    // The name proves nothing either way.
+    expect(isGmgnSkill(acquired('shipped', { name: 'gmgn-token', category: 'crypto' }))).toBe(false)
+    // Another AgentOS crypto skill keeps the AgentOS mark.
+    expect(isGmgnSkill(acquired('shipped', { category: 'crypto' }))).toBe(false)
   })
 
   it('groups partners → shipped → hub → local, ready-first then name, dropping empties', () => {
