@@ -11,6 +11,8 @@ import {
   XIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
+import '@/i18n/en/channels'
 import { ModalShell } from '@/components/ModalShell'
 import {
   readScopedFields,
@@ -94,7 +96,7 @@ function ChannelField({
             <CheckIcon />
           </span>
           <span>
-            <strong>{draft.checked ? 'On' : 'Off'}</strong>
+            <strong>{draft.checked ? t('channels.toggleOn') : t('channels.toggleOff')}</strong>
           </span>
         </span>
       </label>
@@ -374,7 +376,9 @@ export function ChannelSetupDialog({
 
   const confirmationOpen = confirmDiscard || navigationBlocked
   const phase = saving ? 3 : spec ? 2 : 1
-  const panelTitle = isEditing ? `Configure ${editingName}` : 'Add a channel'
+  const panelTitle = isEditing
+    ? t('channels.panelTitleEdit', { name: String(editingName) })
+    : t('channels.panelTitleAdd')
 
   return (
     <AnimatePresence>
@@ -398,19 +402,17 @@ export function ChannelSetupDialog({
               </span>
               <div>
                 <span className="t-label">
-                  {isEditing ? 'Channel configuration' : 'New integration'}
+                  {isEditing ? t('channels.setupEditTitle') : t('channels.setupNewTitle')}
                 </span>
                 <h2 id="channel-setup-title">{panelTitle}</h2>
                 <p id="channel-setup-description">
-                  {isEditing
-                    ? 'Update this adapter without exposing its saved credentials.'
-                    : 'Choose an adapter, add its credentials, then validate and save it.'}
+                  {isEditing ? t('channels.setupEditSubtitle') : t('channels.setupNewSubtitle')}
                 </p>
               </div>
               <button
                 type="button"
                 className="ch-setup__close"
-                aria-label="Close channel setup"
+                aria-label={t('channels.setupClose')}
                 disabled={saving}
                 onClick={requestClose}
               >
@@ -418,7 +420,7 @@ export function ChannelSetupDialog({
               </button>
             </header>
 
-            <ol className="ch-setup__flow" aria-label="Channel setup progress">
+            <ol className="ch-setup__flow" aria-label={t('channels.setupProgress')}>
               {['Choose adapter', 'Enter details', 'Validate & save'].map((label, index) => {
                 const step = index + 1
                 return (
@@ -438,30 +440,28 @@ export function ChannelSetupDialog({
               {loading ? (
                 <div className="ch-setup__state" role="status">
                   <LoaderCircleIcon className="ch-refresh-spin" />
-                  <strong>Loading channel options…</strong>
-                  <span>Reading the current configuration and adapter catalog.</span>
+                  <strong>{t('channels.setupLoading')}</strong>
+                  <span>{t('channels.setupLoadingHint')}</span>
                 </div>
               ) : loadError ? (
                 <div className="ch-setup__state is-error" role="alert">
-                  <strong>Channel setup could not be loaded.</strong>
+                  <strong>{t('channels.setupLoadFailed')}</strong>
                   <span>{loadError}</span>
                   <Button type="button" variant="outline" onClick={onRetry}>
-                    Try again
+                    {t('channels.setupTryAgain')}
                   </Button>
                 </div>
               ) : specs.length === 0 ? (
                 <div className="ch-setup__state" role="status">
-                  <strong>No channel adapters are available.</strong>
-                  <span>Check the gateway catalog, then refresh this page.</span>
+                  <strong>{t('channels.setupNoAdapters')}</strong>
+                  <span>{t('channels.setupNoAdaptersHint')}</span>
                 </div>
               ) : unsupportedEdit ? (
                 <div className="ch-setup__state" role="status">
-                  <strong>This adapter needs Advanced config.</strong>
-                  <span>
-                    {initialType} is running, but it is not available in the guided channel catalog.
-                  </span>
+                  <strong>{t('channels.setupNeedsAdvancedTitle')}</strong>
+                  <span>{t('channels.setupNeedsAdvancedBody', { type: String(initialType) })}</span>
                   <Button type="button" variant="outline" onClick={onOpenAdvanced}>
-                    Open Advanced config
+                    {t('channels.setupOpenAdvanced')}
                   </Button>
                 </div>
               ) : (
@@ -469,14 +469,18 @@ export function ChannelSetupDialog({
                   <section className="ch-setup__section" aria-labelledby="channel-adapter-heading">
                     <div className="ch-setup__section-head">
                       <div>
-                        <span className="t-label">Step 1</span>
-                        <h3 id="channel-adapter-heading">Choose an adapter</h3>
+                        <span className="t-label">{t('channels.stepOne')}</span>
+                        <h3 id="channel-adapter-heading">{t('channels.stepOneTitle')}</h3>
                       </div>
                       {isEditing ? (
-                        <span className="ch-setup__locked">Type locked while editing</span>
+                        <span className="ch-setup__locked">{t('channels.stepTypeLocked')}</span>
                       ) : null}
                     </div>
-                    <div className="ch-setup__types" role="radiogroup" aria-label="Channel adapter">
+                    <div
+                      className="ch-setup__types"
+                      role="radiogroup"
+                      aria-label={t('channels.stepAdapterLandmark')}
+                    >
                       {specs.map((candidate) => (
                         <button
                           key={candidate.type}
@@ -492,7 +496,9 @@ export function ChannelSetupDialog({
                           </span>
                           <span>
                             <strong>{candidate.label || candidate.type}</strong>
-                            <small>{candidate.transport || 'messaging adapter'}</small>
+                            <small>
+                              {candidate.transport || t('channels.adapterTransportFallback')}
+                            </small>
                           </span>
                           <span className="ch-setup__radio-dot" aria-hidden="true" />
                         </button>
@@ -507,12 +513,14 @@ export function ChannelSetupDialog({
                     >
                       <div className="ch-setup__section-head">
                         <div>
-                          <span className="t-label">Step 2</span>
-                          <h3 id="channel-details-heading">{spec.label || spec.type} details</h3>
+                          <span className="t-label">{t('channels.stepTwo')}</span>
+                          <h3 id="channel-details-heading">
+                            {t('channels.stepTwoTitle', { adapter: spec.label || spec.type })}
+                          </h3>
                         </div>
                         {spec.docsHint ? (
                           <a href={spec.docsHint} target="_blank" rel="noreferrer">
-                            Setup guide
+                            {t('channels.setupGuide')}
                             <ExternalLinkIcon aria-hidden="true" />
                           </a>
                         ) : null}
@@ -524,7 +532,7 @@ export function ChannelSetupDialog({
                         <div className="ch-setup__needs">
                           <ShieldCheckIcon aria-hidden="true" />
                           <div>
-                            <strong>Before you start</strong>
+                            <strong>{t('channels.beforeYouStart')}</strong>
                             <ul>
                               {spec.whatYouNeed.map((item) => (
                                 <li key={item}>{item}</li>
@@ -549,7 +557,7 @@ export function ChannelSetupDialog({
 
                       {advancedFields.length ? (
                         <details className="ch-setup__advanced">
-                          <summary>Advanced options</summary>
+                          <summary>{t('channels.advancedOptions')}</summary>
                           <div className="ch-setup__fields">
                             {advancedFields.map((field) => (
                               <ChannelField
@@ -573,16 +581,12 @@ export function ChannelSetupDialog({
             <footer className="ch-setup__footer">
               <div className="ch-setup__feedback" aria-live="polite">
                 {writeBlocked ? (
-                  <span className="is-error">
-                    Configuration changed on disk. Reload the gateway state before saving.
-                  </span>
+                  <span className="is-error">{t('channels.feedbackWriteBlocked')}</span>
                 ) : conflicted ? (
                   <div className="ch-setup__conflict">
-                    <span className="is-error">
-                      Settings changed elsewhere. Your channel draft is still preserved.
-                    </span>
+                    <span className="is-error">{t('channels.feedbackConflict')}</span>
                     <Button type="button" size="sm" variant="outline" onClick={resolveConflict}>
-                      Use latest version
+                      {t('channels.feedbackUseLatest')}
                     </Button>
                   </div>
                 ) : validationMessage || saveError ? (
@@ -590,13 +594,13 @@ export function ChannelSetupDialog({
                 ) : (
                   <span>
                     <LockKeyholeIcon aria-hidden="true" />
-                    Credentials are write-only and never shown again.
+                    {t('channels.feedbackWriteOnly')}
                   </span>
                 )}
               </div>
               <div className="ch-setup__footer-actions">
                 <Button type="button" variant="outline" disabled={saving} onClick={requestClose}>
-                  Cancel
+                  {t('common.cancel')}
                 </Button>
                 <Button
                   type="button"
@@ -607,7 +611,11 @@ export function ChannelSetupDialog({
                 >
                   {saving ? <LoaderCircleIcon className="ch-refresh-spin" /> : <ShieldCheckIcon />}
                   <span>
-                    {saving ? 'Validating…' : isEditing ? 'Validate & update' : 'Validate & add'}
+                    {saving
+                      ? t('channels.saveValidating')
+                      : isEditing
+                        ? t('channels.saveUpdate')
+                        : t('channels.saveAdd')}
                   </span>
                 </Button>
               </div>
@@ -629,11 +637,11 @@ export function ChannelSetupDialog({
               }}
             >
               <div>
-                <strong id="discard-channel-title">Discard this channel draft?</strong>
+                <strong id="discard-channel-title">{t('channels.discardTitle')}</strong>
                 <span>
                   {navigationBlocked
-                    ? 'Leaving this page will clear unsaved credentials and field changes.'
-                    : 'Your unsaved credentials and field changes will be cleared.'}
+                    ? t('channels.discardBodyNavigating')
+                    : t('channels.discardBody')}
                 </span>
               </div>
               <div>
@@ -647,7 +655,7 @@ export function ChannelSetupDialog({
                     else setConfirmDiscard(false)
                   }}
                 >
-                  Keep editing
+                  {t('channels.discardKeepEditing')}
                 </Button>
                 <Button
                   type="button"
@@ -655,7 +663,7 @@ export function ChannelSetupDialog({
                   disabled={saving}
                   onClick={navigationBlocked ? onDiscardNavigation : onDiscard}
                 >
-                  Discard draft
+                  {t('channels.discardConfirm')}
                 </Button>
               </div>
             </div>

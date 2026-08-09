@@ -6,6 +6,9 @@
 // formatting).
 
 /** A raw channel row from channels.status (all fields optional). */
+import { t } from '@/i18n'
+import '@/i18n/en/channels'
+
 export interface RawChannel {
   name?: string
   id?: string
@@ -139,9 +142,9 @@ export function channelStats(channels: MergedChannel[]): ChannelStats {
 
 /** channels.js:402-406 — Inactive-tile hint text. */
 export function inactiveHint(inactive: number, disabled: number): string {
-  if (!inactive) return 'no inactive channels'
-  if (disabled) return `${disabled} disabled`
-  return 'configured but idle'
+  if (!inactive) return t('channels.inactiveNone')
+  if (disabled) return t('channels.inactiveDisabled', { count: disabled })
+  return t('channels.inactiveIdle')
 }
 
 export interface ChannelDisplay {
@@ -160,7 +163,7 @@ export interface ChannelDisplay {
  * --tone), restart-attempt string, and the pretty-printed adapter config.
  */
 export function channelDisplay(ch: MergedChannel): ChannelDisplay {
-  const name = String(ch.name || ch.id || 'Unknown')
+  const name = String(ch.name || ch.id || t('channels.nameUnknown'))
   const status = String(ch.status || (ch.connected ? 'connected' : 'stopped'))
   const isRunning = status === 'running' || status === 'connected'
   const isDead = status === 'dead'
@@ -184,15 +187,12 @@ export function statusHint(args: {
   name: string
 }): string {
   const safeName = args.name || '<name>'
-  if (!args.enabled)
-    return 'Disabled in config — gateway restart required after re-enabling. Run `agentos onboard configure channels` to change.'
-  if (args.isDead)
-    return `Adapter is dead. Inspect gateway logs, then \`agentos channels restart ${safeName}\`.`
-  if (args.isRunning) return 'Adapter is live in the current gateway process.'
-  if (args.status === 'restarting') return 'Adapter is restarting after dispatch errors.'
-  if (args.status === 'exhausted')
-    return `Adapter exhausted its retry budget. Try \`agentos channels restart ${safeName}\`.`
-  return 'Configured on disk but not active in this gateway process — restart the gateway to load it.'
+  if (!args.enabled) return t('channels.hintDisabled')
+  if (args.isDead) return t('channels.hintDead', { name: safeName })
+  if (args.isRunning) return t('channels.hintRunning')
+  if (args.status === 'restarting') return t('channels.hintRestarting')
+  if (args.status === 'exhausted') return t('channels.hintExhausted', { name: safeName })
+  return t('channels.hintConfigured')
 }
 
 /** channels.js:253 — pairing approval is locked while locked_until*1000 > now. */
@@ -204,16 +204,22 @@ export function isAccessLocked(lockedUntil: number | undefined, now: number = Da
 export function senderLabel(item: AccessAccount): string {
   if (item.username) return '@' + item.username
   if (item.display_name) return item.display_name
-  return 'Telegram user ' + (item.sender_id || 'unknown')
+  return t('channels.senderFallback', {
+    id: item.sender_id || t('channels.senderUnknownId'),
+  })
 }
 
 /** channels.js:379-386 — the secondary meta line (bits joined with " · "). */
 export function senderMeta(item: AccessAccount): string {
   const bits: string[] = []
   if (item.display_name && item.display_name !== senderLabel(item)) bits.push(item.display_name)
-  if (item.sender_id) bits.push('ID ' + item.sender_id)
+  if (item.sender_id) bits.push(t('channels.senderMetaId', { id: item.sender_id }))
   if (item.expires_at)
-    bits.push('expires ' + new Date(Number(item.expires_at) * 1000).toLocaleTimeString())
+    bits.push(
+      t('channels.senderMetaExpires', {
+        time: new Date(Number(item.expires_at) * 1000).toLocaleTimeString(),
+      }),
+    )
   if (item.source) bits.push(item.source)
   return bits.join(' · ')
 }

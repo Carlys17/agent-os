@@ -6,6 +6,8 @@ import { AnimatePresence } from 'motion/react'
 import { CableIcon, PlusIcon, RefreshCwIcon, Settings2Icon } from 'lucide-react'
 import { toast } from 'sonner'
 import { CommandLine } from '@/components/CommandLine'
+import { t, tPlural } from '@/i18n'
+import '@/i18n/en/channels'
 import { MotionListItem } from '@/lib/motion'
 import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
@@ -77,7 +79,7 @@ function PersonRow({
       {variant === 'pending' ? (
         <div className="ch-access__person-actions">
           <Button type="button" size="sm" disabled={disabled} onClick={onApprove}>
-            Pair
+            {t('channels.accessPair')}
           </Button>
           <Button
             type="button"
@@ -86,12 +88,12 @@ function PersonRow({
             disabled={disabled}
             onClick={onDeny}
           >
-            Deny
+            {t('channels.accessDeny')}
           </Button>
         </div>
       ) : (
         <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={onRevoke}>
-          Disconnect
+          {t('channels.accessDisconnect')}
         </Button>
       )}
     </div>
@@ -121,26 +123,27 @@ function AccessPanel({
     <section className={`ch-access${pending.length ? ' ch-access--pending' : ''}`}>
       <div className="ch-access__head">
         <div>
-          <span className="ch-access__eyebrow t-label">Telegram connections</span>
-          <h3 className="ch-access__title">Pairing</h3>
+          <span className="ch-access__eyebrow t-label">{t('channels.accessEyebrow')}</span>
+          <h3 className="ch-access__title">{t('channels.accessTitle')}</h3>
         </div>
       </div>
 
-      {locked ? (
-        <p className="ch-access__warning">
-          Pairing is locked for one hour after repeated invalid codes.
-        </p>
-      ) : null}
+      {locked ? <p className="ch-access__warning">{t('channels.accessLocked')}</p> : null}
 
       <p className="ch-access__note">
-        Direct messages always require pairing.{' '}
+        {t('channels.accessNoteLead')}{' '}
         {access.groups_enabled
-          ? `${access.group_chat_ids?.length || 0} configured group(s) also require a paired sender${access.group_mention_required ? ' and a bot mention' : ''}.`
-          : 'Group messaging is disabled.'}
+          ? t(
+              access.group_mention_required
+                ? 'channels.accessGroupsEnabledMention'
+                : 'channels.accessGroupsEnabled',
+              { count: access.group_chat_ids?.length || 0 },
+            )
+          : t('channels.accessGroupsDisabled')}
       </p>
       <div className="ch-access__group">
         <div className="ch-access__group-title t-label">
-          Pending pairing <span>{pending.length}</span>
+          {t('channels.accessPendingTitle')} <span>{pending.length}</span>
         </div>
         {pending.length ? (
           <div className="ch-access__people">
@@ -156,12 +159,12 @@ function AccessPanel({
             ))}
           </div>
         ) : (
-          <p className="ch-access__empty">No Telegram connections are waiting to pair.</p>
+          <p className="ch-access__empty">{t('channels.accessNoPending')}</p>
         )}
       </div>
       <div className="ch-access__group">
         <div className="ch-access__group-title t-label">
-          Paired <span>{paired.length}</span>
+          {t('channels.accessPairedTitle')} <span>{paired.length}</span>
         </div>
         {paired.length ? (
           <div className="ch-access__people">
@@ -176,7 +179,7 @@ function AccessPanel({
             ))}
           </div>
         ) : (
-          <p className="ch-access__empty">No paired Telegram connections yet.</p>
+          <p className="ch-access__empty">{t('channels.accessNoPaired')}</p>
         )}
       </div>
     </section>
@@ -224,7 +227,9 @@ function ChannelCard({
             <span className="ch-card__name" title={d.name}>
               {d.name}
             </span>
-            <span className="ch-card__type t-data">{channel.type || 'unknown'}</span>
+            <span className="ch-card__type t-data">
+              {channel.type || t('channels.cardTypeUnknown')}
+            </span>
           </div>
         </div>
         <div className="ch-card__head-actions">
@@ -237,7 +242,7 @@ function ChannelCard({
               onClick={onConfigure}
             >
               <Settings2Icon />
-              <span>Configure</span>
+              <span>{t('channels.cardConfigure')}</span>
             </Button>
           ) : (
             <Button
@@ -249,7 +254,11 @@ function ChannelCard({
               onClick={onOpenAdvanced}
             >
               <Settings2Icon />
-              <span>{configurationMode === 'loading' ? 'Loading…' : 'Advanced config'}</span>
+              <span>
+                {configurationMode === 'loading'
+                  ? t('channels.cardLoading')
+                  : t('channels.cardAdvanced')}
+              </span>
             </Button>
           )}
           <span className={`ch-card__chip t-data ${toneClass(d.tone)}`}>{d.status}</span>
@@ -258,18 +267,18 @@ function ChannelCard({
       <div className="ch-card__body">
         <dl className="ch-card__meta">
           <div>
-            <dt className="t-label">Connected</dt>
+            <dt className="t-label">{t('channels.cardConnected')}</dt>
             <dd className="t-data">{since}</dd>
           </div>
           <div>
-            <dt className="t-label">Restart attempts</dt>
+            <dt className="t-label">{t('channels.cardRestartAttempts')}</dt>
             <dd className="t-data">{d.attempts}</dd>
           </div>
         </dl>
         <p className="ch-card__hint">{hint}</p>
         <AccessPanel channel={channel} busy={busy} onResolve={onResolve} onRevoke={onRevoke} />
         <details className="ch-card__config">
-          <summary>Adapter config</summary>
+          <summary>{t('channels.cardAdapterConfig')}</summary>
           <pre className="ch-card__config-pre t-data">{d.configJson}</pre>
         </details>
       </div>
@@ -318,7 +327,7 @@ export function ChannelsPage() {
   const editingName = searchParams.get('channel') || undefined
 
   useEffect(() => {
-    document.title = 'Channels - AgentOS Control'
+    document.title = t('channels.documentTitle')
   }, [])
 
   // Load runtime status and Telegram pairing state in parallel.
@@ -349,7 +358,7 @@ export function ChannelsPage() {
     if (channelsQuery.isError) {
       const err = channelsQuery.error
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to load channels: ' + message, { id: 'channels-load-err' })
+      toast.error(t('channels.toastLoadFailed', { message }), { id: 'channels-load-err' })
     }
   }, [channelsQuery.isError, channelsQuery.error])
 
@@ -427,9 +436,7 @@ export function ChannelsPage() {
         queryClient.invalidateQueries({ queryKey: SETTINGS_SNAPSHOT_QUERY_KEY }),
       ])
       toast.success(
-        result.restartRequired
-          ? 'Channel saved. Restart AgentOS to activate it.'
-          : 'Channel saved.',
+        result.restartRequired ? t('channels.toastSavedRestart') : t('channels.toastSaved'),
         { id: 'channels-setup-save' },
       )
       if (setupNavigationBlockerRef.current.state === 'blocked') {
@@ -449,7 +456,7 @@ export function ChannelsPage() {
           : `Channel could not be saved: ${message}`,
       )
       if (conflict) void setupSnapshotQuery.refetch()
-      toast.error(conflict ? 'Channel draft needs a fresh configuration.' : message, {
+      toast.error(conflict ? t('channels.toastConflict') : message, {
         id: 'channels-setup-save-error',
       })
     },
@@ -475,13 +482,13 @@ export function ChannelsPage() {
         senderId: vars.senderId,
       }),
     onSuccess: (_data, vars) => {
-      if (vars.approved) toast.info('Telegram connection paired.', { id: 'channels-resolve' })
-      else toast.warning('Telegram pairing denied.', { id: 'channels-resolve' })
+      if (vars.approved) toast.info(t('channels.toastPaired'), { id: 'channels-resolve' })
+      else toast.warning(t('channels.toastPairingDenied'), { id: 'channels-resolve' })
       void invalidate()
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to resolve pairing request: ' + message, { id: 'channels-resolve-err' })
+      toast.error(t('channels.toastResolveFailed', { message }), { id: 'channels-resolve-err' })
     },
   })
 
@@ -490,12 +497,12 @@ export function ChannelsPage() {
     mutationFn: (vars: { channel: string; senderId: string }) =>
       rpc.call('channels.pairing.revoke', vars),
     onSuccess: () => {
-      toast.info('Telegram connection disconnected.', { id: 'channels-revoke' })
+      toast.info(t('channels.toastDisconnected'), { id: 'channels-revoke' })
       void invalidate()
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to disconnect Telegram: ' + message, { id: 'channels-revoke-err' })
+      toast.error(t('channels.toastRevokeFailed', { message }), { id: 'channels-revoke-err' })
     },
   })
 
@@ -516,33 +523,33 @@ export function ChannelsPage() {
     <div className="ch-stage">
       <header className="ch-stage__header">
         <div className="ch-stage__title-block">
-          <span className="t-label">Control · Channels</span>
-          <h1 className="t-display">Channels</h1>
-          <p className="ch-stage__subtitle">
-            Add messaging adapters, monitor runtime health, and pair Telegram connections.
-          </p>
+          <span className="t-label">{t('channels.eyebrow')}</span>
+          <h1 className="t-display">{t('channels.title')}</h1>
+          <p className="ch-stage__subtitle">{t('channels.subtitle')}</p>
         </div>
         <div className="ch-stage__actions">
           <Button
             variant="outline"
-            title="Refresh"
+            title={t('channels.refresh')}
             className="ch-stage__refresh text-xs uppercase tracking-[0.14em]"
             disabled={channelsQuery.isFetching}
             onClick={() => void invalidate()}
           >
             <RefreshCwIcon className={channelsQuery.isFetching ? 'ch-refresh-spin' : undefined} />
-            <span>{channelsQuery.isFetching ? 'Refreshing…' : 'Refresh'}</span>
+            <span>
+              {channelsQuery.isFetching ? t('channels.refreshBusy') : t('channels.refresh')}
+            </span>
           </Button>
           <Button type="button" className="ch-stage__add" onClick={() => openSetup()}>
             <PlusIcon />
-            <span>Add channel</span>
+            <span>{t('channels.addChannel')}</span>
           </Button>
         </div>
       </header>
 
       <section
         className={`ch-command${channelsQuery.isFetching ? ' is-loading' : ''}`}
-        aria-label="Channel operations"
+        aria-label={t('channels.operationsLandmark')}
         aria-busy={channelsQuery.isFetching}
       >
         <div className="ch-command__toolbar">
@@ -551,50 +558,58 @@ export function ChannelsPage() {
               <CableIcon />
             </span>
             <div>
-              <span className="t-label">Integration mesh</span>
-              <strong>Channel posture</strong>
+              <span className="t-label">{t('channels.meshEyebrow')}</span>
+              <strong>{t('channels.meshTitle')}</strong>
             </div>
           </div>
           <span className="ch-command__cadence t-data">
-            <span aria-hidden="true" /> Live · refreshes every 5s
+            <span aria-hidden="true" /> {t('channels.cadence')}
           </span>
         </div>
-        <div className="ch-stats" aria-label="Channels summary">
+        <div className="ch-stats" aria-label={t('channels.statsLandmark')}>
           <StatTile
-            label="Total channels"
+            label={t('channels.statTotal')}
             hero
             value={stats.total}
-            hint={`${stats.typeCount} type${stats.typeCount === 1 ? '' : 's'} configured`}
+            hint={tPlural('channels.statTotalHint', stats.typeCount)}
           />
           <StatTile
-            label="Connected"
+            label={t('channels.statConnected')}
             value={stats.connected}
             hint={
               stats.connected
-                ? 'live now'
+                ? t('channels.statConnectedLive')
                 : stats.attention
-                  ? `${stats.attention} unhealthy`
-                  : 'all idle'
+                  ? t('channels.statConnectedUnhealthy', { count: stats.attention })
+                  : t('channels.statConnectedIdle')
             }
           />
           <StatTile
-            label="Inactive"
+            label={t('channels.statInactive')}
             value={stats.inactive}
             hint={
               stats.attention ? (
                 // channels.js:139 — legacy wraps this hint in .ch-neg (--danger).
-                <span className="ch-neg">{stats.attention} need attention</span>
+                <span className="ch-neg">
+                  {t('channels.statInactiveAttention', { count: stats.attention })}
+                </span>
               ) : (
                 inactiveHint(stats.inactive, stats.disabled)
               )
             }
           />
-          <StatTile label="Restart attempts" value={stats.restarts} hint="since gateway start" />
           <StatTile
-            label="Pairing requests"
+            label={t('channels.statRestarts')}
+            value={stats.restarts}
+            hint={t('channels.statRestartsHint')}
+          />
+          <StatTile
+            label={t('channels.statPairing')}
             value={stats.pendingAccess}
             attention={stats.pendingAccess > 0}
-            hint={stats.pendingAccess ? 'Telegram connections waiting' : 'nothing waiting'}
+            hint={
+              stats.pendingAccess ? t('channels.statPairingWaiting') : t('channels.statPairingIdle')
+            }
           />
         </div>
       </section>
@@ -602,15 +617,13 @@ export function ChannelsPage() {
       <section className="ch-list">
         <div className="ch-list__head">
           <div>
-            <h2 className="ch-list__title">Configured channels</h2>
-            <p className="ch-list__description">
-              Runtime adapters, connection health, and Telegram pairing in one place.
-            </p>
+            <h2 className="ch-list__title">{t('channels.listTitle')}</h2>
+            <p className="ch-list__description">{t('channels.listDescription')}</p>
           </div>
           <div className="ch-list__actions">
             {channels.length ? (
               <span className="ch-list__count t-data">
-                {channels.length} channel{channels.length === 1 ? '' : 's'}
+                {tPlural('channels.listCount', channels.length)}
               </span>
             ) : null}
           </div>
@@ -618,15 +631,12 @@ export function ChannelsPage() {
 
         {channels.length === 0 ? (
           <div className="ch-empty">
-            <div className="ch-empty__title">No configured channels.</div>
-            <p className="ch-empty__msg">
-              Connect Telegram, Slack, Discord, or another adapter here. AgentOS validates the
-              configuration before saving and keeps credentials write-only.
-            </p>
+            <div className="ch-empty__title">{t('channels.emptyTitle')}</div>
+            <p className="ch-empty__msg">{t('channels.emptyMsg')}</p>
             <div className="ch-empty__actions">
               <Button type="button" onClick={() => openSetup()}>
                 <PlusIcon />
-                <span>Add your first channel</span>
+                <span>{t('channels.emptyAction')}</span>
               </Button>
             </div>
             <div className="ch-empty__commands">
@@ -696,7 +706,7 @@ export function ChannelsPage() {
         onDirtyChange={updateSetupDirty}
       />
       <span className="sr-only" aria-live="polite">
-        {setupDirty ? 'Channel setup has unsaved changes.' : ''}
+        {setupDirty ? t('channels.unsavedBlocker') : ''}
       </span>
     </div>
   )
