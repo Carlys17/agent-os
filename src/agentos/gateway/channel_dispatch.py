@@ -560,7 +560,11 @@ async def run_channel_dispatch(
             else:
                 await status_reactor.running(msg)
 
-                typing_task = _start_typing_keepalive(channel, msg)
+                typing_task = _start_typing_keepalive(
+                    channel,
+                    msg,
+                    stop_signal=stream_relay.first_chunk_sent if stream_relay is not None else None,
+                )
 
                 async def _reply_task_body(
                     _channel: Any = channel,
@@ -627,8 +631,10 @@ async def run_channel_dispatch(
                 reply_task.add_done_callback(_reply_done)
             continue
 
-        # Gap 3: Start typing indicator (background task)
-        typing_task = _start_typing_keepalive(channel, msg)
+        # Gap 3: Start typing indicator (background task). On a streaming
+        # adapter it only covers the wait before the first chunk.
+        first_chunk_sent = asyncio.Event()
+        typing_task = _start_typing_keepalive(channel, msg, stop_signal=first_chunk_sent)
         try:
             # Gap 4: Run agent turn with streaming (or batch fallback)
             await _run_turn_with_streaming(
@@ -641,6 +647,7 @@ async def run_channel_dispatch(
                 config=config,
                 route_envelope=route_envelope,
                 attachments=ingested.attachments,
+                first_chunk_sent=first_chunk_sent,
             )
         finally:
             if typing_task is not None:
@@ -895,7 +902,7 @@ async def _dispatch_combined_message_after_debounce(channel: Any, combined: Any,
         _in_flight.release(_reservation_token)
 
     await status_reactor.running(msg)
-    typing_task = _start_typing_keepalive(channel, msg)
+    typing_task = _start_typing_keepalive(channel, msg, stop_signal=stream_relay.first_chunk_sent if stream_relay is not None else None)  # noqa: E501
     try:
         await _deliver_runtime_channel_reply(channel=channel, task_runtime=task_runtime, session_manager=session_manager, session_key=session_key, task_id=handle.task_id, route_envelope=route_envelope, inbound=msg, transcript_watermark=transcript_watermark, config=config, stream_relay=stream_relay)  # noqa: E501
     finally:
@@ -1150,16 +1157,25 @@ def _start_typing_keepalive(
     channel: Any,
     inbound: IncomingMessage | None = None,
     interval: float | None = None,
+    stop_signal: asyncio.Event | None = None,
 ) -> asyncio.Task | None:
     """Start a background task that periodically refreshes the typing status.
 
     Uses ``asyncio.create_task`` so typing continues even during long tool calls
     where no events are yielded (a timestamp-in-loop approach would fail here).
 
+    On a streaming adapter (``typing_preamble``) the indicator only covers the
+    wait before the first chunk: the task refreshes typing until *stop_signal*
+    is set, then returns.  That signal is required there — without it the
+    indicator would keep flickering back underneath a message that is already
+    being edited live, so a preamble with no signal is simply not started.
+
     Returns None if the adapter has no ``send_typing`` method (e.g. Terminal).
     The caller MUST cancel the returned task in a ``finally`` block.
     """
-    if not resolve_channel_stream_policy(channel).typing_keepalive:
+    policy = resolve_channel_stream_policy(channel)
+    preamble = policy.typing_preamble and stop_signal is not None
+    if not policy.typing_keepalive and not preamble:
         return None
     send_typing = getattr(channel, "send_typing", None)
     if not callable(send_typing):
@@ -1203,7 +1219,14 @@ def _start_typing_keepalive(
                 await send_typing(**typing_kwargs)
             except Exception:
                 pass  # typing is best-effort, never crash the loop
-            await asyncio.sleep(keepalive_interval)
+            if stop_signal is None:
+                await asyncio.sleep(keepalive_interval)
+                continue
+            try:
+                await asyncio.wait_for(stop_signal.wait(), timeout=keepalive_interval)
+            except TimeoutError:
+                continue
+            return
 
     return asyncio.create_task(_keepalive())
 
@@ -1269,6 +1292,7 @@ async def _run_turn_with_streaming(
     config: Any = None,
     route_envelope: Any = None,
     attachments: list[dict[str, Any]] | None = None,
+    first_chunk_sent: asyncio.Event | None = None,
 ) -> None:
     """Run the agent turn, sending reply via streaming or batch.
 
@@ -1314,6 +1338,7 @@ async def _run_turn_with_streaming(
             semantic_message,
             config,
             attachments,
+            first_chunk_sent=first_chunk_sent,
         )
     else:
         await _run_turn_batch_path(
@@ -1468,6 +1493,10 @@ class _RuntimeChannelStreamRelay:
         self._closed = False
         self.text_emitted = False
         self.stream_error: BaseException | None = None
+        # Set the moment the first chunk is handed to ``send_streaming``. The
+        # typing preamble waits on this: once the adapter has text to show, the
+        # indicator has nothing left to say.
+        self.first_chunk_sent = asyncio.Event()
         # Buffer of chunks already yielded to ``send_streaming``. If the
         # adapter raises mid-stream the relay falls back to ``channel.send``
         # with the chunks that never made it through.
@@ -1555,6 +1584,7 @@ class _RuntimeChannelStreamRelay:
                 tail = sanitizer.flush()
                 if tail:
                     self._yielded_chunks.append(tail)
+                    self.first_chunk_sent.set()
                     yield tail
                     # Only advance the delivered watermark when the consumer
                     # accepted the chunk (yield returned). If yield raises,
@@ -1568,12 +1598,14 @@ class _RuntimeChannelStreamRelay:
             chunk = sanitizer.clean(batched)
             if chunk:
                 self._yielded_chunks.append(chunk)
+                self.first_chunk_sent.set()
                 yield chunk
                 self._undelivered_index = len(self._yielded_chunks)
             if sentinel is _STREAM_DONE:
                 tail = sanitizer.flush()
                 if tail:
                     self._yielded_chunks.append(tail)
+                    self.first_chunk_sent.set()
                     yield tail
                     self._undelivered_index = len(self._yielded_chunks)
                 return
@@ -1607,6 +1639,9 @@ class _RuntimeChannelStreamRelay:
             await self._queue.put(f"{prefix}{artifact_text}")
             self.text_emitted = True
         await self._queue.put(_STREAM_DONE)
+        # A turn that ends without ever emitting text still has to release the
+        # typing preamble; nothing else will set the event in that case.
+        self.first_chunk_sent.set()
         if self._task is None:
             return
         try:
@@ -2186,6 +2221,7 @@ async def _run_turn_streaming_path(
     semantic_message: str | None,
     config: Any,
     attachments: list[dict[str, Any]] | None = None,
+    first_chunk_sent: asyncio.Event | None = None,
 ) -> None:
     """Streaming mode: feed text deltas through an async queue to send_streaming.
 
@@ -2201,6 +2237,11 @@ async def _run_turn_streaming_path(
     artifacts: list[dict[str, Any]] = []
     stream_sanitizer = _DirectiveTagStreamSanitizer()
 
+    def _release_typing_preamble() -> None:
+        """Stop the typing indicator: the adapter now has text to show."""
+        if first_chunk_sent is not None:
+            first_chunk_sent.set()
+
     async def _chunk_iter() -> AsyncIterator[str]:
         """Async iterator that yields text chunks from the queue."""
         nonlocal stream_delivered_index
@@ -2210,12 +2251,15 @@ async def _run_turn_streaming_path(
                 tail = stream_sanitizer.flush()
                 if tail:
                     yielded_stream_chunks.append(tail)
+                    _release_typing_preamble()
                     yield tail
                     stream_delivered_index = len(yielded_stream_chunks)
+                _release_typing_preamble()
                 return
             cleaned = stream_sanitizer.clean(chunk)
             if cleaned:
                 yielded_stream_chunks.append(cleaned)
+                _release_typing_preamble()
                 yield cleaned
                 stream_delivered_index = len(yielded_stream_chunks)
 

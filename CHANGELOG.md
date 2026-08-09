@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Streaming channels show the typing indicator again while the model is still
+  thinking. Since Telegram gained `send_streaming` its stream policy resolved to
+  `adapter_stream`, which suppressed the indicator for the whole turn — and
+  nothing can be streamed before the first token, so a user waiting out model
+  latency and tool calls saw nothing at all. Telegram and Discord now type until
+  the first chunk reaches the chat and drop the indicator the moment it lands,
+  rather than either suppressing it for the run or letting it flicker back under
+  a message that is already being edited. `typing_final` and `final_only`
+  adapters are unchanged. (Fixes #255)
+
 ## [2026.8.9] - 2026-08-09
 
 ### Added
