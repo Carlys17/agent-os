@@ -4,6 +4,8 @@
 // (config.patch {updates.notify}).
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
+import '@/i18n/en/setup'
 import { CommandLine } from '@/components/CommandLine'
 import { SetupCheckbox } from './parts'
 import {
@@ -67,7 +69,7 @@ function ReadinessGroup({
           >
             <span>{detail.label || name}</span>
             <strong>{readinessStatusLabel(detail, name)}</strong>
-            <small>{detail.required ? 'Required' : 'Optional'}</small>
+            <small>{detail.required ? t('setup.finishRequired') : t('setup.finishOptional')}</small>
             {step ? (
               <Button type="button" size="sm" variant="outline" onClick={() => onGo(step)}>
                 {readinessActionLabel(detail, name)}
@@ -113,52 +115,56 @@ export function FinishSection({
   return (
     <section className="setup-panel panel">
       <header className="setup-panel__head">
-        <h2 className="t-label">Finish</h2>
+        <h2 className="t-label">{t('setup.finishTitle')}</h2>
         <p className="setup-panel__subtitle">{status.configPath || ''}</p>
       </header>
 
       <div className="setup-cli">
-        <CommandGroup title="Fix now" commands={fixCommands} />
-        <CommandGroup title="CLI handoff" commands={handoffCommands(configArg)} />
-        <CommandGroup title="CLI recipes" commands={recipeCommands(configArg)} />
+        <CommandGroup title={t('setup.cliFixNow')} commands={fixCommands} />
+        <CommandGroup title={t('setup.cliHandoff')} commands={handoffCommands(configArg)} />
+        <CommandGroup title={t('setup.cliRecipes')} commands={recipeCommands(configArg)} />
       </div>
 
       <div className="setup-summary">
         <div>
-          <span className="t-label">Provider</span>
+          <span className="t-label">{t('setup.summaryProvider')}</span>
           <strong>{summary.provider}</strong>
         </div>
         <div>
-          <span className="t-label">Model</span>
+          <span className="t-label">{t('setup.summaryModel')}</span>
           <strong>{summary.model}</strong>
         </div>
         {summary.proxy ? (
           <div>
-            <span className="t-label">Proxy</span>
+            <span className="t-label">{t('setup.summaryProxy')}</span>
             <strong>{summary.proxy}</strong>
           </div>
         ) : null}
         <div>
-          <span className="t-label">Router</span>
+          <span className="t-label">{t('setup.summaryRouter')}</span>
           <strong>{summary.router}</strong>
         </div>
         <div>
-          <span className="t-label">Channels</span>
+          <span className="t-label">{t('setup.summaryChannels')}</span>
           <strong>{summary.channels}</strong>
         </div>
       </div>
 
       {details.length ? (
-        <div className="setup-readiness" aria-label="Onboarding readiness">
-          <ReadinessGroup title="Required setup" entries={required} onGo={onGoStep} />
-          <ReadinessGroup title="Optional capabilities" entries={optional} onGo={onGoStep} />
+        <div className="setup-readiness" aria-label={t('setup.readinessLandmark')}>
+          <ReadinessGroup title={t('setup.readinessRequired')} entries={required} onGo={onGoStep} />
+          <ReadinessGroup title={t('setup.readinessOptional')} entries={optional} onGo={onGoStep} />
         </div>
       ) : null}
 
-      <section className="setup-subpanel" aria-label="Update preferences">
-        <h3 className="t-label">Updates</h3>
-        <SetupCheckbox ariaLabel="Notify on new release" checked={notify} onChange={setNotify}>
-          Notify me when a new release of use-agent-os is available
+      <section className="setup-subpanel" aria-label={t('setup.updatesLandmark')}>
+        <h3 className="t-label">{t('setup.updatesTitle')}</h3>
+        <SetupCheckbox
+          ariaLabel={t('setup.updatesNotifyAria')}
+          checked={notify}
+          onChange={setNotify}
+        >
+          {t('setup.updatesNotifyLabel')}
         </SetupCheckbox>
         <div className="setup-actions">
           <Button
@@ -167,20 +173,20 @@ export function FinishSection({
             disabled={saving}
             onClick={() => onSaveUpdatesNotify(notify)}
           >
-            Save update preference
+            {t('setup.updatesSave')}
           </Button>
         </div>
       </section>
 
       <div className="setup-actions">
         <Button type="button" variant="outline" onClick={onBack}>
-          Back
+          {t('setup.back')}
         </Button>
         <Button type="button" variant="outline" onClick={onReload}>
-          Refresh
+          {t('setup.refresh')}
         </Button>
         <Button type="button" onClick={onExit}>
-          Open Overview
+          {t('setup.openOverview')}
         </Button>
       </div>
     </section>
