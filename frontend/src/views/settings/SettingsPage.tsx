@@ -15,6 +15,8 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
+import { t, tPlural } from '@/i18n'
+import '@/i18n/en/settings'
 import { SetupPage } from '@/views/setup/SetupPage'
 import { ENV_QUERY_KEY, type EnvListResponse } from '@/views/env/logic'
 import { ConfigPage } from '@/views/config/ConfigPage'
@@ -44,7 +46,7 @@ export function SettingsPage() {
   }
 
   useEffect(() => {
-    document.title = 'Agent Setup - AgentOS Control'
+    document.title = t('settings.documentTitle')
   }, [])
 
   useEffect(() => {
@@ -68,36 +70,36 @@ export function SettingsPage() {
     refetchOnWindowFocus: false,
   })
   const envLabel = envQuery.data
-    ? `${envQuery.data.setCount} of ${envQuery.data.totalCount} set`
-    : 'Manage variables'
+    ? t('settings.envCount', { set: envQuery.data.setCount, total: envQuery.data.totalCount })
+    : t('settings.envManage')
 
   const snapshot = snapshotQuery.data
   const snapshotUnavailable = snapshotQuery.isError && !snapshot
   const readiness = useMemo(() => readinessFromSnapshot(snapshot), [snapshot])
   const readinessLabel =
     readiness.total > 0
-      ? `${readiness.ready} of ${readiness.total} ready`
+      ? t('settings.readinessCount', { ready: readiness.ready, total: readiness.total })
       : snapshotQuery.isError
-        ? 'Status unavailable'
-        : 'Checking setup'
-  const activeModel = snapshot?.config?.llm?.model || 'Choose a model'
+        ? t('settings.statusUnavailable')
+        : t('settings.statusChecking')
+  const activeModel = snapshot?.config?.llm?.model || t('settings.modelUnset')
   const activeProviderId = snapshot?.config?.llm?.provider
   const activeProvider =
     snapshot?.catalog?.providers?.find((provider) => provider.providerId === activeProviderId)
       ?.label ||
     activeProviderId ||
-    'Provider not connected'
+    t('settings.providerUnset')
   const statusLabel = snapshot?.writeBlocked
-    ? 'Changes paused'
+    ? t('settings.statusChangesPaused')
     : snapshot?.pendingRestart
-      ? 'Restart needed'
+      ? t('settings.statusRestartNeeded')
       : snapshotQuery.isError
-        ? 'Status unavailable'
+        ? t('settings.statusUnavailable')
         : readiness.actionRequired > 0
-          ? `${readiness.actionRequired} setup item${readiness.actionRequired === 1 ? '' : 's'} left`
+          ? tPlural('settings.setupItemsLeft', readiness.actionRequired)
           : snapshotQuery.isSuccess
-            ? 'Ready to use'
-            : 'Checking setup'
+            ? t('settings.statusReady')
+            : t('settings.statusChecking')
   const statusTone = snapshot?.writeBlocked
     ? 'tone-danger'
     : snapshot?.pendingRestart
@@ -135,11 +137,9 @@ export function SettingsPage() {
     <div className="settings-workspace">
       <header className="settings-stage__header">
         <div className="settings-stage__title-block">
-          <span className="t-label">Control · Settings</span>
-          <h1 className="t-display">Agent Setup</h1>
-          <p className="settings-stage__subtitle">
-            Choose the model, routing, and tools this agent can use.
-          </p>
+          <span className="t-label">{t('settings.eyebrow')}</span>
+          <h1 className="t-display">{t('settings.title')}</h1>
+          <p className="settings-stage__subtitle">{t('settings.subtitle')}</p>
         </div>
 
         <div className="settings-stage__actions">
@@ -154,20 +154,26 @@ export function SettingsPage() {
             type="button"
             variant="outline"
             className="text-xs uppercase tracking-[0.14em]"
-            title="Refresh agent state"
-            aria-label="Refresh agent state"
+            title={t('settings.refreshTitle')}
+            aria-label={t('settings.refreshTitle')}
             aria-busy={snapshotQuery.isFetching}
             disabled={snapshotQuery.isFetching}
             onClick={() => void reloadSnapshot()}
           >
             <RefreshCwIcon className={snapshotQuery.isFetching ? 'settings-spin' : ''} />
-            <span>{snapshotQuery.isFetching ? 'Refreshing…' : 'Refresh'}</span>
+            <span>
+              {snapshotQuery.isFetching ? t('settings.refreshBusy') : t('settings.refresh')}
+            </span>
           </Button>
         </div>
       </header>
 
-      <section className="settings-toolbar" aria-label="Settings workspace">
-        <nav className="settings-surface-tabs" aria-label="Settings mode" role="tablist">
+      <section className="settings-toolbar" aria-label={t('settings.toolbarLandmark')}>
+        <nav
+          className="settings-surface-tabs"
+          aria-label={t('settings.tabsLandmark')}
+          role="tablist"
+        >
           <button
             id="settings-tab-guided"
             type="button"
@@ -181,8 +187,8 @@ export function SettingsPage() {
           >
             <SlidersHorizontalIcon aria-hidden="true" />
             <span>
-              <strong>Guided setup</strong>
-              <small>Recommended</small>
+              <strong>{t('settings.tabGuided')}</strong>
+              <small>{t('settings.tabGuidedNote')}</small>
             </span>
           </button>
           <button
@@ -198,17 +204,17 @@ export function SettingsPage() {
           >
             <FileCode2Icon aria-hidden="true" />
             <span>
-              <strong>Advanced</strong>
-              <small>Edit config</small>
+              <strong>{t('settings.tabAdvanced')}</strong>
+              <small>{t('settings.tabAdvancedNote')}</small>
             </span>
           </button>
         </nav>
 
-        <div className="settings-glance" aria-label="Current agent setup">
+        <div className="settings-glance" aria-label={t('settings.glanceLandmark')}>
           <div className="settings-glance__item">
             <CheckCircle2Icon aria-hidden="true" />
             <span>
-              <small>Setup progress</small>
+              <small>{t('settings.glanceProgress')}</small>
               <strong>{readinessLabel}</strong>
             </span>
           </div>
@@ -228,7 +234,7 @@ export function SettingsPage() {
           >
             <KeyRoundIcon aria-hidden="true" />
             <span>
-              <small>Environment</small>
+              <small>{t('settings.glanceEnvironment')}</small>
               <strong>{envLabel}</strong>
             </span>
           </button>
@@ -237,23 +243,18 @@ export function SettingsPage() {
 
       {snapshot?.diskDiverged ? (
         <div className="settings-load-error tone-danger" role="alert">
-          <span>
-            The config file changed outside AgentOS. Writes are blocked until the gateway reloads or
-            restarts with that file.
-          </span>
+          <span>{t('settings.divergedBody')}</span>
           <Button type="button" size="sm" variant="outline" onClick={() => void reloadSnapshot()}>
-            Refresh state
+            {t('settings.divergedAction')}
           </Button>
         </div>
       ) : null}
 
       {snapshotQuery.isError ? (
         <div className="settings-load-error tone-danger" role="alert">
-          <span>
-            Agent state could not be loaded. Retry before changing guided or advanced settings.
-          </span>
+          <span>{t('settings.loadErrorBody')}</span>
           <Button type="button" size="sm" variant="outline" onClick={() => void reloadSnapshot()}>
-            Retry
+            {t('common.retry')}
           </Button>
         </div>
       ) : null}

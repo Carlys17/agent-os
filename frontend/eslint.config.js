@@ -14,6 +14,7 @@ const I18N_MIGRATED = [
   'src/views/health/**/*.tsx',
   'src/views/logs/**/*.tsx',
   'src/views/overview/**/*.tsx',
+  'src/views/settings/**/*.tsx',
 ]
 
 // #258: t() reads the locale at call time, so calling it at module scope

@@ -4,6 +4,7 @@ import { env } from './env'
 import { health } from './health'
 import { logs } from './logs'
 import { overview } from './overview'
+import { settings } from './settings'
 import { shell } from './shell'
 
 /**
@@ -13,8 +14,8 @@ import { shell } from './shell'
  * adding a namespace here is what makes its keys callable from `t()` — and the
  * shape tests read it at runtime.
  *
- * It is NOT how the app loads copy. Importing this module pulls all seven
- * namespaces into whichever chunk does so, which for anything reachable from
+ * It is NOT how the app loads copy. Importing this module pulls every
+ * namespace into whichever chunk does so, which for anything reachable from
  * the entry graph is exactly the growth #261 fixed. Runtime code must import
  * the one namespace it needs (`@/i18n/en/logs`) and let `t()` read the
  * registry; `i18n/chunking.test.ts` enforces that. `src/test/setup.ts` imports
@@ -28,5 +29,6 @@ export const en = {
   health,
   logs,
   overview,
+  settings,
   shell,
 } as const
