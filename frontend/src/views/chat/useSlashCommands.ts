@@ -1,3 +1,6 @@
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useRpc } from '@/app/providers'
@@ -144,7 +147,7 @@ export function useSlashCommands(opts?: {
         case 'new_chat':
         case '/new': {
           if (onSessionActionRef.current) onSessionActionRef.current('new_chat', cmd, args)
-          else toast.info('New chat is available from the session menu')
+          else toast.info(t('chat.slashNewChatHint'))
           return
         }
         // chat.js:2716-2737 — reset the current session. (The `/new`-named-but-
@@ -166,10 +169,12 @@ export function useSlashCommands(opts?: {
           }
           rpc
             .call('sessions.contextCompact', { key })
-            .then(() => toast.info('Context compaction requested'))
+            .then(() => toast.info(t('chat.slashCompactionRequested')))
             .catch((err: unknown) =>
               toast.error(
-                'Compaction failed: ' + (err instanceof Error ? err.message : String(err)),
+                t('chat.slashCompactionFailed', {
+                  message: err instanceof Error ? err.message : String(err),
+                }),
               ),
             )
           return
@@ -180,7 +185,7 @@ export function useSlashCommands(opts?: {
         case '/usage': {
           const arg = args.trim().toLowerCase()
           if (arg === 'page') {
-            toast.info('Usage page is available from the sidebar')
+            toast.info(t('chat.slashUsageHint'))
             return
           }
           const method = arg === 'cost' ? 'usage.cost' : 'usage.status'
@@ -194,7 +199,7 @@ export function useSlashCommands(opts?: {
                 toast.info(
                   total != null
                     ? `Usage cost: $${Number(total).toFixed(6)}`
-                    : 'Usage cost unavailable',
+                    : t('chat.slashUsageUnavailable'),
                 )
                 return
               }
@@ -213,7 +218,11 @@ export function useSlashCommands(opts?: {
               )
             })
             .catch((err: unknown) =>
-              toast.error('Usage failed: ' + (err instanceof Error ? err.message : String(err))),
+              toast.error(
+                t('chat.slashUsageFailed', {
+                  message: err instanceof Error ? err.message : String(err),
+                }),
+              ),
             )
           return
         }
@@ -235,7 +244,9 @@ export function useSlashCommands(opts?: {
                   )
                 : list
               if (matches.length === 0) {
-                toast.info(filter ? `No models match "${filter}"` : 'No models available')
+                toast.info(
+                  filter ? t('chat.slashNoModelsMatch', { filter }) : t('chat.slashNoModels'),
+                )
                 return
               }
               const lines = matches.map((m) => {
@@ -254,7 +265,9 @@ export function useSlashCommands(opts?: {
             })
             .catch((err: unknown) =>
               toast.error(
-                'Model list failed: ' + (err instanceof Error ? err.message : String(err)),
+                t('chat.slashModelListFailed', {
+                  message: err instanceof Error ? err.message : String(err),
+                }),
               ),
             )
           return
@@ -266,11 +279,15 @@ export function useSlashCommands(opts?: {
             .call('router.hold.set', { key, tier })
             .then((res: unknown) => {
               const model = (res as { model?: string })?.model
-              toast.info('Router pinned to ' + tier + (model ? ' → ' + model : ''))
+              toast.info(
+                t('chat.slashRouterPinned', { target: tier + (model ? ' → ' + model : '') }),
+              )
             })
             .catch((err: unknown) =>
               toast.error(
-                'Router pin failed: ' + (err instanceof Error ? err.message : String(err)),
+                t('chat.slashRouterPinFailed', {
+                  message: err instanceof Error ? err.message : String(err),
+                }),
               ),
             )
           return
@@ -282,13 +299,15 @@ export function useSlashCommands(opts?: {
             .then((res: unknown) =>
               toast.info(
                 (res as { cleared?: boolean })?.cleared
-                  ? 'Automatic routing restored'
-                  : 'Automatic routing already active',
+                  ? t('chat.slashRoutingRestored')
+                  : t('chat.slashRoutingAlready'),
               ),
             )
             .catch((err: unknown) =>
               toast.error(
-                'Router unpin failed: ' + (err instanceof Error ? err.message : String(err)),
+                t('chat.slashRouterUnpinFailed', {
+                  message: err instanceof Error ? err.message : String(err),
+                }),
               ),
             )
           return
@@ -320,7 +339,7 @@ export function useSlashCommands(opts?: {
       const rest = parts.slice(1)
       const cmd = commandMapRef.current.get(slashCommandKey(cmdText))
       if (!cmd) {
-        toast.warning('Unsupported command: ' + cmdText)
+        toast.warning(t('chat.slashUnsupported', { command: cmdText }))
         return true
       }
       dispatch(cmd, rest.join(' '))

@@ -4,6 +4,8 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { toast } from 'sonner'
 import { MAX_PENDING, sendButtonState, shouldAutofocusComposer } from './logic'
 import { useShortcutDocs } from '@/components/KeyboardShortcuts'
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
 
 // #137 — what the composer binds, in the order `onTextareaKeyDown` tests it, so
 // the `?` overlay reports the composer accurately without the handler leaving
@@ -493,8 +495,8 @@ export function Composer({
               aria-haspopup="dialog"
               aria-expanded={toolbarOpen}
               aria-controls="chat-toolbar-popover"
-              aria-label="Run modes"
-              title="Run modes: execution and routing"
+              aria-label={t('chat.runModes')}
+              title={t('chat.runModesTitle')}
               onClick={() => setToolbarOpen((v) => !v)}
             >
               <SlidersHorizontalIcon aria-hidden="true" />
@@ -515,14 +517,14 @@ export function Composer({
                 >
                   <div className="chat-toolbar-popover__header">
                     <h2 id="chat-toolbar-popover-title" className="chat-toolbar-popover__title">
-                      Run modes
+                      {t('chat.runModes')}
                     </h2>
                     <button
                       ref={toolbarCloseRef}
                       type="button"
                       className="chat-toolbar-popover__close"
-                      aria-label="Close run modes"
-                      title="Close run modes"
+                      aria-label={t('chat.runModesClose')}
+                      title={t('chat.runModesClose')}
                       onClick={() => {
                         setToolbarOpen(false)
                         toolbarTriggerRef.current?.focus()
@@ -546,15 +548,15 @@ export function Composer({
               accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/html,text/csv,application/json,.png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.markdown,.html,.htm,.csv,.json"
               className="chat-composer__file-input"
               onChange={onFilePicked}
-              aria-label="Attach files"
+              aria-label={t('chat.attachFiles')}
               hidden
             />
             <button
               type="button"
               className="btn-term chat-composer__attach"
               onClick={() => fileInputRef.current?.click()}
-              title="Attach a file"
-              aria-label="Attach files"
+              title={t('chat.attachFileTitle')}
+              aria-label={t('chat.attachFiles')}
             >
               <PaperclipIcon aria-hidden="true" />
             </button>
@@ -566,9 +568,9 @@ export function Composer({
           value={value}
           onChange={onChange}
           onKeyDown={onKeyDown}
-          placeholder="Send a message..."
+          placeholder={t('chat.messagePlaceholder')}
           rows={1}
-          aria-label="Message"
+          aria-label={t('chat.messageLabel')}
           aria-autocomplete={slashListboxId ? 'list' : undefined}
           aria-expanded={slashListboxId ? Boolean(slashActiveDescendant) : undefined}
           aria-controls={slashActiveDescendant ? slashListboxId : undefined}
@@ -579,8 +581,8 @@ export function Composer({
             type="button"
             className="btn-term chat-composer__abort"
             onClick={() => onAbort?.()}
-            title="Stop (Esc)"
-            aria-label="Stop"
+            title={t('chat.stopTitle')}
+            aria-label={t('chat.stop')}
           >
             <SquareIcon aria-hidden="true" />
           </button>
@@ -591,7 +593,7 @@ export function Composer({
             onClick={doSend}
             disabled={sendDisabled}
             title={sendLabel}
-            aria-label="Send"
+            aria-label={t('chat.send')}
           >
             <ArrowUpIcon aria-hidden="true" />
           </button>

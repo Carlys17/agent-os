@@ -16,6 +16,9 @@
 // is extracted as `createSeqGate()` and unit-tested (stream.test.ts). The DOM
 // mutation is verified by a live-browser sweep (parity matrix), not RTL.
 
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 import type { StreamEventPayload } from '../types'
 import { createToolRenderer, type ToolRenderer } from './tools'
 import { createArtifactRenderer, type Artifact, type ArtifactRenderer } from './artifacts'
@@ -44,15 +47,17 @@ export const STREAM_SEQ_SEEN_WINDOW = 800
 export const THINKING_DELAY_MS = 400
 export const THINKING_TTL_MS = 60000
 // chat.js:381-382 — "Watching · N.Ns" verb cycle for the thinking indicator.
-export const CAP_VERBS = [
-  'Watching',
-  'Tracking',
-  'Sensing',
-  'Pulsing',
-  'Thinking',
-  'Drafting',
-  'Polishing',
-] as const
+export function capVerbs(): readonly string[] {
+  return [
+    t('chat.verbWatching'),
+    t('chat.verbTracking'),
+    t('chat.verbSensing'),
+    t('chat.verbPulsing'),
+    t('chat.verbThinking'),
+    t('chat.verbDrafting'),
+    t('chat.verbPolishing'),
+  ]
+}
 export const CAP_DWELL_MS = 2500
 // chat.js:45-47 — hint/reveal classes toggled on the streaming bubble.
 export const AWAITING_MODEL_CLASS = 'awaiting-model'
@@ -716,7 +721,8 @@ export function createStreamController(
     elapsed.setAttribute('aria-live', 'off')
     const elapsedMs = Date.now() - _thinkingStartTime
     const seconds = Math.floor(elapsedMs / 1000)
-    const verb = CAP_VERBS[Math.floor(elapsedMs / CAP_DWELL_MS) % CAP_VERBS.length]
+    const verbs = capVerbs()
+    const verb = verbs[Math.floor(elapsedMs / CAP_DWELL_MS) % verbs.length]
     elapsed.textContent = `${verb} (${seconds}s)`
 
     const agent = document.createElement('span')
@@ -740,13 +746,14 @@ export function createStreamController(
       }
       const eMs = Date.now() - _thinkingStartTime
       const s = Math.floor(eMs / 1000)
-      const v = CAP_VERBS[Math.floor(eMs / CAP_DWELL_MS) % CAP_VERBS.length]
+      const verbs = capVerbs()
+      const v = verbs[Math.floor(eMs / CAP_DWELL_MS) % verbs.length]
       const label = _thinkingEl.querySelector('.thinking-elapsed')
       if (label) label.textContent = `${v} (${s}s)`
 
       if (s >= THINKING_TTL_MS / 1000) {
         hideThinkingIndicator()
-        addMessage('system', 'Still waiting for agent response…')
+        addMessage('system', t('chat.stillWaiting'))
       }
     }, 1000)
   }

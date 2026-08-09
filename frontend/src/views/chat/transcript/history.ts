@@ -9,6 +9,9 @@
 // The react-query wiring that DRIVES these (fetch + backward pagination) lives
 // in useTranscript.ts (idiomatic React). Legacy source: static/js/views/chat.js.
 
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 import type { ChatMessage } from '../types'
 import type { Artifact } from './artifacts'
 import type { TurnMeta, TurnUsage } from './message'
@@ -369,7 +372,7 @@ export function createHistoryRenderer(deps: HistoryRenderDeps) {
 
     if (state.loadingEarlier) {
       tone = 'loading'
-      message = 'Loading earlier messages...'
+      message = t('chat.historyLoadingEarlier')
     } else if (state.error) {
       tone = 'error'
       message = state.error
@@ -377,12 +380,12 @@ export function createHistoryRenderer(deps: HistoryRenderDeps) {
     } else if (state.hasMore || state.scope === 'latest_window') {
       tone = 'partial'
       message = `Showing latest ${state.loadedMessages.length} messages.`
-      detail = 'Older history is available.'
+      detail = t('chat.historyOlderAvailable')
       showLoadEarlier = !!state.oldestCursor
     } else if (state.scope === 'compacted' || state.compactionSummaries.length > 0) {
       tone = 'compacted'
-      message = 'Older context was compacted for the model.'
-      detail = 'Export the session for exact text.'
+      message = t('chat.historyCompacted')
+      detail = t('chat.historyExportHint')
     } else {
       return
     }
@@ -400,7 +403,7 @@ export function createHistoryRenderer(deps: HistoryRenderDeps) {
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.className = 'btn btn--sm btn--ghost'
-      btn.textContent = 'Load earlier'
+      btn.textContent = t('chat.historyLoadEarlier')
       btn.disabled = state.loadingEarlier
       btn.addEventListener('click', () => deps.loadEarlierHistory())
       actions.appendChild(btn)
@@ -409,7 +412,8 @@ export function createHistoryRenderer(deps: HistoryRenderDeps) {
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.className = 'btn btn--sm btn--ghost'
-      btn.textContent = state.hasMore && state.oldestCursor ? 'Retry' : 'Retry history'
+      btn.textContent =
+        state.hasMore && state.oldestCursor ? t('chat.historyRetry') : t('chat.historyRetryHistory')
       btn.addEventListener('click', () => {
         if (state.hasMore && state.oldestCursor) {
           deps.loadEarlierHistory()
@@ -473,7 +477,7 @@ export function createHistoryRenderer(deps: HistoryRenderDeps) {
       headerState.current.role = ''
       const empty = document.createElement('div')
       empty.className = 'chat-empty'
-      empty.textContent = 'No messages yet.'
+      empty.textContent = t('chat.historyEmpty')
       th.appendChild(empty)
       deps.markHistoryRendered()
       diag('history.empty.rendered_empty_state', {})

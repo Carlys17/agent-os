@@ -30,6 +30,9 @@
 /* ── Constants (ported verbatim from chat.js) ───────────────────────────── */
 
 // chat.js:2991-2998 — the six terminal compaction statuses.
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 const COMPACTION_TERMINAL_STATUSES = new Set([
   'completed',
   'skipped',
@@ -53,22 +56,26 @@ export const INTERNAL_COMPACTION_SKIP_REASONS = new Set([
 ])
 
 // chat.js:3210-3216 — manual-compact user-facing skip messages by reason.
-const COMPACTION_SKIP_MESSAGES: Record<string, string> = {
-  coverage_blocked: 'Context was left unchanged because required details could not be preserved.',
-  empty_ephemeral_webchat_session: 'No compactable chat history yet.',
-  empty_summary: 'Context was left unchanged because no usable summary was produced.',
-  no_entries: 'No compactable chat history yet.',
-  no_safe_turn_boundary: 'Context cannot be compacted safely during the current tool turn.',
+function compactionSkipMessages(): Record<string, string> {
+  return {
+    coverage_blocked: t('chat.compactSkipCoverage'),
+    empty_ephemeral_webchat_session: t('chat.compactSkipEmptyEphemeral'),
+    empty_summary: t('chat.compactSkipEmptySummary'),
+    no_entries: t('chat.compactSkipNoEntries'),
+    no_safe_turn_boundary: t('chat.compactSkipNoBoundary'),
+  }
 }
 
 // chat.js:3218-3225 — short separator-detail strings by reason.
-const COMPACTION_SKIP_DETAILS: Record<string, string> = {
-  coverage_blocked: 'Required details could not be preserved',
-  empty_ephemeral_webchat_session: 'No compactable history',
-  empty_summary: 'No usable summary was produced',
-  no_entries: 'No compactable history',
-  no_safe_turn_boundary: 'Current tool turn boundary is not safe to compact',
-  unsafe_flush_receipt: 'Memory safety check did not complete',
+function compactionSkipDetails(): Record<string, string> {
+  return {
+    coverage_blocked: t('chat.compactDetailCoverage'),
+    empty_ephemeral_webchat_session: t('chat.compactDetailEmptyEphemeral'),
+    empty_summary: t('chat.compactDetailEmptySummary'),
+    no_entries: t('chat.compactDetailNoEntries'),
+    no_safe_turn_boundary: t('chat.compactDetailNoBoundary'),
+    unsafe_flush_receipt: t('chat.compactDetailUnsafeFlush'),
+  }
 }
 
 // chat.js:2973 — default separator auto-removal delay.
@@ -206,13 +213,11 @@ export function compactionSkipMessage(
 ): string {
   const reason = compactionReason(payload)
   if (source === 'manual') {
-    return (
-      COMPACTION_SKIP_MESSAGES[reason] || 'Already within context budget; no compact was applied.'
-    )
+    return compactionSkipMessages()[reason] || t('chat.compactWithinBudget')
   }
-  if (COMPACTION_SKIP_MESSAGES[reason]) return 'Context compaction could not be applied'
-  if (reason) return 'Context compaction skipped'
-  return 'Already within context budget; no compact was applied.'
+  if (compactionSkipMessages()[reason]) return t('chat.compactCouldNotApply')
+  if (reason) return t('chat.compactSkipped')
+  return t('chat.compactWithinBudget')
 }
 
 // chat.js:3253-3261
@@ -222,10 +227,11 @@ export function compactionStatusDetail(
   status = '',
 ): string {
   if (!compactionUserVisible(payload, source, status)) return ''
-  if (status === 'emergency_ephemeral') return 'Request-scoped; session history was not rewritten'
+  if (status === 'emergency_ephemeral') return t('chat.compactEphemeralDetail')
   const reason = compactionReason(payload)
   if (INTERNAL_COMPACTION_SKIP_REASONS.has(reason)) return ''
-  if (COMPACTION_SKIP_DETAILS[reason]) return COMPACTION_SKIP_DETAILS[reason]
+  const detail = compactionSkipDetails()[reason]
+  if (detail) return detail
   if (reason) return reason.replace(/_/g, ' ')
   return ''
 }
@@ -262,7 +268,7 @@ export function compactSemanticMemoryNotice(payload: CompactionPayload | null | 
   const semanticStatus = String((semantic && semantic.status) || '').toLowerCase()
   const safetyStatus = String((safety && safety.status) || '').toLowerCase()
   if (semanticStatus === 'degraded' && safetyStatus !== 'error') {
-    return 'Memory saved; organizing'
+    return t('chat.compactMemoryOrganizing')
   }
   return ''
 }
@@ -690,7 +696,7 @@ export function createCompactionRenderer(deps: CompactionRendererDeps) {
     if (status === 'emergency_ephemeral') {
       settleCompactInFlight(payload || {})
       if (!isReplay) {
-        toast('Continuing with temporary context compaction for this turn', 'info', 4500)
+        toast(t('chat.compactTemporaryToast'), 'info', 4500)
       }
       return
     }
@@ -704,7 +710,7 @@ export function createCompactionRenderer(deps: CompactionRendererDeps) {
       settleCompactInFlight(payload || {})
       syncCompactionSeparator(payload || {}, 'completed', source, {
         tone: 'ok',
-        label: 'context compacted',
+        label: t('chat.compactSeparatorDone'),
       })
       scheduleHistorySync()
       return
@@ -719,19 +725,24 @@ export function createCompactionRenderer(deps: CompactionRendererDeps) {
       const safe = compactSafeMessageDetail(payload || {})
       const msg = safe ? ': ' + safe : ''
       const pendingSuffix = keepPendingQueued
-        ? '; pending message preserved'
+        ? t('chat.compactPendingPreserved')
         : recovered
-          ? '; pending message recovered to input'
+          ? t('chat.compactPendingRecovered')
           : ''
-      syncCompactionSeparator(payload || {}, status, source, { label: 'compaction failed' })
-      if (!isReplay) toast('Compact failed' + msg + pendingSuffix, 'err', 5000)
+      syncCompactionSeparator(payload || {}, status, source, {
+        label: t('chat.compactSeparatorFailed'),
+      })
+      if (!isReplay)
+        toast(t('chat.compactFailedToast', { detail: msg, pending: pendingSuffix }), 'err', 5000)
       return
     }
     if (status === 'cancelled') {
       const recovered = settleCompactInFlight(payload || {}, { recoverPending: true })
       if (!isReplay) {
         toast(
-          'Compact cancelled' + (recovered ? '; pending message recovered to input' : ''),
+          t('chat.compactCancelledToast', {
+            pending: recovered ? t('chat.compactPendingRecovered') : '',
+          }),
           'info',
           4500,
         )

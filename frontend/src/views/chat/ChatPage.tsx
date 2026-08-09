@@ -33,6 +33,8 @@ import { useApprovalPending } from './useApprovalPending'
 import { usePendingQueue, type PendingComposerBridge } from './usePendingQueue'
 import { useSlashCommands } from './useSlashCommands'
 import { useTranscript } from './useTranscript'
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
 
 // chat.js:2519 — Cmd/Ctrl+Shift+O mirrors the New chat button from anywhere in
 // the app. The registry matches on the physical key too, so this keeps working
@@ -601,27 +603,27 @@ export function ChatPage() {
 
   return (
     <div className="chat-stage" onDrop={onDrop} onDragOver={onDragOver} onPaste={onPaste}>
-      <h1 className="sr-only">Chat</h1>
+      <h1 className="sr-only">{t('chat.srTitle')}</h1>
       {/* New chat is a conversation-level action, so it lives in the floating
           Chat workspace header instead of competing with Send. */}
       <ShellPrimaryActionPortal>
         <button
           type="button"
           className="chat-new-button"
-          title={`New chat (${shortcutHint})`}
-          aria-label="New chat"
+          title={t('chat.newChatTitle', { shortcut: shortcutHint })}
+          aria-label={t('chat.newChat')}
           onClick={startNewChat}
         >
           <span className="chat-new-button__icon" aria-hidden="true">
             <SquarePen />
           </span>
-          <span className="chat-new-button__label">New chat</span>
+          <span className="chat-new-button__label">{t('chat.newChat')}</span>
         </button>
       </ShellPrimaryActionPortal>
       {/* Session context is portalled into the detached Chat header so the
           switch/reset/export workflow stays close to conversation identity. */}
       <ShellHeaderPortal>
-        <div className="chat-session-bar" role="group" aria-label="Chat session controls">
+        <div className="chat-session-bar" role="group" aria-label={t('chat.sessionControls')}>
           <SessionChip
             sessionKey={sessionKey}
             runState={runState}
@@ -634,7 +636,7 @@ export function ChatPage() {
       <div className="chat-thread" ref={containerRef} data-history-ready="false" />
       <div className="chat-history-loading" role="status" aria-live="polite">
         <span className="chat-history-loading__dot" aria-hidden="true" />
-        <span>Opening conversation…</span>
+        <span>{t('chat.opening')}</span>
       </div>
       <PendingQueue queue={pending.queue} onRemove={pending.remove} onClearAll={pending.clearAll} />
       <Composer
@@ -693,23 +695,27 @@ export function ChatPage() {
                   <Terminal />
                 </span>
                 <div>
-                  <div className="chat-output-modal__eyebrow">Tool output</div>
+                  <div className="chat-output-modal__eyebrow">{t('chat.toolOutputEyebrow')}</div>
                   <h2 id="chat-tool-result-modal-title">{toolResultModal.title}</h2>
                 </div>
               </div>
               <button
                 type="button"
                 className="chat-output-modal__close"
-                aria-label="Close"
-                title="Close tool output"
+                aria-label={t('common.close')}
+                title={t('chat.toolOutputClose')}
                 onClick={() => setToolResultModal(null)}
               >
                 <X aria-hidden="true" />
               </button>
             </header>
             <div className="chat-output-modal__meta">
-              <span>Full result</span>
-              <span>{toolResultModal.content.length.toLocaleString()} characters</span>
+              <span>{t('chat.toolOutputFull')}</span>
+              <span>
+                {t('chat.toolOutputChars', {
+                  count: toolResultModal.content.length.toLocaleString(),
+                })}
+              </span>
             </div>
             <pre id="chat-tool-result-modal-content" className="chat-tool-result-full">
               {toolResultModal.content}

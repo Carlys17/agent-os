@@ -25,6 +25,9 @@
 // chat.js:7043) is NOT re-ported here — Task 4 already ported it into tools.ts;
 // this module re-exports it from there so there is one definition (DRY).
 
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 export { publishArtifactTargetName } from './tools'
 
 import { isChartArtifact } from './chart'
@@ -313,21 +316,21 @@ export function createArtifactRenderer(deps: ArtifactRendererDeps) {
         html += `<div class="msg-artifact-chart" data-chart-src="${escAttr(payloadUrl)}" data-artifact-category="${escAttr(category)}" data-artifact-id="${escAttr(artifact?.id || '')}" data-artifact-name="${escAttr(name)}">
           <div class="msg-artifact-chart__header">
             <span class="msg-artifact-chart__name">${esc(name)}</span>
-            <a class="msg-artifact-chart__download" href="${escAttr(downloadHref)}" download="${escAttr(name)}" data-artifact-download="${escAttr(downloadUrl)}">Download</a>
+            <a class="msg-artifact-chart__download" href="${escAttr(downloadHref)}" download="${escAttr(name)}" data-artifact-download="${escAttr(downloadUrl)}">${escAttr(t('chat.artifactDownload'))}</a>
           </div>
           <div class="msg-artifact-chart__readout"></div>
           <div class="msg-artifact-chart__canvas"></div>
-          <p class="msg-artifact-chart__status">Loading chart…</p>
+          <p class="msg-artifact-chart__status">${escAttr(t('chat.chartLoading'))}</p>
         </div>`
       } else if (isImageArtifact(artifact)) {
         const previewUrl = artifactPreviewUrl(artifact || {}, { sessionKey, token })
-        html += `<a class="msg-artifact-card msg-artifact-card--image" href="${escAttr(downloadHref)}" download="${escAttr(name)}" data-artifact-category="${escAttr(category)}" data-artifact-download="${escAttr(downloadUrl)}" data-artifact-id="${escAttr(artifact?.id || '')}" data-artifact-name="${escAttr(name)}" title="Download ${escAttr(name)}">
+        html += `<a class="msg-artifact-card msg-artifact-card--image" href="${escAttr(downloadHref)}" download="${escAttr(name)}" data-artifact-category="${escAttr(category)}" data-artifact-download="${escAttr(downloadUrl)}" data-artifact-id="${escAttr(artifact?.id || '')}" data-artifact-name="${escAttr(name)}" title="${escAttr(t('chat.artifactDownloadTitle', { name }))}">
           ${previewUrl ? `<img class="msg-artifact-preview" src="${esc(previewUrl)}" alt="${esc(name)}" loading="lazy">` : '<span class="msg-artifact-preview msg-artifact-preview--empty" aria-hidden="true"></span>'}
           <span class="msg-artifact-card__body">
             <span class="msg-artifact-card__name">${esc(name)}</span>
             <span class="msg-artifact-card__meta">${esc(meta)}</span>
           </span>
-          <span class="msg-artifact-card__action" aria-hidden="true">Download</span>
+          <span class="msg-artifact-card__action" aria-hidden="true">${escAttr(t('chat.artifactDownload'))}</span>
         </a>`
       } else if (isAudioArtifact(artifact)) {
         html += `<div class="msg-artifact-card msg-artifact-card--audio" data-artifact-category="${escAttr(category)}" data-artifact-id="${escAttr(artifact?.id || '')}" data-artifact-name="${escAttr(name)}">
@@ -336,7 +339,7 @@ export function createArtifactRenderer(deps: ArtifactRendererDeps) {
             <span class="msg-artifact-card__name">${esc(name)}</span>
             <span class="msg-artifact-card__meta">${esc(meta)}</span>
           </span>
-          <a class="msg-artifact-card__action" href="${escAttr(downloadHref)}" download="${escAttr(name)}" data-artifact-download="${escAttr(downloadUrl)}">Download</a>
+          <a class="msg-artifact-card__action" href="${escAttr(downloadHref)}" download="${escAttr(name)}" data-artifact-download="${escAttr(downloadUrl)}">${escAttr(t('chat.artifactDownload'))}</a>
         </div>`
       } else {
         html += `<a class="msg-artifact-chip" href="${escAttr(downloadHref)}" download="${escAttr(name)}" data-artifact-category="${escAttr(category)}" data-artifact-download="${escAttr(downloadUrl)}" data-artifact-id="${escAttr(artifact?.id || '')}" data-artifact-name="${escAttr(name)}" title="${escAttr(name)}">
