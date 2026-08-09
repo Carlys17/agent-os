@@ -5,6 +5,8 @@ import { CommandLine } from '@/components/CommandLine'
 import { useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { useBootstrap, useRpc } from '@/app/providers'
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/health'
 import { t } from '@/i18n'
 import {
   evidenceLabel,

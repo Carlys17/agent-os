@@ -1,4 +1,6 @@
-export const logs = {
+import { defineNamespace } from '../registry'
+
+export const logs = defineNamespace('logs', {
   documentTitle: 'Logs - AgentOS Control',
   eyebrow: 'Control · Logs',
   title: 'Logs',
@@ -52,4 +54,4 @@ export const logs = {
   // Toasts.
   toastRefreshFailed: 'Log refresh failed: {message}',
   toastUnknownError: 'unknown error',
-} as const
+} as const)

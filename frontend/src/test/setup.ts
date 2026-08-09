@@ -1,4 +1,9 @@
 import '@testing-library/jest-dom/vitest'
+// Register every English namespace. In the browser each view registers its own
+// as part of its lazy chunk (see i18n/registry.ts); a unit test renders a
+// component without that chunk boundary, so the suite stands in for it here
+// rather than making every test remember an import.
+import '@/i18n/en'
 import { cleanup } from '@testing-library/react'
 import { transferableAbortController } from 'node:util'
 import { afterEach, vi } from 'vitest'

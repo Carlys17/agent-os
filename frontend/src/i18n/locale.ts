@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { en } from './en'
+import { hasCatalog, putCatalog } from './registry'
 import type { PartialMessages } from './types'
 
 /** A BCP 47 primary subtag that has a catalog registered. */
@@ -8,18 +8,13 @@ export type Locale = string
 export const DEFAULT_LOCALE = 'en'
 
 /**
- * Registered catalogs, keyed by lowercased tag. A future locale ships as its
- * own directory plus one `registerCatalog('pt', pt)` call — this module never
- * needs editing again.
+ * Register a locale's messages, keyed by lowercased tag. A future locale ships
+ * as its own directory plus one `registerCatalog('pt', pt)` call — this module
+ * never needs editing again. English is seeded by the registry itself and
+ * filled in namespace by namespace as catalog modules load.
  */
-const CATALOGS = new Map<string, PartialMessages>([[DEFAULT_LOCALE, en]])
-
 export function registerCatalog(tag: string, messages: PartialMessages): void {
-  CATALOGS.set(tag.trim().toLowerCase(), messages)
-}
-
-export function catalogFor(locale: Locale): PartialMessages {
-  return CATALOGS.get(locale) ?? en
+  putCatalog(tag.trim().toLowerCase(), messages)
 }
 
 /**
@@ -43,9 +38,9 @@ export function resolveLocale(candidate?: string | null): Locale {
     .trim()
     .toLowerCase()
   if (!raw) return DEFAULT_LOCALE
-  if (CATALOGS.has(raw)) return raw
+  if (hasCatalog(raw)) return raw
   const primary = raw.split(/[-_]/)[0] ?? ''
-  return CATALOGS.has(primary) ? primary : DEFAULT_LOCALE
+  return hasCatalog(primary) ? primary : DEFAULT_LOCALE
 }
 
 export function setLocale(candidate?: string | null): Locale {

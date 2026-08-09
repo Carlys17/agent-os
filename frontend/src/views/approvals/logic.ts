@@ -11,6 +11,8 @@ import {
   type Approval,
   type ElevatedMode,
 } from '@/services/approval-monitor'
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/approvals'
 import { t } from '@/i18n'
 
 // Re-exported from the single elevated-mode source of truth

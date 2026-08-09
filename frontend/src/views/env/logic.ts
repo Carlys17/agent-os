@@ -5,6 +5,8 @@
  * can be tested without a DOM — the same split the Skills and MCP views use.
  */
 
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/env'
 import { t } from '@/i18n'
 
 /** Shared so the Settings glance and the Environment screen hit one cache. */
