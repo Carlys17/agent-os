@@ -32,6 +32,7 @@ from agentos.paths import default_agentos_home
 from agentos.router_tiers import (
     DEFAULT_ROUTER_STRATEGY,
     DEFAULT_TEXT_TIER,
+    TEXT_TIERS,
     normalize_text_tier,
     normalize_tier_mapping,
 )
@@ -1151,8 +1152,28 @@ class AgentOSRouterConfig(BaseSettings):
     complaint_upgrade_enabled: bool = True
     complaint_upgrade_steps: int = 1
     complaint_upgrade_max_chars: int = 160
+    # Translation is scored by the router as ordinary work (English, the only
+    # language it was trained on, lands on c1), and non-English input drifts a
+    # tier or more in either direction because it is out of distribution.
+    # Whether translation deserves more than the cheapest tier is an operator
+    # policy, so a deterministic detector (14 languages) caps every detected
+    # translation here instead. A complaint upgrade wins over the cap, and the
+    # large-context floor runs after it.
+    translate_ceiling_enabled: bool = True
+    translate_ceiling_tier: str = "c0"
     estimated_output_savings_pct: float = 0.03
     upgrade_to_c3_compaction_enabled: bool = True
+
+    @field_validator("translate_ceiling_tier")
+    @classmethod
+    def _validate_translate_ceiling_tier(cls, value: str) -> str:
+        tier = normalize_text_tier(value)
+        if tier is None:
+            allowed = ", ".join(repr(t) for t in TEXT_TIERS)
+            raise ValueError(
+                f"agentos_router.translate_ceiling_tier must be one of {allowed}; got {value!r}"
+            )
+        return tier
 
     @field_validator("strategy")
     @classmethod

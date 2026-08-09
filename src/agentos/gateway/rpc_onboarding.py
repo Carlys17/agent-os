@@ -228,6 +228,12 @@ async def _router_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     safety_net_threshold = (
         params.get("safetyNetThreshold") if isinstance(params, dict) else None
     )
+    translate_ceiling_enabled = (
+        params.get("translateCeilingEnabled") if isinstance(params, dict) else None
+    )
+    translate_ceiling_tier = (
+        params.get("translateCeilingTier") if isinstance(params, dict) else None
+    )
     verify_local_endpoint = bool(judge_base_url)
     # ``upsert_router`` is synchronous, and with ``verify_local_endpoint=True`` it
     # runs a full test classification against the local judge endpoint (up to the
@@ -249,6 +255,8 @@ async def _router_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
             judge_base_url=judge_base_url,
             judge_api_key=judge_api_key,
             safety_net_threshold=safety_net_threshold,
+            translate_ceiling_enabled=translate_ceiling_enabled,
+            translate_ceiling_tier=translate_ceiling_tier,
             verify_local_endpoint=True,
         )
     else:
@@ -263,6 +271,8 @@ async def _router_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
             judge_base_url=judge_base_url,
             judge_api_key=judge_api_key,
             safety_net_threshold=safety_net_threshold,
+            translate_ceiling_enabled=translate_ceiling_enabled,
+            translate_ceiling_tier=translate_ceiling_tier,
             verify_local_endpoint=False,
         )
     commit = _commit_mutation(

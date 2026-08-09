@@ -443,6 +443,8 @@ describe('router derivation (setup.js:550-635,1767-1846)', () => {
       defaultTier: 'c2',
       judgeModel: null,
       pilotThresholdRaw: '0.7',
+      translateCeilingEnabled: true,
+      translateCeilingTier: 'c0',
       tiers: [
         { tier: 'c0', provider: 'openai', model: 'a', thinkingLevel: 'low', supportsImage: false },
         {
@@ -466,11 +468,44 @@ describe('router derivation (setup.js:550-635,1767-1846)', () => {
       defaultTier: 'c1',
       judgeModel: null,
       pilotThresholdRaw: '0.5',
+      translateCeilingEnabled: true,
+      translateCeilingTier: 'c0',
       tiers: [],
     })
     expect(params.mode).toBe('disabled')
     expect(params.strategy).toBeUndefined()
     expect(params.safetyNetThreshold).toBeUndefined()
+  })
+  it('buildRouterConfigureParams: translation cap is forwarded for every mode', () => {
+    // The cap is an engine guard, so unlike the pilot threshold it must survive
+    // a judge or disabled selection rather than being dropped with the strategy.
+    const forMode = (sel: 'pilot-v1' | 'llm_judge' | 'disabled') =>
+      buildRouterConfigureParams({
+        sel,
+        defaultTier: 'c1',
+        judgeModel: null,
+        pilotThresholdRaw: '0.5',
+        translateCeilingEnabled: true,
+        translateCeilingTier: 'c0',
+        tiers: [],
+      })
+    for (const sel of ['pilot-v1', 'llm_judge', 'disabled'] as const) {
+      expect(forMode(sel).translateCeilingEnabled).toBe(true)
+      expect(forMode(sel).translateCeilingTier).toBe('c0')
+    }
+  })
+  it('buildRouterConfigureParams: translation cap can be turned off', () => {
+    const params = buildRouterConfigureParams({
+      sel: 'pilot-v1',
+      defaultTier: 'c1',
+      judgeModel: null,
+      pilotThresholdRaw: '0.5',
+      translateCeilingEnabled: false,
+      translateCeilingTier: 'c1',
+      tiers: [],
+    })
+    expect(params.translateCeilingEnabled).toBe(false)
+    expect(params.translateCeilingTier).toBe('c1')
   })
   it('buildRouterConfigureParams: judge mode never forwards threshold', () => {
     const params = buildRouterConfigureParams({
@@ -478,6 +513,8 @@ describe('router derivation (setup.js:550-635,1767-1846)', () => {
       defaultTier: 'c1',
       judgeModel: 'j',
       pilotThresholdRaw: '0.9',
+      translateCeilingEnabled: true,
+      translateCeilingTier: 'c0',
       tiers: [],
     })
     expect(params.strategy).toBe('llm_judge')

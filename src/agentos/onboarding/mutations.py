@@ -739,6 +739,8 @@ def upsert_router(
     judge_base_url: str | None = None,
     judge_api_key: str | None = None,
     safety_net_threshold: float | None = None,
+    translate_ceiling_enabled: bool | None = None,
+    translate_ceiling_tier: str | None = None,
     verify_local_endpoint: bool = False,
 ) -> MutationResult:
     """Upsert router config.
@@ -761,6 +763,11 @@ def upsert_router(
     (only meaningful under ``strategy="pilot-v1"``): ``None`` preserves the
     persisted value; any provided value is range-validated (0.0–1.0) by
     ``PilotConfig`` and persisted.
+
+    ``translate_ceiling_enabled`` / ``translate_ceiling_tier`` set the
+    translation cap (``[agentos_router]``), which applies to every strategy:
+    ``None`` preserves the persisted value, and the tier is validated by
+    ``AgentOSRouterConfig`` when the payload is reconstructed below.
 
     ``verify_local_endpoint`` runs a one-shot connectivity probe (spec D2) when a
     new local ``judge_base_url`` is being set, raising if it is unreachable or
@@ -796,6 +803,13 @@ def upsert_router(
         pilot_payload = dict(router_payload.get("pilot") or {})
         pilot_payload["safety_net_threshold"] = safety_net_threshold
         router_payload["pilot"] = pilot_payload
+
+    # Translation ceiling. Strategy-independent: the cap is an engine guard, so
+    # it is written at the top level rather than into the pilot sub-table.
+    if translate_ceiling_enabled is not None:
+        router_payload["translate_ceiling_enabled"] = bool(translate_ceiling_enabled)
+    if translate_ceiling_tier is not None:
+        router_payload["translate_ceiling_tier"] = translate_ceiling_tier
 
     default_tier_override = _normalize_explicit_text_tier(default_tier)
     default_tier_clean = default_tier_override or str(
