@@ -32,12 +32,14 @@ import {
   type EnvVarRow,
 } from './logic'
 
-const FILTERS: ReadonlyArray<{ id: EnvFilter; label: string }> = [
-  { id: 'all', label: t('env.filterAll') },
-  { id: 'missing', label: t('env.filterMissing') },
-  { id: 'set', label: t('env.filterSet') },
-  { id: 'custom', label: t('env.filterCustom') },
-]
+function filterOptions(): ReadonlyArray<{ id: EnvFilter; label: string }> {
+  return [
+    { id: 'all', label: t('env.filterAll') },
+    { id: 'missing', label: t('env.filterMissing') },
+    { id: 'set', label: t('env.filterSet') },
+    { id: 'custom', label: t('env.filterCustom') },
+  ]
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -292,7 +294,7 @@ export function EnvPage() {
           aria-label={t('env.search')}
         />
         <div className="env-filters" role="group" aria-label={t('env.filterLandmark')}>
-          {FILTERS.map((entry) => (
+          {filterOptions().map((entry) => (
             <button
               key={entry.id}
               type="button"
