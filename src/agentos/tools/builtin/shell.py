@@ -326,12 +326,33 @@ def _resolve_shell_write_target(raw_target: str, workdir: str | None) -> Path:
     return path.resolve(strict=False)
 
 
+# ``2>&1``, ``>&2`` and ``>&-`` duplicate or close a descriptor: what follows the
+# operator is a descriptor number, not a path. Blank those out before scanning so
+# they are never mistaken for a write target.
+_FD_DUP_PATTERN = re.compile(r"\d*>&\s*(?:\d+-?|-)(?=$|[\s|&;<>)])")
+
+# Redirection operators that create or truncate a file: ``>``, ``>>``, ``n>``,
+# ``n>>``, ``&>``, ``&>>``, ``>&file`` and the noclobber override ``>|``. The
+# operator is deliberately *not* anchored to a word boundary — ``echo x>file`` is
+# valid shell and must be caught just like ``echo x > file``.
+_REDIRECTION_PATTERN = re.compile(r"(?:&>{1,2}|\d*>{1,2}&?)\|?\s*(['\"]?)([^'\"\s|&;<>()]+)\1")
+
+# ``tee`` is the other write primitive this parser covers, and it needs the same
+# treatment as the redirection operators: ``echo x|tee /etc/passwd`` is valid
+# shell, so a preceding ``|``, ``;``, ``&`` or ``(`` has to count just like a
+# space. The lookbehind keeps ``mytee``/``notee`` out while still matching a
+# fully qualified ``/usr/bin/tee``. Options may be short (``-a``), long
+# (``--append``) or long with a value (``--output-error=warn``); all of them are
+# skipped so the first non-option word is the real target.
+_TEE_PATTERN = re.compile(
+    r"(?<![\w-])tee(?:\s+-{1,2}[A-Za-z][\w-]*(?:=[^\s|&;]+)?)*\s+(['\"]?)([^'\"\s|&;]+)\1"
+)
+
+
 def _shell_write_targets(command: str) -> list[str]:
-    targets: list[str] = []
-    redirection_pattern = r"(?:^|\s)(?:\d?>{1,2}|&>{1,2})\s*(['\"]?)([^'\"\s|&;]+)\1"
-    targets.extend(match.group(2) for match in re.finditer(redirection_pattern, command))
-    tee_pattern = r"(?:^|\s)tee(?:\s+-[A-Za-z]+)*\s+(['\"]?)([^'\"\s|&;]+)\1"
-    targets.extend(match.group(2) for match in re.finditer(tee_pattern, command))
+    scanned = _FD_DUP_PATTERN.sub(" ", command)
+    targets: list[str] = [match.group(2) for match in _REDIRECTION_PATTERN.finditer(scanned)]
+    targets.extend(match.group(2) for match in _TEE_PATTERN.finditer(scanned))
     return targets
 
 

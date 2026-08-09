@@ -83,6 +83,18 @@ agentos agent \
 `--workspace-lockdown` is intended for automation where writes must stay inside
 the workspace or scratch directory.
 
+For shell commands, lockdown inspects the command text for write targets —
+redirections (`>`, `>>`, `2>`, `&>`, `>&`, `>|`, with or without surrounding
+whitespace) and `tee` (including pipe-adjacent `|tee` and long options such as
+`tee --append`). The scan reads text, not shell syntax, so it deliberately fails
+closed: a command that merely *mentions* a path after `>` inside quotes — say
+`grep '>/dev/null' script.sh` — is refused under lockdown even though it writes
+nothing. That is defense in depth, not a security boundary: a
+command can still reach outside the workspace through an interpreter
+(`python -c`), a copy (`cp`, `dd of=`), an in-place edit (`sed -i`), or a path
+built from a shell variable. Use the OS sandbox (`agentos sandbox on`) when you
+need containment that does not depend on reading the command line.
+
 ## Sandbox Commands
 
 ```sh
