@@ -1,3 +1,6 @@
+import { t, tPlural } from '@/i18n'
+import '@/i18n/en/mcp'
+
 export const ROBINHOOD_MCP_URL = 'https://agent.robinhood.com/mcp/trading'
 export const ROBINHOOD_HELP_URL =
   'https://robinhood.com/us/en/support/articles/agentic-trading-overview/#ConnectyourAIagent'
@@ -120,15 +123,15 @@ export function validateServerDraft(
 ): McpDraftErrors {
   const errors: McpDraftErrors = {}
   const name = draft.name.trim()
-  if (!name) errors.name = 'Enter a server name.'
+  if (!name) errors.name = t('mcp.errorName')
   else if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
     errors.name = 'Use letters, numbers, dots, underscores, or hyphens.'
   } else if (servers.some((server) => server.name === name && server.name !== draft.originalName)) {
-    errors.name = 'This server name already exists.'
+    errors.name = t('mcp.errorNameTaken')
   }
 
   if (draft.transport === 'stdio') {
-    if (!draft.command.trim()) errors.command = 'Enter a command.'
+    if (!draft.command.trim()) errors.command = t('mcp.errorCommand')
   } else {
     try {
       const url = new URL(draft.url.trim())
@@ -136,24 +139,24 @@ export function validateServerDraft(
         errors.url = 'Use an HTTP or HTTPS URL.'
       }
     } catch {
-      errors.url = 'Enter a valid absolute URL.'
+      errors.url = t('mcp.errorUrl')
     }
   }
 
   try {
     const headers = JSON.parse(draft.headers || '{}') as unknown
     if (!headers || Array.isArray(headers) || typeof headers !== 'object') {
-      errors.headers = 'Headers must be a JSON object.'
+      errors.headers = t('mcp.errorHeadersObject')
     } else if (Object.values(headers).some((value) => typeof value !== 'string')) {
-      errors.headers = 'Header values must be strings.'
+      errors.headers = t('mcp.errorHeaderValues')
     }
   } catch {
-    errors.headers = 'Enter valid JSON.'
+    errors.headers = t('mcp.errorHeadersJson')
   }
 
   const timeout = Number(draft.timeout)
   if (!Number.isFinite(timeout) || timeout < 1 || timeout > 600) {
-    errors.timeout = 'Choose a timeout from 1 to 600 seconds.'
+    errors.timeout = t('mcp.errorTimeout')
   }
   return errors
 }
@@ -174,14 +177,14 @@ export function serverFromDraft(draft: McpServerDraft): McpServerConfig {
 }
 
 export function transportLabel(transport: McpTransport): string {
-  if (transport === 'streamable_http') return 'Streamable HTTP'
-  if (transport === 'sse') return 'SSE'
-  return 'Local process'
+  if (transport === 'streamable_http') return t('mcp.transportStreamableHttp')
+  if (transport === 'sse') return t('mcp.transportSse')
+  return t('mcp.transportStdio')
 }
 
 export function serverDetail(server: McpServerConfig): string {
-  if (server.transport !== 'stdio') return server.url || 'Configuration incomplete'
-  return [server.command, ...server.args].filter(Boolean).join(' ') || 'Configuration incomplete'
+  if (server.transport !== 'stdio') return server.url || t('mcp.detailIncomplete')
+  return [server.command, ...server.args].filter(Boolean).join(' ') || t('mcp.detailIncomplete')
 }
 
 export function serverPresentation(
@@ -191,32 +194,43 @@ export function serverPresentation(
   statusAvailable = true,
 ): McpServerPresentation {
   const toolCount = status?.tools?.length ?? 0
-  if (!enabled) return { tone: 'paused', label: 'Paused', detail: 'Runtime disabled', toolCount }
+  if (!enabled)
+    return {
+      tone: 'paused',
+      label: t('mcp.statePaused'),
+      detail: t('mcp.statePausedDetail'),
+      toolCount,
+    }
   if (!statusAvailable) {
     return {
       tone: 'unavailable',
-      label: 'Status unavailable',
-      detail: 'Live gateway status is unavailable',
+      label: t('mcp.stateUnavailable'),
+      detail: t('mcp.stateUnavailableDetail'),
       toolCount,
     }
   }
   if (status?.connected) {
     return {
       tone: 'connected',
-      label: 'Connected',
-      detail: `${toolCount} registered tool${toolCount === 1 ? '' : 's'}`,
+      label: t('mcp.stateConnected'),
+      detail: tPlural('mcp.stateConnectedDetail', toolCount),
       toolCount,
     }
   }
   if (server.oauth && !status?.authenticated) {
     return {
       tone: 'authorization',
-      label: 'Authorization required',
-      detail: 'Sign in before tools can load',
+      label: t('mcp.stateAuthorization'),
+      detail: t('mcp.stateAuthorizationDetail'),
       toolCount,
     }
   }
-  return { tone: 'offline', label: 'Disconnected', detail: 'Ready to connect', toolCount }
+  return {
+    tone: 'offline',
+    label: t('mcp.stateOffline'),
+    detail: t('mcp.stateOfflineDetail'),
+    toolCount,
+  }
 }
 
 export function robinhoodPresentation(
@@ -229,10 +243,10 @@ export function robinhoodPresentation(
   if (!server) {
     return {
       tone: 'ready',
-      label: 'Ready to connect',
-      detail: 'Secure setup ready',
-      tools: 'Discovered on connect',
-      action: 'Connect Robinhood',
+      label: t('mcp.rhReady'),
+      detail: t('mcp.rhReadyDetail'),
+      tools: t('mcp.rhReadyTools'),
+      action: t('mcp.rhReadyAction'),
     }
   }
   const status = statusByName[server.name]
@@ -240,44 +254,44 @@ export function robinhoodPresentation(
   if (!enabled) {
     return {
       tone: 'paused',
-      label: 'Runtime paused',
-      detail: 'Configured and paused',
-      tools: 'Available when enabled',
-      action: 'Review connection',
+      label: t('mcp.rhPaused'),
+      detail: t('mcp.rhPausedDetail'),
+      tools: t('mcp.rhPausedTools'),
+      action: t('mcp.rhReviewAction'),
     }
   }
   if (!statusAvailable) {
     return {
       tone: 'unavailable',
-      label: 'Status unavailable',
-      detail: 'Configuration is still available',
-      tools: 'Live discovery unavailable',
-      action: 'Review connection',
+      label: t('mcp.rhUnavailable'),
+      detail: t('mcp.rhUnavailableDetail'),
+      tools: t('mcp.rhUnavailableTools'),
+      action: t('mcp.rhReviewAction'),
     }
   }
   if (status?.connected) {
     return {
       tone: 'connected',
-      label: 'Connected',
-      detail: `${toolCount} live tool${toolCount === 1 ? '' : 's'}`,
-      tools: `${toolCount} registered`,
-      action: 'Manage connection',
+      label: t('mcp.rhConnected'),
+      detail: tPlural('mcp.rhConnectedDetail', toolCount),
+      tools: t('mcp.rhConnectedTools', { count: toolCount }),
+      action: t('mcp.rhManageAction'),
     }
   }
   if (server.oauth && !status?.authenticated) {
     return {
       tone: 'authorization',
-      label: 'OAuth required',
-      detail: 'Ready for authorization',
-      tools: 'Loads after authorization',
-      action: 'Authorize Robinhood',
+      label: t('mcp.rhOauthRequired'),
+      detail: t('mcp.rhOauthDetail'),
+      tools: t('mcp.rhOauthTools'),
+      action: t('mcp.rhAuthorizeAction'),
     }
   }
   return {
     tone: 'ready',
-    label: 'Ready to connect',
-    detail: 'Configuration saved',
-    tools: 'Discovered on connect',
-    action: 'Review connection',
+    label: t('mcp.rhReady'),
+    detail: t('mcp.rhSavedDetail'),
+    tools: t('mcp.rhReadyTools'),
+    action: t('mcp.rhReviewAction'),
   }
 }

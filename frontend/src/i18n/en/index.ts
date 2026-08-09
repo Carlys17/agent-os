@@ -6,6 +6,7 @@ import { config } from './config'
 import { env } from './env'
 import { health } from './health'
 import { logs } from './logs'
+import { mcp } from './mcp'
 import { overview } from './overview'
 import { settings } from './settings'
 import { sessions } from './sessions'
@@ -37,6 +38,7 @@ export const en = {
   env,
   health,
   logs,
+  mcp,
   overview,
   sessions,
   settings,

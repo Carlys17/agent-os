@@ -25,6 +25,8 @@ import { toast } from 'sonner'
 import { useBootstrap, useRpc } from '@/app/providers'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
+import { t, tPlural } from '@/i18n'
+import '@/i18n/en/mcp'
 import { MotionListItem } from '@/lib/motion'
 import trustNetworkUrl from '@/assets/mcp-trust-network.webp'
 import robinhoodSymbolUrl from '@/assets/robinhood-symbol.png'
@@ -94,7 +96,7 @@ function RuntimeSwitch({
       className="mcp-runtime"
       role="switch"
       aria-checked={enabled}
-      aria-label="Enable MCP runtime"
+      aria-label={t('mcp.runtimeAria')}
       disabled={disabled}
       onClick={onToggle}
     >
@@ -102,8 +104,8 @@ function RuntimeSwitch({
         <PowerIcon />
       </span>
       <span className="mcp-runtime__copy">
-        <strong>MCP runtime</strong>
-        <small>{enabled ? 'New connections enabled' : 'All connections paused'}</small>
+        <strong>{t('mcp.runtimeTitle')}</strong>
+        <small>{enabled ? t('mcp.runtimeOn') : t('mcp.runtimeOff')}</small>
       </span>
       <span className="mcp-runtime__track" aria-hidden="true">
         <span />
@@ -155,17 +157,17 @@ function ServerEditor({
       <form className="mcp-editor" onSubmit={submit} noValidate>
         <header className="mcp-editor__header">
           <div>
-            <span className="mcp-editor__label">MCP connection</span>
-            <h2 id="mcp-editor-title">{draft.originalName ? 'Edit server' : 'Add server'}</h2>
-            <p id="mcp-editor-description">
-              Save the connection, then discover its tools immediately.
-            </p>
+            <span className="mcp-editor__label">{t('mcp.editorEyebrow')}</span>
+            <h2 id="mcp-editor-title">
+              {draft.originalName ? t('mcp.editorEditTitle') : t('mcp.editorAddTitle')}
+            </h2>
+            <p id="mcp-editor-description">{t('mcp.editorDescription')}</p>
           </div>
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            aria-label="Close dialog"
+            aria-label={t('mcp.editorClose')}
             disabled={busy}
             onClick={onClose}
           >
@@ -176,28 +178,28 @@ function ServerEditor({
         <div className="mcp-editor__body">
           <div className="mcp-form-grid">
             <label className="mcp-field">
-              <span>Name</span>
+              <span>{t('mcp.fieldName')}</span>
               <input
                 value={draft.name}
-                aria-label="Name"
+                aria-label={t('mcp.fieldName')}
                 maxLength={64}
                 autoComplete="off"
-                placeholder="my-mcp-server"
+                placeholder={t('mcp.fieldNamePlaceholder')}
                 aria-invalid={Boolean(errors.name)}
                 aria-describedby="mcp-name-help mcp-name-error"
                 onChange={(event) => update('name', event.target.value)}
               />
-              <small id="mcp-name-help">Unique name used in logs and configuration.</small>
+              <small id="mcp-name-help">{t('mcp.fieldNameHelp')}</small>
               <em id="mcp-name-error" role="alert">
                 {errors.name}
               </em>
             </label>
 
             <label className="mcp-field">
-              <span>Transport</span>
+              <span>{t('mcp.fieldTransport')}</span>
               <select
                 value={draft.transport}
-                aria-label="Transport"
+                aria-label={t('mcp.fieldTransport')}
                 onChange={(event) => {
                   const transport = event.target.value as McpTransport
                   onChange({
@@ -207,11 +209,11 @@ function ServerEditor({
                   })
                 }}
               >
-                <option value="streamable_http">Streamable HTTP</option>
-                <option value="sse">SSE (legacy)</option>
-                <option value="stdio">Local process (stdio)</option>
+                <option value="streamable_http">{t('mcp.transportStreamableHttpOption')}</option>
+                <option value="sse">{t('mcp.transportSseOption')}</option>
+                <option value="stdio">{t('mcp.transportStdioOption')}</option>
               </select>
-              <small>Use Streamable HTTP for new remote servers.</small>
+              <small>{t('mcp.fieldTransportHelp')}</small>
               <em aria-hidden="true" />
             </label>
           </div>
@@ -219,18 +221,18 @@ function ServerEditor({
           {isHttp ? (
             <>
               <label className="mcp-field">
-                <span>Server URL</span>
+                <span>{t('mcp.fieldUrl')}</span>
                 <input
                   type="url"
                   value={draft.url}
-                  aria-label="Server URL"
+                  aria-label={t('mcp.fieldUrl')}
                   autoComplete="url"
-                  placeholder="https://example.com/mcp"
+                  placeholder={t('mcp.fieldUrlPlaceholder')}
                   aria-invalid={Boolean(errors.url)}
                   aria-describedby="mcp-url-help mcp-url-error"
                   onChange={(event) => update('url', event.target.value)}
                 />
-                <small id="mcp-url-help">Use an absolute HTTP or HTTPS endpoint.</small>
+                <small id="mcp-url-help">{t('mcp.fieldUrlHelp')}</small>
                 <em id="mcp-url-error" role="alert">
                   {errors.url}
                 </em>
@@ -241,35 +243,33 @@ function ServerEditor({
                   <input
                     type="checkbox"
                     checked={draft.oauth}
-                    aria-label="Authenticate with OAuth"
+                    aria-label={t('mcp.oauthAria')}
                     onChange={(event) => update('oauth', event.target.checked)}
                   />
                   <span className="mcp-oauth-option__icon" aria-hidden="true">
                     <KeyRoundIcon />
                   </span>
                   <span>
-                    <strong>Authenticate with OAuth</strong>
-                    <small>Store provider tokens privately in the AgentOS state directory.</small>
+                    <strong>{t('mcp.oauthTitle')}</strong>
+                    <small>{t('mcp.oauthHelp')}</small>
                   </span>
                 </label>
               ) : null}
 
               <details className="mcp-advanced">
-                <summary>Custom headers</summary>
+                <summary>{t('mcp.headersSummary')}</summary>
                 <label className="mcp-field">
-                  <span>Headers (JSON)</span>
+                  <span>{t('mcp.fieldHeaders')}</span>
                   <textarea
                     rows={5}
                     value={draft.headers}
-                    aria-label="Headers (JSON)"
+                    aria-label={t('mcp.fieldHeaders')}
                     spellCheck={false}
                     aria-invalid={Boolean(errors.headers)}
                     aria-describedby="mcp-headers-help mcp-headers-error"
                     onChange={(event) => update('headers', event.target.value)}
                   />
-                  <small id="mcp-headers-help">
-                    Prefer environment-backed configuration for long-lived secrets.
-                  </small>
+                  <small id="mcp-headers-help">{t('mcp.fieldHeadersHelp')}</small>
                   <em id="mcp-headers-error" role="alert">
                     {errors.headers}
                   </em>
@@ -279,42 +279,42 @@ function ServerEditor({
           ) : (
             <div className="mcp-form-grid">
               <label className="mcp-field">
-                <span>Command</span>
+                <span>{t('mcp.fieldCommand')}</span>
                 <input
                   value={draft.command}
-                  aria-label="Command"
+                  aria-label={t('mcp.fieldCommand')}
                   autoComplete="off"
-                  placeholder="uvx"
+                  placeholder={t('mcp.fieldCommandPlaceholder')}
                   aria-invalid={Boolean(errors.command)}
                   aria-describedby="mcp-command-error"
                   onChange={(event) => update('command', event.target.value)}
                 />
-                <small>Executable used to start the local MCP server.</small>
+                <small>{t('mcp.fieldCommandHelp')}</small>
                 <em id="mcp-command-error" role="alert">
                   {errors.command}
                 </em>
               </label>
               <label className="mcp-field">
-                <span>Arguments</span>
+                <span>{t('mcp.fieldArgs')}</span>
                 <input
                   value={draft.args}
-                  aria-label="Arguments"
+                  aria-label={t('mcp.fieldArgs')}
                   autoComplete="off"
-                  placeholder="package-name --flag"
+                  placeholder={t('mcp.fieldArgsPlaceholder')}
                   onChange={(event) => update('args', event.target.value)}
                 />
-                <small>Arguments are split on spaces. Use config for complex quoting.</small>
+                <small>{t('mcp.fieldArgsHelp')}</small>
                 <em aria-hidden="true" />
               </label>
             </div>
           )}
 
           <label className="mcp-field mcp-field--timeout">
-            <span>Tool timeout</span>
+            <span>{t('mcp.fieldTimeout')}</span>
             <span className="mcp-timeout-input">
               <input
                 type="number"
-                aria-label="Tool timeout"
+                aria-label={t('mcp.fieldTimeout')}
                 min={1}
                 max={600}
                 step={1}
@@ -323,7 +323,7 @@ function ServerEditor({
                 aria-describedby="mcp-timeout-error"
                 onChange={(event) => update('timeout', event.target.value)}
               />
-              <span>seconds</span>
+              <span>{t('mcp.fieldTimeoutUnit')}</span>
             </span>
             <em id="mcp-timeout-error" role="alert">
               {errors.timeout}
@@ -333,14 +333,14 @@ function ServerEditor({
 
         <footer className="mcp-editor__footer">
           <span role="status" aria-live="polite">
-            {busy ? 'Saving connection...' : 'Configuration changes apply immediately.'}
+            {busy ? t('mcp.editorSaving') : t('mcp.editorImmediate')}
           </span>
           <div>
             <Button type="button" variant="ghost" disabled={busy} onClick={onClose}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" disabled={busy}>
-              {busy ? 'Saving...' : 'Save and connect'}
+              {busy ? t('mcp.editorSaveBusy') : t('mcp.editorSave')}
             </Button>
           </div>
         </footer>
@@ -372,16 +372,16 @@ function RemoveServerDialog({
       <div className="mcp-confirm__icon" aria-hidden="true">
         <Trash2Icon />
       </div>
-      <h2 id="mcp-remove-title">Remove MCP server?</h2>
+      <h2 id="mcp-remove-title">{t('mcp.removeTitle')}</h2>
       <p id="mcp-remove-description">
-        Remove <strong>{serverName}</strong> from AgentOS. Stored OAuth tokens will also be cleared.
+        {t('mcp.removeBodyLead')} <strong>{serverName}</strong> {t('mcp.removeBodyTail')}
       </p>
       <div className="mcp-confirm__actions">
         <Button type="button" variant="ghost" disabled={busy} onClick={onClose}>
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button type="button" variant="destructive" disabled={busy} onClick={onConfirm}>
-          {busy ? 'Removing...' : 'Remove server'}
+          {busy ? t('mcp.removeBusy') : t('mcp.removeConfirm')}
         </Button>
       </div>
     </ModalShell>
@@ -404,11 +404,10 @@ function OAuthCallback() {
       : null
   const [completionError, setCompletionError] = useState<string | null>(null)
   const state = invalidMessage || completionError ? 'error' : 'working'
-  const message =
-    invalidMessage || completionError || 'Exchanging the authorization code and loading tools.'
+  const message = invalidMessage || completionError || t('mcp.callbackMessage')
 
   useEffect(() => {
-    document.title = 'MCP Authorization - AgentOS Control'
+    document.title = t('mcp.callbackDocumentTitle')
     if (invalidMessage || !code || !oauthState) return
 
     let cancelled = false
@@ -417,7 +416,7 @@ function OAuthCallback() {
         await rpc.waitForConnection()
         await rpc.call('mcp.oauth.complete', { code, state: oauthState })
         if (cancelled) return
-        toast.success('MCP authorization complete.')
+        toast.success(t('mcp.toastAuthorized'))
         navigate('/mcp', { replace: true })
       } catch (error) {
         if (cancelled) return
@@ -434,11 +433,11 @@ function OAuthCallback() {
       <span className={`mcp-callback__icon is-${state}`} aria-hidden="true">
         {state === 'working' ? <RefreshCwIcon /> : <XIcon />}
       </span>
-      <h1>{state === 'working' ? 'Completing authorization' : 'Authorization not completed'}</h1>
+      <h1>{state === 'working' ? t('mcp.callbackWorking') : t('mcp.callbackFailed')}</h1>
       <p>{message}</p>
       {state === 'error' ? (
         <Button type="button" variant="outline" onClick={() => navigate('/mcp')}>
-          Back to MCP servers
+          {t('mcp.callbackBack')}
         </Button>
       ) : null}
     </section>
@@ -456,7 +455,7 @@ export function McpPage() {
   const [removeTarget, setRemoveTarget] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!isCallback) document.title = 'MCP Servers - AgentOS Control'
+    if (!isCallback) document.title = t('mcp.documentTitle')
   }, [isCallback])
 
   const workspaceQuery = useQuery({
@@ -530,7 +529,7 @@ export function McpPage() {
     try {
       const result = await rpc.call<McpConnectResponse>('mcp.connect', { name })
       if (result.authorizationRequired) await authorize(name)
-      else toast.success(`${name} connected.`)
+      else toast.success(t('mcp.toastConnected', { name }))
       await refresh()
     } catch (error) {
       toast.error(errorMessage(error))
@@ -544,7 +543,7 @@ export function McpPage() {
     setBusyAction(`disconnect:${name}`)
     try {
       await rpc.call('mcp.disconnect', { name })
-      toast.success(`${name} disconnected.`)
+      toast.success(t('mcp.toastDisconnected', { name }))
       await refresh()
     } catch (error) {
       toast.error(errorMessage(error))
@@ -563,7 +562,7 @@ export function McpPage() {
           workspace.servers.map((server) => rpc.call('mcp.disconnect', { name: server.name })),
         )
       }
-      toast.success(enabled ? 'MCP runtime enabled.' : 'MCP runtime paused.')
+      toast.success(enabled ? t('mcp.toastRuntimeEnabled') : t('mcp.toastRuntimePaused'))
       await refresh()
     } catch (error) {
       toast.error(errorMessage(error))
@@ -609,7 +608,7 @@ export function McpPage() {
         await rpc.call('mcp.disconnect', { name: removeTarget })
       }
       await patchServers(workspace.servers.filter((server) => server.name !== removeTarget))
-      toast.success(`${removeTarget} removed.`)
+      toast.success(t('mcp.toastRemoved', { name: removeTarget }))
       setRemoveTarget(null)
       await refresh()
     } catch (error) {
@@ -638,7 +637,7 @@ export function McpPage() {
 
   if (workspaceQuery.isLoading) {
     return (
-      <section className="mcp-stage" aria-busy="true" aria-label="Loading MCP servers">
+      <section className="mcp-stage" aria-busy="true" aria-label={t('mcp.loadingLabel')}>
         <div className="mcp-skeleton mcp-skeleton--header" />
         <div className="mcp-skeleton mcp-skeleton--feature" />
         <div className="mcp-skeleton mcp-skeleton--row" />
@@ -653,11 +652,11 @@ export function McpPage() {
           <span aria-hidden="true">
             <AlertTriangleIcon />
           </span>
-          <h1>MCP configuration unavailable</h1>
+          <h1>{t('mcp.loadErrorTitle')}</h1>
           <p>{errorMessage(workspaceQuery.error)}</p>
           <Button type="button" variant="outline" onClick={() => void workspaceQuery.refetch()}>
             <RefreshCwIcon />
-            Retry
+            {t('common.retry')}
           </Button>
         </div>
       </section>
@@ -668,9 +667,9 @@ export function McpPage() {
     <section className="mcp-stage">
       <header className="mcp-stage__header">
         <div className="mcp-stage__title-block">
-          <div className="t-label">Connections</div>
-          <h1 className="t-display">MCP Servers</h1>
-          <p>Control which external tools your agents can discover and use.</p>
+          <div className="t-label">{t('mcp.eyebrow')}</div>
+          <h1 className="t-display">{t('mcp.title')}</h1>
+          <p>{t('mcp.subtitle')}</p>
         </div>
         <div className="mcp-stage__actions">
           <Button
@@ -680,7 +679,7 @@ export function McpPage() {
             onClick={() => void refresh()}
           >
             <RefreshCwIcon className={workspaceQuery.isFetching ? 'mcp-spin' : undefined} />
-            Refresh
+            {t('mcp.refresh')}
           </Button>
           <RuntimeSwitch
             enabled={workspace.enabled}
@@ -696,11 +695,8 @@ export function McpPage() {
             <AlertTriangleIcon />
           </span>
           <div>
-            <strong>Live MCP status is unavailable.</strong>
-            <p>
-              Your configuration is still available. Restart the gateway if this persists, then
-              retry the status check.
-            </p>
+            <strong>{t('mcp.statusWarningTitle')}</strong>
+            <p>{t('mcp.statusWarningBody')}</p>
           </div>
           <Button
             type="button"
@@ -710,49 +706,49 @@ export function McpPage() {
             onClick={() => void refresh()}
           >
             <RefreshCwIcon className={workspaceQuery.isFetching ? 'mcp-spin' : undefined} />
-            Retry status
+            {t('mcp.statusRetry')}
           </Button>
         </div>
       ) : null}
 
-      <div className="mcp-summary" aria-label="MCP summary">
+      <div className="mcp-summary" aria-label={t('mcp.summaryLandmark')}>
         <div>
-          <span>Configured</span>
+          <span>{t('mcp.summaryConfigured')}</span>
           <strong>{workspace.servers.length}</strong>
         </div>
         <div>
-          <span>Connected</span>
-          <strong>{statusAvailable ? connectedCount : '—'}</strong>
+          <span>{t('mcp.summaryConnected')}</span>
+          <strong>{statusAvailable ? connectedCount : t('common.dash')}</strong>
         </div>
         <div>
-          <span>Live tools</span>
-          <strong>{statusAvailable ? toolCount : '—'}</strong>
+          <span>{t('mcp.summaryLiveTools')}</span>
+          <strong>{statusAvailable ? toolCount : t('common.dash')}</strong>
         </div>
         <div
           className={`mcp-summary__runtime is-${
             statusAvailable ? (workspace.enabled ? 'live' : 'paused') : 'unavailable'
           }`}
         >
-          <span>Runtime posture</span>
+          <span>{t('mcp.summaryRuntime')}</span>
           <strong>
             {statusAvailable
               ? workspace.enabled
-                ? 'Accepting connections'
-                : 'Paused'
-              : 'Live status unavailable'}
+                ? t('mcp.summaryAccepting')
+                : t('mcp.summaryPaused')
+              : t('mcp.summaryUnavailable')}
           </strong>
         </div>
       </div>
 
-      <article className={`mcp-partner is-${robinhood.tone}`} aria-label="Robinhood MCP">
+      <article className={`mcp-partner is-${robinhood.tone}`} aria-label={t('mcp.partnerLandmark')}>
         <img className="mcp-partner__network" src={trustNetworkUrl} alt="" aria-hidden="true" />
         <div className="mcp-partner__content">
           <div className="mcp-partner__brand">
-            <img src={robinhoodSymbolUrl} alt="Robinhood logo" width="48" height="48" />
+            <img src={robinhoodSymbolUrl} alt={t('mcp.partnerLogoAlt')} width="48" height="48" />
             <div>
-              <span>Featured integration</span>
+              <span>{t('mcp.partnerEyebrow')}</span>
               <h2>
-                Robinhood <small>for AgentOS</small>
+                {'Robinhood'} <small>{t('mcp.partnerForAgentos')}</small>
               </h2>
             </div>
           </div>
@@ -760,20 +756,17 @@ export function McpPage() {
             <span aria-hidden="true" />
             {robinhood.label}
           </span>
-          <h3>A controlled path from your agent to the market.</h3>
-          <p>
-            Connect a dedicated Agentic Trading account with secure authorization and live tool
-            discovery.
-          </p>
-          <div className="mcp-partner__capabilities" aria-label="Connection capabilities">
+          <h3>{t('mcp.partnerHeadline')}</h3>
+          <p>{t('mcp.partnerBody')}</p>
+          <div className="mcp-partner__capabilities" aria-label={t('mcp.partnerCapabilities')}>
             <span>
-              <ShieldCheckIcon /> OAuth + PKCE
+              <ShieldCheckIcon /> {t('mcp.partnerCapOauth')}
             </span>
             <span>
-              <Globe2Icon /> Streamable HTTP
+              <Globe2Icon /> {t('mcp.partnerCapTransport')}
             </span>
             <span>
-              <NetworkIcon /> Live registration
+              <NetworkIcon /> {t('mcp.partnerCapRegistration')}
             </span>
           </div>
           <div className="mcp-partner__actions">
@@ -783,7 +776,7 @@ export function McpPage() {
             </Button>
             <Button asChild variant="ghost">
               <a href={ROBINHOOD_HELP_URL} target="_blank" rel="noopener noreferrer">
-                Setup guide <ExternalLinkIcon />
+                {t('mcp.partnerSetupGuide')} <ExternalLinkIcon />
               </a>
             </Button>
           </div>
@@ -791,37 +784,37 @@ export function McpPage() {
 
         <div className="mcp-partner__connection">
           <div className="mcp-partner__connection-head">
-            <span>Connection architecture</span>
+            <span>{t('mcp.partnerArchitecture')}</span>
             <strong>{robinhood.detail}</strong>
           </div>
-          <div className="mcp-flow" aria-label="AgentOS connects securely to Robinhood MCP">
+          <div className="mcp-flow" aria-label={t('mcp.partnerFlowLandmark')}>
             <div className="mcp-flow__node">
               <span aria-hidden="true">
                 <NetworkIcon />
               </span>
-              <small>Local gateway</small>
-              <strong>AgentOS</strong>
+              <small>{t('mcp.partnerFlowLocal')}</small>
+              <strong>{'AgentOS'}</strong>
             </div>
             <div className="mcp-flow__rail" aria-hidden="true">
-              <span>OAuth</span>
+              <span>{t('mcp.partnerFlowOauth')}</span>
             </div>
             <div className="mcp-flow__node">
               <img src={robinhoodSymbolUrl} alt="" width="32" height="32" />
-              <small>Remote server</small>
-              <strong>Robinhood MCP</strong>
+              <small>{t('mcp.partnerFlowRemote')}</small>
+              <strong>{t('mcp.partnerFlowRemoteName')}</strong>
             </div>
           </div>
           <dl className="mcp-partner__specs">
             <div>
-              <dt>Endpoint</dt>
+              <dt>{t('mcp.partnerSpecEndpoint')}</dt>
               <dd title={ROBINHOOD_MCP_URL}>{ROBINHOOD_MCP_URL}</dd>
             </div>
             <div>
-              <dt>Authorization</dt>
-              <dd>OAuth with PKCE</dd>
+              <dt>{t('mcp.partnerSpecAuthorization')}</dt>
+              <dd>{t('mcp.partnerSpecAuthorizationValue')}</dd>
             </div>
             <div>
-              <dt>Tool loading</dt>
+              <dt>{t('mcp.partnerSpecTools')}</dt>
               <dd>{robinhood.tools}</dd>
             </div>
           </dl>
@@ -829,8 +822,7 @@ export function McpPage() {
         <div className="mcp-partner__notice" role="note">
           <AlertTriangleIcon aria-hidden="true" />
           <span>
-            <strong>Human-controlled by design.</strong> You approve the account link and remain
-            responsible for every order. Agentic trading involves significant risk.
+            <strong>{t('mcp.partnerNoticeLead')}</strong> {t('mcp.partnerNoticeBody')}
           </span>
         </div>
       </article>
@@ -838,24 +830,23 @@ export function McpPage() {
       <div className="mcp-security-note" role="note">
         <ShieldCheckIcon aria-hidden="true" />
         <span>
-          <strong>Review every MCP permission.</strong> Connected servers can expose private data
-          and tools that take actions on your behalf.
+          <strong>{t('mcp.securityNoteLead')}</strong> {t('mcp.securityNoteBody')}
         </span>
       </div>
 
       <section className="mcp-servers" aria-labelledby="mcp-servers-title">
         <header className="mcp-servers__header">
           <div>
-            <h2 id="mcp-servers-title">Your servers</h2>
+            <h2 id="mcp-servers-title">{t('mcp.serversTitle')}</h2>
             <p>
               {workspace.servers.length
-                ? `${workspace.servers.length} configured connection${workspace.servers.length === 1 ? '' : 's'}`
-                : 'No custom servers configured yet'}
+                ? tPlural('mcp.serversCount', workspace.servers.length)
+                : t('mcp.serversNone')}
             </p>
           </div>
           <Button type="button" variant="outline" onClick={() => setEditor(createServerDraft())}>
             <PlusIcon />
-            Add server
+            {t('mcp.addServer')}
           </Button>
         </header>
 
@@ -888,11 +879,9 @@ export function McpPage() {
                       </div>
                       <div className="mcp-server-row__meta">
                         <span>{transportLabel(server.transport)}</span>
-                        {server.oauth ? <span>OAuth</span> : null}
+                        {server.oauth ? <span>{t('mcp.rowOauth')}</span> : null}
                         {presentation.toolCount ? (
-                          <span>
-                            {presentation.toolCount} tool{presentation.toolCount === 1 ? '' : 's'}
-                          </span>
+                          <span>{tPlural('mcp.rowToolCount', presentation.toolCount)}</span>
                         ) : null}
                       </div>
                       <code title={serverDetail(server)}>{serverDetail(server)}</code>
@@ -907,10 +896,10 @@ export function McpPage() {
                         >
                           <Link2Icon />
                           {actionBusy
-                            ? 'Connecting...'
+                            ? t('mcp.rowConnecting')
                             : server.oauth && !status?.authenticated
-                              ? 'Authorize'
-                              : 'Connect'}
+                              ? t('mcp.rowAuthorize')
+                              : t('mcp.rowConnect')}
                         </Button>
                       ) : null}
                       {status?.connected ? (
@@ -922,15 +911,15 @@ export function McpPage() {
                           onClick={() => void disconnect(server.name)}
                         >
                           <UnplugIcon />
-                          {actionBusy ? 'Disconnecting...' : 'Disconnect'}
+                          {actionBusy ? t('mcp.rowDisconnecting') : t('mcp.rowDisconnect')}
                         </Button>
                       ) : null}
                       <Button
                         type="button"
                         size="icon-sm"
                         variant="ghost"
-                        aria-label={`Edit ${server.name}`}
-                        title={`Edit ${server.name}`}
+                        aria-label={t('mcp.rowEdit', { name: server.name })}
+                        title={t('mcp.rowEdit', { name: server.name })}
                         onClick={() => editServer(server)}
                       >
                         <PencilIcon />
@@ -940,8 +929,8 @@ export function McpPage() {
                         size="icon-sm"
                         variant="ghost"
                         className="mcp-server-row__remove"
-                        aria-label={`Remove ${server.name}`}
-                        title={`Remove ${server.name}`}
+                        aria-label={t('mcp.rowRemove', { name: server.name })}
+                        title={t('mcp.rowRemove', { name: server.name })}
                         onClick={() => setRemoveTarget(server.name)}
                       >
                         <Trash2Icon />
@@ -957,11 +946,11 @@ export function McpPage() {
             <span aria-hidden="true">
               <NetworkIcon />
             </span>
-            <h3>No MCP servers</h3>
-            <p>Add a server URL or configure the Robinhood connection above.</p>
+            <h3>{t('mcp.emptyTitle')}</h3>
+            <p>{t('mcp.emptyBody')}</p>
             <Button type="button" variant="outline" onClick={() => setEditor(createServerDraft())}>
               <PlusIcon />
-              Add first server
+              {t('mcp.emptyAction')}
             </Button>
           </div>
         )}
