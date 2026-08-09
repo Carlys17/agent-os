@@ -19,6 +19,8 @@ import { toast } from 'sonner'
 import { MotionListItem } from '@/lib/motion'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
+import { t, tPlural } from '@/i18n'
+import '@/i18n/en/skills'
 import { useRpc } from '@/app/providers'
 import agentosMarkUrl from '@/assets/agentos-mark.png'
 import bankrSymbolUrl from '@/assets/bankr-symbol.svg'
@@ -26,7 +28,7 @@ import capminalSymbolUrl from '@/assets/capminal-symbol.svg'
 import gmgnSymbolUrl from '@/assets/gmgn-symbol.png'
 import robinhoodSymbolUrl from '@/assets/robinhood-symbol.png'
 import {
-  CAT_LABEL,
+  catLabel,
   REGISTRY_SEARCH_DEBOUNCE_MS,
   categoryChips,
   communityFilter,
@@ -40,7 +42,7 @@ import {
   installedEmptyMessage,
   isGmgnSkill,
   isPartnerSkill,
-  SKILL_BUCKET_LABEL,
+  skillBucketLabel,
   skillBucket,
   layerHelp,
   layerLabel,
@@ -112,21 +114,22 @@ const PARTNER_BRANDS: Record<PartnerBrand, { label: string; asset: string }> = {
  * renders its own intro (`ROBINHOOD_INTRO`) rather than going through
  * `RegistryPanel`.
  */
-const REGISTRY_INTRO: Record<
+function registryIntro(): Record<
   Exclude<RegistryGroup, 'community'>,
   { title: string; description: string; notice?: string }
-> = {
-  bankr: {
-    title: 'Bankr skill catalog',
-    description: 'Curated financial and on-chain capabilities maintained by the Bankr ecosystem.',
-    notice: "the 'bankr' skill is required for all skills in this catalog.",
-  },
-  capminal: {
-    title: 'Capminal skill catalog',
-    description:
-      'Wallet, token-launch, and on-chain execution skills maintained by the Capminal team.',
-    notice: "the 'capminal' skill is required for all skills in this catalog.",
-  },
+> {
+  return {
+    bankr: {
+      title: t('skills.bankrTitle'),
+      description: t('skills.bankrDesc'),
+      notice: t('skills.bankrNotice'),
+    },
+    capminal: {
+      title: t('skills.capminalTitle'),
+      description: t('skills.capminalDesc'),
+      notice: t('skills.capminalNotice'),
+    },
+  }
 }
 
 /**
@@ -140,17 +143,17 @@ const REGISTRY_INTRO: Record<
  * create it, so a user who installs and runs it first only finds out when the
  * first tool call fails.
  */
-const ROBINHOOD_INTRO = {
-  title: 'Robinhood skills',
-  description:
-    'Official bundled capabilities for Robinhood products and on-chain assets, maintained by AgentOS against the Robinhood Trading MCP.',
-  notice:
-    "the 'robinhood-agentic-trading' skill trades from a dedicated Robinhood Agentic account — create that account in Robinhood and complete its authorization flow before using the skill.",
+function robinhoodIntro() {
+  return {
+    title: t('skills.robinhoodTitle'),
+    description: t('skills.robinhoodDesc'),
+    notice: t('skills.robinhoodNotice'),
+  }
 }
 
 /** The brand name for a catalog tab's search/loading copy ('community' has none). */
 function registryLabel(group: RegistryGroup): string {
-  return group === 'community' ? 'community' : PARTNER_BRANDS[group].label
+  return group === 'community' ? t('skills.registryLabelCommunity') : PARTNER_BRANDS[group].label
 }
 
 /**
@@ -160,9 +163,9 @@ function registryLabel(group: RegistryGroup): string {
  */
 function acquisitionSourceLabel(skill: RawSkill): string {
   const acq = skill.acquisition
-  if (acq?.kind === 'hub') return acq.source_id || 'hub'
-  if (acq?.kind === 'shipped') return 'shipped'
-  if (acq?.kind === 'local') return 'local'
+  if (acq?.kind === 'hub') return acq.source_id || t('skills.srcHub')
+  if (acq?.kind === 'shipped') return t('skills.srcShipped')
+  if (acq?.kind === 'local') return t('skills.srcLocal')
   // Pre-#130 gateway: fall back to the location layer rather than claim one.
   return layerLabel(skill.layer).toLowerCase()
 }
@@ -174,8 +177,9 @@ function acquisitionSourceLabel(skill: RawSkill): string {
  * string names filesystem paths and is deliberately kept off the wire, so say
  * what the operator has to do instead of rendering a button that half-succeeds.
  */
-const REMOVE_BLOCKED_NOTE =
-  'AgentOS cannot remove this skill: the configured managed skills directory does not hold it. Check skills.managed_dir, or delete the files by hand.'
+function removeBlockedNote(): string {
+  return t('skills.removeBlockedNote')
+}
 
 /**
  * The "installed, but the agent is not being offered it" chip.
@@ -332,7 +336,13 @@ function SkillIcon({
   const emoji = (skill.emoji ?? '').trim()
   if (isGmgnSkill(skill)) {
     const mark = (
-      <img className={brandClass} src={gmgnSymbolUrl} alt="GMGN logo" width="40" height="40" />
+      <img
+        className={brandClass}
+        src={gmgnSymbolUrl}
+        alt={t('skills.altGmgnLogo')}
+        width="40"
+        height="40"
+      />
     )
     if (!emoji) return mark
     // The wrapper takes its footprint from the mark it holds, so one pair of
@@ -354,7 +364,13 @@ function SkillIcon({
   // move the skill into Partner Skills.
   if (skillGroupKey(skill) === 'crypto') {
     return (
-      <img className={brandClass} src={agentosMarkUrl} alt="AgentOS logo" width="40" height="40" />
+      <img
+        className={brandClass}
+        src={agentosMarkUrl}
+        alt={t('skills.altAgentosLogo')}
+        width="40"
+        height="40"
+      />
     )
   }
   return (
@@ -398,7 +414,7 @@ function SkillCard({
   onUse: () => void
 }) {
   const desc = skill.description || ''
-  const statusLabel = SKILL_BUCKET_LABEL[skillBucket(skill)]
+  const statusLabel = skillBucketLabel(skillBucket(skill))
   // The card used to be one big <button>. "Use" is a second action, and a
   // button cannot nest inside a button, so the shell splits the same way
   // RegistryCard/PartnerSkillCard already do: an <article> wrapper, a details
@@ -410,7 +426,7 @@ function SkillCard({
         type="button"
         className="sk-card__details"
         onClick={onOpen}
-        aria-label={`Skill ${skill.name}`}
+        aria-label={t('skills.cardSkillLabel', { name: String(skill.name) })}
         title={skill.name + (desc ? ': ' + desc : '')}
       >
         <div className="sk-card__head">
@@ -443,11 +459,11 @@ function SkillCard({
           tabIndex={-1}
           aria-hidden="true"
         >
-          View details
+          {t('skills.cardViewDetails')}
           <ChevronRightIcon />
         </button>
         <Button type="button" variant="outline" size="sm" onClick={onUse}>
-          Use
+          {t('skills.cardUse')}
         </Button>
       </div>
     </article>
@@ -473,11 +489,14 @@ function RegistryCard({
   // category (label from CAT_LABEL, falling back to the raw category key).
   const cat = item.category && item.category !== 'other' ? item.category : ''
   return (
-    <article className="sk-rcard" aria-label={`Catalog skill ${item.name}`}>
+    <article
+      className="sk-rcard"
+      aria-label={t('skills.catalogSkillLabel', { name: String(item.name) })}
+    >
       <button
         type="button"
         className="sk-rcard__details"
-        aria-label={`View details for ${item.name}`}
+        aria-label={t('skills.cardDetailsFor', { name: String(item.name) })}
         onClick={onOpen}
       >
         <div className="sk-rcard__head">
@@ -486,9 +505,9 @@ function RegistryCard({
             <span className="sk-rcard__name">{item.name}</span>
             <span className="sk-rcard__provider">{item.provider || item.source || ''}</span>
           </div>
-          {cat ? <span className="sk-rcard__cat">{CAT_LABEL[cat] || cat}</span> : null}
+          {cat ? <span className="sk-rcard__cat">{catLabel(cat)}</span> : null}
         </div>
-        <span className="sk-rcard__desc">{item.description || 'Open details'}</span>
+        <span className="sk-rcard__desc">{item.description || t('skills.cardOpenDetails')}</span>
       </button>
       <div className="sk-rcard__foot">
         <span className="sk-rcard__src sk-mono">{item.source || ''}</span>
@@ -516,7 +535,7 @@ function PartnerSkillCard({
 }) {
   const label = PARTNER_BRANDS[brand].label
   const bucket = skillBucket(skill)
-  const statusLabel = SKILL_BUCKET_LABEL[bucket]
+  const statusLabel = skillBucketLabel(bucket)
   const statusClass =
     bucket === 'ready'
       ? 'sk-chip--ok'
@@ -525,11 +544,14 @@ function PartnerSkillCard({
         : 'sk-chip--unverified'
 
   return (
-    <article className="sk-rcard sk-rcard--partner" aria-label={`${label} skill ${skill.name}`}>
+    <article
+      className="sk-rcard sk-rcard--partner"
+      aria-label={t('skills.partnerSkillLabel', { brand: label, name: String(skill.name) })}
+    >
       <button
         type="button"
         className="sk-rcard__details"
-        aria-label={`View details for ${skill.name}`}
+        aria-label={t('skills.cardDetailsFor', { name: String(skill.name) })}
         onClick={onOpen}
       >
         <div className="sk-rcard__head">
@@ -539,7 +561,7 @@ function PartnerSkillCard({
             <span className="sk-rcard__provider">{label}</span>
           </div>
         </div>
-        <span className="sk-rcard__desc">{skill.description || 'Open details'}</span>
+        <span className="sk-rcard__desc">{skill.description || t('skills.cardOpenDetails')}</span>
       </button>
       <div className="sk-rcard__foot">
         {/* Not every partner skill ships with AgentOS — a partner hub install
@@ -572,7 +594,7 @@ function InstallButton({
     return (
       <span className={`sk-chip sk-chip--ok${large ? ' sk-chip--lg' : ' sk-chip--card-action'}`}>
         <CheckIcon aria-hidden="true" />
-        Installed
+        {t('skills.installed')}
       </span>
     )
   if (action === 'force') {
@@ -585,7 +607,7 @@ function InstallButton({
         onClick={(e) => onInstall(true, e)}
       >
         {!busy ? <TriangleAlertIcon aria-hidden="true" /> : null}
-        {busy ? 'Force installing…' : 'Force install'}
+        {busy ? t('skills.forceInstalling') : t('skills.forceInstall')}
       </Button>
     )
   }
@@ -596,7 +618,7 @@ function InstallButton({
       disabled={busy}
       onClick={(e) => onInstall(false, e)}
     >
-      {busy ? 'Installing…' : large ? 'Install skill' : 'Install'}
+      {busy ? t('skills.installing') : large ? t('skills.installSkill') : t('skills.install')}
     </Button>
   )
 }
@@ -662,7 +684,7 @@ export function SkillsPage() {
   const [sessionInstalls, setSessionInstalls] = useState<RegistryItem[]>([])
 
   useEffect(() => {
-    document.title = 'Skills - AgentOS Control'
+    document.title = t('skills.documentTitle')
   }, [])
 
   // skills.js:210-220 — debounce the community search input (250ms). A cleared
@@ -689,9 +711,12 @@ export function SkillsPage() {
   useEffect(() => {
     if (skillsQuery.isError) {
       const err = skillsQuery.error
-      toast.error('Failed to load skills: ' + (err instanceof Error ? err.message : String(err)), {
-        id: 'skills-load-err',
-      })
+      toast.error(
+        t('skills.toastLoadFailed', {
+          message: err instanceof Error ? err.message : String(err),
+        }),
+        { id: 'skills-load-err' },
+      )
     }
   }, [skillsQuery.isError, skillsQuery.error])
 
@@ -805,7 +830,9 @@ export function SkillsPage() {
     onSuccess: (res, vars) => {
       if (res?.success) {
         armForce(vars.identifier, false)
-        toast.success('Installed ' + (res.name || vars.identifier), { id: 'skills-install' })
+        toast.success(t('skills.toastInstalled', { name: res.name || vars.identifier }), {
+          id: 'skills-install',
+        })
         if (vars.item) {
           const row = { ...vars.item, installed: true }
           setSessionInstalls((prev) => mergeRegistryRows([row], prev))
@@ -819,14 +846,15 @@ export function SkillsPage() {
       const n = (res?.scan_findings || []).length
       if (blocked && !vars.force) {
         armForce(vars.identifier, true)
+        const name = res?.name || t('skills.toastScanUnnamed')
         toast.error(
-          `Security scan flagged ${res?.name || 'this skill'}${
-            n ? ` (${n} finding${n === 1 ? '' : 's'})` : ''
-          }. Click again to install anyway.`,
+          t('skills.toastScanBlocked', {
+            target: n ? tPlural('skills.toastScanTarget', n, { name }) : name,
+          }),
           { id: 'skills-install-err' },
         )
       } else {
-        toast.error(res?.message || 'Install failed', { id: 'skills-install-err' })
+        toast.error(res?.message || t('skills.toastInstallFailed'), { id: 'skills-install-err' })
       }
     },
     onError: (err) => {
@@ -845,7 +873,7 @@ export function SkillsPage() {
     onSuccess: (res, vars) => {
       const name = vars.name
       if (res?.success) {
-        toast.success('Removed ' + name, { id: 'skills-uninstall' })
+        toast.success(t('skills.toastRemoved', { name }), { id: 'skills-uninstall' })
         setDialog({ kind: 'none' })
         setSessionInstalls((prev) =>
           prev.filter((r) => r.name !== name && registryKey(r) !== vars.identifier),
@@ -857,7 +885,9 @@ export function SkillsPage() {
         // always invalidated it; removal never did.
         void invalidateRegistry()
       } else {
-        toast.error(res?.message || 'Uninstall failed', { id: 'skills-uninstall-err' })
+        toast.error(res?.message || t('skills.toastUninstallFailed'), {
+          id: 'skills-uninstall-err',
+        })
       }
     },
     onError: (err) => {
@@ -874,10 +904,14 @@ export function SkillsPage() {
     onSuccess: (res, name) => {
       const result = firstUpdateResult(res)
       if (result.success) {
-        toast.success(result.message || `Updated ${name}`, { id: 'skills-update' })
+        toast.success(result.message || t('skills.toastUpdated', { name }), {
+          id: 'skills-update',
+        })
         void invalidateSkills()
       } else {
-        toast.error(result.message || res?.message || 'Update failed', { id: 'skills-update-err' })
+        toast.error(result.message || res?.message || t('skills.toastUpdateFailed'), {
+          id: 'skills-update-err',
+        })
       }
     },
     onError: (err) => {
@@ -897,10 +931,10 @@ export function SkillsPage() {
     onSettled: (_d, _e, vars) => setBusy('deps:' + vars.name + ':' + vars.installId, false),
     onSuccess: (res) => {
       if (res?.success) {
-        toast.success(res.message || 'Installed', { id: 'skills-deps' })
+        toast.success(res.message || t('skills.toastDepsInstalled'), { id: 'skills-deps' })
         if (stillMissingCount(res) === 0) setDialog({ kind: 'none' })
       } else {
-        toast.error(res?.message || 'Install failed', { id: 'skills-deps-err' })
+        toast.error(res?.message || t('skills.toastInstallFailed'), { id: 'skills-deps-err' })
       }
       void invalidateSkills()
     },
@@ -1005,27 +1039,30 @@ export function SkillsPage() {
     <div className="sk-stage">
       <header className="sk-stage__header">
         <div className="sk-stage__title-block">
-          <h1 className="t-display">Skills</h1>
-          <p className="sk-stage__subtitle">
-            Manage installed capabilities and discover trusted skills for your agents.
-          </p>
+          <h1 className="t-display">{t('skills.title')}</h1>
+          <p className="sk-stage__subtitle">{t('skills.subtitle')}</p>
         </div>
         <div className="sk-stage__actions">
-          <Button variant="outline" title="Refresh" className="sk-refresh" onClick={refresh}>
+          <Button
+            variant="outline"
+            title={t('skills.refresh')}
+            className="sk-refresh"
+            onClick={refresh}
+          >
             <RefreshCwIcon />
-            <span>Refresh</span>
+            <span>{t('skills.refresh')}</span>
           </Button>
         </div>
       </header>
 
       {/* Tabs (skills.js:107-112) */}
-      <nav className="sk-source-nav" aria-label="Skill source">
-        <div className="sk-tabs" role="tablist" aria-label="Skill source">
+      <nav className="sk-source-nav" aria-label={t('skills.tabsLandmark')}>
+        <div className="sk-tabs" role="tablist" aria-label={t('skills.tabsLandmark')}>
           <TabButton
             current={tab}
             tab="installed"
-            label="Installed"
-            description={`${stats.total} local skills`}
+            label={t('skills.tabInstalled')}
+            description={t('skills.tabInstalledDesc', { count: stats.total })}
             icon={<PackageIcon aria-hidden="true" />}
             onSelect={setTab}
           />
@@ -1033,8 +1070,8 @@ export function SkillsPage() {
             <TabButton
               current={tab}
               tab="bankr"
-              label="Bankr"
-              description="Partner catalog"
+              label={PARTNER_BRANDS.bankr.label}
+              description={t('skills.tabPartnerDesc')}
               icon={<PartnerLogo brand="bankr" className="sk-tab__brand" decorative />}
               onSelect={setTab}
             />
@@ -1043,8 +1080,8 @@ export function SkillsPage() {
             <TabButton
               current={tab}
               tab="capminal"
-              label="Capminal"
-              description="Partner catalog"
+              label={PARTNER_BRANDS.capminal.label}
+              description={t('skills.tabPartnerDesc')}
               icon={<PartnerLogo brand="capminal" className="sk-tab__brand" decorative />}
               onSelect={setTab}
             />
@@ -1052,16 +1089,16 @@ export function SkillsPage() {
           <TabButton
             current={tab}
             tab="robinhood"
-            label="Robinhood"
-            description="Bundled partner"
+            label={PARTNER_BRANDS.robinhood.label}
+            description={t('skills.tabRobinhoodDesc')}
             icon={<PartnerLogo brand="robinhood" className="sk-tab__brand" decorative />}
             onSelect={setTab}
           />
           <TabButton
             current={tab}
             tab="community"
-            label="Community"
-            description="Open catalog"
+            label={t('skills.tabCommunity')}
+            description={t('skills.tabCommunityDesc')}
             icon={<GlobeIcon aria-hidden="true" />}
             onSelect={setTab}
           />
@@ -1075,31 +1112,31 @@ export function SkillsPage() {
             <input
               type="search"
               className="sk-search-input sk-search-input--library"
-              placeholder="Search installed skills"
-              aria-label="Filter installed skills"
+              placeholder={t('skills.searchPlaceholder')}
+              aria-label={t('skills.searchLabel')}
               autoComplete="off"
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
             />
           </div>
           {/* Metric pills → status filter (skills.js:342-367) */}
-          <section className="sk-metrics" aria-label="Skills summary">
+          <section className="sk-metrics" aria-label={t('skills.metricsLandmark')}>
             <MetricPill
-              label="All"
+              label={t('skills.metricAll')}
               value={stats.total}
               tone="accent"
               active={statusFilter === 'all'}
               onClick={() => setStatusFilter('all')}
             />
             <MetricPill
-              label="Ready"
+              label={t('skills.metricReady')}
               value={stats.ready}
               tone="ok"
               active={statusFilter === 'ready'}
               onClick={() => setStatusFilter('ready')}
             />
             <MetricPill
-              label="Needs setup"
+              label={t('skills.metricNeedsSetup')}
               value={stats.needs}
               tone="warn"
               active={statusFilter === 'needs-setup'}
@@ -1110,7 +1147,7 @@ export function SkillsPage() {
                 filter next to the ones that matter. */}
             {stats.disabled > 0 || statusFilter === 'disabled' ? (
               <MetricPill
-                label="Disabled"
+                label={t('skills.metricDisabled')}
                 value={stats.disabled}
                 active={statusFilter === 'disabled'}
                 onClick={() => setStatusFilter('disabled')}
@@ -1191,8 +1228,8 @@ export function SkillsPage() {
                 <DownloadIcon />
               </span>
               <div>
-                <h2 id="sk-github-title">Install from GitHub</h2>
-                <p>Add a skill directly from a public repository or folder.</p>
+                <h2 id="sk-github-title">{t('skills.githubTitle')}</h2>
+                <p>{t('skills.githubDesc')}</p>
               </div>
             </div>
             <div className="sk-github-install__controls">
@@ -1200,8 +1237,8 @@ export function SkillsPage() {
                 <input
                   type="url"
                   className="sk-search-input sk-search-input--lg"
-                  placeholder="https://github.com/owner/repo/tree/main/skill"
-                  aria-label="Install from GitHub URL"
+                  placeholder={t('skills.githubPlaceholder')}
+                  aria-label={t('skills.githubUrlLabel')}
                   autoComplete="off"
                   value={githubUrl}
                   onChange={(e) => setGithubUrl(e.target.value)}
@@ -1227,7 +1264,7 @@ export function SkillsPage() {
                     })
                 }}
               >
-                Install
+                {t('skills.githubInstall')}
               </Button>
             </div>
           </section>
@@ -1294,7 +1331,7 @@ export function SkillsPage() {
               try {
                 await rpc.call('env.set', { name: envPrompt.name, value: envValue })
                 await queryClient.invalidateQueries({ queryKey: ['skills'] })
-                toast.success(`${envPrompt.name} saved.`)
+                toast.success(t('skills.toastEnvSaved', { name: envPrompt.name }))
                 setEnvPrompt(null)
                 setEnvValue('')
               } catch (error) {
@@ -1430,10 +1467,10 @@ function InstalledPanel({
   if (error)
     return (
       <div id="sk-panel-installed" role="tabpanel" className="sk-error">
-        Failed to load skills: {error}
+        {t('skills.installedLoadFailed', { error })}
       </div>
     )
-  if (loading) return <SkillsSkeleton label="Loading installed skills" />
+  if (loading) return <SkillsSkeleton label={t('skills.loadingInstalled')} />
   if (empty)
     return (
       <div id="sk-panel-installed" role="tabpanel" className="sk-empty__state">
@@ -1513,15 +1550,14 @@ function PartnerIntro({
           <p className="sk-partner__notice" role="note">
             <TriangleAlertIcon size={13} aria-hidden="true" />
             <span>
-              <strong>IMPORTANT:</strong> {notice}
+              <strong>{t('skills.importantPrefix')}</strong> {notice}
             </span>
           </p>
         ) : null}
       </div>
       {typeof count === 'number' ? (
         <span className="sk-partner__count">
-          <strong>{count}</strong>
-          {count === 1 ? ' skill' : ' skills'}
+          <strong>{count}</strong> {count === 1 ? t('skills.skillWord') : t('skills.skillsWord')}
         </span>
       ) : null}
     </div>
@@ -1550,10 +1586,10 @@ function RobinhoodPanel({
   const stats = skillStats(skills)
   const filtered = filterSkills(skills, query.trim(), statusFilter)
   const filters = [
-    { key: 'all' as const, label: 'All', count: stats.total },
-    { key: 'ready' as const, label: 'Ready', count: stats.ready },
-    { key: 'needs-setup' as const, label: 'Needs setup', count: stats.needs },
-    { key: 'disabled' as const, label: 'Disabled', count: stats.disabled },
+    { key: 'all' as const, label: t('skills.metricAll'), count: stats.total },
+    { key: 'ready' as const, label: t('skills.metricReady'), count: stats.ready },
+    { key: 'needs-setup' as const, label: t('skills.metricNeedsSetup'), count: stats.needs },
+    { key: 'disabled' as const, label: t('skills.metricDisabled'), count: stats.disabled },
   ].filter((item) => item.key === 'all' || item.count > 0 || item.key === statusFilter)
 
   return (
@@ -1565,9 +1601,9 @@ function RobinhoodPanel({
     >
       <PartnerIntro
         brand="robinhood"
-        title={ROBINHOOD_INTRO.title}
-        description={ROBINHOOD_INTRO.description}
-        notice={ROBINHOOD_INTRO.notice}
+        title={robinhoodIntro().title}
+        description={robinhoodIntro().description}
+        notice={robinhoodIntro().notice}
         count={skills.length}
       />
       <div className="sk-browse__bar">
@@ -1576,8 +1612,12 @@ function RobinhoodPanel({
           <input
             type="search"
             className="sk-search-input sk-search-input--lg"
-            placeholder="Search Robinhood skills…"
-            aria-label="Search Robinhood skills"
+            placeholder={t('skills.registrySearchPlaceholder', {
+              label: PARTNER_BRANDS.robinhood.label,
+            })}
+            aria-label={t('skills.registrySearchLabel', {
+              label: PARTNER_BRANDS.robinhood.label,
+            })}
             autoComplete="off"
             value={query}
             onChange={(event) => onQuery(event.target.value)}
@@ -1585,13 +1625,13 @@ function RobinhoodPanel({
         </div>
       </div>
       {filters.length > 1 ? (
-        <div className="sk-chips" aria-label="Robinhood skill status">
+        <div className="sk-chips" aria-label={t('skills.robinhoodStatusLandmark')}>
           {filters.map((filter) => (
             <button
               key={filter.key}
               type="button"
               className={`sk-chip-btn${statusFilter === filter.key ? ' is-active' : ''}`}
-              aria-label={`Filter Robinhood skills: ${filter.label}`}
+              aria-label={t('skills.robinhoodFilterLabel', { label: filter.label })}
               aria-pressed={statusFilter === filter.key}
               onClick={() => onStatusFilter(filter.key)}
             >
@@ -1603,15 +1643,15 @@ function RobinhoodPanel({
       <div className="sk-browse__results">
         {error ? (
           <div className="sk-error">
-            Failed to load: {error}
+            {t('skills.loadFailed', { error })}
             <br />
-            <span className="sk-dim">Press Refresh to retry.</span>
+            <span className="sk-dim">{t('skills.retryHintRobinhood')}</span>
           </div>
         ) : loading ? (
-          <SkillsSkeleton label="Loading Robinhood skills" />
+          <SkillsSkeleton label={t('skills.loadingRobinhood')} />
         ) : filtered.length === 0 ? (
           <div className="sk-registry__hint">
-            {partnerEmptyMessage('Robinhood', query, statusFilter)}
+            {partnerEmptyMessage(PARTNER_BRANDS.robinhood.label, query, statusFilter)}
           </div>
         ) : (
           <div className="sk-grid sk-grid--registry">
@@ -1686,15 +1726,15 @@ function RegistryPanel({
       className={`sk-panel sk-panel--source sk-panel--${group}`}
     >
       {group !== 'community' ? (
-        <PartnerIntro brand={group} {...REGISTRY_INTRO[group]} count={snapshot.length} />
+        <PartnerIntro brand={group} {...registryIntro()[group]} count={snapshot.length} />
       ) : (
         <div className="sk-community-intro">
           <span className="sk-community-intro__icon" aria-hidden="true">
             <GlobeIcon />
           </span>
           <div>
-            <h2>Community catalog</h2>
-            <p>Discover skills published by the wider AgentOS community.</p>
+            <h2>{t('skills.communityTitle')}</h2>
+            <p>{t('skills.communityDesc')}</p>
           </div>
         </div>
       )}
@@ -1704,8 +1744,8 @@ function RegistryPanel({
           <input
             type="search"
             className="sk-search-input sk-search-input--lg"
-            placeholder={`Search ${registryLabel(group)} skills…`}
-            aria-label={`Search ${registryLabel(group)} skills`}
+            placeholder={t('skills.registrySearchPlaceholder', { label: registryLabel(group) })}
+            aria-label={t('skills.registrySearchLabel', { label: registryLabel(group) })}
             autoComplete="off"
             value={query}
             onChange={(e) => onQuery(e.target.value)}
@@ -1729,12 +1769,12 @@ function RegistryPanel({
       <div className="sk-browse__results">
         {error ? (
           <div className="sk-error">
-            Failed to load: {error}
+            {t('skills.loadFailed', { error })}
             <br />
-            <span className="sk-dim">Re-open the tab or press Refresh to retry.</span>
+            <span className="sk-dim">{t('skills.retryHintCommunity')}</span>
           </div>
         ) : loading ? (
-          <SkillsSkeleton label={`Loading ${registryLabel(group)} catalog`} />
+          <SkillsSkeleton label={t('skills.loadingCatalog', { label: registryLabel(group) })} />
         ) : items.length === 0 ? (
           <div className="sk-registry__hint">{registryEmptyMessage(group, query)}</div>
         ) : (
@@ -1763,10 +1803,10 @@ function RegistryPanel({
 // Per-requirement name + status chip + missing/requires detail. Renders nothing
 // when there are no requirement items.
 function reqStatusLabel(status: string): string {
-  if (status === 'ready') return 'ready'
-  if (status === 'needs_setup') return 'needs setup'
-  if (status === 'missing_skill') return 'missing skill'
-  return 'no deps declared'
+  if (status === 'ready') return t('skills.reqReady')
+  if (status === 'needs_setup') return t('skills.reqNeedsSetup')
+  if (status === 'missing_skill') return t('skills.reqMissingSkill')
+  return t('skills.reqNotDeclared')
 }
 
 function reqStatusClass(status: string): string {
@@ -1781,9 +1821,9 @@ function RequirementRow({ item }: { item: SkillRequirementItem }) {
   // skills.js:750-755 — declared requirements as plain text fragments.
   const requires: string[] = [...(item.requires_bins || [])]
   if ((item.requires_any_bins || []).length) {
-    requires.push(`one of ${(item.requires_any_bins || []).join(' / ')}`)
+    requires.push(t('skills.reqOneOf', { list: (item.requires_any_bins || []).join(' / ') }))
   }
-  ;(item.requires_env || []).forEach((e) => requires.push(`${e} env`))
+  ;(item.requires_env || []).forEach((e) => requires.push(t('skills.reqEnv', { name: e })))
   const status = item.status || 'not_declared'
 
   // skills.js:764-766 — detail prefers the missing codes, else the requires
@@ -1792,7 +1832,7 @@ function RequirementRow({ item }: { item: SkillRequirementItem }) {
   if (missing.length) {
     detail = (
       <>
-        Missing{' '}
+        {t('skills.reqMissingLead')}{' '}
         {missing.map((m, i) => (
           <span key={m}>
             {i > 0 ? ', ' : ''}
@@ -1804,12 +1844,12 @@ function RequirementRow({ item }: { item: SkillRequirementItem }) {
   } else if (requires.length) {
     detail = requires.join(', ')
   } else {
-    detail = 'No declared dependencies'
+    detail = t('skills.reqNoDeps')
   }
 
   return (
     <div className="sk-dialog__req-row">
-      <span className="sk-dialog__req-name">{item.name || 'unknown'}</span>
+      <span className="sk-dialog__req-name">{item.name || t('skills.reqUnknown')}</span>
       <span className={`sk-chip ${reqStatusClass(status)}`}>{reqStatusLabel(status)}</span>
       <span className="sk-dialog__req-detail">{detail}</span>
     </div>
@@ -1821,7 +1861,7 @@ function RequirementsSection({ requirements }: { requirements?: SkillRequirement
   if (!items.length) return null
   return (
     <div className="sk-dialog__section">
-      <div className="sk-dialog__section-title">Requirements</div>
+      <div className="sk-dialog__section-title">{t('skills.reqTitle')}</div>
       <div className="sk-dialog__requirements">
         {items.map((item, i) => (
           <RequirementRow key={item.name || i} item={item} />
@@ -1894,16 +1934,22 @@ function SkillDialog({
             </span>
             <OriginChip skill={skill} />
             {bucket === 'ready' ? (
-              <span className="sk-chip sk-chip--ok">✓ ready</span>
+              <span className="sk-chip sk-chip--ok">{t('skills.chipReady')}</span>
             ) : bucket === 'disabled' ? (
-              <span className="sk-chip sk-chip--unverified">disabled</span>
+              <span className="sk-chip sk-chip--unverified">{t('skills.chipDisabled')}</span>
             ) : (
-              <span className="sk-chip sk-chip--warn">needs deps</span>
+              <span className="sk-chip sk-chip--warn">{t('skills.chipNeedsDeps')}</span>
             )}
             <AvailabilityChip skill={skill} />
           </div>
         </div>
-        <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          aria-label={t('common.close')}
+        >
           <XIcon />
         </Button>
       </header>
@@ -1914,20 +1960,20 @@ function SkillDialog({
             still not find it?" — the gateway writes the prose. */}
         {availabilityDetail ? (
           <div className="sk-dialog__section sk-dialog__withheld">
-            <div className="sk-dialog__section-title">Agent availability</div>
+            <div className="sk-dialog__section-title">{t('skills.sectionAvailability')}</div>
             <p className="sk-dialog__desc">{availabilityDetail}</p>
           </div>
         ) : null}
         <RequirementsSection requirements={skill.requirements} />
         {hasMissing ? (
           <div className="sk-dialog__section">
-            <div className="sk-dialog__section-title">Missing</div>
+            <div className="sk-dialog__section-title">{t('skills.sectionMissing')}</div>
             <ul className="sk-dialog__missing">
               {missingBins.map((b) => (
                 <li key={`bin:${b}`} className="sk-dialog__missing-row">
                   <div className="sk-dialog__missing-info">
                     <div className="sk-dialog__missing-head">
-                      <code>{b}</code> <span className="sk-dim">binary</span>
+                      <code>{b}</code> <span className="sk-dim">{t('skills.missingBinary')}</span>
                     </div>
                   </div>
                 </li>
@@ -1941,7 +1987,7 @@ function SkillDialog({
                   <li key={`env:${e}`} className="sk-dialog__missing-row sk-dialog__missing-env">
                     <div className="sk-dialog__missing-info">
                       <div className="sk-dialog__missing-head">
-                        <code>{e}</code> <span className="sk-dim">env var</span>
+                        <code>{e}</code> <span className="sk-dim">{t('skills.missingEnvVar')}</span>
                       </div>
                       {detail?.description || detail?.url ? (
                         <p className="sk-dialog__missing-desc">
@@ -1955,7 +2001,7 @@ function SkillDialog({
                                 target="_blank"
                                 rel="noopener noreferrer"
                               >
-                                where to get it ↗
+                                {t('skills.whereToGet')}
                               </a>
                             </>
                           ) : null}
@@ -1969,10 +2015,10 @@ function SkillDialog({
                       type="button"
                       variant="outline"
                       size="sm"
-                      aria-label={`Set ${e}`}
+                      aria-label={t('skills.setEnvAria', { name: e })}
                       onClick={() => onSetEnv(e)}
                     >
-                      Set
+                      {t('skills.setEnvAction')}
                     </Button>
                   </li>
                 )
@@ -1982,7 +2028,7 @@ function SkillDialog({
         ) : null}
         {installs.length ? (
           <div className="sk-dialog__section">
-            <div className="sk-dialog__section-title">Install</div>
+            <div className="sk-dialog__section-title">{t('skills.sectionInstall')}</div>
             {installs.map((i) => {
               const busy = busyKeys.has('deps:' + skill.name + ':' + i.id)
               return (
@@ -1999,7 +2045,9 @@ function SkillDialog({
                     disabled={busy}
                     onClick={() => onInstallDeps(i.id!)}
                   >
-                    {busy ? 'Installing…' : `Install via ${i.kind}`}
+                    {busy
+                      ? t('skills.installing')
+                      : t('skills.installVia', { kind: String(i.kind) })}
                   </Button>
                 </div>
               )
@@ -2009,19 +2057,19 @@ function SkillDialog({
         {homepage ? (
           <div className="sk-dialog__section">
             <a href={homepage} target="_blank" rel="noopener" className="sk-dialog__link">
-              Homepage ↗
+              {t('skills.homepage')}
             </a>
           </div>
         ) : null}
       </section>
       <footer className="sk-dialog__foot">
         {removeBlocked ? (
-          <small className="sk-dim sk-dialog__note">{REMOVE_BLOCKED_NOTE}</small>
+          <small className="sk-dim sk-dialog__note">{removeBlockedNote()}</small>
         ) : skill.file_path ? (
           <small className="sk-dim sk-dialog__path">{skill.file_path}</small>
         ) : null}
         <Button type="button" size="sm" onClick={onUse}>
-          Use in chat
+          {t('skills.useInChat')}
         </Button>
         {canUpdate ? (
           <Button
@@ -2031,7 +2079,7 @@ function SkillDialog({
             disabled={updateBusy}
             onClick={onUpdate}
           >
-            {updateBusy ? 'Updating…' : 'Update'}
+            {updateBusy ? t('skills.updating') : t('skills.update')}
           </Button>
         ) : null}
         {canRemove ? (
@@ -2042,7 +2090,7 @@ function SkillDialog({
             disabled={removeBusy}
             onClick={onRemove}
           >
-            {removeBusy ? 'Removing…' : 'Remove'}
+            {removeBusy ? t('skills.removing') : t('skills.remove')}
           </Button>
         ) : null}
       </footer>
@@ -2090,7 +2138,13 @@ function RegistryDialog({
             <div className="sk-dialog__provider">{item.provider || ''}</div>
           </div>
         </div>
-        <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          aria-label={t('common.close')}
+        >
           <XIcon />
         </Button>
       </header>
@@ -2099,21 +2153,19 @@ function RegistryDialog({
           <span
             className={`sk-chip ${item.trust_level === 'trusted' ? 'sk-chip--ok' : 'sk-chip--warn'}`}
           >
-            {item.trust_level || 'community'}
+            {item.trust_level || t('skills.trustCommunity')}
           </span>
-          {cat ? <span className="sk-chip">{CAT_LABEL[cat] || cat}</span> : null}
+          {cat ? <span className="sk-chip">{catLabel(cat)}</span> : null}
           <span className="sk-chip sk-mono">{item.source || ''}</span>
         </div>
         {item.description ? (
           <p className="sk-dialog__desc">{item.description}</p>
         ) : (
-          <p className="sk-dialog__desc sk-dim">
-            Description loads after install (from the skill&apos;s SKILL.md).
-          </p>
+          <p className="sk-dialog__desc sk-dim">{t('skills.descPending')}</p>
         )}
         {Array.isArray(item.setup) && item.setup.length ? (
           <div className="sk-dialog__section">
-            <div className="sk-dialog__section-title">Setup</div>
+            <div className="sk-dialog__section-title">{t('skills.sectionSetup')}</div>
             <ol className="sk-dialog__setup">
               {item.setup.map((s, i) => (
                 <li key={i}>{s}</li>
@@ -2124,7 +2176,7 @@ function RegistryDialog({
         {item.demo && item.demo.code ? (
           <div className="sk-dialog__section">
             <div className="sk-dialog__section-title">
-              Demo{' '}
+              {t('skills.sectionDemo')}{' '}
               {demoTitle ? (
                 <span className="sk-dialog__demo-title sk-mono">{demoTitle}</span>
               ) : null}{' '}
@@ -2138,7 +2190,7 @@ function RegistryDialog({
         {homepage ? (
           <div className="sk-dialog__section">
             <a href={homepage} target="_blank" rel="noopener" className="sk-dialog__link">
-              Source ↗
+              {t('skills.sourceLink')}
             </a>
           </div>
         ) : null}
@@ -2178,9 +2230,15 @@ function SetEnvDialog({
     >
       <header className="sk-dialog__head">
         <h2 id={titleId} className="sk-dialog__title">
-          Set {name}
+          {t('skills.setEnvTitle', { name })}
         </h2>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label="Close" onClick={onClose}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t('common.close')}
+          onClick={onClose}
+        >
           <XIcon />
         </Button>
       </header>
@@ -2192,7 +2250,7 @@ function SetEnvDialog({
         }}
       >
         <p className="sk-dialog__desc">
-          Stored in the AgentOS <code>.env</code> and applied to the running gateway.
+          {t('skills.setEnvDescLead')} <code>{'.env'}</code> {t('skills.setEnvDescTail')}
         </p>
         <input
           type="password"
@@ -2204,10 +2262,10 @@ function SetEnvDialog({
         />
         <div className="sk-dialog__install-row">
           <Button type="submit" size="sm" disabled={saving || !value}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? t('skills.saving') : t('common.save')}
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={onClose}>
-            Cancel
+            {t('common.cancel')}
           </Button>
         </div>
       </form>

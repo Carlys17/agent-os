@@ -8,6 +8,9 @@
 // ── Types ────────────────────────────────────────────────────────────────────
 
 /** An installed skill row from skills.list (all fields optional). */
+import { t } from '@/i18n'
+import '@/i18n/en/skills'
+
 export interface RawSkill {
   name?: string
   description?: string
@@ -204,37 +207,45 @@ export function skillBucket(skill: RawSkill): SkillBucket {
 // longer groups the Installed tab (see SKILL_GROUP_ORDER below) — grouping on
 // it split the same partner's skills across two headings.
 
-export const LAYER_LABEL: Record<string, string> = {
-  workspace: 'Workspace',
-  bundled: 'Bundled',
-  managed: 'Managed',
-  personal: 'Personal',
-  project: 'Project',
-  extra: 'Extra',
+function layerLabels(): Record<string, string> {
+  return {
+    workspace: t('skills.layerWorkspace'),
+    bundled: t('skills.layerBundled'),
+    managed: t('skills.layerManaged'),
+    personal: t('skills.layerPersonal'),
+    project: t('skills.layerProject'),
+    extra: t('skills.layerExtra'),
+  }
 }
 
-export const LAYER_HELP: Record<string, string> = {
-  workspace: 'Workspace skills are local to the active workspace.',
-  bundled: 'Bundled skills ship with AgentOS.',
-  managed: 'Managed skills are locally installed into AgentOS state.',
-  personal: 'Personal skills are local user installs, not bundled.',
-  project: 'Project skills are local to the current project.',
-  extra: 'Extra skills come from configured local directories.',
+function layerHelps(): Record<string, string> {
+  return {
+    workspace: t('skills.layerHelpWorkspace'),
+    bundled: t('skills.layerHelpBundled'),
+    managed: t('skills.layerHelpManaged'),
+    personal: t('skills.layerHelpPersonal'),
+    project: t('skills.layerHelpProject'),
+    extra: t('skills.layerHelpExtra'),
+  }
 }
 
-export const CAT_LABEL: Record<string, string> = {
-  all: 'All',
-  trading: 'Trading',
-  defi: 'DeFi',
-  wallet: 'Wallets',
-  markets: 'Markets',
-  social: 'Social',
-  data: 'Data',
-  nft: 'NFT',
-  dev: 'Dev tools',
-  infra: 'Infra',
-  crypto: 'Crypto',
-  other: 'Other',
+/** Catalog category labels, resolved per call so they follow the locale. */
+export function catLabel(category: string): string {
+  const labels: Record<string, string> = {
+    all: t('skills.catAll'),
+    trading: t('skills.catTrading'),
+    defi: t('skills.catDefi'),
+    wallet: t('skills.catWallet'),
+    markets: t('skills.catMarkets'),
+    social: t('skills.catSocial'),
+    data: t('skills.catData'),
+    nft: t('skills.catNft'),
+    dev: t('skills.catDev'),
+    infra: t('skills.catInfra'),
+    crypto: t('skills.catCrypto'),
+    other: t('skills.catOther'),
+  }
+  return labels[category] || category
 }
 
 /** skills.js:210,220 — the registry-search debounce interval (ms). */
@@ -243,11 +254,11 @@ export const REGISTRY_SEARCH_DEBOUNCE_MS = 250
 // ── Layer label/help (skills.js:1070-1076) ───────────────────────────────────
 
 export function layerLabel(layer?: string): string {
-  return (layer && LAYER_LABEL[layer]) || layer || 'Unknown'
+  return (layer && layerLabels()[layer]) || layer || t('skills.layerUnknown')
 }
 
 export function layerHelp(layer?: string): string {
-  return (layer && LAYER_HELP[layer]) || 'Configured local skill directory.'
+  return (layer && layerHelps()[layer]) || t('skills.layerHelpFallback')
 }
 
 // ── Installed stats (skills.js:342-367) ──────────────────────────────────────
@@ -298,11 +309,11 @@ export function filterSkills(
 
 /** skills.js:391-399 — the empty-state message for the installed list. */
 export function installedEmptyMessage(filterText: string, statusFilter: StatusFilter): string {
-  if (filterText) return `No skills match ${filterText}.`
-  if (statusFilter === 'ready') return 'No skills are ready. Install dependencies to enable them.'
-  if (statusFilter === 'needs-setup') return 'No skills currently need setup.'
-  if (statusFilter === 'disabled') return 'No skills are switched off.'
-  return 'No skills installed.'
+  if (filterText) return t('skills.emptyMatch', { query: filterText })
+  if (statusFilter === 'ready') return t('skills.emptyReady')
+  if (statusFilter === 'needs-setup') return t('skills.emptyNeedsSetup')
+  if (statusFilter === 'disabled') return t('skills.emptyDisabled')
+  return t('skills.emptyNone')
 }
 
 // ── Provenance grouping + ready-first sort (skills.js:407-442) ────────────────
@@ -343,20 +354,24 @@ export function skillChatPromptPath(name: string): string {
   return '/chat?prompt=' + encodeURIComponent('use skill ' + name + '\n')
 }
 
-export const SKILL_GROUP_LABEL: Record<SkillGroupKey, string> = {
-  partners: 'Partner Skills',
-  crypto: 'AgentOS Crypto Skills',
-  shipped: 'AgentOS Normal Skills',
-  hub: 'Installed from a hub',
-  local: 'Your local skills',
+function skillGroupLabels(): Record<SkillGroupKey, string> {
+  return {
+    partners: t('skills.groupPartners'),
+    crypto: t('skills.groupCrypto'),
+    shipped: t('skills.groupShipped'),
+    hub: t('skills.groupHub'),
+    local: t('skills.groupLocal'),
+  }
 }
 
-export const SKILL_GROUP_HELP: Record<SkillGroupKey, string> = {
-  partners: 'Skills published by an AgentOS partner.',
-  crypto: 'On-chain and wallet skills that ship with AgentOS.',
-  shipped: 'Skills that ship with AgentOS.',
-  hub: 'Skills you installed from a skill hub.',
-  local: 'Skills you added yourself, from a local skill directory.',
+function skillGroupHelps(): Record<SkillGroupKey, string> {
+  return {
+    partners: t('skills.groupHelpPartners'),
+    crypto: t('skills.groupHelpCrypto'),
+    shipped: t('skills.groupHelpShipped'),
+    hub: t('skills.groupHelpHub'),
+    local: t('skills.groupHelpLocal'),
+  }
 }
 
 /**
@@ -470,8 +485,8 @@ export function groupSkills(skills: RawSkill[]): SkillGroup[] {
     if (!list || list.length === 0) return
     out.push({
       key,
-      label: SKILL_GROUP_LABEL[key],
-      help: SKILL_GROUP_HELP[key],
+      label: skillGroupLabels()[key],
+      help: skillGroupHelps()[key],
       skills: sortByReady(list),
     })
   })
@@ -499,16 +514,19 @@ export function skillDotClass(skill: RawSkill): SkillDot {
 }
 
 /** The label under the dot, per bucket. */
-export const SKILL_BUCKET_LABEL: Record<SkillBucket, string> = {
-  ready: 'Ready',
-  'needs-setup': 'Setup required',
-  disabled: 'Disabled',
+export function skillBucketLabel(bucket: SkillBucket): string {
+  const labels: Record<SkillBucket, string> = {
+    ready: t('skills.bucketReady'),
+    'needs-setup': t('skills.bucketNeedsSetup'),
+    disabled: t('skills.bucketDisabled'),
+  }
+  return labels[bucket]
 }
 
 /** skills.js:454 — the dot tooltip. */
 export function skillDotTitle(skill: RawSkill): string {
-  if (skill.disabled) return skill.status_detail || 'Disabled in config'
-  return skill.status_detail || (skill.eligible ? 'Ready' : 'Needs setup')
+  if (skill.disabled) return skill.status_detail || t('skills.dotDisabled')
+  return skill.status_detail || (skill.eligible ? t('skills.dotReady') : t('skills.dotNeedsSetup'))
 }
 
 // ── Availability: installed and eligible, but is it offered? ──────────────────
@@ -530,22 +548,24 @@ export function skillAvailabilityTone(skill: RawSkill): SkillAvailabilityTone {
 }
 
 /** Short labels per withheld reason, for the card chip. */
-export const AVAILABILITY_REASON_LABEL: Record<string, string> = {
-  model_invocation_disabled: 'Not offered — agent cannot invoke',
-  ineligible: 'Not offered — needs setup',
-  tool_gate: 'Not offered — missing tools',
-  fallback_superseded: 'Not offered — superseded',
-  not_retrieved: 'Not offered — not retrieved',
-  prompt_budget: 'Not offered — prompt too long',
+function availabilityReasonLabels(): Record<string, string> {
+  return {
+    model_invocation_disabled: t('skills.availModelInvocationDisabled'),
+    ineligible: t('skills.availIneligible'),
+    tool_gate: t('skills.availToolGate'),
+    fallback_superseded: t('skills.availFallbackSuperseded'),
+    not_retrieved: t('skills.availNotRetrieved'),
+    prompt_budget: t('skills.availPromptBudget'),
+  }
 }
 
 /** The chip label; '' when availability was not computed (nothing to show). */
 export function skillAvailabilityLabel(skill: RawSkill): string {
   const tone = skillAvailabilityTone(skill)
   if (tone === 'unknown') return ''
-  if (tone === 'offered') return 'Offered to the agent'
+  if (tone === 'offered') return t('skills.availOffered')
   const reason = String(skill.availability?.reason || '')
-  return AVAILABILITY_REASON_LABEL[reason] || 'Not offered to the agent'
+  return availabilityReasonLabels()[reason] || t('skills.availNotOffered')
 }
 
 /** The chip tooltip: the server's prose when it wrote any, else the label. */
@@ -592,11 +612,11 @@ export function partnerEmptyMessage(
   statusFilter: StatusFilter,
 ): string {
   const query = (filterText || '').trim()
-  if (query) return `No ${brand} skills match ${query}.`
-  if (statusFilter === 'ready') return `No ${brand} skills are ready.`
-  if (statusFilter === 'needs-setup') return `No ${brand} skills currently need setup.`
-  if (statusFilter === 'disabled') return `No ${brand} skills are switched off.`
-  return `${brand} skills are on the way. No ${brand} skills are installed yet.`
+  if (query) return t('skills.partnerEmptyMatch', { brand, query })
+  if (statusFilter === 'ready') return t('skills.partnerEmptyReady', { brand })
+  if (statusFilter === 'needs-setup') return t('skills.partnerEmptyNeedsSetup', { brand })
+  if (statusFilter === 'disabled') return t('skills.partnerEmptyDisabled', { brand })
+  return t('skills.partnerEmptyNone', { brand })
 }
 
 // ── Registry (community / bankr) derivations ──────────────────────────────────
@@ -650,7 +670,7 @@ export function categoryChips(snapshot: RegistryItem[], activeCat: string): Cate
   const cats = ['all', ...keys.sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0))]
   return cats.map((c) => ({
     cat: c,
-    label: CAT_LABEL[c] || c,
+    label: catLabel(c),
     count: c === 'all' ? snapshot.length : (counts[c] ?? 0),
     active: activeCat === c,
   }))
@@ -710,10 +730,10 @@ export function registryEmptyMessage(
   query: string,
 ): string {
   const q = (query || '').trim()
-  if (q) return `No skills match ${q}.`
-  if (group === 'bankr') return 'No Bankr skills available right now.'
-  if (group === 'capminal') return 'No Capminal skills available right now.'
-  return 'No community skills available right now.'
+  if (q) return t('skills.registryEmptyMatch', { query: q })
+  if (group === 'bankr') return t('skills.registryEmptyBankr')
+  if (group === 'capminal') return t('skills.registryEmptyCapminal')
+  return t('skills.registryEmptyCommunity')
 }
 
 /** skills.js:662,715,283 — the stable identifier key for a registry row. */

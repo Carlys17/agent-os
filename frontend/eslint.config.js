@@ -18,6 +18,7 @@ const I18N_MIGRATED = [
   'src/views/overview/**/*.tsx',
   'src/views/sessions/**/*.tsx',
   'src/views/settings/**/*.tsx',
+  'src/views/skills/**/*.tsx',
   'src/views/usage/**/*.tsx',
 ]
 
@@ -52,6 +53,22 @@ const NO_HARDCODED_COPY = [
     selector:
       'JSXAttribute[name.name=/^(aria-label|aria-description|placeholder|title|alt)$/] > Literal[value=/[A-Za-z]{3,}/]',
     message: 'Accessible and attribute copy must come from t().',
+  },
+  {
+    // JSXText only covers bare text nodes. Copy also reaches the DOM through
+    // expression containers — `{busy ? 'Saving…' : 'Save'}`, `{x || 'None'}` —
+    // which the rule above cannot see, and which is exactly how the skills
+    // dialog's Update/Remove buttons survived the first migration pass.
+    // The :not() excludes attribute values, so the `className={x ? 'a' : 'b'}`
+    // ternaries all over this codebase stay legal. Only direct ternary branches
+    // and `||` fallbacks, so a `{'main'}` identifier escape hatch still passes.
+    selector: [
+      'JSXExpressionContainer:not(JSXAttribute JSXExpressionContainer)',
+      '> :matches(ConditionalExpression, LogicalExpression)',
+      '> Literal[value=/[A-Za-z]{3,}/]',
+    ].join(' '),
+    message:
+      'Copy inside a JSX expression must come from t() too — a ternary or || fallback still renders to the user.',
   },
 ]
 
