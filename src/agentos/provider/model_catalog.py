@@ -8,6 +8,7 @@ from typing import Any, cast
 import httpx
 import structlog
 
+from agentos import model_registry
 from agentos.env import trust_env as _trust_env
 from agentos.secrets import clean_header_secret
 
@@ -21,93 +22,19 @@ DEFAULT_MAX_TOKENS = 16384
 SAFE_OPENROUTER_DEFAULT_MAX_TOKENS = 8192
 DEFAULT_CONTEXT_WINDOW = 200_000
 
-# Static fallback for agentos-router tier models + default model.
-# Used when OpenRouter API is unreachable at boot.
-# Format: model_id → (max_output_tokens, context_window)
-_STATIC_FALLBACK: dict[str, tuple[int, int]] = {
-    "gpt-5.4-nano": (128_000, 400_000),
-    "gpt-5.4-mini": (128_000, 400_000),
-    "gpt-5.5": (128_000, 1_000_000),
-    "minimax/minimax-m2.7": (8192, 196_608),
-    "minimax/minimax-m3": (131_072, 1_048_576),
-    "stepfun/step-3.5-flash": (16_384, 256_000),
-    "z-ai/glm-4.5-air": (98_304, 131_072),
-    "minimax/minimax-m2.5": (65_536, 196_608),
-    "openai/gpt-5.6-luna": (128_000, 1_050_000),
-    "deepseek/deepseek-v4-flash": (16_384, 1_048_576),
-    "deepseek/deepseek-v4-pro": (16_384, 1_048_576),
-    "deepseek-v4-flash": (393_216, 1_048_576),
-    "deepseek-v4-pro": (393_216, 1_048_576),
-    "deepseek/deepseek-v3.2": (16_384, 163_840),
-    "glm-4.7-flashx": (128_000, 200_000),
-    "glm-5": (128_000, 200_000),
-    "glm-5.1": (128_000, 200_000),
-    "z-ai/glm-5": (80_000, 80_000),
-    "z-ai/glm-5.1": (202_752, 202_752),
-    "z-ai/glm-5.2": (131_072, 1_048_576),
-    "moonshot-v1-8k": (8192, 8192),
-    "moonshot-v1-32k": (32_768, 32_768),
-    "moonshot-v1-128k": (131_072, 131_072),
-    "kimi-k2.5": (32_768, 262_144),
-    "kimi-k2.6": (32_768, 262_144),
-    "moonshotai/kimi-k2.6": (DEFAULT_MAX_TOKENS, 262_142),
-    "moonshotai/kimi-k2.5": (65_535, 262_144),
-    # Shared Bankr/OpenCAP gateway catalog IDs are bare. "gpt-5.5",
-    # "gpt-5.4-mini" and "deepseek-v4-flash" already have entries above (the
-    # deepseek entry keeps the DeepSeek direct contract values; the gateway's
-    # 128K output cap lives in _PROVIDER_STATIC_FALLBACK). "kimi-k2.6" above
-    # keeps the Moonshot direct contract; the gateway override is below.
-    "oc-uncensored-1.0": (DEFAULT_MAX_TOKENS, 262_144),
-    "glm-5.2": (131_072, 1_048_576),
-    "minimax-m3": (131_072, 1_048_576),
-    "qwen3.6-flash": (65_536, 1_000_000),
-    "qwen3.7-max": (32_768, 256_000),
-    "qwen3.7-plus": (32_768, 256_000),
-    "claude-opus-5": (128_000, 1_000_000),
-    "anthropic/claude-opus-5": (128_000, 1_000_000),
-    "claude-opus-4.8": (128_000, 1_000_000),
-    "claude-sonnet-5": (64_000, 1_000_000),
-    "claude-sonnet-4.6": (64_000, 1_000_000),
-    "claude-fable-5": (128_000, 1_000_000),
-    "claude-haiku-4.5": (64_000, 200_000),
-    "gemini-3.1-flash-lite": (65_536, 1_000_000),
-    "gemini-3.5-flash": (65_536, 1_000_000),
-    "gemini-3.1-pro-preview": (32_768, 1_000_000),
-    "gemini-2.5-pro": (65_536, 1_048_576),
-    "grok-4.3": (128_000, 1_000_000),
-    "grok-4.5": (DEFAULT_MAX_TOKENS, 500_000),
-    "kimi-k2.7-code": (262_144, 262_144),
-    "gpt-5.6-luna": (128_000, 1_050_000),
-    "gpt-5.6-terra": (128_000, 1_050_000),
-    "gpt-5.6-sol": (128_000, 1_050_000),
-    "gpt-5.6-luna-pro": (128_000, 1_050_000),
-    "gpt-5.6-terra-pro": (128_000, 1_050_000),
-    "gpt-5.6-sol-pro": (128_000, 1_050_000),
-    # Volcengine Ark Seed 2.0, the volcengine profile tier defaults. Ark serves
-    # the family with a 256K context. Published max output disagrees across
-    # sources (32K vs 128K), so the conservative value is used: boot.py fetches
-    # no live catalog for volcengine, so nothing corrects an over-ask here and
-    # too high a max_tokens fails the request outright.
-    "doubao-seed-2-0-mini-260215": (32_768, 256_000),
-    "doubao-seed-2-0-lite-260215": (32_768, 256_000),
-    "doubao-seed-2-0-pro-260215": (32_768, 256_000),
-    "doubao-seed-2-0-code-preview-260215": (32_768, 256_000),
-}
+# Every model's windows are declared once in agentos.model_registry, alongside
+# its price and capability flags. These two names stay so the resolution chain
+# below (user override > live catalog > provider fallback > shared static >
+# generic) is untouched -- only where the numbers come from has changed.
+#
+# Format: model_id -> (max_output_tokens, context_window). Used when the
+# provider's own catalog is unreachable at boot.
+_STATIC_FALLBACK: dict[str, tuple[int, int]] = model_registry.static_windows()
 
-# Per-provider overrides for ids whose shared _STATIC_FALLBACK entry carries a
-# different provider's contract. "deepseek-v4-flash" keeps the DeepSeek direct
-# windows (393K max output) above, but compatible gateways serve the same id
-# with a 128K output cap — sending the direct value would over-ask the gateway.
-_GATEWAY_STATIC_FALLBACK = {
-    "deepseek-v4-flash": (128_000, 1_000_000),
-    # Moonshot direct serves kimi-k2.6 with 32K output / 262K context; the
-    # gateways list 64K output / 256K context for the same bare id.
-    "kimi-k2.6": (65_536, 256_000),
-}
-_PROVIDER_STATIC_FALLBACK: dict[str, dict[str, tuple[int, int]]] = {
-    "bankr": dict(_GATEWAY_STATIC_FALLBACK),
-    "opencap": dict(_GATEWAY_STATIC_FALLBACK),
-}
+# Ids whose shared entry carries one endpoint's contract while another endpoint
+# serves the same id with different limits. Each override declares its reason in
+# the registry, next to the model.
+_PROVIDER_STATIC_FALLBACK: dict[str, dict[str, tuple[int, int]]] = model_registry.provider_windows()
 
 
 def _catalog_price_per_1k(value: object) -> float:
@@ -322,9 +249,7 @@ class ModelCatalog:
                 reasoning_format="dashscope" if supports_reasoning else "none",
             )
         if provider_id == "moonshot":
-            supports_reasoning = model_l.startswith(
-                ("kimi-k2.5", "kimi-k2.6", "kimi-k2-thinking")
-            )
+            supports_reasoning = model_l.startswith(("kimi-k2.5", "kimi-k2.6", "kimi-k2-thinking"))
             return ModelCapabilities(
                 supports_reasoning=supports_reasoning,
                 supports_tools=True,
@@ -427,9 +352,7 @@ class ModelCatalog:
         """
         context_window = self.resolve_context_window(model_id, provider_name)
         info = self._models.get(model_id)
-        provider_fallback = _PROVIDER_STATIC_FALLBACK.get(
-            provider_name.strip().lower(), {}
-        )
+        provider_fallback = _PROVIDER_STATIC_FALLBACK.get(provider_name.strip().lower(), {})
 
         using_user_override = user_override > 0
         if using_user_override:
@@ -463,9 +386,7 @@ class ModelCatalog:
         info = self._models.get(model_id)
         if info and info.context_window > 0:
             return info.context_window
-        provider_fallback = _PROVIDER_STATIC_FALLBACK.get(
-            provider_name.strip().lower(), {}
-        )
+        provider_fallback = _PROVIDER_STATIC_FALLBACK.get(provider_name.strip().lower(), {})
         if model_id in provider_fallback:
             return provider_fallback[model_id][1]
         if model_id in _STATIC_FALLBACK:
