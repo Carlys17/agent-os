@@ -1,5 +1,6 @@
 import { agents } from './agents'
 import { approvals } from './approvals'
+import { channels } from './channels'
 import { common } from './common'
 import { config } from './config'
 import { env } from './env'
@@ -30,6 +31,7 @@ import { usage } from './usage'
 export const en = {
   agents,
   approvals,
+  channels,
   common,
   config,
   env,
