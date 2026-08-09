@@ -1,3 +1,6 @@
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -881,7 +884,7 @@ export function useTranscript(opts: {
       // chat.js:6129 — the model receives a fallback prompt when text is empty but
       // attachments are present ("Describe these attachments").
       const userText = trimmed
-      const providerText = trimmed || 'Describe these attachments'
+      const providerText = trimmed || t('chat.attachmentsPrompt')
 
       // Show the user turn through the shared imperative `_addMessage` port.
       const userTs = new Date().toISOString()
@@ -952,7 +955,7 @@ export function useTranscript(opts: {
           seamsRef.current.diag?.('send.rpc.error', { message })
           // chat.js:6202-6203 — end streaming + surface the failure inline.
           if (controller.isStreaming()) controller.endStreaming()
-          messageRendererRef.current?.addMessage('error', 'Send failed: ' + message)
+          messageRendererRef.current?.addMessage('error', t('chat.sendFailed', { message }))
         })
     },
     [rpc, controller, routerConfigGate],
@@ -1113,7 +1116,7 @@ export function useTranscript(opts: {
   useLayoutEffect(() => {
     if (!historyQuery.isError) return
     historyHydratingRef.current = false
-    pagingRef.current.error = 'Could not load chat history.'
+    pagingRef.current.error = t('chat.historyLoadFailed')
     historyRenderer.renderHistoryScopeRow(pagingRef.current)
     historySettledSessionRef.current = opts.sessionKey
     revealTranscriptIfSettled(opts.sessionKey, historyQuery.fetchStatus)
@@ -1172,7 +1175,7 @@ export function useTranscript(opts: {
         controller.renderCompactionSummarySeparators(mergedMessages)
       } catch {
         state.loadingEarlier = false
-        state.error = 'Could not load earlier history.'
+        state.error = t('chat.historyEarlierFailed')
         historyRenderer.renderHistoryScopeRow(state)
       } finally {
         loadingEarlierGuard.current = false
@@ -1266,7 +1269,7 @@ export function useTranscript(opts: {
           current_stream_seq?: unknown
         } | null
         if (cancelled || sessionKey !== sessionKeyRef.current) return
-        if (res && res.subscribed === false) throw new Error('No subscription manager available')
+        if (res && res.subscribed === false) throw new Error(t('chat.noSubscriptionManager'))
         const subscribedState = (res as Record<string, unknown>) ?? {}
         applySessionRunState(subscribedState)
         seams().applySessionRunState?.(subscribedState)
@@ -1286,7 +1289,7 @@ export function useTranscript(opts: {
         if (res && res.replay_complete === false) {
           const gapReason = res.replay_gap_reason || res.replayGapReason || ''
           if (replayGapShouldWarn(gapReason)) {
-            toast.warning('Missed live stream events; transcript refreshed.', { duration: 5000 })
+            toast.warning(t('chat.streamMissedEvents'), { duration: 5000 })
           }
           resyncHistory()
         }
@@ -1294,8 +1297,9 @@ export function useTranscript(opts: {
         if (controller.isStreaming()) controller.resetStreamIdleTimer()
       } catch (error: unknown) {
         toast.error(
-          'Session stream subscription failed: ' +
-            (error instanceof Error ? error.message : String(error)),
+          t('chat.streamSubscribeFailed', {
+            message: error instanceof Error ? error.message : String(error),
+          }),
           { duration: 6000 },
         )
         diag('session.subscribe.error', { sessionKey })
@@ -1501,7 +1505,7 @@ export function useTranscript(opts: {
       onEvent('session.event.warning', (payload: StreamEventPayload) => {
         if (isForeign(payload)) return
         if (isStaleEpoch(payload)) return
-        const message = (payload as { message?: string })?.message || 'Cap warning'
+        const message = (payload as { message?: string })?.message || t('chat.capWarning')
         toast.warning(message, { duration: 5000 })
         seams().showWarningToast?.(message)
       }),
@@ -1792,14 +1796,14 @@ export function useTranscript(opts: {
             typeof payload.terminal_message === 'string' && payload.terminal_message.trim()
               ? payload.terminal_message.trim()
               : code.includes('timeout')
-                ? 'The task timed out before it could finish.'
+                ? t('chat.taskTimedOut')
                 : code.includes('abandoned')
-                  ? 'The task stopped before it could finish.'
+                  ? t('chat.taskStopped')
                   : code.includes('cancelled')
-                    ? 'The task was cancelled before it finished.'
+                    ? t('chat.taskCancelled')
                     : typeof payload.message === 'string' && payload.message
                       ? payload.message
-                      : 'Agent error'
+                      : t('chat.agentError')
           messageRendererRef.current?.addMessage('error', message)
           // chat.js:5146 — recover pending after a failed turn.
           pendingDelegatesRef.current.popAllPendingIntoComposer()
@@ -1847,8 +1851,8 @@ export function useTranscript(opts: {
       rpc.on('_gap', () => {
         if (!controller.isStreaming()) return
         controller.clearStreamIdleTimer()
-        toast.warning('Stream connection gap detected; reconnecting.')
-        seams().showWarningToast?.('Stream connection gap detected; reconnecting.')
+        toast.warning(t('chat.streamGap'))
+        seams().showWarningToast?.(t('chat.streamGap'))
         // Terminal-history resync: the socket will reconnect and re-subscribe
         // (chat.js:1713 / 5177) — refresh history so the transcript is whole.
         resyncHistory()

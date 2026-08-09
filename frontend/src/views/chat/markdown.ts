@@ -1,3 +1,6 @@
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/core'
 import bash from 'highlight.js/lib/languages/bash'
@@ -60,7 +63,7 @@ function restoreMath(html: string, stash: string[]): string {
   return html.replace(MATH_SENTINEL, (_match, rawIndex: string) => {
     const raw = stash[Number(rawIndex)]
     if (raw === undefined) return ''
-    return `<code class="math-raw" title="LaTeX formula (not rendered)">${escapeHtml(raw)}</code>`
+    return `<code class="math-raw" title="${escapeHtml(t('chat.mathTitle'))}">${escapeHtml(raw)}</code>`
   })
 }
 
@@ -75,7 +78,7 @@ function wrapCodeBlocks(html: string): string {
         '<div class="code-block">' +
         '<div class="code-block-header">' +
         `<span class="code-lang">${language}</span>` +
-        `<button type="button" class="copy-btn" data-target="${id}" aria-label="Copy code">` +
+        `<button type="button" class="copy-btn" data-target="${id}" aria-label="${escapeHtml(t('chat.copyCode'))}">` +
         '<span aria-hidden="true">⧉</span> Copy</button>' +
         '</div>' +
         `<pre id="${id}"><code class="code-content${languageClass}">${code}</code></pre>` +
@@ -102,7 +105,7 @@ function fallbackRender(text: string): string {
       '<div class="code-block">' +
       '<div class="code-block-header">' +
       `<span class="code-lang">${language}</span>` +
-      `<button type="button" class="copy-btn" data-target="${id}" aria-label="Copy code">` +
+      `<button type="button" class="copy-btn" data-target="${id}" aria-label="${escapeHtml(t('chat.copyCode'))}">` +
       '<span aria-hidden="true">⧉</span> Copy</button>' +
       '</div>' +
       `<pre id="${id}"><code class="code-content${languageClass}">${code}</code></pre>` +
@@ -227,7 +230,7 @@ export function bindCopy(container: HTMLElement): void {
         .then(() => showCopyStatus(button, '✓ Copied'))
         .catch(() => {
           showCopyStatus(button, '! Failed', 1800)
-          toast.error('Copy failed. Select the code manually.')
+          toast.error(t('chat.copyFailed'))
         })
         .finally(() => {
           button.disabled = false

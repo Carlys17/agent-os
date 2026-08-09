@@ -14,6 +14,8 @@ import {
 } from './logic'
 import { useShortcutDocs } from '@/components/KeyboardShortcuts'
 import { useOverlayLayer } from '@/components/overlay-layer'
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
 
 // #137 — the switcher popover and the actions menu bind these to their own
 // elements (`onKey` / `onActionsKeyDown` below), so they are documented here.
@@ -39,6 +41,22 @@ const SESSION_SHORTCUTS = [
 
 // chat.js:1903 — the switcher group order (empty groups are skipped).
 const GROUP_ORDER: SessionGroup[] = ['Web chat', 'CLI', 'Sub-agents', 'Agents', 'Sessions', 'Other']
+
+/**
+ * `SessionGroup` is a stable token set — it is both a type and the bucket key
+ * `classifySessionKey` returns — so only the rendered label is translated.
+ */
+function groupLabel(group: SessionGroup): string {
+  const labels: Record<SessionGroup, string> = {
+    'Web chat': t('chat.groupWebChat'),
+    CLI: t('chat.groupCli'),
+    'Sub-agents': t('chat.groupSubagents'),
+    Agents: t('chat.groupAgents'),
+    Sessions: t('chat.groupSessions'),
+    Other: t('chat.groupOther'),
+  }
+  return labels[group]
+}
 
 const COMPACT_RUN_LABEL: Record<RunStatusResult['status'], string> = {
   idle: 'Idle',
@@ -327,12 +345,12 @@ export function SessionChip({
 
   return (
     <div className="chat-session" ref={rootRef}>
-      <span className="chat-session-label">session</span>
+      <span className="chat-session-label">{t('chat.sessionLabel')}</span>
       <button
         id="chat-session-switcher-trigger"
         type="button"
         className={`chat-session-chip${open ? ' is-active' : ''}`}
-        aria-label="Switch chat session"
+        aria-label={t('chat.sessionSwitchAria')}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={toggle}
@@ -366,8 +384,8 @@ export function SessionChip({
           ref={actionsTriggerRef}
           type="button"
           className="chat-session-actions-trigger"
-          title="Chat actions"
-          aria-label="Chat actions"
+          title={t('chat.sessionActions')}
+          aria-label={t('chat.sessionActions')}
           aria-haspopup="menu"
           aria-expanded={actionsOpen}
           onClick={toggleActions}
@@ -380,7 +398,7 @@ export function SessionChip({
             ref={actionsMenuRef}
             className="chat-session-actions-menu"
             role="menu"
-            aria-label="Chat actions"
+            aria-label={t('chat.sessionActions')}
             onKeyDown={onActionsKeyDown}
           >
             <button
@@ -388,24 +406,24 @@ export function SessionChip({
               className="chat-session-actions-menu__item"
               role="menuitem"
               tabIndex={-1}
-              aria-label="Copy session key"
+              aria-label={t('chat.sessionCopyKeyAria')}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => runHeaderAction(copy)}
             >
               <Copy aria-hidden="true" />
-              <span>Copy session key</span>
+              <span>{t('chat.sessionCopyKey')}</span>
             </button>
             <button
               type="button"
               className="chat-session-actions-menu__item"
               role="menuitem"
               tabIndex={-1}
-              aria-label="Reset session"
+              aria-label={t('chat.sessionResetAria')}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => runHeaderAction(onReset)}
             >
               <RotateCcw aria-hidden="true" />
-              <span>Reset session</span>
+              <span>{t('chat.sessionReset')}</span>
             </button>
             {onExport ? (
               <button
@@ -413,12 +431,12 @@ export function SessionChip({
                 className="chat-session-actions-menu__item"
                 role="menuitem"
                 tabIndex={-1}
-                aria-label="Export chat as Markdown"
+                aria-label={t('chat.sessionExportAria')}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => runHeaderAction(onExport)}
               >
                 <FileDown aria-hidden="true" />
-                <span>Export Markdown</span>
+                <span>{t('chat.sessionExport')}</span>
               </button>
             ) : null}
           </div>
@@ -426,14 +444,18 @@ export function SessionChip({
       </div>
 
       {open && (
-        <div className="chat-session-popover" role="dialog" aria-label="Switch session">
+        <div
+          className="chat-session-popover"
+          role="dialog"
+          aria-label={t('chat.sessionSwitchDialog')}
+        >
           {failed ? (
             <>
               <input
                 type="search"
                 className="chat-session-popover-search"
-                placeholder="Enter session key..."
-                aria-label="Session key"
+                placeholder={t('chat.sessionKeyPlaceholder')}
+                aria-label={t('chat.sessionKeyLabel')}
                 autoComplete="off"
                 spellCheck={false}
                 value={manualKey}
@@ -447,16 +469,16 @@ export function SessionChip({
                 autoFocus
               />
               <div className="chat-session-popover-list">
-                <div className="chat-session-popover-empty">
-                  Session list unavailable. Enter a key above.
-                </div>
+                <div className="chat-session-popover-empty">{t('chat.sessionListUnavailable')}</div>
                 <button
                   type="button"
                   className="chat-session-popover-item"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => switchTo(manualKey.trim())}
                 >
-                  <span className="chat-session-popover-item-key">Switch to typed session</span>
+                  <span className="chat-session-popover-item-key">
+                    {t('chat.sessionSwitchTyped')}
+                  </span>
                 </button>
               </div>
             </>
@@ -465,8 +487,8 @@ export function SessionChip({
               <input
                 type="search"
                 className="chat-session-popover-search"
-                placeholder="Search sessions…"
-                aria-label="Search sessions"
+                placeholder={t('chat.sessionSearchPlaceholder')}
+                aria-label={t('chat.sessionSearchLabel')}
                 autoComplete="off"
                 spellCheck={false}
                 value={filter}
@@ -475,15 +497,17 @@ export function SessionChip({
               />
               <div className="chat-session-popover-list">
                 {sessions === null ? (
-                  <div className="chat-session-popover-empty">Loading…</div>
+                  <div className="chat-session-popover-empty">{t('chat.sessionLoading')}</div>
                 ) : total === 0 ? (
                   <div className="chat-session-popover-empty">
-                    {filter.trim() ? 'No matches.' : 'No sessions found.'}
+                    {filter.trim() ? t('chat.sessionNoMatches') : t('chat.sessionNoSessions')}
                   </div>
                 ) : (
                   groups.map((group) => (
                     <div className="chat-session-popover-group" key={group.label}>
-                      <div className="chat-session-popover-group-label">{group.label}</div>
+                      <div className="chat-session-popover-group-label">
+                        {groupLabel(group.label)}
+                      </div>
                       {group.items.map((item) => {
                         const k = sessionItemKey(item)
                         const run = sessionRunStatus(typeof item === 'object' ? item : {})
@@ -507,7 +531,9 @@ export function SessionChip({
                               </span>
                             )}
                             {isCurrent && (
-                              <span className="chat-session-popover-item-tag">current</span>
+                              <span className="chat-session-popover-item-tag">
+                                {t('chat.sessionCurrent')}
+                              </span>
                             )}
                           </button>
                         )

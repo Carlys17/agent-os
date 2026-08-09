@@ -9,6 +9,8 @@ import {
 } from 'react'
 import { parseSlashInput, type SlashCommand } from './logic'
 import { useShortcutDocs } from '@/components/KeyboardShortcuts'
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
 
 // #137 — the menu consumes these from the composer's keydown (`handleKeyDown`
 // below) while it is open, so they are documented, not dispatched.
@@ -205,7 +207,12 @@ export function SlashMenu({
   if (!open) return null
 
   return (
-    <div id={resolvedListboxId} className="chat-slash" role="listbox" aria-label="Slash commands">
+    <div
+      id={resolvedListboxId}
+      className="chat-slash"
+      role="listbox"
+      aria-label={t('chat.slashLandmark')}
+    >
       {filtered.map((cmd, i) => (
         <div
           key={cmd.cmd || cmd.name || i}

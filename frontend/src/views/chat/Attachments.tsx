@@ -13,6 +13,8 @@ import {
   type NormalizedComposerPayload,
   type PendingAttachment,
 } from './logic'
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
 
 /**
  * Chat attachments — the pending-attachment buffer + tray (React).
@@ -301,7 +303,11 @@ export function Attachments({ api }: AttachmentsProps) {
                 key={att.local_id}
               >
                 <span className="attachment-chip__icon" aria-hidden="true">
-                  {isBusy ? <span className="spinner attachment-chip__spinner" /> : 'file'}
+                  {isBusy ? (
+                    <span className="spinner attachment-chip__spinner" />
+                  ) : (
+                    t('chat.attachmentIconFallback')
+                  )}
                 </span>
                 <span className="attachment-chip__name">{att.name}</span>
                 <span className="attachment-chip__meta">{meta}</span>
@@ -309,8 +315,8 @@ export function Attachments({ api }: AttachmentsProps) {
                   type="button"
                   className="attachment-remove"
                   onClick={() => remove(att.local_id)}
-                  title="Remove"
-                  aria-label={`Remove attachment ${att.name}`}
+                  title={t('chat.attachmentRemove')}
+                  aria-label={t('chat.attachmentRemoveAria', { name: att.name })}
                 >
                   &times;
                 </button>

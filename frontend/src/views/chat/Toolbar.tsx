@@ -20,6 +20,8 @@ import {
   normalizeSessionUsage,
   type SessionUsage,
 } from './logic'
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
 
 // config.get carries the router feature state + the global permission default.
 interface ConfigGetResponse {
@@ -249,7 +251,7 @@ export function Toolbar({
     <div className="chat-toolbar" data-bypass={bypass ? 'on' : undefined}>
       <div className="chat-toolbar-controls">
         <div className="chat-toolbar-row chat-toolbar-row--mode">
-          <span className="chat-toolbar-row-label t-label">Execution mode</span>
+          <span className="chat-toolbar-row-label t-label">{t('chat.toolbarExecutionMode')}</span>
           <ElevatedPill
             sessionMode={sessionMode}
             globalMode={globalMode}
@@ -259,8 +261,8 @@ export function Toolbar({
         </div>
 
         <div className="chat-toolbar-row">
-          <span className="chat-toolbar-row-label t-label">Pilot Router</span>
-          <label className="chat-toggle" aria-label="Pilot Router">
+          <span className="chat-toolbar-row-label t-label">{t('chat.toolbarPilotRouter')}</span>
+          <label className="chat-toggle" aria-label={t('chat.toolbarPilotRouter')}>
             <input
               type="checkbox"
               checked={routerChecked}
@@ -273,8 +275,8 @@ export function Toolbar({
         </div>
 
         <div className="chat-toolbar-row">
-          <span className="chat-toolbar-row-label t-label">Visual effects</span>
-          <label className="chat-toggle" aria-label="Visual effects">
+          <span className="chat-toolbar-row-label t-label">{t('chat.toolbarVisualEffects')}</span>
+          <label className="chat-toggle" aria-label={t('chat.toolbarVisualEffects')}>
             <input
               type="checkbox"
               checked={routerFxChecked}
@@ -289,17 +291,17 @@ export function Toolbar({
 
       <div className="chat-toolbar-usage" role="group" aria-labelledby="chat-toolbar-usage-title">
         <div id="chat-toolbar-usage-title" className="chat-toolbar-usage-title t-label">
-          Session usage
+          {t('chat.toolbarUsageTitle')}
         </div>
         {usage ? (
           <>
             <div className="chat-toolbar-usage-model">
-              <span className="t-label">Model</span>
+              <span className="t-label">{t('chat.toolbarModel')}</span>
               <span
                 className="chat-toolbar-usage-model-value t-data"
-                title={usage.model || 'Not reported'}
+                title={usage.model || t('chat.toolbarModelUnreported')}
               >
-                {usage.model || 'Not reported'}
+                {usage.model || t('chat.toolbarModelUnreported')}
               </span>
             </div>
             <div className="chat-toolbar-usage-metrics" data-has-cost={usage.cost != null}>
@@ -308,19 +310,19 @@ export function Toolbar({
                 <span className="t-data">{tokens(usage.input)}</span>
               </span>
               <span className="chat-toolbar-usage-metric">
-                <span className="t-label">out</span>
+                <span className="t-label">{t('chat.toolbarOut')}</span>
                 <span className="t-data">{tokens(usage.output)}</span>
               </span>
               {usage.cost != null ? (
                 <span className="chat-toolbar-usage-metric">
-                  <span className="t-label">cost</span>
+                  <span className="t-label">{t('chat.toolbarCost')}</span>
                   <span className="t-data">${usage.cost.toFixed(4)}</span>
                 </span>
               ) : null}
             </div>
           </>
         ) : (
-          <span className="chat-toolbar-usage-empty t-label">No usage yet</span>
+          <span className="chat-toolbar-usage-empty t-label">{t('chat.toolbarNoUsage')}</span>
         )}
       </div>
 
@@ -335,18 +337,15 @@ export function Toolbar({
             onClose={() => setConfirmOpen(false)}
           >
             <h2 id="chat-bypass-confirm-title" className="t-display">
-              Enable approval bypass?
+              {t('chat.bypassConfirmTitle')}
             </h2>
             <div id="chat-bypass-confirm-body" className="chat-modal-body">
-              <p>
-                This allows host execution without approval prompts in this browser session. This
-                maps to /elevated bypass.
-              </p>
-              <p>Sensitive-path checks remain active.</p>
+              <p>{t('chat.bypassConfirmBody')}</p>
+              <p>{t('chat.bypassConfirmNote')}</p>
             </div>
             <div className="chat-modal-actions">
               <Button type="button" variant="outline" onClick={() => setConfirmOpen(false)}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button
                 type="button"
@@ -356,7 +355,7 @@ export function Toolbar({
                   applyElevatedMode('bypass')
                 }}
               >
-                Enable bypass
+                {t('chat.bypassConfirmAction')}
               </Button>
             </div>
           </ModalShell>

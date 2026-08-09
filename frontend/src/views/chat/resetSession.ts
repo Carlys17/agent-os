@@ -1,3 +1,6 @@
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 import { toast } from 'sonner'
 
 interface SessionResetRpc {
@@ -27,13 +30,13 @@ function errorMessage(error: unknown): string {
 async function discardAndReset(rpc: SessionResetRpc, sessionKey: string): Promise<void> {
   try {
     await rpc.call('sessions.reset', { key: sessionKey, force: true })
-    toast.info('Session reset without transcript backup')
+    toast.info(t('chat.resetNoBackup'))
   } catch (error) {
     if (errorCode(error) === 'permission_denied') {
-      toast.error('Reset without backup requires an admitted Control connection.')
+      toast.error(t('chat.resetNoBackupDenied'))
       return
     }
-    toast.error('Reset failed: ' + errorMessage(error))
+    toast.error(t('chat.resetFailed', { message: errorMessage(error) }))
   }
 }
 
@@ -45,15 +48,15 @@ async function discardAndReset(rpc: SessionResetRpc, sessionKey: string): Promis
 export async function resetSession(rpc: SessionResetRpc, sessionKey: string): Promise<void> {
   try {
     await rpc.call('sessions.reset', { key: sessionKey })
-    toast.info('Session reset')
+    toast.info(t('chat.resetDone'))
   } catch (error) {
     if (errorCode(error) === 'flush_unavailable') {
-      toast.warning('Transcript backup is unavailable.', {
+      toast.warning(t('chat.resetBackupUnavailable'), {
         id: 'session-reset-flush-unavailable',
-        description: 'Discard the current transcript and reset this session?',
+        description: t('chat.resetBackupPrompt'),
         duration: Infinity,
         action: {
-          label: 'Discard & reset',
+          label: t('chat.resetDiscardAction'),
           onClick: () => {
             void discardAndReset(rpc, sessionKey)
           },
@@ -61,6 +64,6 @@ export async function resetSession(rpc: SessionResetRpc, sessionKey: string): Pr
       })
       return
     }
-    toast.error('Reset failed: ' + errorMessage(error))
+    toast.error(t('chat.resetFailed', { message: errorMessage(error) }))
   }
 }

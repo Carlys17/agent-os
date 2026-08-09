@@ -29,6 +29,9 @@
 /* ── Constants (ported verbatim from chat.js) ───────────────────────────── */
 
 // chat.js:3375 — default tier ids until config replaces them.
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 export const ROUTER_FX_DEFAULT_TIERS = ['c0', 'c1', 'c2', 'c3'] as const
 // chat.js:3392 — per-browser visualisation preference key.
 export const ROUTER_FX_PREF_KEY = 'agentos-router-fx'
@@ -631,7 +634,7 @@ export function createRouterFxRenderer(deps: RouterFxRendererDeps) {
     header.className = 'router-fx-header'
     header.innerHTML =
       '<span class="glyph">←</span>' +
-      '<span class="title">Choosing a model</span>' +
+      `<span class="title">${t('chat.routerChoosing')}</span>` +
       '<span class="glyph">→</span>'
     wrap.appendChild(header)
 
@@ -752,9 +755,9 @@ export function createRouterFxRenderer(deps: RouterFxRendererDeps) {
     const statusLabel =
       hasWinner && name
         ? wrap.dataset.observe === 'true'
-          ? 'Suggested model'
-          : 'Model selected'
-        : 'Finalizing model'
+          ? t('chat.routerSuggested')
+          : t('chat.routerSelected')
+        : t('chat.routerFinalizing')
     const title = wrap.querySelector<HTMLElement>('.router-fx-header .title')
     if (title) title.textContent = statusLabel
     wrap.dataset.hasWinner = hasWinner ? 'true' : 'false'

@@ -17,6 +17,9 @@
 //      the streaming path mutates. DOM behavior is verified by a live-browser
 //      sweep (parity matrix), not RTL.
 
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 import type { StreamEventPayload } from '../types'
 
 /* ── Constants (ported from chat.js, modernized to vector icon keys) ────── */
@@ -293,17 +296,17 @@ function applyToolSummaryStatus(statusSpan: HTMLElement, status: string, duratio
   statusSpan.setAttribute('aria-live', 'polite')
   const accessibleStatus =
     status === 'running'
-      ? 'Running'
+      ? t('chat.toolRunning')
       : status === 'success'
         ? visibleStatus
           ? `Completed in ${visibleStatus}`
-          : 'Completed'
+          : t('chat.toolCompleted')
         : status === 'error'
           ? visibleStatus
             ? `Failed in ${visibleStatus}`
-            : 'Failed'
+            : t('chat.toolFailed')
           : status === 'unknown'
-            ? 'Unknown status'
+            ? t('chat.toolUnknownStatus')
             : ''
   if (accessibleStatus) statusSpan.setAttribute('aria-label', accessibleStatus)
   else statusSpan.removeAttribute('aria-label')
@@ -342,7 +345,7 @@ function injectProviderBadge(summary: Element | null, providerRaw: string): void
     summary.insertBefore(badge, status)
   }
   badge.textContent = provider
-  badge.title = 'Search provider: ' + provider
+  badge.title = t('chat.toolSearchProvider', { provider })
 }
 
 /* ── DOM lookup helpers (chat.js:7167-7179) ─────────────────────────────── */
@@ -528,13 +531,15 @@ export function createToolRenderer(deps: ToolRendererDeps) {
       const viewBtn = document.createElement('button')
       viewBtn.className = 'btn btn--sm btn--ghost chat-tool-view-btn'
       viewBtn.type = 'button'
-      viewBtn.textContent = 'View full'
+      viewBtn.textContent = t('chat.toolViewFull')
       viewBtn.addEventListener('click', (event) => {
         event.preventDefault()
         event.stopPropagation()
-        openModal('Tool Result', '<pre class="chat-tool-result-full">' + esc(content) + '</pre>', [
-          { label: 'Close', cls: 'btn-secondary' },
-        ])
+        openModal(
+          t('chat.toolResultTitle'),
+          '<pre class="chat-tool-result-full">' + esc(content) + '</pre>',
+          [{ label: t('common.close'), cls: 'btn-secondary' }],
+        )
       })
       div.appendChild(viewBtn)
     }

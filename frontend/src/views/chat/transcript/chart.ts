@@ -20,6 +20,9 @@
 
 // Type-only — erased at compile time, so it does not pull the library into the
 // Chat chunk. The runtime import stays dynamic, inside `draw`.
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 import type { MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts'
 
 import type { Artifact } from './artifacts'
@@ -555,7 +558,7 @@ export function createChartMounter(deps: ChartMounterDeps) {
   async function mountOne(host: HTMLElement): Promise<void> {
     const url = host.dataset.chartSrc || ''
     if (!url) {
-      setStatus(host, 'Chart data is unavailable.')
+      setStatus(host, t('chat.chartUnavailable'))
       return
     }
     try {
@@ -563,14 +566,14 @@ export function createChartMounter(deps: ChartMounterDeps) {
       const raw = await deps.fetchPayload(url)
       const payload = normalizeChartPayload(raw)
       if (!payload) {
-        setStatus(host, 'Chart data could not be read.')
+        setStatus(host, t('chat.chartUnreadable'))
         diag('chart.mount.empty', { url })
         return
       }
       await draw(host, payload)
       diag('chart.mount.done', { url, candles: payload.candles.length })
     } catch (error) {
-      setStatus(host, 'Chart failed to load.')
+      setStatus(host, t('chat.chartFailed'))
       diag('chart.mount.error', { url, error: String(error) })
     }
   }

@@ -1,3 +1,6 @@
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 import type { MarkdownDep, TranscriptHeaderStateRef } from './stream'
 import { modelDisplayName } from './routerFx'
 import {
@@ -143,7 +146,7 @@ function appendSubagentDisclosure(body: HTMLElement, text: string): void {
     summary.textContent = `Subagent: ${payload.child_session_key || payload.session_key || 'completion'}`
     pre.textContent = JSON.stringify(payload, null, 2)
   } catch {
-    summary.textContent = 'Subagent completion'
+    summary.textContent = t('chat.msgSubagentCompletion')
     pre.classList.add('chat-subagent-disclosure-body--raw')
     pre.textContent = text
   }
@@ -209,7 +212,7 @@ export function createMessageRenderer(deps: MessageRendererDeps) {
     } finally {
       textarea.remove()
     }
-    return copied ? Promise.resolve() : Promise.reject(new Error('Copy failed'))
+    return copied ? Promise.resolve() : Promise.reject(new Error(t('chat.msgCopyFailedError')))
   }
 
   function attachHoverActions(row: HTMLElement, role: string): void {
@@ -222,17 +225,17 @@ export function createMessageRenderer(deps: MessageRendererDeps) {
     actions.setAttribute('role', 'toolbar')
     actions.setAttribute(
       'aria-label',
-      role === 'user' ? 'User message actions' : 'Agent message actions',
+      role === 'user' ? t('chat.msgUserActions') : t('chat.msgAgentActions'),
     )
     actions.appendChild(
-      actionButton('copy', 'Copy message', [
+      actionButton('copy', t('chat.msgCopy'), [
         'M9 9h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V9Z',
         'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
       ]),
     )
     if (role === 'assistant' && deps.onRegenerate) {
       actions.appendChild(
-        actionButton('regenerate', 'Regenerate response', [
+        actionButton('regenerate', t('chat.msgRegenerate'), [
           'M20 11a8.1 8.1 0 1 1-2.3-5.7L20 8',
           'M20 4v4h-4',
         ]),
@@ -240,7 +243,7 @@ export function createMessageRenderer(deps: MessageRendererDeps) {
     }
     if (role === 'user' && deps.onEdit) {
       actions.appendChild(
-        actionButton('edit', 'Edit message', [
+        actionButton('edit', t('chat.msgEdit'), [
           'M12 20h9',
           'M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z',
         ]),
@@ -254,10 +257,12 @@ export function createMessageRenderer(deps: MessageRendererDeps) {
       const action = button.dataset.action
       if (action === 'copy') {
         void copyText(extractBubbleText(row))
-          .then(() => deps.toast('Copied', 'info', 1200))
+          .then(() => deps.toast(t('chat.msgCopied'), 'info', 1200))
           .catch((error: unknown) =>
             deps.toast(
-              'Copy failed: ' + (error instanceof Error ? error.message : String(error)),
+              t('chat.msgCopyFailed', {
+                message: error instanceof Error ? error.message : String(error),
+              }),
               'error',
               2500,
             ),
@@ -265,7 +270,7 @@ export function createMessageRenderer(deps: MessageRendererDeps) {
         return
       }
       if (deps.isStreaming()) {
-        deps.toast('Wait for the current response to finish', 'warn', 2000)
+        deps.toast(t('chat.msgWaitForResponse'), 'warn', 2000)
         return
       }
       if (action === 'edit' && deps.onEdit) {
@@ -282,7 +287,7 @@ export function createMessageRenderer(deps: MessageRendererDeps) {
         while (user && !user.matches('.msg.user'))
           user = user.previousElementSibling as HTMLElement | null
         if (!user) {
-          deps.toast('No previous message to regenerate', 'info', 2000)
+          deps.toast(t('chat.msgNoPrevious'), 'info', 2000)
           return
         }
         const text = extractBubbleText(user)
@@ -366,7 +371,7 @@ export function createMessageRenderer(deps: MessageRendererDeps) {
       tags.className = 'msg-tags'
       const tag = document.createElement('span')
       tag.className = 'cron-tag'
-      tag.textContent = 'Cron'
+      tag.textContent = t('chat.msgCronTag')
       tags.appendChild(tag)
       header.appendChild(tags)
     }

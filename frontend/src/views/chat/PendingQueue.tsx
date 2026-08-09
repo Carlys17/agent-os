@@ -1,4 +1,6 @@
 import { MAX_PENDING, type PendingItem } from './logic'
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
 
 /**
  * The pending-queue rail (chat.js:8474-8503 `_renderPendingQueue`).
@@ -24,10 +26,6 @@ export interface PendingQueueProps {
   onClearAll: () => void
 }
 
-// chat.js:8484 — the label title string, verbatim.
-const LABEL_TITLE =
-  'Alt+↑ pulls the most recent back into the input · ESC recovers all to input · sends FIFO when the current response finishes'
-
 export function PendingQueue({ queue, onRemove, onClearAll }: PendingQueueProps) {
   // chat.js:8476-8480 — hidden (nothing rendered) when the queue is empty.
   if (queue.length === 0) return null
@@ -36,19 +34,19 @@ export function PendingQueue({ queue, onRemove, onClearAll }: PendingQueueProps)
   const showClearAll = queue.length >= 2
 
   return (
-    <div className="chat-pending" role="region" aria-label="Pending messages">
+    <div className="chat-pending" role="region" aria-label={t('chat.pendingLandmark')}>
       <div className="chat-pending-header">
-        <span className="chat-pending-label" title={LABEL_TITLE}>
-          Pending {queue.length}/{MAX_PENDING}
+        <span className="chat-pending-label" title={t('chat.pendingLabelTitle')}>
+          {t('chat.pendingCount', { count: queue.length, max: MAX_PENDING })}
         </span>
         {showClearAll && (
           <button
             type="button"
             className="chat-pending-clear"
-            aria-label="Clear all pending messages"
+            aria-label={t('chat.pendingClearAllAria')}
             onClick={onClearAll}
           >
-            Clear all
+            {t('chat.pendingClearAll')}
           </button>
         )}
       </div>
@@ -56,7 +54,7 @@ export function PendingQueue({ queue, onRemove, onClearAll }: PendingQueueProps)
         {queue.map((p, i) => {
           // chat.js:8490-8494 — 30-char preview (ellipsis past 30), attachment
           // count chip, and the full text as the chip title / aria label.
-          const raw = p.text || (p.attachments.length ? '(attachment only)' : '')
+          const raw = p.text || (p.attachments.length ? t('chat.pendingAttachmentOnly') : '')
           const preview = raw.slice(0, 30) + (raw.length > 30 ? '…' : '')
           const chipLabel = `Pending message ${i + 1}: ${raw.slice(0, 80)}`
           return (
@@ -69,7 +67,7 @@ export function PendingQueue({ queue, onRemove, onClearAll }: PendingQueueProps)
                 type="button"
                 className="chat-pending-chip-remove"
                 aria-label={`Remove ${chipLabel}`}
-                title="Remove"
+                title={t('chat.pendingRemove')}
                 onClick={() => onRemove(i)}
               >
                 ×

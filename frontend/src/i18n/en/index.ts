@@ -1,6 +1,7 @@
 import { agents } from './agents'
 import { approvals } from './approvals'
 import { channels } from './channels'
+import { chat } from './chat'
 import { common } from './common'
 import { config } from './config'
 import { cron } from './cron'
@@ -35,6 +36,7 @@ export const en = {
   agents,
   approvals,
   channels,
+  chat,
   common,
   config,
   cron,

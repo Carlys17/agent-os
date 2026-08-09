@@ -4,6 +4,9 @@
 // so each helper is unit-testable in isolation. Cited legacy line ranges are
 // against static/js/views/chat.js.
 
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
 import {
   isApprovalBypassMode,
   normalizeElevatedMode,
@@ -177,16 +180,16 @@ export interface RunStatusResult {
 /** chat.js:1571-1583 — the human label for a normalized run status. */
 export function runStatusLabel(status: string): string {
   const labels: Record<string, string> = {
-    queued: 'Queued',
-    running: 'Running',
-    approval_pending: 'Waiting for approval',
-    interrupted: 'Interrupted',
-    failed: 'Failed',
-    timeout: 'Timed out',
-    cancelled: 'Cancelled',
-    idle: 'Idle',
+    queued: t('chat.runQueued'),
+    running: t('chat.runRunning'),
+    approval_pending: t('chat.runApprovalPending'),
+    interrupted: t('chat.runInterrupted'),
+    failed: t('chat.runFailed'),
+    timeout: t('chat.runTimeout'),
+    cancelled: t('chat.runCancelled'),
+    idle: t('chat.runIdle'),
   }
-  return labels[status] || 'Idle'
+  return labels[status] || t('chat.runIdle')
 }
 
 /** chat.js:1585-1595 — collapse legacy synonyms onto the normalized vocabulary. */
@@ -461,8 +464,8 @@ export function dayLabel(isoDay: string): string {
   const today = new Date()
   const todayKey = today.toISOString().slice(0, 10)
   const yesterKey = new Date(today.getTime() - 86400000).toISOString().slice(0, 10)
-  if (isoDay === todayKey) return 'Today'
-  if (isoDay === yesterKey) return 'Yesterday'
+  if (isoDay === todayKey) return t('chat.dayToday')
+  if (isoDay === yesterKey) return t('chat.dayYesterday')
   const d = new Date(isoDay + 'T12:00:00')
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
@@ -515,10 +518,10 @@ export function sendButtonState(
   const hasText = (input ?? '').trim().length > 0
   const disabled = !hasText && !hasPendingAttachments
   const label = pendingCompaction
-    ? 'Send (queues until compaction finishes)'
+    ? t('chat.sendQueuedCompaction')
     : busy
-      ? 'Send (queues for after current response)'
-      : 'Send'
+      ? t('chat.sendQueuedBusy')
+      : t('chat.sendLabel')
   return { disabled, label }
 }
 
