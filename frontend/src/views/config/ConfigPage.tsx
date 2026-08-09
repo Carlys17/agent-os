@@ -14,6 +14,8 @@ import {
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
+import { t, tPlural } from '@/i18n'
+import '@/i18n/en/config'
 import {
   isMethodNotFoundRpcError,
   SETTINGS_SNAPSHOT_QUERY_KEY,
@@ -68,13 +70,19 @@ interface ConfigPageProps {
 
 type EditorMode = 'form' | 'yaml'
 
-const SEARCH_TAB: TabDef = { id: 'search', label: 'Search results', prefixes: [] }
+function searchTab(): TabDef {
+  return { id: 'search', label: t('config.tabSearchResults'), prefixes: [] }
+}
 
 // ── Per-field help tooltip trigger ───────────────────────────────────────────
 function HelpTrigger({ configKey }: { configKey: string }) {
   return (
     <span className="cfg-help">
-      <button type="button" className="cfg-help__btn" aria-label={`Help for ${configKey}`}>
+      <button
+        type="button"
+        className="cfg-help__btn"
+        aria-label={t('config.fieldHelpLabel', { key: configKey })}
+      >
         <HelpCircleIcon aria-hidden="true" />
       </button>
       {/* config.js:747-810 — help copy, surfaced on hover/focus (CSS-driven, no
@@ -145,7 +153,9 @@ function ConfigField({
         <span className="cfg-switch__track" aria-hidden="true">
           <span className="cfg-switch__thumb" />
         </span>
-        <span className="cfg-switch__text">{checked ? 'Enabled' : 'Disabled'}</span>
+        <span className="cfg-switch__text">
+          {checked ? t('config.fieldEnabled') : t('config.fieldDisabled')}
+        </span>
       </label>
     )
   } else if (kind === 'number') {
@@ -168,7 +178,7 @@ function ConfigField({
       <details className="cfg-object" open={dirty || invalid}>
         <summary>
           <span className="cfg-object__summary">{objectSummary(value)}</span>
-          <span className="cfg-object__action">Edit</span>
+          <span className="cfg-object__action">{t('config.fieldEdit')}</span>
         </summary>
         <textarea
           id={inputId}
@@ -180,7 +190,7 @@ function ConfigField({
           onChange={(e) => onChange(configKey, 'json', e.target.value)}
         />
         <div id={errorId} className={`cfg-json-error${invalid ? '' : ' cfg-hidden'}`}>
-          Invalid JSON
+          {t('config.fieldInvalidJson')}
         </div>
       </details>
     )
@@ -199,7 +209,11 @@ function ConfigField({
           <button
             type="button"
             className="cfg-secret-toggle"
-            aria-label={`${secretVisible ? 'Hide' : 'Show'} ${configKey}`}
+            aria-label={
+              secretVisible
+                ? t('config.fieldSecretHide', { key: configKey })
+                : t('config.fieldSecretShow', { key: configKey })
+            }
             aria-pressed={secretVisible}
             onClick={() => setSecretVisible((visible) => !visible)}
           >
@@ -254,7 +268,7 @@ function FormTab({
 }) {
   const entries = entriesForTab(config, tab, search)
   if (entries.length === 0) {
-    return <div className="cfg-empty">No matching fields</div>
+    return <div className="cfg-empty">{t('config.emptyNoMatches')}</div>
   }
   const groups = groupEntries(entries)
   return (
@@ -264,7 +278,7 @@ function FormTab({
           <header className="cfg-group__head">
             <h2 className="cfg-group__title t-label">{group.title}</h2>
             <span className="cfg-group__meta t-data">
-              {group.entries.length} {group.entries.length === 1 ? 'field' : 'fields'}
+              {tPlural('config.groupFields', group.entries.length)}
             </span>
           </header>
           <div className="cfg-group__fields">
@@ -320,13 +334,16 @@ function StickyBar({
     <div
       className="cfg-stickybar panel tone-info tone-rail"
       role="region"
-      aria-label="Pending changes"
+      aria-label={t('config.pendingLandmark')}
       aria-live="polite"
     >
       <div className="cfg-stickybar__row">
         <span className="cfg-stickybar__pulse" aria-hidden="true" />
         <span className="cfg-stickybar__count">
-          <strong>{count}</strong> <span>{count === 1 ? 'change pending' : 'changes pending'}</span>
+          <strong>{count}</strong>{' '}
+          <span>
+            {count === 1 ? t('config.pendingChangeWord') : t('config.pendingChangesWord')}
+          </span>
         </span>
         <span className="cfg-stickybar__sep" aria-hidden="true">
           ·
@@ -338,27 +355,27 @@ function StickyBar({
           aria-controls={diffId}
           onClick={onToggleDiff}
         >
-          {diffOpen ? 'Hide diff' : 'View diff'}
+          {diffOpen ? t('config.diffHide') : t('config.diffShow')}
         </button>
         <span className="cfg-stickybar__spacer" />
         <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={onDiscard}>
-          Discard
+          {t('config.discard')}
         </Button>
         <Button type="button" size="sm" disabled={saveDisabled} onClick={onSave}>
           <CheckIcon />
-          <span>Save</span>
+          <span>{t('config.save')}</span>
         </Button>
       </div>
       {diffOpen ? (
         <div className="cfg-stickybar__diff" id={diffId}>
           {yamlMode ? (
             <div className="cfg-diff-row">
-              <span className="cfg-diff-row__key t-data">YAML</span>
-              <span className="cfg-diff-row__old">loaded config</span>
+              <span className="cfg-diff-row__key t-data">{t('config.diffYamlKey')}</span>
+              <span className="cfg-diff-row__old">{t('config.diffYamlOld')}</span>
               <span className="cfg-diff-row__arrow" aria-hidden="true">
                 {'->'}
               </span>
-              <span className="cfg-diff-row__new">unsaved draft</span>
+              <span className="cfg-diff-row__new">{t('config.diffYamlNew')}</span>
             </div>
           ) : (
             <>
@@ -377,11 +394,11 @@ function StickyBar({
               {Object.keys(invalid).map((key) => (
                 <div className="cfg-diff-row" key={key}>
                   <span className="cfg-diff-row__key t-data">{key}</span>
-                  <span className="cfg-diff-row__old">loaded JSON</span>
+                  <span className="cfg-diff-row__old">{t('config.diffInvalidOld')}</span>
                   <span className="cfg-diff-row__arrow" aria-hidden="true">
                     {'->'}
                   </span>
-                  <span className="cfg-diff-row__new">Fix invalid JSON</span>
+                  <span className="cfg-diff-row__new">{t('config.diffInvalidNew')}</span>
                 </div>
               ))}
             </>
@@ -426,7 +443,7 @@ export function ConfigPage({
   const [yamlDraft, setYamlDraft] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!embedded) document.title = 'Config - AgentOS Control'
+    if (!embedded) document.title = t('config.documentTitle')
   }, [embedded])
 
   const configQuery = useQuery<ConfigEditorSnapshot>({
@@ -460,7 +477,7 @@ export function ConfigPage({
     if (!usesExternalSnapshot && configQuery.isError) {
       const err = configQuery.error
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to load config: ' + message, { id: 'config-load-err' })
+      toast.error(t('config.toastLoadFailed', { message }), { id: 'config-load-err' })
     }
   }, [usesExternalSnapshot, configQuery.isError, configQuery.error])
 
@@ -595,11 +612,9 @@ export function ConfigPage({
       rpc.call<SaveResult>('config.patch', payload),
     onSuccess: (res) => {
       if (res?.restartRequired) {
-        toast.info('Config saved. Gateway restart required for the change to take effect.', {
-          id: 'config-save',
-        })
+        toast.info(t('config.toastSavedRestart'), { id: 'config-save' })
       } else {
-        toast.success('Config saved', { id: 'config-save' })
+        toast.success(t('config.toastSaved'), { id: 'config-save' })
       }
       clearEditorDraft()
       void queryClient.invalidateQueries({ queryKey: ['config'] })
@@ -607,7 +622,7 @@ export function ConfigPage({
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Save failed: ' + message, { id: 'config-save-err' })
+      toast.error(t('config.toastSaveFailed', { message }), { id: 'config-save-err' })
     },
   })
 
@@ -619,11 +634,9 @@ export function ConfigPage({
     }) => rpc.call<SaveResult>('config.apply', payload),
     onSuccess: (res) => {
       if (res?.restartRequired) {
-        toast.info('Config applied. Gateway restart required for the change to take effect.', {
-          id: 'config-apply',
-        })
+        toast.info(t('config.toastAppliedRestart'), { id: 'config-apply' })
       } else {
-        toast.success('Config applied', { id: 'config-apply' })
+        toast.success(t('config.toastApplied'), { id: 'config-apply' })
       }
       clearEditorDraft()
       void queryClient.invalidateQueries({ queryKey: ['config'] })
@@ -631,7 +644,7 @@ export function ConfigPage({
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Apply failed: ' + message, { id: 'config-apply-err' })
+      toast.error(t('config.toastApplyFailed', { message }), { id: 'config-apply-err' })
     },
   })
 
@@ -655,27 +668,21 @@ export function ConfigPage({
   // with the invalid-JSON gate + the no-op short-circuit.
   const onSave = useCallback(() => {
     if (writeBlocked) {
-      toast.error('The config file changed outside AgentOS. Restart or reload the gateway first.', {
-        id: 'config-save',
-      })
+      toast.error(t('config.toastWriteBlocked'), { id: 'config-save' })
       return
     }
     if (snapshotConflict) {
-      toast.error('Configuration changed in another workspace. Discard and reload before saving.', {
-        id: 'config-save',
-      })
+      toast.error(t('config.toastConflict'), { id: 'config-save' })
       return
     }
     if (mode === 'yaml') {
       if (formPendingKeys > 0) {
-        toast.warning('Save or discard the pending Form changes before applying YAML.', {
-          id: 'config-save',
-        })
+        toast.warning(t('config.toastPendingForm'), { id: 'config-save' })
         return
       }
       const text = yamlDraft ?? baselineYaml
       if (!yamlDirty) {
-        toast.info('No changes to save', { id: 'config-save' })
+        toast.info(t('config.toastNoChanges'), { id: 'config-save' })
         return
       }
       applyMutation.mutate({
@@ -685,18 +692,16 @@ export function ConfigPage({
       return
     }
     if (yamlDirty) {
-      toast.warning('Save or discard the pending YAML change before saving Form fields.', {
-        id: 'config-save',
-      })
+      toast.warning(t('config.toastPendingYaml'), { id: 'config-save' })
       return
     }
     if (invalidJson) {
-      toast.error('Fix invalid JSON before saving', { id: 'config-save' })
+      toast.error(t('config.toastFixJson'), { id: 'config-save' })
       return
     }
     const payload = buildPatchPayload(dirty)
     if (Object.keys(payload.patches).length === 0) {
-      toast.info('No changes to save', { id: 'config-save' })
+      toast.info(t('config.toastNoChanges'), { id: 'config-save' })
       return
     }
     patchMutation.mutate({
@@ -734,9 +739,7 @@ export function ConfigPage({
 
   const onReload = () => {
     if (barVisible) {
-      toast.warning('Discard pending changes before reloading the configuration.', {
-        id: 'config-reload',
-      })
+      toast.warning(t('config.toastReloadBlocked'), { id: 'config-reload' })
       return
     }
     onDiscardOrReload()
@@ -758,50 +761,51 @@ export function ConfigPage({
 
   const onTabKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const tabs = TABS
       let nextIndex: number | null = null
-      if (event.key === 'ArrowRight') nextIndex = (index + 1) % TABS.length
-      if (event.key === 'ArrowLeft') nextIndex = (index - 1 + TABS.length) % TABS.length
+      if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length
+      if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length
       if (event.key === 'Home') nextIndex = 0
-      if (event.key === 'End') nextIndex = TABS.length - 1
+      if (event.key === 'End') nextIndex = tabs.length - 1
       if (nextIndex === null) return
       event.preventDefault()
-      const next = TABS[nextIndex]
+      const next = tabs[nextIndex]
       if (!next) return
       setActiveTab(next.id)
-      const tabs =
+      const buttons =
         event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
-      tabs?.[nextIndex]?.focus()
+      buttons?.[nextIndex]?.focus()
     },
     [],
   )
 
-  const visibleTab = search.trim() ? SEARCH_TAB : TABS.find((tab) => tab.id === activeTab)
+  const visibleTab = search.trim() ? searchTab() : TABS.find((tab) => tab.id === activeTab)
 
   return (
     <div className={`cfg-stage${embedded ? ' cfg-stage--embedded' : ''}`}>
       <header className={`cfg-stage__header${embedded ? ' cfg-stage__header--embedded' : ''}`}>
         <div className="cfg-stage__title-block">
-          <span className="t-label">{embedded ? 'Advanced workspace' : 'Control · Config'}</span>
+          <span className="t-label">
+            {embedded ? t('config.embeddedEyebrow') : t('config.eyebrow')}
+          </span>
           {embedded ? (
-            <h2 className="cfg-stage__embedded-title">Configuration editor</h2>
+            <h2 className="cfg-stage__embedded-title">{t('config.embeddedTitle')}</h2>
           ) : (
-            <h1 className="t-display">Config</h1>
+            <h1 className="t-display">{t('config.title')}</h1>
           )}
           <p className="cfg-stage__subtitle">
-            {embedded
-              ? 'Edit the complete runtime surface with a reviewed diff before it is applied.'
-              : 'Advanced gateway configuration. Use guided setup for provider, router, channels, and extras.'}
+            {embedded ? t('config.embeddedSubtitle') : t('config.subtitle')}
           </p>
         </div>
         <div className="cfg-stage__actions">
-          <div className="cfg-mode-toggle" role="group" aria-label="Editor mode">
+          <div className="cfg-mode-toggle" role="group" aria-label={t('config.modeLandmark')}>
             <button
               type="button"
               className={`cfg-mode-btn${mode === 'form' ? ' is-active' : ''}`}
               aria-pressed={mode === 'form'}
               onClick={() => setMode('form')}
             >
-              Form
+              {t('config.modeForm')}
             </button>
             <button
               type="button"
@@ -809,77 +813,71 @@ export function ConfigPage({
               aria-pressed={mode === 'yaml'}
               onClick={() => setMode('yaml')}
             >
-              YAML
+              {t('config.modeYaml')}
             </button>
           </div>
           {!embedded ? (
             <Button
               variant="outline"
               className="text-xs uppercase tracking-[0.14em]"
-              title="Open guided setup"
+              title={t('config.guidedTitle')}
               onClick={() => navigate('/setup')}
             >
               <SlidersHorizontalIcon />
-              <span>Guided setup</span>
+              <span>{t('config.guided')}</span>
             </Button>
           ) : null}
           <Button
             variant="outline"
             className="text-xs uppercase tracking-[0.14em]"
-            title="Reload config"
+            title={t('config.reloadTitle')}
             onClick={onReload}
           >
             <RefreshCwIcon />
-            <span>Reload</span>
+            <span>{t('config.reload')}</span>
           </Button>
           <Button
             className="text-xs uppercase tracking-[0.14em]"
-            title="Save config"
-            aria-label="Save config"
+            title={t('config.saveTitle')}
+            aria-label={t('config.saveTitle')}
             disabled={saving || snapshotConflict || writeBlocked || !activeEditorCanSave}
             onClick={onSave}
           >
             <CheckIcon />
-            <span>Save</span>
+            <span>{t('config.save')}</span>
           </Button>
         </div>
       </header>
 
       {configLoading ? (
         <div className="cfg-state" role="status">
-          Loading configuration…
+          {t('config.stateLoading')}
         </div>
       ) : null}
 
       {configError ? (
         <div className="cfg-state cfg-state--error" role="alert">
-          <span>Configuration could not be loaded.</span>
+          <span>{t('config.stateError')}</span>
           <Button type="button" size="sm" variant="outline" onClick={retryConfig}>
-            Retry
+            {t('common.retry')}
           </Button>
         </div>
       ) : null}
 
       {snapshotConflict ? (
         <div className="cfg-state cfg-state--error" role="alert">
-          <span>
-            Configuration changed while this draft was open. Discard the stale draft before saving
-            against the latest revision.
-          </span>
+          <span>{t('config.conflictBody')}</span>
           <Button type="button" size="sm" variant="outline" onClick={onDiscardOrReload}>
-            Discard draft &amp; reload
+            {t('config.conflictAction')}
           </Button>
         </div>
       ) : null}
 
       {diskDiverged && !embedded ? (
         <div className="cfg-state cfg-state--error" role="alert">
-          <span>
-            The config file changed outside AgentOS. Writes are blocked until the gateway reloads or
-            restarts with that file.
-          </span>
+          <span>{t('config.divergedBody')}</span>
           <Button type="button" size="sm" variant="outline" onClick={onDiscardOrReload}>
-            Refresh state
+            {t('config.divergedAction')}
           </Button>
         </div>
       ) : null}
@@ -887,7 +885,7 @@ export function ConfigPage({
       {configReady && mode === 'form' ? (
         <div className="cfg-form">
           <div className="cfg-toolbar">
-            <div className="cfg-tabs" role="tablist" aria-label="Config sections">
+            <div className="cfg-tabs" role="tablist" aria-label={t('config.tabsLandmark')}>
               {TABS.map((tab, index) => (
                 <button
                   key={tab.id}
@@ -908,8 +906,8 @@ export function ConfigPage({
               <input
                 className="cfg-search__input"
                 type="search"
-                aria-label="Search config"
-                placeholder="Search keys & values…"
+                aria-label={t('config.searchLabel')}
+                placeholder={t('config.searchPlaceholder')}
                 autoComplete="off"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -937,7 +935,7 @@ export function ConfigPage({
         <div className="cfg-yaml">
           <textarea
             className="cfg-input cfg-yaml__area"
-            aria-label="YAML editor"
+            aria-label={t('config.yamlEditorLabel')}
             spellCheck={false}
             value={yamlDraft ?? baselineYaml}
             onChange={(e) => onYamlChange(e.target.value)}

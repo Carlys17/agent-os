@@ -10,6 +10,7 @@ const I18N_MIGRATED = [
   'src/app/**/*.tsx',
   'src/components/**/*.tsx',
   'src/views/approvals/**/*.tsx',
+  'src/views/config/**/*.tsx',
   'src/views/env/**/*.tsx',
   'src/views/health/**/*.tsx',
   'src/views/logs/**/*.tsx',
