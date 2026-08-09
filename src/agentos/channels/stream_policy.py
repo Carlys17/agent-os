@@ -18,6 +18,15 @@ class ChannelStreamPolicy:
     mode: ChannelStreamMode
     relay_stream: bool
     typing_keepalive: bool
+    typing_preamble: bool = False
+    """Show typing only until the first streamed chunk lands.
+
+    ``typing_keepalive`` covers a whole run for adapters that reply once at the
+    end.  A streaming adapter has nothing to show until the model emits its
+    first token — model latency plus tool calls make that window tens of
+    seconds — so it gets the indicator for that gap alone, then hands the chat
+    over to the live-edited message.
+    """
 
 
 def _strategy_override(channel: Any) -> str | None:
@@ -34,6 +43,7 @@ def _policy_for_mode(mode: ChannelStreamMode, *, has_typing: bool) -> ChannelStr
         mode=mode,
         relay_stream=mode == "adapter_stream",
         typing_keepalive=mode == "typing_final" and has_typing,
+        typing_preamble=mode == "adapter_stream" and has_typing,
     )
 
 
