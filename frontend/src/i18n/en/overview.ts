@@ -1,4 +1,6 @@
-export const overview = {
+import { defineNamespace } from '../registry'
+
+export const overview = defineNamespace('overview', {
   documentTitle: 'Overview - AgentOS Control',
   eyebrow: 'Control · Overview',
   title: 'Overview',
@@ -72,4 +74,4 @@ export const overview = {
   connTokenOptional: 'optional',
   connConnect: 'Connect',
   connDisconnect: 'Disconnect',
-} as const
+} as const)

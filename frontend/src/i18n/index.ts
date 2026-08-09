@@ -1,5 +1,10 @@
-import { en } from './en'
-import { catalogFor, getLocale } from './locale'
+// The shell's copy is the only catalog the entry bundle carries. Every other
+// namespace is imported by the view that uses it and so rides in that view's
+// lazy chunk — see registry.ts for why the fallback is assembled by import.
+import './en/common'
+import './en/shell'
+import { getLocale } from './locale'
+import { catalogFor, enFallback, type LooseCatalog } from './registry'
 import type { Args, MessageKey, PluralBase, Vars } from './types'
 
 export {
@@ -15,8 +20,6 @@ export {
 export type { MessageKey, PartialMessages } from './types'
 
 const PLACEHOLDER = /\{(\w+)\}/g
-
-type Catalog = Record<string, Record<string, string | undefined> | undefined>
 
 /**
  * Trailing words that mark a numeric placeholder as an identifier or a machine
@@ -102,9 +105,9 @@ function lookupOptional(key: string): string | undefined {
   if (dot < 0) return undefined
   const ns = key.slice(0, dot)
   const leaf = key.slice(dot + 1)
-  const fromLocale = (catalogFor(getLocale()) as Catalog)[ns]?.[leaf]
+  const fromLocale = (catalogFor(getLocale()) as LooseCatalog)[ns]?.[leaf]
   if (typeof fromLocale === 'string') return fromLocale
-  const fromEn = (en as Catalog)[ns]?.[leaf]
+  const fromEn = enFallback[ns]?.[leaf]
   return typeof fromEn === 'string' ? fromEn : undefined
 }
 

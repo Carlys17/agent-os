@@ -16,6 +16,8 @@ import { toast } from 'sonner'
 import { useRpc } from '@/app/providers'
 import { ModalShell } from '@/components/ModalShell'
 import { Button } from '@/components/ui/button'
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/env'
 import { t } from '@/i18n'
 import {
   ENV_QUERY_KEY,

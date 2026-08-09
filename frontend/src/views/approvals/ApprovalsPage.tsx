@@ -6,6 +6,8 @@ import { toast } from 'sonner'
 import { CommandLine } from '@/components/CommandLine'
 import { Button } from '@/components/ui/button'
 import { useBootstrap, useRpc } from '@/app/providers'
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/approvals'
 import { t } from '@/i18n'
 import {
   approvalCommand,

@@ -5,6 +5,8 @@
 // RPC calls, event subscriptions, and rendering live in OverviewPage.tsx; this
 // module owns the pure derivations (label mapping, formatting, session sort).
 
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/overview'
 import { t } from '@/i18n'
 
 /** A recent session row as returned by sessions.list (all fields optional). */

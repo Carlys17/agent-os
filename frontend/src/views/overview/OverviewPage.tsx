@@ -15,6 +15,8 @@ import {
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useBootstrap, useRpc } from '@/app/providers'
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/overview'
 import { t, tPlural } from '@/i18n'
 import {
   formatCost,

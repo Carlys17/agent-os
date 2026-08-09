@@ -1,4 +1,6 @@
-export const health = {
+import { defineNamespace } from '../registry'
+
+export const health = defineNamespace('health', {
   documentTitle: 'Health - AgentOS Control',
   eyebrow: 'Control · Health',
   title: 'Health',
@@ -91,4 +93,4 @@ export const health = {
   // Synthetic gateway.unavailable finding (health.js:86-115).
   gatewayUnavailableTitle: 'Gateway health report unavailable',
   gatewayUnavailableDetail: 'Cannot load doctor.status from {url}. {reason}',
-} as const
+} as const)

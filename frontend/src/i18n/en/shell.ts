@@ -1,9 +1,11 @@
+import { defineNamespace } from '../registry'
+
 /**
  * The app shell: navigation, connection footer, route errors, the global
  * approval prompt, and the shared chrome components. View bodies live in their
  * own namespaces.
  */
-export const shell = {
+export const shell = defineNamespace('shell', {
   // Brand. Not translated in practice, but routed through the catalog so the
   // shell has no literal copy left for a translator to miss.
   brandName: 'AgentOS',
@@ -99,4 +101,4 @@ export const shell = {
   commandCopied: 'Copied command',
   commandCopyFailed: 'Copy failed: {message}',
   commandCopyError: 'Copy command failed',
-} as const
+} as const)

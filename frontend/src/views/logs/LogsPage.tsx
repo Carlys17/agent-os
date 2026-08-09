@@ -5,6 +5,8 @@ import { ActivityIcon, DownloadIcon, ScrollTextIcon, SearchIcon } from 'lucide-r
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
+// Registers this view's copy; it ships in this chunk, not the entry bundle.
+import '@/i18n/en/logs'
 import { formatNumber, t } from '@/i18n'
 import {
   DEFAULT_LEVELS,

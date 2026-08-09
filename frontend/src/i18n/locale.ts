@@ -1,18 +1,11 @@
 import { create } from 'zustand'
-import { en } from './en'
+import { hasCatalog, putCatalog } from './registry'
 import type { PartialMessages } from './types'
 
 /** A BCP 47 primary subtag that has a catalog registered. */
 export type Locale = string
 
 export const DEFAULT_LOCALE = 'en'
-
-/**
- * Registered catalogs, keyed by lowercased tag. A future locale ships as its
- * own directory plus one `registerCatalog('pt', pt)` call — this module never
- * needs editing again.
- */
-const CATALOGS = new Map<string, PartialMessages>([[DEFAULT_LOCALE, en]])
 
 /**
  * Fold a tag onto the key catalogs are stored under, or `null` if it is not a
@@ -30,6 +23,11 @@ function localeKey(tag: string): string | null {
 }
 
 /**
+ * Register a locale's messages. A future locale ships as its own directory plus
+ * one `registerCatalog('pt', pt)` call — this module never needs editing again.
+ * English is seeded by the registry itself and filled in namespace by namespace
+ * as catalog modules load.
+ *
  * Catalogs are registered at module load by our own code, so a malformed tag is
  * a programming error and throws here — loudly, at the source. Accepting it
  * would surface instead as a `RangeError` from `new Intl.PluralRules()` at the
@@ -40,11 +38,7 @@ export function registerCatalog(tag: string, messages: PartialMessages): void {
   if (key === null) {
     throw new RangeError(`registerCatalog: ${JSON.stringify(tag)} is not a valid BCP 47 locale tag`)
   }
-  CATALOGS.set(key, messages)
-}
-
-export function catalogFor(locale: Locale): PartialMessages {
-  return CATALOGS.get(locale) ?? en
+  putCatalog(key, messages)
 }
 
 /**
@@ -79,9 +73,9 @@ export function resolveLocale(candidate?: string | null): Locale {
   // rather than throw, while a registered tag is ours to get right.
   const key = localeKey(String(candidate ?? '').replace(/_/g, '-'))
   if (key === null) return DEFAULT_LOCALE
-  if (CATALOGS.has(key)) return key
+  if (hasCatalog(key)) return key
   const primary = key.split('-')[0] ?? ''
-  return CATALOGS.has(primary) ? primary : DEFAULT_LOCALE
+  return hasCatalog(primary) ? primary : DEFAULT_LOCALE
 }
 
 export function setLocale(candidate?: string | null): Locale {

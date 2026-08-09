@@ -1,4 +1,6 @@
-export const approvals = {
+import { defineNamespace } from '../registry'
+
+export const approvals = defineNamespace('approvals', {
   documentTitle: 'Approvals - AgentOS Control',
   eyebrow: 'Control · Approvals',
   title: 'Approvals',
@@ -71,4 +73,4 @@ export const approvals = {
   // Toasts.
   toastStrategySaved: 'Approval strategy: {mode}',
   toastStrategyFailed: 'Failed to save strategy: {message}',
-} as const
+} as const)
