@@ -15,6 +15,8 @@ import {
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useRpc } from '@/app/providers'
+import { t, tPlural } from '@/i18n'
+import '@/i18n/en/usage'
 import {
   buildCsv,
   chartRows,
@@ -42,23 +44,99 @@ import {
 } from './logic'
 
 const RANGE_KEY = 'agentos-usage-range'
+// `label` is a getter throughout: these are module constants, so a resolved
+// label would freeze at module-evaluation time and keep the boot locale (#258).
 const RANGE_OPTIONS: { value: UsageRange; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: '7', label: '7d' },
-  { value: '14', label: '14d' },
-  { value: '30', label: '30d' },
+  {
+    value: 'all',
+    get label() {
+      return t('usage.rangeAll')
+    },
+  },
+  {
+    value: '7',
+    get label() {
+      return t('usage.range7')
+    },
+  },
+  {
+    value: '14',
+    get label() {
+      return t('usage.range14')
+    },
+  },
+  {
+    value: '30',
+    get label() {
+      return t('usage.range30')
+    },
+  },
 ]
 // usage.js:16-26 — the sessions table columns; a subset is sortable.
 const TABLE_COLUMNS: { key: string; label: string; sortable: boolean }[] = [
-  { key: 'session', label: 'Session', sortable: true },
-  { key: 'updated_at', label: 'Modified', sortable: true },
-  { key: 'input_tokens', label: 'Input', sortable: true },
-  { key: 'output_tokens', label: 'Output', sortable: true },
-  { key: 'cache_read_tokens', label: 'Cache R', sortable: false },
-  { key: 'cache_write_tokens', label: 'Cache W', sortable: false },
-  { key: 'cost_usd', label: 'Cost', sortable: true },
-  { key: 'cost_source', label: 'Source', sortable: false },
-  { key: 'model', label: 'Model', sortable: true },
+  {
+    key: 'session',
+    get label() {
+      return t('usage.colSession')
+    },
+    sortable: true,
+  },
+  {
+    key: 'updated_at',
+    get label() {
+      return t('usage.colModified')
+    },
+    sortable: true,
+  },
+  {
+    key: 'input_tokens',
+    get label() {
+      return t('usage.colInput')
+    },
+    sortable: true,
+  },
+  {
+    key: 'output_tokens',
+    get label() {
+      return t('usage.colOutput')
+    },
+    sortable: true,
+  },
+  {
+    key: 'cache_read_tokens',
+    get label() {
+      return t('usage.colCacheRead')
+    },
+    sortable: false,
+  },
+  {
+    key: 'cache_write_tokens',
+    get label() {
+      return t('usage.colCacheWrite')
+    },
+    sortable: false,
+  },
+  {
+    key: 'cost_usd',
+    get label() {
+      return t('usage.colCost')
+    },
+    sortable: true,
+  },
+  {
+    key: 'cost_source',
+    get label() {
+      return t('usage.colSource')
+    },
+    sortable: false,
+  },
+  {
+    key: 'model',
+    get label() {
+      return t('usage.colModel')
+    },
+    sortable: true,
+  },
 ]
 
 interface UsageStatus {
@@ -99,7 +177,7 @@ export function UsagePage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   useEffect(() => {
-    document.title = 'Usage - AgentOS Control'
+    document.title = t('usage.documentTitle')
   }, [])
 
   // usage.js:350-366 — usage.status {} after waitForConnection; the view derives
@@ -122,7 +200,7 @@ export function UsagePage() {
     if (usageQuery.isError) {
       const err = usageQuery.error
       const message = err instanceof Error ? err.message : String(err)
-      toast.error('Failed to load usage: ' + message, { id: 'usage-load-err' })
+      toast.error(t('usage.toastLoadFailed', { message }), { id: 'usage-load-err' })
     }
   }, [usageQuery.isError, usageQuery.error])
 
@@ -181,15 +259,23 @@ export function UsagePage() {
     URL.revokeObjectURL(url)
   }
 
-  const sessionMeta = [`${sorted.length} session${sorted.length === 1 ? '' : 's'}`, hiddenHint]
+  const sessionMeta = [tPlural('usage.sessionCount', sorted.length), hiddenHint]
     .filter(Boolean)
     .join(' · ')
 
+  const chartCaptionBase =
+    chartMode === 'cost' ? t('usage.chartCaptionCost') : t('usage.chartCaptionTokens')
   const chartCaption =
-    (chartMode === 'cost' ? 'Top sessions by cost' : 'Top sessions by total tokens') +
-    (chart.poolSize > chart.shown ? ` · showing ${chart.shown} of ${chart.poolSize}` : '')
+    chart.poolSize > chart.shown
+      ? t('usage.chartCaptionWithPool', {
+          caption: chartCaptionBase,
+          shown: chart.shown,
+          pool: chart.poolSize,
+        })
+      : chartCaptionBase
 
-  const rangeLabel = range === 'all' ? 'All recorded activity' : `Last ${range} days`
+  const rangeLabel =
+    range === 'all' ? t('usage.rangeLabelAll') : t('usage.rangeLabelDays', { days: range })
   const errorMessage =
     usageQuery.error instanceof Error ? usageQuery.error.message : String(usageQuery.error ?? '')
 
@@ -197,11 +283,9 @@ export function UsagePage() {
     <div className="usage-stage">
       <header className="usage-stage__header">
         <div className="usage-stage__title-block">
-          <span className="t-label">Control · Analytics</span>
-          <h1 className="t-display">Usage</h1>
-          <p className="usage-stage__subtitle">
-            Tokens, cost, and per-model spend across every session.
-          </p>
+          <span className="t-label">{t('usage.eyebrow')}</span>
+          <h1 className="t-display">{t('usage.title')}</h1>
+          <p className="usage-stage__subtitle">{t('usage.subtitle')}</p>
           {hiddenHint ? (
             <small className="usage-range-notice" aria-live="polite">
               {hiddenHint}
@@ -211,21 +295,21 @@ export function UsagePage() {
         <div className="usage-stage__actions">
           <Button
             variant="outline"
-            title="Download CSV"
+            title={t('usage.exportTitle')}
             disabled={visible.length === 0}
             onClick={exportCsv}
           >
             <DownloadIcon />
-            <span>Export CSV</span>
+            <span>{t('usage.export')}</span>
           </Button>
           <Button
             variant="outline"
-            title="Refresh"
+            title={t('usage.refresh')}
             disabled={usageQuery.isFetching}
             onClick={() => void queryClient.invalidateQueries({ queryKey: ['usage'] })}
           >
             <RefreshCwIcon className={usageQuery.isFetching ? 'usage-spin' : undefined} />
-            <span>{usageQuery.isFetching ? 'Refreshing' : 'Refresh'}</span>
+            <span>{usageQuery.isFetching ? t('usage.refreshBusy') : t('usage.refresh')}</span>
           </Button>
         </div>
       </header>
@@ -238,23 +322,23 @@ export function UsagePage() {
             <ActivityIcon />
           </div>
           <div>
-            <h2>Usage data is unavailable</h2>
-            <p>{errorMessage || 'The gateway did not return usage data.'}</p>
+            <h2>{t('usage.errorTitle')}</h2>
+            <p>{errorMessage || t('usage.errorFallback')}</p>
           </div>
           <Button variant="outline" onClick={() => void usageQuery.refetch()}>
             <RefreshCwIcon />
-            Retry
+            {t('common.retry')}
           </Button>
         </section>
       ) : (
         <>
-          <section className="usage-overview" aria-label="Usage summary">
+          <section className="usage-overview" aria-label={t('usage.summaryLandmark')}>
             <div className="usage-overview__toolbar">
               <div>
-                <span className="usage-overview__eyebrow">Billing window</span>
+                <span className="usage-overview__eyebrow">{t('usage.billingWindow')}</span>
                 <strong className="usage-overview__window">{rangeLabel}</strong>
               </div>
-              <div className="usage-range" role="group" aria-label="Date range">
+              <div className="usage-range" role="group" aria-label={t('usage.dateRange')}>
                 {RANGE_OPTIONS.map((opt) => (
                   <button
                     key={opt.value}
@@ -270,59 +354,61 @@ export function UsagePage() {
             </div>
 
             <div className="usage-overview__body">
-              <div className="usage-overview__spend" aria-label="Total cost">
+              <div className="usage-overview__spend" aria-label={t('usage.totalCost')}>
                 <span className="usage-overview__metric-label">
                   <CoinsIcon aria-hidden="true" />
-                  Period spend
+                  {t('usage.metricSpend')}
                 </span>
                 <strong className="usage-overview__spend-value t-data">
                   {formatCost(metrics.cost, { decimals: 4 })}
                 </strong>
                 <span className="usage-overview__hint">
-                  {compositionHint || 'No cost source yet'}
+                  {compositionHint || t('usage.noCostSource')}
                 </span>
               </div>
 
-              <div className="usage-overview__tokens" aria-label="Total tokens">
+              <div className="usage-overview__tokens" aria-label={t('usage.totalTokens')}>
                 <span className="usage-overview__metric-label">
                   <ActivityIcon aria-hidden="true" />
-                  Token volume
+                  {t('usage.metricTokens')}
                 </span>
                 <strong className="usage-overview__token-value t-data">
                   {metrics.totalTokens.toLocaleString()}
                 </strong>
                 <dl className="usage-overview__token-grid">
                   <div>
-                    <dt>Input</dt>
+                    <dt>{t('usage.dtInput')}</dt>
                     <dd className="t-data">{metrics.input.toLocaleString()}</dd>
                   </div>
                   <div>
-                    <dt>Output</dt>
+                    <dt>{t('usage.dtOutput')}</dt>
                     <dd className="t-data">{metrics.output.toLocaleString()}</dd>
                   </div>
                   <div>
-                    <dt>Cache read</dt>
+                    <dt>{t('usage.dtCacheRead')}</dt>
                     <dd className="t-data">{metrics.cacheRead.toLocaleString()}</dd>
                   </div>
                   <div>
-                    <dt>Cache write</dt>
+                    <dt>{t('usage.dtCacheWrite')}</dt>
                     <dd className="t-data">{metrics.cacheWrite.toLocaleString()}</dd>
                   </div>
                 </dl>
               </div>
 
               <dl className="usage-overview__supporting">
-                <div aria-label="Sessions">
-                  <dt>Sessions</dt>
+                <div aria-label={t('usage.sessionsLandmark')}>
+                  <dt>{t('usage.dtSessions')}</dt>
                   <dd className="t-data">{metrics.sessions}</dd>
-                  <dd className="usage-overview__supporting-hint">in this window</dd>
+                  <dd className="usage-overview__supporting-hint">{t('usage.hintInWindow')}</dd>
                 </div>
-                <div aria-label="Avg cost / session">
-                  <dt>Average / session</dt>
+                <div aria-label={t('usage.averageLandmark')}>
+                  <dt>{t('usage.dtAverage')}</dt>
                   <dd className="t-data">
                     {metrics.avgCost != null ? formatCost(metrics.avgCost, { decimals: 4 }) : '—'}
                   </dd>
-                  <dd className="usage-overview__supporting-hint">running average</dd>
+                  <dd className="usage-overview__supporting-hint">
+                    {t('usage.hintRunningAverage')}
+                  </dd>
                 </div>
               </dl>
             </div>
@@ -335,18 +421,18 @@ export function UsagePage() {
                   <BarChart3Icon />
                 </span>
                 <div>
-                  <h2 id="usage-chart-title">Session footprint</h2>
-                  <p>Compare the highest-consumption sessions in the selected window.</p>
+                  <h2 id="usage-chart-title">{t('usage.chartTitle')}</h2>
+                  <p>{t('usage.chartSubtitle')}</p>
                 </div>
               </div>
-              <div className="usage-segs" role="group" aria-label="Chart metric">
+              <div className="usage-segs" role="group" aria-label={t('usage.chartMetric')}>
                 <button
                   type="button"
                   className={`usage-seg${chartMode === 'tokens' ? ' is-active' : ''}`}
                   aria-pressed={chartMode === 'tokens'}
                   onClick={() => setChartMode('tokens')}
                 >
-                  Tokens
+                  {t('usage.segTokens')}
                 </button>
                 <button
                   type="button"
@@ -354,7 +440,7 @@ export function UsagePage() {
                   aria-pressed={chartMode === 'cost'}
                   onClick={() => setChartMode('cost')}
                 >
-                  Cost
+                  {t('usage.segCost')}
                 </button>
               </div>
             </div>
@@ -365,20 +451,20 @@ export function UsagePage() {
               <span className="usage-chart__legend-spacer" />
               <span className="usage-chart__legend-item">
                 <span className="usage-chart__swatch usage-chart__swatch--input" />
-                Input
+                {t('usage.legendInput')}
               </span>
               {chartMode === 'tokens' ? (
                 <span className="usage-chart__legend-item">
                   <span className="usage-chart__swatch usage-chart__swatch--output" />
-                  Output
+                  {t('usage.legendOutput')}
                 </span>
               ) : null}
             </div>
             {chart.bars.length === 0 ? (
               <div className="usage-bars__empty">
                 <BarChart3Icon className="usage-bars__empty-icon" aria-hidden="true" />
-                <strong>No data in the selected window.</strong>
-                <span>Choose a wider billing window or run a new session.</span>
+                <strong>{t('usage.chartEmptyTitle')}</strong>
+                <span>{t('usage.chartEmptyMsg')}</span>
               </div>
             ) : (
               <div className="usage-bars" key={`${chartMode}-${range}`}>
@@ -387,7 +473,7 @@ export function UsagePage() {
                     key={bar.key + i}
                     type="button"
                     className="usage-bar-row"
-                    title={`Open ${bar.key}`}
+                    title={t('usage.barTitle', { key: bar.key })}
                     style={{ '--i': i } as React.CSSProperties}
                     onClick={() => openChat(bar.key)}
                   >
@@ -418,17 +504,17 @@ export function UsagePage() {
           <section className="usage-models">
             <div className="usage-section-head">
               <div>
-                <h2 className="usage-section-title">Model allocation</h2>
-                <p>Token volume, session reach, and cost contribution by model.</p>
+                <h2 className="usage-section-title">{t('usage.modelsTitle')}</h2>
+                <p>{t('usage.modelsSubtitle')}</p>
               </div>
               <span className="usage-section-meta t-data">
-                {grid.models.length} model{grid.models.length === 1 ? '' : 's'}
+                {tPlural('usage.modelCount', grid.models.length)}
               </span>
             </div>
             {grid.models.length === 0 ? (
-              <div className="usage-models__empty">No model usage yet.</div>
+              <div className="usage-models__empty">{t('usage.modelsEmpty')}</div>
             ) : (
-              <div className="usage-model-grid" key={range} aria-label="By model breakdown">
+              <div className="usage-model-grid" key={range} aria-label={t('usage.modelsLandmark')}>
                 {grid.models.map((m, i) => (
                   <article
                     className="usage-model-card"
@@ -451,7 +537,7 @@ export function UsagePage() {
                         </h3>
                       </div>
                     </div>
-                    <div className="usage-model-card__share" title="Share of total cost">
+                    <div className="usage-model-card__share" title={t('usage.shareTitle')}>
                       <span className="usage-model-card__share-bar" aria-hidden="true">
                         <span
                           className="usage-model-card__share-fill"
@@ -459,25 +545,25 @@ export function UsagePage() {
                         />
                       </span>
                       <strong className="t-data">{m.sharePct.toFixed(1)}%</strong>
-                      <span>of spend</span>
+                      <span>{t('usage.ofSpend')}</span>
                     </div>
                     <dl className="usage-model-card__rows">
                       <div>
-                        <dt>Tokens</dt>
+                        <dt>{t('usage.dtTokens')}</dt>
                         <dd className="t-data">{m.totalTokens.toLocaleString()}</dd>
                       </div>
                       <div>
-                        <dt>Input / output</dt>
+                        <dt>{t('usage.dtInputOutput')}</dt>
                         <dd className="t-data">
                           {m.inputTokens.toLocaleString()} / {m.outputTokens.toLocaleString()}
                         </dd>
                       </div>
                       <div>
-                        <dt>Sessions</dt>
+                        <dt>{t('usage.dtSessions')}</dt>
                         <dd className="t-data">{m.sessions}</dd>
                       </div>
                       <div>
-                        <dt>Cost</dt>
+                        <dt>{t('usage.dtCost')}</dt>
                         <dd className="t-data usage-cost">{formatCost(m.costUsd)}</dd>
                       </div>
                     </dl>
@@ -490,8 +576,8 @@ export function UsagePage() {
           <section className="usage-sessions">
             <div className="usage-section-head">
               <div>
-                <h2 className="usage-section-title">Sessions</h2>
-                <p>Auditable usage records with provider billing provenance.</p>
+                <h2 className="usage-section-title">{t('usage.tableTitle')}</h2>
+                <p>{t('usage.tableSubtitle')}</p>
               </div>
               <span className="usage-section-meta t-data">{sessionMeta}</span>
             </div>
@@ -523,10 +609,8 @@ export function UsagePage() {
                       <td colSpan={TABLE_COLUMNS.length} className="usage-empty-row">
                         <div className="usage-empty">
                           <BarChart3Icon className="usage-empty__icon" aria-hidden="true" />
-                          <div className="usage-empty__title">No usage data yet</div>
-                          <p className="usage-empty__msg">
-                            Run a session and token spend will appear here automatically.
-                          </p>
+                          <div className="usage-empty__title">{t('usage.tableEmptyTitle')}</div>
+                          <p className="usage-empty__msg">{t('usage.tableEmptyMsg')}</p>
                         </div>
                       </td>
                     </tr>
@@ -546,7 +630,7 @@ export function UsagePage() {
                           key={key || `row-${rowIndex}`}
                           row={row}
                           sessionKey={key}
-                          modified={ts != null ? formatRelTime(ts) : '—'}
+                          modified={ts != null ? formatRelTime(ts) : t('common.dash')}
                           badge={badge}
                           modelLabel={modelLabel}
                           canExpand={canExpand}
@@ -570,8 +654,8 @@ export function UsagePage() {
 
 function UsageLoading() {
   return (
-    <div className="usage-loading" role="status" aria-label="Loading usage data">
-      <span className="sr-only">Loading usage data</span>
+    <div className="usage-loading" role="status" aria-label={t('usage.loadingLabel')}>
+      <span className="sr-only">{t('usage.loadingLabel')}</span>
       <div className="usage-loading__overview" />
       <div className="usage-loading__chart" />
       <div className="usage-loading__rows">
@@ -615,13 +699,13 @@ function ExpandableRow({
             <button
               type="button"
               className="usage-sess-link t-data"
-              title={`Open chat for ${sessionKey}`}
+              title={t('usage.openChatFor', { key: sessionKey })}
               onClick={onOpenChat}
             >
               {sessionKey}
             </button>
           ) : (
-            '—'
+            t('common.dash')
           )}
         </td>
         <td data-label="Modified" className="t-data usage-dim">
@@ -679,21 +763,22 @@ function ModelExpansion({ row }: { row: UsageRow }) {
     <div className="usage-expand">
       <div className="usage-expand__head">
         <span className="usage-expand__connector" aria-hidden="true" />
-        <span className="usage-expand__eyebrow">Model breakdown</span>
-        <span className="usage-expand__count">
-          {ex.count} model{ex.count === 1 ? '' : 's'}
-        </span>
+        <span className="usage-expand__eyebrow">{t('usage.expandEyebrow')}</span>
+        <span className="usage-expand__count">{tPlural('usage.expandModels', ex.count)}</span>
         <span className="usage-expand__spacer" />
         <span className="usage-expand__total">
-          {ex.totalTokens.toLocaleString()} tokens · {formatCost(ex.totalCost)}
+          {t('usage.expandTotal', {
+            tokens: ex.totalTokens.toLocaleString(),
+            cost: formatCost(ex.totalCost),
+          })}
         </span>
       </div>
       {ex.anyProrated ? (
         <div className="usage-expand__notice" role="note">
-          Per-model split is estimated; total is the actual billed amount.
+          {t('usage.expandProrated')}
         </div>
       ) : null}
-      <div className="usage-expand__list" role="table" aria-label="Model breakdown">
+      <div className="usage-expand__list" role="table" aria-label={t('usage.expandEyebrow')}>
         {ex.rows.map((m, i) => (
           <div
             className="usage-expand__row"
