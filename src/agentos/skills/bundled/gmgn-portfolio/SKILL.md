@@ -11,7 +11,7 @@ metadata:
   cliHelp: "gmgn-cli portfolio --help"
   agentos:
     emoji: "💼"
-    category: trading
+    category: crypto
     homepage: https://github.com/GMGNAI/gmgn-skills
     risk: low
     capabilities: [network-read]
