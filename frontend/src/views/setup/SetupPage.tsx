@@ -15,6 +15,8 @@ import {
 import { toast } from 'sonner'
 import { useRpc } from '@/app/providers'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
+import '@/i18n/en/setup'
 import type { SettingsSnapshot } from '@/views/settings/snapshot'
 import { ProviderSection } from './ProviderSection'
 import { RouterSection } from './RouterSection'
@@ -506,7 +508,7 @@ export function SetupPage({
     return (
       <div className="setup-stage">
         <div className="setup-error panel tone-danger tone-rail">
-          Failed to load setup catalog: {message}
+          {t('setup.loadFailed', { message })}
         </div>
       </div>
     )
@@ -515,7 +517,7 @@ export function SetupPage({
   if (!loaded) {
     return (
       <div className="setup-stage">
-        <p className="setup-muted">Loading setup…</p>
+        <p className="setup-muted">{t('setup.loading')}</p>
       </div>
     )
   }
@@ -525,19 +527,19 @@ export function SetupPage({
       {!embedded ? (
         <header className="setup-stage__header">
           <div className="setup-stage__title-block">
-            <span className="t-label">Control · Setup</span>
-            <h1 className="t-display">Setup</h1>
+            <span className="t-label">{t('setup.pageEyebrow')}</span>
+            <h1 className="t-display">{t('setup.pageTitle')}</h1>
             <p className="setup-stage__subtitle">{headline.title}</p>
           </div>
           <div className="setup-stage__aside">
             <button
               type="button"
               className="setup-exit"
-              aria-label="Exit setup and return to Overview"
+              aria-label={t('setup.exitAria')}
               onClick={() => navigate('/overview')}
             >
               <span aria-hidden="true">←</span>
-              <span>Exit setup</span>
+              <span>{t('setup.exit')}</span>
             </button>
             <div className={`setup-status ${HEADLINE_TONE[headline.tone]}`}>{headline.chip}</div>
           </div>
@@ -550,7 +552,9 @@ export function SetupPage({
             <ul
               className="setup-reasons"
               aria-label={
-                headline.tone === 'is-warn' ? 'Setup actions needed' : 'Optional improvements'
+                headline.tone === 'is-warn'
+                  ? t('setup.reasonsWarnLandmark')
+                  : t('setup.reasonsOptionalLandmark')
               }
             >
               {reasons.map((reason) => (
@@ -570,7 +574,9 @@ export function SetupPage({
                     <CircleAlertIcon className="setup-reasons__icon" aria-hidden="true" />
                     <span className="setup-reasons__text">{reason.text}</span>
                     <span className="setup-reasons__cta">
-                      {reason.tier === 'blocking' ? 'Continue' : 'Review'}
+                      {reason.tier === 'blocking'
+                        ? t('setup.reasonContinue')
+                        : t('setup.reasonReview')}
                       <ArrowRightIcon aria-hidden="true" />
                     </span>
                   </button>
@@ -582,20 +588,17 @@ export function SetupPage({
           {conflictedTargets.length > 0 ? (
             <div className="setup-warning panel tone-warn tone-rail" role="alert">
               <span>
-                The configuration changed while{' '}
-                {conflictedTargets.length === 1 ? 'a guided draft was' : 'guided drafts were'} open.
-                Review the latest state, then discard the stale{' '}
-                {conflictedTargets.length === 1 ? 'draft' : 'drafts'} before saving.
+                {conflictedTargets.length === 1 ? t('setup.conflictOne') : t('setup.conflictMany')}
               </span>
               <Button type="button" size="sm" variant="outline" onClick={discardConflictedDrafts}>
-                Discard stale drafts
+                {t('setup.conflictDiscard')}
               </Button>
             </div>
           ) : null}
         </div>
       ) : null}
 
-      <nav className="setup-stepper" aria-label="Setup steps">
+      <nav className="setup-stepper" aria-label={t('setup.stepperLandmark')}>
         {STEPS.map((s) => {
           const st = stepStatus(s.id, status, effectiveProviderId)
           const StepIcon = STEP_ICONS[s.id]

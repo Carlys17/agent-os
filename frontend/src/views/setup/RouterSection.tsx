@@ -7,6 +7,8 @@ import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useRpc } from '@/app/providers'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
+import '@/i18n/en/setup'
 import { PanelHead, SetupCheckbox, SetupSelect } from './parts'
 import {
   buildRouterConfigureParams,
@@ -242,30 +244,26 @@ export function RouterSection({
 
   return (
     <section className="setup-panel panel">
-      <PanelHead title="Router Tiers" subtitle={summary} />
+      <PanelHead title={t('setup.routerTitle')} subtitle={summary} />
       <div className="setup-router-toolbar">
         <label>
-          <span>Mode</span>
+          <span>{t('setup.routerMode')}</span>
           <SetupSelect
-            aria-label="Router mode"
+            aria-label={t('setup.routerModeAria')}
             value={mode}
             disabled={!provider}
             onChange={(e) => setMode(e.target.value as RouterMode)}
           >
-            <option value="pilot-v1">Local ML - English-optimized (Pilot)</option>
-            <option value="llm_judge">Smart routing (LLM-based)</option>
-            <option value="disabled">Off</option>
+            <option value="pilot-v1">{t('setup.routerModePilot')}</option>
+            <option value="llm_judge">{t('setup.routerModeJudge')}</option>
+            <option value="disabled">{t('setup.routerModeOff')}</option>
           </SetupSelect>
-          {showPilot ? (
-            <small className="setup-hint">
-              English-optimized local ML router; runs offline with the self-trained AgentOS model.
-            </small>
-          ) : null}
+          {showPilot ? <small className="setup-hint">{t('setup.routerPilotHint')}</small> : null}
         </label>
         <label>
-          <span>Default text model</span>
+          <span>{t('setup.routerDefaultModel')}</span>
           <SetupSelect
-            aria-label="Default text model"
+            aria-label={t('setup.routerDefaultModel')}
             value={defaultTier}
             disabled={!provider}
             onChange={(e) => setDefaultTier(e.target.value)}
@@ -279,9 +277,9 @@ export function RouterSection({
         </label>
         {showJudge ? (
           <label>
-            <span>Judge model</span>
+            <span>{t('setup.routerJudgeModel')}</span>
             <SetupSelect
-              aria-label="Judge model"
+              aria-label={t('setup.routerJudgeModel')}
               value={judge}
               onChange={(e) => setJudge(e.target.value)}
             >
@@ -296,26 +294,23 @@ export function RouterSection({
         ) : null}
         {showPilot ? (
           <label>
-            <span>Pilot safety net</span>
+            <span>{t('setup.routerPilotSafetyNet')}</span>
             <input
               type="number"
               min={0}
               max={1}
               step={0.05}
-              aria-label="Pilot safety-net threshold"
+              aria-label={t('setup.routerPilotThresholdAria')}
               value={pilotThreshold}
               onChange={(e) => setPilotThreshold(e.target.value)}
             />
-            <small className="setup-hint">
-              Under-routing floor (default 0.5). The effective cutoff is the max of this and the
-              router confidence threshold.
-            </small>
+            <small className="setup-hint">{t('setup.routerPilotThresholdHint')}</small>
           </label>
         ) : null}
         <label>
-          <span>Translation cap</span>
+          <span>{t('setup.routerTranslateCap')}</span>
           <SetupSelect
-            aria-label="Translation cap tier"
+            aria-label={t('setup.routerTranslateCapAria')}
             value={translateCeilingEnabled ? translateCeilingTier : 'off'}
             disabled={!provider}
             onChange={(e) => {
@@ -328,28 +323,25 @@ export function RouterSection({
               setTranslateCeilingTier(next)
             }}
           >
-            <option value="off">Off - route translations normally</option>
+            <option value="off">{t('setup.routerTranslateOff')}</option>
             {TEXT_TIERS.map((t) => (
               <option key={t} value={t}>
                 {tierLabel(t)}
               </option>
             ))}
           </SetupSelect>
-          <small className="setup-hint">
-            Translation requests are capped at this tier in 14 languages. A complaint upgrade and
-            the large-context floor still override it.
-          </small>
+          <small className="setup-hint">{t('setup.routerTranslateHint')}</small>
         </label>
       </div>
 
       {provider ? (
         <div className="setup-tier-table" role="table">
           <div className="setup-tier-table__row is-head" role="row">
-            <span role="columnheader">Tier</span>
-            <span role="columnheader">Provider</span>
-            <span role="columnheader">Model</span>
-            <span role="columnheader">Thinking</span>
-            <span role="columnheader">Image</span>
+            <span role="columnheader">{t('setup.routerColTier')}</span>
+            <span role="columnheader">{t('setup.routerColProvider')}</span>
+            <span role="columnheader">{t('setup.routerColModel')}</span>
+            <span role="columnheader">{t('setup.routerColThinking')}</span>
+            <span role="columnheader">{t('setup.routerColImage')}</span>
           </div>
           {visibleTiers.map(([name, tier]) => {
             // A coherent settings snapshot can add a tier while this mounted
@@ -371,27 +363,30 @@ export function RouterSection({
               <div className="setup-tier-table__row" role="row" key={name}>
                 <div className="setup-tier-table__cell setup-tier-table__cell--tier" role="cell">
                   <span className="setup-tier-table__mobile-label" aria-hidden="true">
-                    Tier
+                    {t('setup.routerColTier')}
                   </span>
                   <code>{name}</code>
                 </div>
                 <div className="setup-tier-table__cell" role="cell">
                   <span className="setup-tier-table__mobile-label" aria-hidden="true">
-                    Provider
+                    {t('setup.routerColProvider')}
                   </span>
                   {/* Read-only: five editable copies of one value are five
                       chances to get it wrong, and the runtime ignores the
                       difference anyway. */}
-                  <code className="setup-provider-chip" aria-label={`${name} provider`}>
+                  <code
+                    className="setup-provider-chip"
+                    aria-label={t('setup.routerRowProvider', { tier: name })}
+                  >
                     {provider}
                   </code>
                 </div>
                 <div className="setup-tier-table__cell setup-tier-table__cell--model" role="cell">
                   <span className="setup-tier-table__mobile-label" aria-hidden="true">
-                    Model
+                    {t('setup.routerColModel')}
                   </span>
                   <input
-                    aria-label={`${name} model`}
+                    aria-label={t('setup.routerRowModel', { tier: name })}
                     value={row.model}
                     list={options.length > 0 ? listId : undefined}
                     autoComplete="off"
@@ -421,10 +416,10 @@ export function RouterSection({
                 </div>
                 <div className="setup-tier-table__cell" role="cell">
                   <span className="setup-tier-table__mobile-label" aria-hidden="true">
-                    Thinking
+                    {t('setup.routerColThinking')}
                   </span>
                   <SetupSelect
-                    aria-label={`${name} thinking level`}
+                    aria-label={t('setup.routerRowThinking', { tier: name })}
                     value={row.thinkingLevel}
                     onChange={(e) => setRow(name, tier, { thinkingLevel: e.target.value })}
                   >
@@ -437,16 +432,16 @@ export function RouterSection({
                 </div>
                 <div className="setup-tier-table__cell setup-tier-table__cell--image" role="cell">
                   <span className="setup-tier-table__mobile-label" aria-hidden="true">
-                    Image
+                    {t('setup.routerColImage')}
                   </span>
                   <SetupCheckbox
-                    ariaLabel={`${name} supports image`}
+                    ariaLabel={t('setup.routerRowImage', { tier: name })}
                     checked={supportsImage}
                     className="setup-check--compact"
                     disabled={isImageModel}
                     onChange={(checked) => setRow(name, tier, { supportsImage: checked })}
                   >
-                    {supportsImage ? 'On' : 'Off'}
+                    {supportsImage ? t('setup.routerImageOn') : t('setup.routerImageOff')}
                   </SetupCheckbox>
                 </div>
               </div>
@@ -455,25 +450,25 @@ export function RouterSection({
         </div>
       ) : (
         <div className="setup-warning panel tone-warn tone-rail">
-          Choose a provider first to preview and save Pilot Router tiers.
+          {t('setup.routerNeedsProviderWarning')}
         </div>
       )}
 
       {provider && !canSave ? (
         <div className="setup-warning panel tone-warn tone-rail">
-          Save the provider before saving router tiers.
+          {t('setup.routerSaveProviderFirst')}
         </div>
       ) : null}
 
       <div className="setup-actions">
         <Button type="button" variant="outline" onClick={onBack}>
-          Back
+          {t('setup.back')}
         </Button>
         <Button type="button" disabled={!canSave || saving} onClick={collectAndSave}>
-          Save Router
+          {t('setup.routerSave')}
         </Button>
         <Button type="button" variant="outline" onClick={onNext}>
-          Next
+          {t('setup.next')}
         </Button>
       </div>
     </section>

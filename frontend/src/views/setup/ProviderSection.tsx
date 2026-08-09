@@ -4,6 +4,8 @@
 // echoed). Save/Next are gated on a selected provider.
 import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
+import '@/i18n/en/setup'
 import { NeedList, PanelHead, SetupField, SetupSelect } from './parts'
 import {
   effectiveProvider as effectiveProviderFn,
@@ -124,17 +126,17 @@ export function ProviderSection({
 
   return (
     <section className="setup-panel panel">
-      <PanelHead title="Provider" subtitle={summary} />
+      <PanelHead title={t('setup.providerTitle')} subtitle={summary} />
       <div className="setup-form">
         <label>
-          <span>Provider</span>
+          <span>{t('setup.providerTitle')}</span>
           <SetupSelect
-            aria-label="Provider"
+            aria-label={t('setup.providerTitle')}
             value={selected}
             onChange={(e) => selectProvider(e.target.value)}
           >
             <option value="" disabled>
-              Choose a provider
+              {t('setup.providerChoose')}
             </option>
             {providers.map((p) => (
               <option key={p.providerId} value={p.providerId}>
@@ -145,15 +147,15 @@ export function ProviderSection({
         </label>
 
         <div className={`setup-provider-meta ${TONE_CLASS[supportTone]}`}>
-          <span className="t-label">Pilot Router tiers</span>
+          <span className="t-label">{t('setup.providerTiersLabel')}</span>
           <strong className="setup-provider-meta__badge">
             {providerRouterSupportText(selected ? spec : null)}
           </strong>
         </div>
 
         <NeedList
-          items={selected ? spec?.whatYouNeed : ['Choose a provider to see required fields.']}
-          label="Provider needs"
+          items={selected ? spec?.whatYouNeed : [t('setup.providerNeedsPlaceholder')]}
+          label={t('setup.providerNeedsLabel')}
         />
 
         <div className="setup-provider-fields">
@@ -172,8 +174,8 @@ export function ProviderSection({
 
         {advancedFields.length > 0 ? (
           <details className="setup-advanced" open={advancedInitiallyOpen}>
-            <summary>Advanced provider connection</summary>
-            <div className="setup-advanced__body" aria-label="Provider connection">
+            <summary>{t('setup.providerAdvanced')}</summary>
+            <div className="setup-advanced__body" aria-label={t('setup.providerConnection')}>
               {advancedFields.map((f) => (
                 <SetupField
                   key={f.name}
@@ -191,17 +193,16 @@ export function ProviderSection({
 
         {envMissing ? (
           <div className="setup-warning panel tone-warn tone-rail">
-            {envKey} is not visible to this gateway process. Set it before starting or restarting
-            the gateway, or paste an API key instead.
+            {t('setup.providerEnvWarning', { key: String(envKey) })}
           </div>
         ) : null}
 
         <div className="setup-actions">
           <Button type="button" disabled={!selected || saving} onClick={collectAndSave}>
-            Save Provider
+            {t('setup.providerSave')}
           </Button>
           <Button type="button" variant="outline" disabled={!selected} onClick={onNext}>
-            Next
+            {t('setup.next')}
           </Button>
         </div>
       </div>

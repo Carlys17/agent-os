@@ -11,6 +11,9 @@
 // ── shared catalog / status / config wire shapes ────────────────────────────
 
 /** A field spec from onboarding.catalog (provider/channel/image/audio). */
+import { t, tPlural } from '@/i18n'
+import '@/i18n/en/setup'
+
 export interface FieldSpec {
   name: string
   label?: string
@@ -201,19 +204,23 @@ export interface SetupConfig {
 
 export const TEXT_TIERS = ['c0', 'c1', 'c2', 'c3'] as const
 
-export const TIER_LABELS: Record<string, string> = {
-  c0: 'Route c0',
-  c1: 'Route c1',
-  c2: 'Route c2',
-  c3: 'Route c3',
+function tierLabels(): Record<string, string> {
+  return {
+    c0: t('setup.tierC0'),
+    c1: t('setup.tierC1'),
+    c2: t('setup.tierC2'),
+    c3: t('setup.tierC3'),
+  }
 }
 
-export const READINESS_LABELS: Record<string, string> = {
-  ok: 'Ready',
-  optional: 'Optional',
-  missing: 'Missing',
-  degraded: 'Needs action',
-  unknown: 'Check',
+function readinessLabels(): Record<string, string> {
+  return {
+    ok: t('setup.readyOk'),
+    optional: t('setup.readyOptional'),
+    missing: t('setup.readyMissing'),
+    degraded: t('setup.readyDegraded'),
+    unknown: t('setup.readyUnknown'),
+  }
 }
 
 /** setup.js:27-36 — section id → setup step id (shared by initial-step + reasons). */
@@ -230,12 +237,36 @@ export const SECTION_STEPS: Array<[string, string]> = [
 
 export type StepId = 'provider' | 'router' | 'channels' | 'extras' | 'finish'
 
-/** setup.js:4-10 — the ordered stepper steps. */
+/**
+ * setup.js:4-10 — the ordered stepper steps. `label` is a getter: the array is a
+ * module constant, so a resolved label would freeze at module-evaluation time
+ * and keep the boot locale (#258).
+ */
 export const STEPS: Array<{ id: StepId; label: string }> = [
-  { id: 'provider', label: 'Provider' },
-  { id: 'router', label: 'Router Tiers' },
-  { id: 'extras', label: 'Capabilities' },
-  { id: 'finish', label: 'Finish' },
+  {
+    id: 'provider',
+    get label() {
+      return t('setup.stepProvider')
+    },
+  },
+  {
+    id: 'router',
+    get label() {
+      return t('setup.stepRouter')
+    },
+  },
+  {
+    id: 'extras',
+    get label() {
+      return t('setup.stepExtras')
+    },
+  },
+  {
+    id: 'finish',
+    get label() {
+      return t('setup.stepFinish')
+    },
+  },
 ]
 
 // ── small utilities ─────────────────────────────────────────────────────────
@@ -247,7 +278,7 @@ export function camel(name: string): string {
 
 /** setup.js:660-662 — tier label with a c1 fallback. */
 export function tierLabel(tier: string | undefined): string {
-  return TIER_LABELS[tier ?? ''] || tier || 'Route c1'
+  return tierLabels()[tier ?? ''] || tier || t('setup.tierC1')
 }
 
 // ── status / readiness derivation (setup.js:125-305) ────────────────────────
@@ -279,10 +310,13 @@ export function stepDetailNeedsAction(detail: SectionDetail | undefined): boolea
 
 /** setup.js:158-163 — status of a single detail-backed step. */
 export function detailStepStatus(detail: SectionDetail | undefined): StepStatus {
-  if (!detail) return { label: 'Review', tone: 'is-muted' }
-  if (stepDetailNeedsAction(detail)) return { label: 'Needs action', tone: 'is-warn' }
-  if (detail.status === 'ok') return { label: 'Ready', tone: 'is-ok' }
-  return { label: READINESS_LABELS[detail.status ?? ''] || 'Optional', tone: 'is-muted' }
+  if (!detail) return { label: t('setup.chipReview'), tone: 'is-muted' }
+  if (stepDetailNeedsAction(detail)) return { label: t('setup.chipNeedsAction'), tone: 'is-warn' }
+  if (detail.status === 'ok') return { label: t('setup.chipReady'), tone: 'is-ok' }
+  return {
+    label: readinessLabels()[detail.status ?? ''] || t('setup.chipOptional'),
+    tone: 'is-muted',
+  }
 }
 
 /** setup.js:146-156 — aggregate several sections into one step status. */
@@ -290,12 +324,12 @@ export function aggregateStepStatus(status: OnboardingStatus, sectionNames: stri
   const details = status.sectionDetails || {}
   const entries = sectionNames.map((name) => details[name]).filter(Boolean) as SectionDetail[]
   if (entries.some((detail) => stepDetailNeedsAction(detail))) {
-    return { label: 'Needs action', tone: 'is-warn' }
+    return { label: t('setup.chipNeedsAction'), tone: 'is-warn' }
   }
   if (entries.length && entries.every((detail) => detail.status === 'ok')) {
-    return { label: 'Ready', tone: 'is-ok' }
+    return { label: t('setup.chipReady'), tone: 'is-ok' }
   }
-  return { label: 'Optional', tone: 'is-muted' }
+  return { label: t('setup.chipOptional'), tone: 'is-muted' }
 }
 
 /** setup.js:261-270 — any pending setup action anywhere. */
@@ -313,11 +347,11 @@ export function stepStatus(
 ): StepStatus {
   const details = status.sectionDetails || {}
   if (stepId === 'provider') {
-    if (providerEnvMissing(status)) return { label: 'Needs action', tone: 'is-warn' }
+    if (providerEnvMissing(status)) return { label: t('setup.chipNeedsAction'), tone: 'is-warn' }
     return detailStepStatus(details.llm || details.provider)
   }
   if (stepId === 'router' && !effectiveProviderId) {
-    return { label: 'Provider first', tone: 'is-muted' }
+    return { label: t('setup.chipProviderFirst'), tone: 'is-muted' }
   }
   if (stepId === 'router') return detailStepStatus(details.router)
   if (stepId === 'channels') return detailStepStatus(details.channels)
@@ -326,10 +360,10 @@ export function stepStatus(
   }
   if (stepId === 'finish') {
     return hasSetupAction(status)
-      ? { label: 'Review', tone: 'is-warn' }
-      : { label: 'Ready', tone: 'is-ok' }
+      ? { label: t('setup.chipReview'), tone: 'is-warn' }
+      : { label: t('setup.chipReady'), tone: 'is-ok' }
   }
-  return { label: 'Review', tone: 'is-muted' }
+  return { label: t('setup.chipReview'), tone: 'is-muted' }
 }
 
 /** setup.js:302-305 — the step that fixes a given section. */
@@ -371,9 +405,9 @@ export function setupActionReason(name: string, detail: SectionDetail): string {
   const detailText = String(detail.detail || '')
   if (detailText.startsWith(missingEnvPrefix)) {
     const envKey = detailText.slice(missingEnvPrefix.length).trim()
-    if (envKey) return `${envKey} is not visible`
+    if (envKey) return t('setup.reasonEnvNotVisible', { key: envKey })
   }
-  return `${detail.label || name} setup needed`
+  return t('setup.reasonSectionSetup', { label: detail.label || name })
 }
 
 /**
@@ -392,9 +426,9 @@ export function onboardingReasons(status: OnboardingStatus, config: SetupConfig)
   }
   const llm = config.llm || {}
   if (providerEnvMissing(status)) {
-    push(`${providerEnvKey(config)} is not visible`, 'blocking', 'provider')
+    push(t('setup.reasonEnvNotVisible', { key: providerEnvKey(config) }), 'blocking', 'provider')
   } else if (!llm.provider || !llm.model) {
-    push('Connect a model provider', 'blocking', 'provider')
+    push(t('setup.reasonConnectProvider'), 'blocking', 'provider')
   }
   const details = status.sectionDetails || {}
   Object.entries(details).forEach(([name, detail]) => {
@@ -410,13 +444,13 @@ export function onboardingReasons(status: OnboardingStatus, config: SetupConfig)
     const tier: Reason['tier'] =
       detail.blocking || detail.status === 'missing' ? 'blocking' : 'optional'
     if ((name === 'llm' || name === 'provider') && detail.status === 'missing') {
-      push('Connect a model provider', 'blocking', step)
+      push(t('setup.reasonConnectProvider'), 'blocking', step)
       return
     }
     if ((name === 'llm' || name === 'provider') && reasons.length) return
     push(setupActionReason(name, detail), tier, step)
   })
-  if (!reasons.length) push('Review setup sections for pending actions', 'blocking', 'provider')
+  if (!reasons.length) push(t('setup.reasonReviewSections'), 'blocking', 'provider')
   return reasons
 }
 
@@ -425,16 +459,20 @@ export function setupHeadline(reasons: Reason[]): SetupHeadline {
   const blocking = reasons.filter((reason) => reason.tier === 'blocking').length
   const optional = reasons.length - blocking
   if (blocking) {
-    return { title: 'Action needed', chip: 'Action needed', tone: 'is-warn' }
+    return {
+      title: t('setup.headlineActionNeeded'),
+      chip: t('setup.headlineActionNeeded'),
+      tone: 'is-warn',
+    }
   }
   if (optional) {
     return {
-      title: 'Optional improvements',
-      chip: `Optional · ${optional} ${optional === 1 ? 'item' : 'items'}`,
+      title: t('setup.headlineOptional'),
+      chip: tPlural('setup.headlineOptionalChip', optional),
       tone: 'is-optional',
     }
   }
-  return { title: 'Ready to run', chip: 'Ready', tone: 'is-ok' }
+  return { title: t('setup.headlineReady'), chip: t('setup.chipReady'), tone: 'is-ok' }
 }
 
 // ── env recovery command lookup (setup.js:501-507) ──────────────────────────
@@ -450,7 +488,7 @@ export function envRecoveryCommand(status: OnboardingStatus, section: string): s
 
 export function providerRouterSupportText(spec: ProviderSpec | null | undefined): string {
   if (!spec || !spec.providerId) return 'choose provider'
-  return spec.routerSupported === true ? 'Pilot Router ready' : 'Direct only'
+  return spec.routerSupported === true ? t('setup.routerSupported') : t('setup.routerDirectOnly')
 }
 
 export function providerRouterSupportTone(
@@ -571,64 +609,60 @@ export function missingEnvStatusText(
 ): string {
   const key = String(envKey || '').trim()
   if (!key) return fallback
-  return `${capability} is selected, but $${key} is not visible to the gateway.`
+  return t('setup.missingEnvStatus', { capability, key })
 }
 
 /** setup.js:977-992 — web search status text. */
 export function searchStatusText(status: OnboardingStatus, config: SetupConfig): string {
   if (!config.search_provider) {
-    return 'Web search is off until a provider is selected.'
+    return t('setup.searchOff')
   }
   if (status.searchConfigured === true) {
-    return 'Web search is ready for new turns.'
+    return t('setup.searchReady')
   }
   if (status.searchSource === 'missing_env') {
     return missingEnvStatusText(
-      'Web search',
+      t('setup.capSearch'),
       status.searchEnvKey,
-      'Web search is selected but still needs a visible provider key.',
+      t('setup.searchNeedsKey'),
     )
   }
-  return 'Web search is selected but still needs a visible provider key.'
+  return t('setup.searchNeedsKey')
 }
 
 /** setup.js:994-1012 — image generation status text. */
 export function imageGenerationStatusText(status: OnboardingStatus): string {
   if (status.imageGenerationEnabled === false) {
-    return 'Image generation is hidden from agents until this capability is enabled.'
+    return t('setup.imageDisabled')
   }
   if (status.imageGenerationConfigured === true) {
     if (status.imageGenerationSource === 'llm_fallback') {
-      return 'Image generation will be available in new turns using the same provider key.'
+      return t('setup.imageReadySameKey')
     }
-    return 'Image generation will be available in new turns once the gateway has the visible key.'
+    return t('setup.imageReadyVisibleKey')
   }
   if (status.imageGenerationSource === 'missing_env') {
     return missingEnvStatusText(
-      'Image generation',
+      t('setup.capImage'),
       status.imageGenerationEnvKey,
-      'Image generation is enabled but still needs a visible provider key before agents can use it.',
+      t('setup.imageNeedsKey'),
     )
   }
-  return 'Image generation is enabled but still needs a visible provider key before agents can use it.'
+  return t('setup.imageNeedsKey')
 }
 
 /** setup.js:1014-1029 — voice audio status text. */
 export function audioStatusText(status: OnboardingStatus): string {
   if (status.audioEnabled === false) {
-    return 'Voice audio tools stay hidden until this capability is enabled.'
+    return t('setup.audioDisabled')
   }
   if (status.audioConfigured === true) {
-    return 'Voice audio tools are ready for TTS, transcription, dubbing, cloning, conversion, and music.'
+    return t('setup.audioReady')
   }
   if (status.audioSource === 'missing_env') {
-    return missingEnvStatusText(
-      'Voice audio',
-      status.audioEnvKey,
-      'Voice audio is enabled but still needs a visible provider key.',
-    )
+    return missingEnvStatusText(t('setup.capAudio'), status.audioEnvKey, t('setup.audioNeedsKey'))
   }
-  return 'Voice audio is enabled but still needs a visible provider key.'
+  return t('setup.audioNeedsKey')
 }
 
 /** setup.js:1031-1058 — memory-embedding status text for the selected provider. */
@@ -641,28 +675,28 @@ export function memoryEmbeddingStatusText(
   const savedProvider = current.provider || current.mode || status.memoryEmbeddingProvider || 'auto'
   const provider = providerId || savedProvider
   if (provider === 'none') {
-    return 'Keyword search stays available; embeddings are disabled.'
+    return t('setup.memoryKeywordOnly')
   }
   if (provider === 'local') {
-    return 'Uses local BGE embeddings; no remote key is needed.'
+    return t('setup.memoryLocalBge')
   }
   if (provider === 'ollama') {
-    return 'Uses your Ollama server; no API key is needed.'
+    return t('setup.memoryOllama')
   }
   if (provider === 'auto') {
-    return 'Local-first memory search; optional remote fallback can be configured.'
+    return t('setup.memoryLocalFirst')
   }
   if (provider === savedProvider && status.memoryEmbeddingConfigured === true) {
-    return 'Remote memory embeddings are configured for new turns.'
+    return t('setup.memoryRemoteReady')
   }
   if (provider === savedProvider && status.memoryEmbeddingSource === 'missing_env') {
     return missingEnvStatusText(
-      'Remote memory embeddings',
+      t('setup.capMemory'),
       status.memoryEmbeddingEnvKey,
-      'Remote memory embeddings need a visible provider key before they can run.',
+      t('setup.memoryNeedsKey'),
     )
   }
-  return 'Remote memory embeddings need a visible provider key before they can run.'
+  return t('setup.memoryNeedsKey')
 }
 
 // ── memory-embedding provider control enablement (setup.js:741-749,1560-1575) ──
@@ -1023,7 +1057,7 @@ export interface CliCommand {
 export function finishEnvRecoveryCommands(status: OnboardingStatus): CliCommand[] {
   return (Array.isArray(status.envRecoveryCommands) ? status.envRecoveryCommands : [])
     .map((entry) => ({
-      label: entry.label || 'Set environment key',
+      label: entry.label || t('setup.cliSetEnvKey'),
       command: entry.command || '',
     }))
     .filter((entry) => entry.command)
@@ -1034,27 +1068,33 @@ export function envFixCommands(envRecoveryCommands: CliCommand[], configArg: str
   if (!envRecoveryCommands.length) return []
   return [
     ...envRecoveryCommands,
-    { label: 'Restart gateway after env fix', command: `agentos gateway restart${configArg}` },
+    { label: t('setup.cliRestartGateway'), command: `agentos gateway restart${configArg}` },
   ]
 }
 
 /** setup.js:1098-1107 — the CLI-handoff command group. */
 export function handoffCommands(configArg: string): CliCommand[] {
   return [
-    { label: 'Guided CLI', command: `agentos onboard --if-needed${configArg}` },
-    { label: 'Check status', command: `agentos onboard status${configArg}` },
+    { label: t('setup.cliGuided'), command: `agentos onboard --if-needed${configArg}` },
+    { label: t('setup.cliCheckStatus'), command: `agentos onboard status${configArg}` },
   ]
 }
 
 /** setup.js:1108-1133 — the CLI-recipes command group. */
 export function recipeCommands(configArg: string): CliCommand[] {
   return [
-    { label: 'Provider options', command: `agentos onboard catalog providers${configArg}` },
-    { label: 'Router tiers', command: `agentos onboard catalog router${configArg}` },
-    { label: 'Search options', command: `agentos onboard catalog search${configArg}` },
-    { label: 'Channel options', command: `agentos onboard catalog channels${configArg}` },
-    { label: 'Image options', command: `agentos onboard catalog image${configArg}` },
-    { label: 'Memory options', command: `agentos onboard catalog memory${configArg}` },
+    {
+      label: t('setup.cliProviderOptions'),
+      command: `agentos onboard catalog providers${configArg}`,
+    },
+    { label: t('setup.cliRouterTiers'), command: `agentos onboard catalog router${configArg}` },
+    { label: t('setup.cliSearchOptions'), command: `agentos onboard catalog search${configArg}` },
+    {
+      label: t('setup.cliChannelOptions'),
+      command: `agentos onboard catalog channels${configArg}`,
+    },
+    { label: t('setup.cliImageOptions'), command: `agentos onboard catalog image${configArg}` },
+    { label: t('setup.cliMemoryOptions'), command: `agentos onboard catalog memory${configArg}` },
   ]
 }
 
@@ -1074,12 +1114,14 @@ export function finishSummary(status: OnboardingStatus, config: SetupConfig): Fi
   const configured = configuredProvider(status, config)
   return {
     provider: configured || 'not configured',
-    model: configured ? (config.llm || {}).model || 'Pilot Router defaults' : 'not configured',
+    model: configured
+      ? (config.llm || {}).model || t('setup.modelPilotDefaults')
+      : t('setup.modelNotConfigured'),
     proxy: configured ? String((config.llm || {}).proxy || '').trim() : '',
     router: configured
       ? router.enabled === false
         ? 'disabled'
-        : 'Pilot Router'
+        : t('setup.routerPilot')
       : 'choose a provider first',
     channels: String(status.channelCount || 0),
   }
@@ -1107,17 +1149,17 @@ export function readinessTone(
 
 /** setup.js:1284-1288 — readiness-row status label. */
 export function readinessStatusLabel(detail: SectionDetail, name: string): string {
-  if (routerNeedsProvider(detail, name)) return 'Provider first'
-  if (detail.blocking || detail.actionRequired) return 'Needs action'
-  return READINESS_LABELS[detail.status ?? ''] || 'Optional'
+  if (routerNeedsProvider(detail, name)) return t('setup.chipProviderFirst')
+  if (detail.blocking || detail.actionRequired) return t('setup.chipNeedsAction')
+  return readinessLabels()[detail.status ?? ''] || t('setup.chipOptional')
 }
 
 /** setup.js:1256-1261 — readiness action button label. */
 export function readinessActionLabel(detail: SectionDetail, name: string): string {
-  if (routerNeedsProvider(detail, name)) return 'Choose provider'
+  if (routerNeedsProvider(detail, name)) return t('setup.chipChooseProvider')
   if (detail.blocking || detail.actionRequired) return 'Fix'
-  if (detail.status === 'ok') return 'Review'
-  return 'Configure'
+  if (detail.status === 'ok') return t('setup.chipReview')
+  return t('setup.chipConfigure')
 }
 
 /** setup.js:1241-1248 — the setup step a readiness row jumps to (''=no jump). */

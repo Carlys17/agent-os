@@ -11,6 +11,7 @@ import { mcp } from './mcp'
 import { overview } from './overview'
 import { settings } from './settings'
 import { sessions } from './sessions'
+import { setup } from './setup'
 import { shell } from './shell'
 import { skills } from './skills'
 import { usage } from './usage'
@@ -44,6 +45,7 @@ export const en = {
   overview,
   sessions,
   settings,
+  setup,
   shell,
   skills,
   usage,

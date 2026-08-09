@@ -5,6 +5,8 @@
 // settings uses config.patch). All decision-shaped derivation lives in logic.ts.
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { t } from '@/i18n'
+import '@/i18n/en/setup'
 import {
   CapabilityBadge,
   EnvRecoveryCommand,
@@ -148,19 +150,19 @@ function SearchCard({
   return (
     <div className="setup-mini panel">
       <div className="setup-mini__head">
-        <h3 className="t-label">Web search</h3>
+        <h3 className="t-label">{t('setup.searchTitle')}</h3>
         <CapabilityBadge status={status} name="search" />
       </div>
       <p className="setup-muted">{searchStatusText(status, config)}</p>
       <EnvRecoveryCommand command={envRecoveryCommand(status, 'search')} />
       <NeedList
         items={credentialNeedList(spec.whatYouNeed, apiKeyEnv || spec.envKey)}
-        label="Search needs"
+        label={t('setup.searchNeeds')}
       />
       <label>
-        <span>Provider</span>
+        <span>{t('setup.fieldProvider')}</span>
         <SetupSelect
-          aria-label="Search provider"
+          aria-label={t('setup.searchProviderAria')}
           value={provider}
           onChange={(e) => setProvider(e.target.value)}
         >
@@ -172,12 +174,12 @@ function SearchCard({
         </SetupSelect>
       </label>
       <label>
-        <span>Max results</span>
+        <span>{t('setup.searchMaxResults')}</span>
         <input
           type="number"
           min={1}
           step={1}
-          aria-label="Search max results"
+          aria-label={t('setup.searchMaxResultsAria')}
           value={maxResults}
           onChange={(e) => setMaxResults(e.target.value)}
         />
@@ -185,19 +187,19 @@ function SearchCard({
       {requiresKey ? (
         <div className="setup-advanced__body">
           <label>
-            <span>API key</span>
+            <span>{t('setup.fieldApiKey')}</span>
             <input
               type="password"
-              aria-label="Search API key"
-              placeholder="leave blank to keep current"
+              aria-label={t('setup.searchApiKeyAria')}
+              placeholder={t('setup.keepCurrentPlaceholder')}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
             />
           </label>
           <label>
-            <span>API key env</span>
+            <span>{t('setup.fieldApiKeyEnv')}</span>
             <input
-              aria-label="Search API key env"
+              aria-label={t('setup.searchApiKeyEnvAria')}
               value={apiKeyEnv}
               placeholder={spec.envKey || 'SEARCH_API_KEY'}
               onChange={(e) => {
@@ -212,41 +214,41 @@ function SearchCard({
         className="setup-advanced"
         open={Boolean(proxy || useEnvProxy || fallback !== 'off' || diagnostics)}
       >
-        <summary>Advanced search options</summary>
-        <div className="setup-advanced__body" aria-label="Search behavior">
+        <summary>{t('setup.searchAdvanced')}</summary>
+        <div className="setup-advanced__body" aria-label={t('setup.searchBehavior')}>
           <label>
-            <span>HTTP proxy</span>
+            <span>{t('setup.searchProxy')}</span>
             <input
-              aria-label="Search proxy"
-              placeholder="http://127.0.0.1:7890"
+              aria-label={t('setup.searchProxyAria')}
+              placeholder={t('setup.searchProxyPlaceholder')}
               value={proxy}
               onChange={(e) => setProxy(e.target.value)}
             />
           </label>
           <SetupCheckbox
-            ariaLabel="Use environment proxy"
+            ariaLabel={t('setup.searchUseEnvProxy')}
             checked={useEnvProxy}
             onChange={setUseEnvProxy}
           >
-            Use environment proxy
+            {t('setup.searchUseEnvProxy')}
           </SetupCheckbox>
           <label>
-            <span>Fallback policy</span>
+            <span>{t('setup.searchFallback')}</span>
             <SetupSelect
-              aria-label="Search fallback policy"
+              aria-label={t('setup.searchFallbackAria')}
               value={fallback}
               onChange={(e) => setFallback(e.target.value)}
             >
-              <option value="off">Off</option>
-              <option value="network">Network retry</option>
+              <option value="off">{t('setup.searchFallbackOff')}</option>
+              <option value="network">{t('setup.searchFallbackNetwork')}</option>
             </SetupSelect>
           </label>
           <SetupCheckbox
-            ariaLabel="Search diagnostics"
+            ariaLabel={t('setup.searchDiagnosticsAria')}
             checked={diagnostics}
             onChange={setDiagnostics}
           >
-            Diagnostics
+            {t('setup.searchDiagnostics')}
           </SetupCheckbox>
         </div>
       </details>
@@ -256,7 +258,7 @@ function SearchCard({
         disabled={saving}
         onClick={collect}
       >
-        Save web search
+        {t('setup.searchSave')}
       </Button>
     </div>
   )
@@ -345,24 +347,27 @@ function MemoryEmbeddingCard({
   }
 
   const apiKeyLabel = provider === 'auto' ? 'Fallback API key' : 'API key'
-  const remoteSummary = provider === 'auto' ? 'Remote fallback options' : 'Connection options'
+  const remoteSummary =
+    provider === 'auto'
+      ? t('setup.memoryRemoteFallbackSummary')
+      : t('setup.memoryConnectionSummary')
 
   return (
     <div className="setup-mini panel">
       <div className="setup-mini__head">
-        <h3 className="t-label">Memory embedding</h3>
+        <h3 className="t-label">{t('setup.memoryEmbeddingTitle')}</h3>
         <CapabilityBadge status={status} name="memory_embedding" />
       </div>
       <p className="setup-muted">{memoryEmbeddingStatusText(status, config, provider)}</p>
       <EnvRecoveryCommand command={envRecoveryCommand(status, 'memory_embedding')} />
       <NeedList
         items={memoryNeedList(spec, provider, apiKeyEnv || spec.envKey)}
-        label="Memory needs"
+        label={t('setup.memoryNeeds')}
       />
       <label>
-        <span>Provider</span>
+        <span>{t('setup.fieldProvider')}</span>
         <SetupSelect
-          aria-label="Memory embedding provider"
+          aria-label={t('setup.memoryEmbeddingProviderAria')}
           value={provider}
           onChange={(e) => setProvider(e.target.value)}
         >
@@ -375,10 +380,10 @@ function MemoryEmbeddingCard({
       </label>
       {flags.localControlEnabled ? (
         <label>
-          <span>ONNX directory</span>
+          <span>{t('setup.memoryOnnxDir')}</span>
           <input
-            aria-label="Memory ONNX directory"
-            placeholder="models/bge-onnx"
+            aria-label={t('setup.memoryOnnxDirAria')}
+            placeholder={t('setup.memoryOnnxDirPlaceholder')}
             value={onnxDir}
             onChange={(e) => setOnnxDir(e.target.value)}
           />
@@ -387,12 +392,12 @@ function MemoryEmbeddingCard({
       {flags.hasRemoteOptions ? (
         <details className="setup-advanced" open={provider !== 'auto'}>
           <summary>{remoteSummary}</summary>
-          <div className="setup-advanced__body" aria-label="Memory embedding connection">
+          <div className="setup-advanced__body" aria-label={t('setup.memoryEmbeddingConnection')}>
             {flags.remoteControlEnabled ? (
               <label>
-                <span>Model</span>
+                <span>{t('setup.fieldModel')}</span>
                 <input
-                  aria-label="Memory embedding model"
+                  aria-label={t('setup.memoryEmbeddingModelAria')}
                   value={model}
                   placeholder={
                     provider === 'ollama' ? 'nomic-embed-text' : 'text-embedding-3-small'
@@ -407,16 +412,16 @@ function MemoryEmbeddingCard({
                   <span>{apiKeyLabel}</span>
                   <input
                     type="password"
-                    aria-label="Memory embedding API key"
-                    placeholder="leave blank to keep current"
+                    aria-label={t('setup.memoryEmbeddingApiKeyAria')}
+                    placeholder={t('setup.keepCurrentPlaceholder')}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                   />
                 </label>
                 <label>
-                  <span>API key env</span>
+                  <span>{t('setup.fieldApiKeyEnv')}</span>
                   <input
-                    aria-label="Memory embedding API key env"
+                    aria-label={t('setup.memoryEmbeddingApiKeyEnvAria')}
                     value={apiKeyEnv}
                     placeholder={spec.envKey || 'OPENAI_API_KEY'}
                     onChange={(e) => setApiKeyEnv(e.target.value)}
@@ -426,9 +431,9 @@ function MemoryEmbeddingCard({
             ) : null}
             {flags.remoteControlEnabled ? (
               <label>
-                <span>Base URL</span>
+                <span>{t('setup.fieldBaseUrl')}</span>
                 <input
-                  aria-label="Memory embedding base URL"
+                  aria-label={t('setup.memoryEmbeddingBaseUrlAria')}
                   value={baseUrl}
                   placeholder={
                     provider === 'ollama' ? 'http://localhost:11434' : 'https://api.openai.com/v1'
@@ -446,7 +451,7 @@ function MemoryEmbeddingCard({
         disabled={saving}
         onClick={collect}
       >
-        Save memory embedding
+        {t('setup.memoryEmbeddingSave')}
       </Button>
     </div>
   )
@@ -480,62 +485,58 @@ function MemorySettingsCard({
   return (
     <div className="setup-mini panel">
       <div className="setup-mini__head">
-        <h3 className="t-label">Memory</h3>
+        <h3 className="t-label">{t('setup.memoryTitle')}</h3>
       </div>
-      <p className="setup-muted">
-        Bounded long-term memory and profile notes carried into every conversation.
-      </p>
+      <p className="setup-muted">{t('setup.memoryBlurb')}</p>
       <label>
-        <span>Memory provider</span>
+        <span>{t('setup.memoryProvider')}</span>
         <SetupSelect
-          aria-label="Memory provider"
+          aria-label={t('setup.memoryProviderAria')}
           value={providerName}
           onChange={(e) => setProviderName(e.target.value)}
         >
-          <option value="">None - built-in memory only</option>
-          <option value="mem0">mem0</option>
+          <option value="">{t('setup.memoryProviderNone')}</option>
+          <option value="mem0">{t('setup.memoryProviderMem0')}</option>
         </SetupSelect>
       </label>
       <label>
-        <span>Long-term memory budget (MEMORY.md)</span>
+        <span>{t('setup.memoryBudget')}</span>
         <input
           type="number"
           min={0}
           step={1}
-          aria-label="Long-term memory budget"
+          aria-label={t('setup.memoryBudgetAria')}
           value={memoryLimit}
           onChange={(e) => setMemoryLimit(e.target.value)}
         />
       </label>
       <label>
-        <span>User profile budget (USER.md)</span>
+        <span>{t('setup.memoryUserBudget')}</span>
         <input
           type="number"
           min={0}
           step={1}
-          aria-label="User profile budget"
+          aria-label={t('setup.memoryUserBudgetAria')}
           value={userLimit}
           onChange={(e) => setUserLimit(e.target.value)}
         />
       </label>
       <label>
-        <span>Prompt injection limit</span>
+        <span>{t('setup.memoryInjectLimit')}</span>
         <input
           type="number"
           min={0}
           step={1}
-          aria-label="Prompt injection limit"
+          aria-label={t('setup.memoryInjectLimitAria')}
           value={injectLimit}
           onChange={(e) => setInjectLimit(e.target.value)}
         />
       </label>
       {overBudget ? (
-        <div className="setup-warning panel tone-warn tone-rail">
-          Injection limit too small. The user profile block may be dropped.
-        </div>
+        <div className="setup-warning panel tone-warn tone-rail">{t('setup.memoryOverBudget')}</div>
       ) : null}
       <Button type="button" variant="outline" disabled={saving} onClick={collect}>
-        Save memory settings
+        {t('setup.memorySave')}
       </Button>
     </div>
   )
@@ -633,26 +634,26 @@ function ImageCard({
   return (
     <div className="setup-mini panel">
       <div className="setup-mini__head">
-        <h3 className="t-label">Image generation</h3>
+        <h3 className="t-label">{t('setup.imageTitle')}</h3>
         <CapabilityBadge status={status} name="image_generation" />
       </div>
       <p className="setup-muted">{statusText}</p>
       <EnvRecoveryCommand command={envRecoveryCommand(status, 'image_generation')} />
-      <NeedList items={needs} label="Image needs" />
+      <NeedList items={needs} label={t('setup.imageNeeds')} />
       <SetupCheckbox
-        ariaLabel="Image generation enabled"
+        ariaLabel={t('setup.imageEnabledAria')}
         checked={enabled}
         className="setup-capability-toggle"
         onChange={setEnabled}
       >
-        Enable image generation
+        {t('setup.imageEnable')}
       </SetupCheckbox>
       {enabled ? (
         <div className="setup-advanced__body">
           <label>
-            <span>Provider</span>
+            <span>{t('setup.fieldProvider')}</span>
             <SetupSelect
-              aria-label="Image provider"
+              aria-label={t('setup.imageProviderAria')}
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
             >
@@ -664,36 +665,36 @@ function ImageCard({
             </SetupSelect>
           </label>
           <label>
-            <span>Primary model</span>
+            <span>{t('setup.imagePrimaryModel')}</span>
             <input
-              aria-label="Image primary model"
+              aria-label={t('setup.imagePrimaryModelAria')}
               value={primary}
               onChange={(e) => setPrimary(e.target.value)}
             />
           </label>
           <label>
-            <span>API key</span>
+            <span>{t('setup.fieldApiKey')}</span>
             <input
               type="password"
-              aria-label="Image API key"
-              placeholder="leave blank to keep current"
+              aria-label={t('setup.imageApiKeyAria')}
+              placeholder={t('setup.keepCurrentPlaceholder')}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
             />
           </label>
           <label>
-            <span>API key env</span>
+            <span>{t('setup.fieldApiKeyEnv')}</span>
             <input
-              aria-label="Image API key env"
+              aria-label={t('setup.imageApiKeyEnvAria')}
               value={apiKeyEnv}
               placeholder={spec.envKey || 'OPENROUTER_API_KEY'}
               onChange={(e) => setApiKeyEnv(e.target.value)}
             />
           </label>
           <label>
-            <span>Base URL</span>
+            <span>{t('setup.fieldBaseUrl')}</span>
             <input
-              aria-label="Image base URL"
+              aria-label={t('setup.imageBaseUrlAria')}
               value={baseUrl}
               placeholder={spec.defaultBaseUrl || 'https://api.openai.com/v1'}
               onChange={(e) => setBaseUrl(e.target.value)}
@@ -707,7 +708,7 @@ function ImageCard({
         disabled={saving}
         onClick={collect}
       >
-        Save image generation
+        {t('setup.imageSave')}
       </Button>
     </div>
   )
@@ -820,26 +821,26 @@ function AudioCard({
   return (
     <div className="setup-mini panel">
       <div className="setup-mini__head">
-        <h3 className="t-label">Voice audio</h3>
+        <h3 className="t-label">{t('setup.audioTitle')}</h3>
         <CapabilityBadge status={status} name="audio" />
       </div>
       <p className="setup-muted">{statusText}</p>
       <EnvRecoveryCommand command={envRecoveryCommand(status, 'audio')} />
-      <NeedList items={needs} label="Audio needs" />
+      <NeedList items={needs} label={t('setup.audioNeeds')} />
       <SetupCheckbox
-        ariaLabel="Voice audio enabled"
+        ariaLabel={t('setup.audioEnabledAria')}
         checked={enabled}
         className="setup-capability-toggle"
         onChange={setEnabled}
       >
-        Enable voice audio
+        {t('setup.audioEnable')}
       </SetupCheckbox>
       {enabled ? (
         <div className="setup-advanced__body">
           <label>
-            <span>Provider</span>
+            <span>{t('setup.fieldProvider')}</span>
             <SetupSelect
-              aria-label="Audio provider"
+              aria-label={t('setup.audioProviderAria')}
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
             >
@@ -851,55 +852,55 @@ function AudioCard({
             </SetupSelect>
           </label>
           <label>
-            <span>API key</span>
+            <span>{t('setup.fieldApiKey')}</span>
             <input
               type="password"
-              aria-label="Audio API key"
-              placeholder="leave blank to keep current"
+              aria-label={t('setup.audioApiKeyAria')}
+              placeholder={t('setup.keepCurrentPlaceholder')}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
             />
           </label>
           <label>
-            <span>API key env</span>
+            <span>{t('setup.fieldApiKeyEnv')}</span>
             <input
-              aria-label="Audio API key env"
+              aria-label={t('setup.audioApiKeyEnvAria')}
               value={apiKeyEnv}
               placeholder={spec.envKey || 'ELEVENLABS_API_KEY'}
               onChange={(e) => setApiKeyEnv(e.target.value)}
             />
           </label>
           <label>
-            <span>Base URL</span>
+            <span>{t('setup.fieldBaseUrl')}</span>
             <input
-              aria-label="Audio base URL"
+              aria-label={t('setup.audioBaseUrlAria')}
               value={baseUrl}
               placeholder={spec.defaultBaseUrl || 'https://api.elevenlabs.io'}
               onChange={(e) => setBaseUrl(e.target.value)}
             />
           </label>
           <label>
-            <span>TTS voice</span>
+            <span>{t('setup.audioTtsVoice')}</span>
             <input
-              aria-label="Audio TTS voice"
+              aria-label={t('setup.audioTtsVoiceAria')}
               value={ttsVoice}
               placeholder={spec.defaultTtsVoice || 'voice id'}
               onChange={(e) => setTtsVoice(e.target.value)}
             />
           </label>
           <label>
-            <span>TTS model</span>
+            <span>{t('setup.audioTtsModel')}</span>
             <input
-              aria-label="Audio TTS model"
+              aria-label={t('setup.audioTtsModelAria')}
               value={ttsModel}
               placeholder={spec.defaultTtsModel || 'eleven_multilingual_v2'}
               onChange={(e) => setTtsModel(e.target.value)}
             />
           </label>
           <label>
-            <span>Language code</span>
+            <span>{t('setup.audioLanguage')}</span>
             <input
-              aria-label="Audio language code"
+              aria-label={t('setup.audioLanguageAria')}
               value={languageCode}
               placeholder="zh-CN, en-US, en-GB"
               onChange={(e) => setLanguageCode(e.target.value)}
@@ -913,7 +914,7 @@ function AudioCard({
         disabled={saving}
         onClick={collect}
       >
-        Save voice audio
+        {t('setup.audioSave')}
       </Button>
     </div>
   )
@@ -958,10 +959,7 @@ export function ExtrasSection({
 }) {
   return (
     <section className="setup-panel panel">
-      <PanelHead
-        title="Capability Center"
-        subtitle="Web search · Memory recall · Image generation · Voice audio"
-      />
+      <PanelHead title={t('setup.extrasTitle')} subtitle={t('setup.extrasSubtitle')} />
       <div className="setup-extras">
         <div className="setup-capability-slot" onChangeCapture={() => onDirtyChange('search')}>
           <SearchCard
@@ -1020,10 +1018,10 @@ export function ExtrasSection({
       </div>
       <div className="setup-actions">
         <Button type="button" variant="outline" onClick={onBack}>
-          Back
+          {t('setup.back')}
         </Button>
         <Button type="button" variant="outline" onClick={onNext}>
-          Next
+          {t('setup.next')}
         </Button>
       </div>
     </section>
