@@ -45,8 +45,7 @@ def test_opencap_unseeded_lookup_uses_static_fallback_without_outbound_io() -> N
     assert price == PriceEntry(0.0825, 0.33)
 
 
-def test_opencap_live_price_is_scoped_away_from_other_gateway_bare_ids(
-) -> None:
+def test_opencap_live_price_is_scoped_away_from_other_gateway_bare_ids() -> None:
     seed_opencap_price_cache(
         {
             "data": [
@@ -393,15 +392,17 @@ def test_every_router_tier_default_has_explicit_price_and_catalog_entries() -> N
     older model or ``_DEFAULT_PRICING``, and the catalog falls through an
     exact-key miss to ``DEFAULT_CONTEXT_WINDOW``/``DEFAULT_MAX_TOKENS``. Neither
     logs, so a miss only shows up as a plausible-looking wrong number.
+
+    Both tables are now derived from the registry, so this asks the question one
+    level up: is the model declared, and declared completely? ``config.py``
+    raises on an undeclared id at import time, which makes the first assertion
+    belt-and-braces -- the price and window assertions are the ones with teeth.
     """
+    from agentos import model_registry
     from agentos.gateway.config import (
         ROUTER_TIER_PROFILE_IDS,
         _router_tier_profile_defaults,
     )
-    from agentos.provider.model_catalog import _STATIC_FALLBACK
-
-    priced_ids = {prefix for prefix, _ in pricing._PRICING_TABLE}
-    catalog_ids = {model_id.lower() for model_id in _STATIC_FALLBACK}
 
     tier_models = {
         str(tier["model"]).lower()
@@ -411,14 +412,19 @@ def test_every_router_tier_default_has_explicit_price_and_catalog_entries() -> N
     }
 
     assert tier_models, "expected at least one tier default to audit"
-    assert not tier_models - priced_ids, (
-        f"tier defaults missing an exact _PRICING_TABLE entry: "
-        f"{sorted(tier_models - priced_ids)}"
+
+    undeclared = sorted(m for m in tier_models if model_registry.by_id(m) is None)
+    assert not undeclared, f"tier defaults not declared in the model registry: {undeclared}"
+
+    unpriced = sorted(
+        m for m in tier_models if (facts := model_registry.by_id(m)) and facts.price is None
     )
-    assert not tier_models - catalog_ids, (
-        f"tier defaults missing an exact _STATIC_FALLBACK entry: "
-        f"{sorted(tier_models - catalog_ids)}"
+    assert not unpriced, f"tier defaults declared with no price: {unpriced}"
+
+    windowless = sorted(
+        m for m in tier_models if (facts := model_registry.by_id(m)) and facts.context_window <= 0
     )
+    assert not windowless, f"tier defaults declared with no context window: {windowless}"
 
 
 def _opencap_catalog_payload() -> dict[str, object]:
@@ -528,8 +534,6 @@ def test_opencap_static_fallback_is_reported_once_per_model(
     lookup_price("glm-5.2", provider_id="opencap")
 
     events = [
-        kwargs["model"]
-        for event, kwargs in warnings
-        if event == "pricing.opencap_static_fallback"
+        kwargs["model"] for event, kwargs in warnings if event == "pricing.opencap_static_fallback"
     ]
     assert events == ["minimax-m3", "glm-5.2"]

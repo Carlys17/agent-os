@@ -12,6 +12,7 @@ from typing import Any, cast
 import httpx
 import structlog
 
+from agentos import model_registry
 from agentos.env import trust_env as _trust_env
 from agentos.provider.openrouter_attribution import openrouter_app_headers
 from agentos.provider.registry import get_provider_spec
@@ -117,28 +118,21 @@ class PriceEntry:
     cached_input_per_m: float | None = None
 
 
-# Canonical non-discount prices that must override OpenRouter's promotional or routed
-# discounted prices. Values are USD per 1M tokens from official provider pricing.
+def _entry(facts: model_registry.PriceFacts) -> PriceEntry:
+    return PriceEntry(facts.input_per_m, facts.output_per_m, facts.cached_input_per_m)
+
+
+# Prices that must survive a live provider catalog: Bankr/OpenCAP gateway rates
+# for bare ids, and canonical rack rates that OpenRouter's promotional or routed
+# discounts would otherwise replace. Declared per model in the registry as
+# ``beats_live_catalog``; consulted before the table below.
+#
+# Ids shared with direct-provider entries (gpt-5.4-mini, gpt-5.5,
+# deepseek-v4-flash) are deliberately not marked: the direct rack rates keep
+# pricing those ids, which overestimates gateway spend rather than
+# underestimating direct spend.
 _PRICE_OVERRIDES: list[tuple[str, PriceEntry]] = [
-    ("deepseek/deepseek-v4-pro", PriceEntry(1.74, 3.48)),
-    # Bankr LLM Gateway (llm.bankr.bot) catalog prices — not vendor rack rates.
-    # These bare IDs are also served by OpenCAP, whose provider-scoped live
-    # catalog takes precedence above. Ids shared with direct-provider entries
-    # (gpt-5.4-mini, gpt-5.5, deepseek-v4-flash) are intentionally absent: the
-    # direct rack rates keep pricing those ids, which overestimates the gateway
-    # spend rather than underestimating direct spend.
-    # Keep in sync with the bankr group in _PRICING_TABLE below.
-    ("oc-uncensored-1.0", PriceEntry(0.20, 0.80)),
-    ("minimax-m3", PriceEntry(0.0825, 0.33)),
-    ("qwen3.7-max", PriceEntry(1.056, 3.168)),
-    ("glm-5.2", PriceEntry(0.132, 0.429)),
-    ("gemini-3.5-flash", PriceEntry(0.275, 1.375)),
-    ("grok-4.3", PriceEntry(0.34375, 0.6875)),
-    ("claude-opus-5", PriceEntry(1.375, 6.875)),
-    ("claude-opus-4.8", PriceEntry(1.375, 6.875)),
-    ("claude-sonnet-5", PriceEntry(2.20, 11.0)),
-    ("claude-sonnet-4.6", PriceEntry(0.825, 4.125)),
-    ("claude-fable-5", PriceEntry(6.27, 31.35)),
+    (model_id, _entry(facts)) for model_id, facts in model_registry.price_override_rows()
 ]
 
 
@@ -182,7 +176,7 @@ def _opencap_live_pricing_enabled() -> bool:
 
 
 def _normalize_openrouter_base_url(base_url: str | None = None) -> str:
-    base = (base_url or os.environ.get("OPENROUTER_BASE_URL") or _OPENROUTER_PRICING_BASE_URL)
+    base = base_url or os.environ.get("OPENROUTER_BASE_URL") or _OPENROUTER_PRICING_BASE_URL
     base = base.rstrip("/")
     if base.endswith("/v1"):
         return base
@@ -464,65 +458,25 @@ def seed_live_price_cache_for_tests(model_id: str, price: PriceEntry) -> None:
         _LIVE_PRICE_MISS_AT.pop(key, None)
 
 
-# Built-in pricing table: model_prefix → (input_per_M, output_per_M)
-_PRICING_TABLE: list[tuple[str, PriceEntry]] = [
-    # Offline fallback for Pilot Router tier models.
-    ("stepfun/step-3.5-flash", PriceEntry(0.10, 0.30)),
-    ("z-ai/glm-4.5-air", PriceEntry(0.13, 0.85)),
-    ("minimax/minimax-m2.5", PriceEntry(0.118, 0.99)),
-    ("minimax/minimax-m3", PriceEntry(0.0825, 0.33)),
-    ("openai/gpt-5.6-luna", PriceEntry(0.20, 1.25)),
-    ("deepseek/deepseek-v4-flash", PriceEntry(0.14, 0.28)),
-    ("deepseek/deepseek-v4-pro", PriceEntry(1.74, 3.48)),
-    ("deepseek/deepseek-v3.2", PriceEntry(0.26, 0.38)),
-    ("z-ai/glm-5.1", PriceEntry(1.40, 4.40)),
-    ("z-ai/glm-5.2", PriceEntry(0.132, 0.429)),
-    ("z-ai/glm-5", PriceEntry(0.72, 2.30)),
-    ("moonshotai/kimi-k2.6", PriceEntry(0.95, 4.0)),
-    ("moonshotai/kimi-k2.5", PriceEntry(0.3827, 1.72)),
+# Prefix families that are not single models: model generations, vendor
+# namespaces, and free local runtimes. A per-model declaration would be fiction
+# here, so these keep the historical ``startswith`` behaviour and stay ordered by
+# hand -- longest prefix first within a family. Anything that *is* one model is
+# declared in agentos.model_registry instead, and a test keeps the two disjoint.
+_LEGACY_PRICING_PREFIXES: list[tuple[str, PriceEntry]] = [
     # Direct provider smoke estimates.
     ("gpt-4.1", PriceEntry(2.0, 8.0)),
     # Zhipu docs quote GLM-4.5 series API prices in CNY; converted to USD at
     # roughly 6.975 CNY/USD for AgentOS estimates only.
     ("glm-4.5", PriceEntry(0.115, 0.287)),
-    ("kimi-k2.6", PriceEntry(0.95, 4.0)),
     ("minimax-m2.7", PriceEntry(0.118, 0.99)),
-    # Direct provider profile estimates.
-    # OpenAI-compatible Chat Completions returns token usage, not billed cost.
-    # These values prevent profile defaults from falling through to generic
-    # fallback pricing and must be reported as AgentOS estimates.
-    ("gpt-5.4-nano", PriceEntry(0.20, 1.25)),
-    ("gpt-5.4-mini", PriceEntry(0.75, 4.50)),
-    ("gpt-5.5", PriceEntry(5.0, 30.0)),
-    ("gpt-5.6-luna", PriceEntry(0.20, 1.25)),
-    ("gpt-5.6-terra", PriceEntry(0.75, 4.50)),
-    ("gpt-5.6-sol", PriceEntry(5.0, 30.0)),
-    # Zhipu GLM-4.7-FlashX, the zhipu profile c0 default. Source: published
-    # GLM-4.7-FlashX API rates, checked 2026-08-03. Must precede any shorter
-    # "glm-4.7" prefix added later: the scan below takes the first match.
-    ("glm-4.7-flashx", PriceEntry(0.07, 0.40)),
-    ("glm-5.1", PriceEntry(1.40, 4.40)),
-    ("glm-5", PriceEntry(0.72, 2.30)),
-    ("kimi-k2.5", PriceEntry(0.3827, 1.72)),
-    ("deepseek-v4-flash", PriceEntry(0.14, 0.28)),
-    ("deepseek-v4-pro", PriceEntry(1.74, 3.48)),
     ("gemini-2.5-flash-lite", PriceEntry(0.10, 0.40)),
     ("gemini-2.5-flash", PriceEntry(0.15, 0.60)),
-    ("gemini-2.5-pro", PriceEntry(1.25, 10.0)),
-    ("gemini-3.1-flash-lite", PriceEntry(0.10, 0.40)),
-    ("qwen3.6-flash", PriceEntry(0.029, 0.287)),
     ("qwen3.6-plus", PriceEntry(0.115, 0.688)),
-    ("qwen3.7-plus", PriceEntry(0.115, 0.688)),
     ("qwen3-max", PriceEntry(0.359, 1.434)),
     ("doubao-seed-1-6-flash", PriceEntry(0.15, 0.60)),
     ("doubao-seed-1-6-thinking", PriceEntry(0.60, 2.40)),
     ("doubao-seed-1-6", PriceEntry(0.30, 1.20)),
-    # Volcengine Ark online inference Seed 2.0 estimates for <=32k input tier,
-    # converted from CNY per 1M tokens to USD at roughly 6.975 CNY/USD.
-    ("doubao-seed-2-0-mini-260215", PriceEntry(0.029, 0.287)),
-    ("doubao-seed-2-0-lite-260215", PriceEntry(0.086, 0.516)),
-    ("doubao-seed-2-0-pro-260215", PriceEntry(0.459, 2.294)),
-    ("doubao-seed-2-0-code-preview-260215", PriceEntry(0.459, 2.294)),
     # DeepSeek.
     ("deepseek/deepseek-r1", PriceEntry(0.70, 2.50)),
     ("deepseek/deepseek-v3", PriceEntry(0.26, 0.38)),
@@ -544,7 +498,6 @@ _PRICING_TABLE: list[tuple[str, PriceEntry]] = [
     ("o1-mini", PriceEntry(3.0, 12.0)),
     ("o1", PriceEntry(15.0, 60.0)),
     # Anthropic Claude.
-    ("anthropic/claude-opus-5", PriceEntry(5.0, 25.0)),
     ("anthropic/claude-opus-4.8", PriceEntry(5.0, 25.0)),
     ("anthropic/claude-opus-4.7", PriceEntry(5.0, 25.0)),
     ("anthropic/claude-opus-4.5", PriceEntry(5.0, 25.0)),
@@ -575,27 +528,20 @@ _PRICING_TABLE: list[tuple[str, PriceEntry]] = [
     ("qwen-flash", PriceEntry(0.022, 0.216)),
     ("qwen-turbo", PriceEntry(0.044, 0.087)),
     ("qwen-max", PriceEntry(0.345, 1.377)),
-    # MiniMax.
-    ("minimax/minimax-m2.7", PriceEntry(0.118, 0.99)),
-    # Bankr LLM Gateway fallback prices for bare IDs also served by OpenCAP.
-    # Shadowed by _PRICE_OVERRIDES for these ids; keep both lists in sync.
-    ("oc-uncensored-1.0", PriceEntry(0.20, 0.80)),
-    ("minimax-m3", PriceEntry(0.0825, 0.33)),
-    ("qwen3.7-max", PriceEntry(1.056, 3.168)),
-    ("glm-5.2", PriceEntry(0.132, 0.429)),
-    ("gemini-3.5-flash", PriceEntry(0.275, 1.375)),
-    ("grok-4.3", PriceEntry(0.34375, 0.6875)),
-    ("claude-opus-5", PriceEntry(1.375, 6.875)),
-    ("claude-opus-4.8", PriceEntry(1.375, 6.875)),
-    ("claude-sonnet-5", PriceEntry(2.20, 11.0)),
-    ("claude-sonnet-4.6", PriceEntry(0.825, 4.125)),
-    ("claude-fable-5", PriceEntry(6.27, 31.35)),
     # Ollama / local (free).
     ("baai/", PriceEntry(0.0, 0.0)),
     ("sentence-transformers/", PriceEntry(0.0, 0.0)),
     ("ollama/", PriceEntry(0.0, 0.0)),
     ("local/", PriceEntry(0.0, 0.0)),
 ]
+
+# Every model that has one declared price, most specific id first, ahead of the
+# prefix families. Ordering by id length is what makes specificity structural:
+# the scan below takes the first match, so a shorter prefix added later can no
+# longer quietly swallow a longer id it happens to be a prefix of.
+_PRICING_TABLE: list[tuple[str, PriceEntry]] = [
+    (model_id, _entry(facts)) for model_id, facts in model_registry.exact_price_rows()
+] + _LEGACY_PRICING_PREFIXES
 
 _DEFAULT_PRICING = PriceEntry(3.0, 15.0)
 
@@ -706,9 +652,7 @@ def calculate_cost_usd(
     cached_input = min(safe_input, max(0, int(cached_input_tokens)))
     regular_input = safe_input - cached_input
     cached_rate = (
-        price.cached_input_per_m
-        if price.cached_input_per_m is not None
-        else price.input_per_m
+        price.cached_input_per_m if price.cached_input_per_m is not None else price.input_per_m
     )
     return (
         regular_input * price.input_per_m

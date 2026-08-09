@@ -233,3 +233,67 @@ def test_legacy_openrouter_models_untouched_for_other_providers() -> None:
 
     assert result.changed is False
     assert result.payload["llm"]["model"] == "anthropic/claude-opus-4.7"
+
+
+# ---------------------------------------------------------------------------
+# Legacy model rewrites vs the shipped tier defaults (issue #140).
+#
+# The rewrite maps are a fifth place a model id is written down, and the only
+# one nothing checked. Both directions can rot silently, and both produce a
+# working-looking config pointed at the wrong model.
+# ---------------------------------------------------------------------------
+
+
+def _legacy_rewrites() -> dict[str, str]:
+    from agentos.gateway.config_migration import (
+        LEGACY_GATEWAY_MODEL_IDS,
+        LEGACY_OPENROUTER_MODEL_IDS,
+    )
+
+    return {**LEGACY_GATEWAY_MODEL_IDS, **LEGACY_OPENROUTER_MODEL_IDS}
+
+
+def _shipped_tier_models() -> set[str]:
+    from agentos.gateway.config import (
+        ROUTER_TIER_PROFILE_IDS,
+        _router_tier_profile_defaults,
+    )
+
+    return {
+        str(tier["model"])
+        for profile in ROUTER_TIER_PROFILE_IDS
+        for tier in _router_tier_profile_defaults(profile).values()
+        if tier.get("model")
+    }
+
+
+def test_every_legacy_rewrite_target_is_a_model_we_still_ship() -> None:
+    """Retiring a default must not leave a migration aiming at a dead id.
+
+    A rewrite target that is no longer a tier default still gets written into
+    the user's config on upgrade, and neither pricing nor the catalog would
+    complain -- they would just quote numbers for a model nobody routes to.
+    """
+    from agentos import model_registry
+
+    shipped = _shipped_tier_models()
+
+    for legacy_id, target in _legacy_rewrites().items():
+        assert model_registry.by_id(target) is not None, (
+            f"{legacy_id} is rewritten to {target}, which is not declared in the model registry"
+        )
+        assert target in shipped, (
+            f"{legacy_id} is rewritten to {target}, which is no longer a shipped tier default"
+        )
+
+
+def test_no_legacy_rewrite_key_is_still_a_shipped_tier_default() -> None:
+    """The inverse, and the one that will break first when defaults rotate.
+
+    If a retired id is brought back as a default, the migration would keep
+    rewriting it away on every load -- the user's chosen model silently
+    replaced by whatever the map points at.
+    """
+    resurrected = sorted(_shipped_tier_models() & set(_legacy_rewrites()))
+
+    assert not resurrected, f"tier defaults that a migration would rewrite away: {resurrected}"

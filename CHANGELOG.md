@@ -27,6 +27,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `provenance.origin` behind the same shipped/bundled gate as the group itself,
   so a local drop-in cannot mint it, and it ships with the client, so no card
   fetches a remote image. Skill names are unchanged. (Fixes #246)
+- A model's price, context window, max output and image support are now declared
+  once, in `agentos.model_registry`; the pricing table, the catalog's window
+  fallbacks and the router tier defaults are derived from it instead of
+  restating it. Bumping a tier default used to mean editing four or five files
+  by hand with nothing checking that you did — and because both lookup tables
+  fail open in opposite directions, a forgotten entry produced a plausible wrong
+  number rather than an error. Shipping a tier default whose model is not
+  declared now fails at import. No prices or windows change. (Fixes #140)
 
 ## [2026.8.7] - 2026-08-07
 

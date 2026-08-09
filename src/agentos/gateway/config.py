@@ -23,7 +23,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from agentos import __version__
+from agentos import __version__, model_registry
 from agentos.gateway.config_migration import (
     backup_and_write_migrated_config,
     migrate_config_payload,
@@ -622,6 +622,47 @@ class MemoryConfig(BaseSettings):
     provider: MemoryProviderSettings = Field(default_factory=MemoryProviderSettings)
 
 
+def _tier(
+    *,
+    provider: str,
+    model: str,
+    description: str,
+    thinking_level: str | None = None,
+    image_only: bool = False,
+) -> dict:
+    """Build one router tier entry from a model declared in the registry.
+
+    ``supports_image`` is read from the registry rather than restated here --
+    whether a model can see an image is a fact about the model, not a routing
+    decision. ``description`` and ``thinking_level`` stay per-profile, because
+    the same model is deliberately c2 at ``medium`` and c3 at ``high`` inside
+    one profile.
+
+    Raises on an unknown id, so a tier default cannot ship without a price and
+    a context window: that miss used to surface only as a plausible wrong
+    number much later (issue #140).
+    """
+    facts = model_registry.by_id(model)
+    if facts is None:
+        raise ValueError(
+            f"router tier default {model!r} ({provider}) is not declared in "
+            "agentos.model_registry -- add it there with its price and windows"
+        )
+    tier: dict = {
+        "provider": provider,
+        "model": model,
+        "description": description,
+        "supports_image": facts.supports_image,
+    }
+    # Absent keys must stay absent: the dashscope and gemini c0 tiers carry no
+    # thinking_level, and only image tiers carry image_only.
+    if image_only:
+        tier["image_only"] = True
+    if thinking_level is not None:
+        tier["thinking_level"] = thinking_level
+    return tier
+
+
 def _default_tiers() -> dict:
     """Default model routing config.
 
@@ -642,57 +683,52 @@ def _bankr_tiers() -> dict:
     output limit.
     """
     return {
-        "c0": {
-            "provider": "bankr",
-            "model": "deepseek-v4-flash",
-            "description": (
-                "fast DeepSeek V4 Flash route for trivial chat, short rewrites, "
-                "extraction, and low-risk simple Q&A"
+        "c0": _tier(
+            provider="bankr",
+            model="deepseek-v4-flash",
+            description=(
+                "fast DeepSeek V4 Flash route for trivial chat, short rewrites, extraction, and "
+                "low-risk simple Q&A"
             ),
-            "supports_image": False,
-            "thinking_level": "high",
-        },
-        "c1": {
-            "provider": "bankr",
-            "model": "gpt-5.6-luna",
-            "description": (
-                "default balanced text model for normal agent work, coding assistance, "
-                "debugging, and moderate analysis"
+            thinking_level="high",
+        ),
+        "c1": _tier(
+            provider="bankr",
+            model="gpt-5.6-luna",
+            description=(
+                "default balanced text model for normal agent work, coding assistance, debugging, "
+                "and moderate analysis"
             ),
-            "supports_image": False,
-            "thinking_level": "high",
-        },
-        "c2": {
-            "provider": "bankr",
-            "model": "glm-5.2",
-            "description": (
-                "stronger text model for multi-step coding, structured reasoning, "
-                "larger context synthesis, and harder analysis"
+            thinking_level="high",
+        ),
+        "c2": _tier(
+            provider="bankr",
+            model="glm-5.2",
+            description=(
+                "stronger text model for multi-step coding, structured reasoning, larger context "
+                "synthesis, and harder analysis"
             ),
-            "supports_image": False,
-            "thinking_level": "high",
-        },
-        "c3": {
-            "provider": "bankr",
-            "model": "claude-opus-5",
-            "description": (
-                "Highest-quality text reasoning model for difficult planning, "
-                "deep review, complex debugging, and high-stakes synthesis"
+            thinking_level="high",
+        ),
+        "c3": _tier(
+            provider="bankr",
+            model="claude-opus-5",
+            description=(
+                "Highest-quality text reasoning model for difficult planning, deep review, complex "
+                "debugging, and high-stakes synthesis"
             ),
-            "supports_image": False,
-            "thinking_level": "high",
-        },
-        "image_model": {
-            "provider": "bankr",
-            "model": "minimax-m3",
-            "description": (
+            thinking_level="high",
+        ),
+        "image_model": _tier(
+            provider="bankr",
+            model="minimax-m3",
+            description=(
                 "Image model: vision-capable route for user-supplied image attachments, "
                 "screenshots, diagrams, and visual question answering"
             ),
-            "supports_image": True,
-            "image_only": True,
-            "thinking_level": "medium",
-        },
+            thinking_level="medium",
+            image_only=True,
+        ),
     }
 
 
@@ -711,57 +747,52 @@ def _opencap_tiers() -> dict:
 def _openrouter_tiers() -> dict:
     """Legacy OpenRouter routing config, kept as an explicit tier profile."""
     return {
-        "c0": {
-            "provider": "openrouter",
-            "model": "deepseek/deepseek-v4-flash",
-            "description": (
-                "fast DeepSeek V4 Flash route for trivial chat, short rewrites, "
-                "extraction, and low-risk simple Q&A"
+        "c0": _tier(
+            provider="openrouter",
+            model="deepseek/deepseek-v4-flash",
+            description=(
+                "fast DeepSeek V4 Flash route for trivial chat, short rewrites, extraction, and "
+                "low-risk simple Q&A"
             ),
-            "supports_image": False,
-            "thinking_level": "high",
-        },
-        "c1": {
-            "provider": "openrouter",
-            "model": "openai/gpt-5.6-luna",
-            "description": (
-                "default balanced text model for normal agent work, coding assistance, "
-                "debugging, and moderate analysis"
+            thinking_level="high",
+        ),
+        "c1": _tier(
+            provider="openrouter",
+            model="openai/gpt-5.6-luna",
+            description=(
+                "default balanced text model for normal agent work, coding assistance, debugging, "
+                "and moderate analysis"
             ),
-            "supports_image": False,
-            "thinking_level": "high",
-        },
-        "c2": {
-            "provider": "openrouter",
-            "model": "z-ai/glm-5.2",
-            "description": (
-                "stronger text model for multi-step coding, structured reasoning, "
-                "larger context synthesis, and harder analysis"
+            thinking_level="high",
+        ),
+        "c2": _tier(
+            provider="openrouter",
+            model="z-ai/glm-5.2",
+            description=(
+                "stronger text model for multi-step coding, structured reasoning, larger context "
+                "synthesis, and harder analysis"
             ),
-            "supports_image": False,
-            "thinking_level": "high",
-        },
-        "c3": {
-            "provider": "openrouter",
-            "model": "anthropic/claude-opus-5",
-            "description": (
-                "Highest-quality text reasoning model for difficult planning, "
-                "deep review, complex debugging, and high-stakes synthesis"
+            thinking_level="high",
+        ),
+        "c3": _tier(
+            provider="openrouter",
+            model="anthropic/claude-opus-5",
+            description=(
+                "Highest-quality text reasoning model for difficult planning, deep review, complex "
+                "debugging, and high-stakes synthesis"
             ),
-            "supports_image": False,
-            "thinking_level": "high",
-        },
-        "image_model": {
-            "provider": "openrouter",
-            "model": "minimax/minimax-m3",
-            "description": (
+            thinking_level="high",
+        ),
+        "image_model": _tier(
+            provider="openrouter",
+            model="minimax/minimax-m3",
+            description=(
                 "Image model: vision-capable route for user-supplied image attachments, "
                 "screenshots, diagrams, and visual question answering"
             ),
-            "supports_image": True,
-            "image_only": True,
-            "thinking_level": "medium",
-        },
+            thinking_level="medium",
+            image_only=True,
+        ),
     }
 
 
@@ -812,264 +843,234 @@ def _router_tier_profile_defaults(profile: str | None) -> dict:
         return _openrouter_tiers()
     profiles = {
         "openai": {
-            "c0": {
-                "provider": "openai",
-                "model": "gpt-5.6-luna",
-                "description": (
+            "c0": _tier(
+                provider="openai",
+                model="gpt-5.6-luna",
+                description=(
                     "OpenAI fast route: GPT-5.6 Luna for fast, high-throughput simple work."
                 ),
-                "supports_image": False,
-                "thinking_level": "none",
-            },
-            "c1": {
-                "provider": "openai",
-                "model": "gpt-5.6-terra",
-                "description": "OpenAI balanced route: GPT-5.6 Terra for normal agent work.",
-                "supports_image": False,
-                "thinking_level": "low",
-            },
-            "c2": {
-                "provider": "openai",
-                "model": "gpt-5.6-sol",
-                "description": "OpenAI strong route: GPT-5.6 Sol for complex text tasks.",
-                "supports_image": False,
-                "thinking_level": "medium",
-            },
-            "c3": {
-                "provider": "openai",
-                "model": "gpt-5.6-sol",
-                "description": (
-                    "OpenAI highest route: GPT-5.6 Sol with high reasoning; the Pro "
-                    "variant is excluded because it is not streaming-compatible."
+                thinking_level="none",
+            ),
+            "c1": _tier(
+                provider="openai",
+                model="gpt-5.6-terra",
+                description="OpenAI balanced route: GPT-5.6 Terra for normal agent work.",
+                thinking_level="low",
+            ),
+            "c2": _tier(
+                provider="openai",
+                model="gpt-5.6-sol",
+                description="OpenAI strong route: GPT-5.6 Sol for complex text tasks.",
+                thinking_level="medium",
+            ),
+            "c3": _tier(
+                provider="openai",
+                model="gpt-5.6-sol",
+                description=(
+                    "OpenAI highest route: GPT-5.6 Sol with high reasoning; the Pro variant is "
+                    "excluded because it is not streaming-compatible."
                 ),
-                "supports_image": False,
-                "thinking_level": "high",
-            },
+                thinking_level="high",
+            ),
         },
         "dashscope": {
-            "c0": {
-                "provider": "dashscope",
-                "model": "qwen3.6-flash",
-                "description": (
+            "c0": _tier(
+                provider="dashscope",
+                model="qwen3.6-flash",
+                description=(
                     "DashScope fast route: Qwen3.6 Flash for simple text tasks; pending live smoke."
                 ),
-                "supports_image": False,
-            },
-            "c1": {
-                "provider": "dashscope",
-                "model": "qwen3.7-plus",
-                "description": (
-                    "DashScope balanced route: Qwen3.7 Plus for normal agent and "
-                    "coding work; pending live smoke."
-                ),
-                "supports_image": False,
-            },
-            "c2": {
-                "provider": "dashscope",
-                "model": "qwen3.7-max",
-                "description": "DashScope strong route: Qwen3.7 Max for complex text tasks.",
-                "supports_image": False,
-            },
-            "c3": {
-                "provider": "dashscope",
-                "model": "qwen3.7-max",
-                "description": (
-                    "DashScope highest route: Qwen3.7 Max; higher-thinking behavior "
-                    "requires future payload support."
-                ),
-                "supports_image": False,
-            },
-        },
-        "deepseek": {
-            "c0": {
-                "provider": "deepseek",
-                "model": "deepseek-v4-flash",
-                "description": (
-                    "DeepSeek fast route: V4 Flash with no router-requested thinking; "
-                    "request ID pending live smoke."
-                ),
-                "supports_image": False,
-                "thinking_level": "off",
-            },
-            "c1": {
-                "provider": "deepseek",
-                "model": "deepseek-v4-flash",
-                "description": (
-                    "DeepSeek balanced route: V4 Flash with thinking enabled; request "
-                    "ID pending live smoke."
-                ),
-                "supports_image": False,
-                "thinking_level": "low",
-            },
-            "c2": {
-                "provider": "deepseek",
-                "model": "deepseek-v4-pro",
-                "description": (
-                    "DeepSeek strong route: V4 Pro with thinking enabled; request ID "
+            ),
+            "c1": _tier(
+                provider="dashscope",
+                model="qwen3.7-plus",
+                description=(
+                    "DashScope balanced route: Qwen3.7 Plus for normal agent and coding work; "
                     "pending live smoke."
                 ),
-                "supports_image": False,
-                "thinking_level": "medium",
-            },
-            "c3": {
-                "provider": "deepseek",
-                "model": "deepseek-v4-pro",
-                "description": (
-                    "DeepSeek highest route: same V4 Pro wire behavior until "
-                    "effort-level support is added."
+            ),
+            "c2": _tier(
+                provider="dashscope",
+                model="qwen3.7-max",
+                description="DashScope strong route: Qwen3.7 Max for complex text tasks.",
+            ),
+            "c3": _tier(
+                provider="dashscope",
+                model="qwen3.7-max",
+                description=(
+                    "DashScope highest route: Qwen3.7 Max; higher-thinking behavior requires "
+                    "future payload support."
                 ),
-                "supports_image": False,
-                "thinking_level": "high",
-            },
+            ),
+        },
+        "deepseek": {
+            "c0": _tier(
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                description=(
+                    "DeepSeek fast route: V4 Flash with no router-requested thinking; request ID "
+                    "pending live smoke."
+                ),
+                thinking_level="off",
+            ),
+            "c1": _tier(
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                description=(
+                    "DeepSeek balanced route: V4 Flash with thinking enabled; request ID pending "
+                    "live smoke."
+                ),
+                thinking_level="low",
+            ),
+            "c2": _tier(
+                provider="deepseek",
+                model="deepseek-v4-pro",
+                description=(
+                    "DeepSeek strong route: V4 Pro with thinking enabled; request ID pending live "
+                    "smoke."
+                ),
+                thinking_level="medium",
+            ),
+            "c3": _tier(
+                provider="deepseek",
+                model="deepseek-v4-pro",
+                description=(
+                    "DeepSeek highest route: same V4 Pro wire behavior until effort-level support "
+                    "is added."
+                ),
+                thinking_level="high",
+            ),
         },
         "gemini": {
-            "c0": {
-                "provider": "gemini",
-                "model": "gemini-3.1-flash-lite",
-                "description": "Gemini fast route: 3.1 Flash-Lite for low-latency tasks.",
-                "supports_image": False,
-            },
-            "c1": {
-                "provider": "gemini",
-                "model": "gemini-3.5-flash",
-                "description": "Gemini balanced route: 3.5 Flash for normal agent work.",
-                "supports_image": False,
-                "thinking_level": "low",
-            },
-            "c2": {
-                "provider": "gemini",
-                "model": "gemini-2.5-pro",
-                "description": (
-                    "Gemini strong route: 2.5 Pro for complex coding and reasoning; "
-                    "3.x Pro remains preview-only."
+            "c0": _tier(
+                provider="gemini",
+                model="gemini-3.1-flash-lite",
+                description="Gemini fast route: 3.1 Flash-Lite for low-latency tasks.",
+            ),
+            "c1": _tier(
+                provider="gemini",
+                model="gemini-3.5-flash",
+                description="Gemini balanced route: 3.5 Flash for normal agent work.",
+                thinking_level="low",
+            ),
+            "c2": _tier(
+                provider="gemini",
+                model="gemini-2.5-pro",
+                description=(
+                    "Gemini strong route: 2.5 Pro for complex coding and reasoning; 3.x Pro "
+                    "remains preview-only."
                 ),
-                "supports_image": False,
-                "thinking_level": "medium",
-            },
-            "c3": {
-                "provider": "gemini",
-                "model": "gemini-2.5-pro",
-                "description": (
-                    "Gemini highest route: 2.5 Pro with high thinking; 3.1 Pro preview "
-                    "remains opt-in."
+                thinking_level="medium",
+            ),
+            "c3": _tier(
+                provider="gemini",
+                model="gemini-2.5-pro",
+                description=(
+                    "Gemini highest route: 2.5 Pro with high thinking; 3.1 Pro preview remains "
+                    "opt-in."
                 ),
-                "supports_image": False,
-                "thinking_level": "high",
-            },
+                thinking_level="high",
+            ),
         },
         "zhipu": {
-            "c0": {
-                "provider": "zhipu",
-                "model": "glm-4.7-flashx",
-                "description": (
-                    "Zhipu fast route: GLM-4.7 FlashX for simple text tasks; live smoke "
-                    "may require fallback."
+            "c0": _tier(
+                provider="zhipu",
+                model="glm-4.7-flashx",
+                description=(
+                    "Zhipu fast route: GLM-4.7 FlashX for simple text tasks; live smoke may "
+                    "require fallback."
                 ),
-                "supports_image": False,
-            },
-            "c1": {
-                "provider": "zhipu",
-                "model": "glm-5",
-                "description": "Zhipu balanced route: GLM-5 for normal agent work.",
-                "supports_image": False,
-                "thinking_level": "low",
-            },
-            "c2": {
-                "provider": "zhipu",
-                "model": "glm-5.2",
-                "description": "Zhipu strong route: GLM-5.2 for complex text tasks.",
-                "supports_image": False,
-                "thinking_level": "medium",
-            },
-            "c3": {
-                "provider": "zhipu",
-                "model": "glm-5.2",
-                "description": "Zhipu highest route: GLM-5.2 with high reasoning effort.",
-                "supports_image": False,
-                "thinking_level": "high",
-            },
+            ),
+            "c1": _tier(
+                provider="zhipu",
+                model="glm-5",
+                description="Zhipu balanced route: GLM-5 for normal agent work.",
+                thinking_level="low",
+            ),
+            "c2": _tier(
+                provider="zhipu",
+                model="glm-5.2",
+                description="Zhipu strong route: GLM-5.2 for complex text tasks.",
+                thinking_level="medium",
+            ),
+            "c3": _tier(
+                provider="zhipu",
+                model="glm-5.2",
+                description="Zhipu highest route: GLM-5.2 with high reasoning effort.",
+                thinking_level="high",
+            ),
         },
         "moonshot": {
-            "c0": {
-                "provider": "moonshot",
-                "model": "kimi-k2.5",
-                "description": (
-                    "Moonshot fast route: Kimi K2.5 for cost-efficient agent work "
-                    "with 256K context."
+            "c0": _tier(
+                provider="moonshot",
+                model="kimi-k2.5",
+                description=(
+                    "Moonshot fast route: Kimi K2.5 for cost-efficient agent work with 256K "
+                    "context."
                 ),
-                "supports_image": True,
-                "thinking_level": "low",
-            },
-            "c1": {
-                "provider": "moonshot",
-                "model": "kimi-k2.5",
-                "description": (
-                    "Moonshot balanced route: Kimi K2.5 for normal multimodal agent work."
+                thinking_level="low",
+            ),
+            "c1": _tier(
+                provider="moonshot",
+                model="kimi-k2.5",
+                description="Moonshot balanced route: Kimi K2.5 for normal multimodal agent work.",
+                thinking_level="medium",
+            ),
+            "c2": _tier(
+                provider="moonshot",
+                model="kimi-k2.6",
+                description=(
+                    "Moonshot strong route: Kimi K2.6 for complex coding, reasoning, and "
+                    "multimodal tasks."
                 ),
-                "supports_image": True,
-                "thinking_level": "medium",
-            },
-            "c2": {
-                "provider": "moonshot",
-                "model": "kimi-k2.6",
-                "description": (
-                    "Moonshot strong route: Kimi K2.6 for complex coding, reasoning, "
-                    "and multimodal tasks."
-                ),
-                "supports_image": True,
-                "thinking_level": "medium",
-            },
-            "c3": {
-                "provider": "moonshot",
-                "model": "kimi-k2.6",
-                "description": (
+                thinking_level="medium",
+            ),
+            "c3": _tier(
+                provider="moonshot",
+                model="kimi-k2.6",
+                description=(
                     "Moonshot highest route: Kimi K2.6 for the hardest long-horizon agent work."
                 ),
-                "supports_image": True,
-                "thinking_level": "high",
-            },
+                thinking_level="high",
+            ),
         },
         "volcengine": {
-            "c0": {
-                "provider": "volcengine",
-                "model": "doubao-seed-2-0-mini-260215",
-                "description": (
-                    "Volcengine fast route: Doubao Seed 2.0 Mini for low-latency, "
-                    "low-cost simple text tasks."
+            "c0": _tier(
+                provider="volcengine",
+                model="doubao-seed-2-0-mini-260215",
+                description=(
+                    "Volcengine fast route: Doubao Seed 2.0 Mini for low-latency, low-cost simple "
+                    "text tasks."
                 ),
-                "supports_image": False,
-                "thinking_level": "off",
-            },
-            "c1": {
-                "provider": "volcengine",
-                "model": "doubao-seed-2-0-lite-260215",
-                "description": (
-                    "Volcengine balanced route: Doubao Seed 2.0 Lite for daily agent "
-                    "work with lower cost than Pro."
+                thinking_level="off",
+            ),
+            "c1": _tier(
+                provider="volcengine",
+                model="doubao-seed-2-0-lite-260215",
+                description=(
+                    "Volcengine balanced route: Doubao Seed 2.0 Lite for daily agent work with "
+                    "lower cost than Pro."
                 ),
-                "supports_image": False,
-                "thinking_level": "low",
-            },
-            "c2": {
-                "provider": "volcengine",
-                "model": "doubao-seed-2-0-pro-260215",
-                "description": (
-                    "Volcengine strong route: Doubao Seed 2.0 Pro for complex "
-                    "reasoning and multimodal-capable text work."
+                thinking_level="low",
+            ),
+            "c2": _tier(
+                provider="volcengine",
+                model="doubao-seed-2-0-pro-260215",
+                description=(
+                    "Volcengine strong route: Doubao Seed 2.0 Pro for complex reasoning and "
+                    "multimodal-capable text work."
                 ),
-                "supports_image": False,
-                "thinking_level": "medium",
-            },
-            "c3": {
-                "provider": "volcengine",
-                "model": "doubao-seed-2-0-code-preview-260215",
-                "description": (
-                    "Volcengine highest route: Doubao Seed 2.0 Code Preview for the "
-                    "hardest coding and code-review routes."
+                thinking_level="medium",
+            ),
+            "c3": _tier(
+                provider="volcengine",
+                model="doubao-seed-2-0-code-preview-260215",
+                description=(
+                    "Volcengine highest route: Doubao Seed 2.0 Code Preview for the hardest coding "
+                    "and code-review routes."
                 ),
-                "supports_image": False,
-                "thinking_level": "high",
-            },
+                thinking_level="high",
+            ),
         },
     }
     return {name: dict(value) for name, value in profiles[normalized].items()}
