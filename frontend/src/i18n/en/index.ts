@@ -9,6 +9,7 @@ import { overview } from './overview'
 import { settings } from './settings'
 import { sessions } from './sessions'
 import { shell } from './shell'
+import { skills } from './skills'
 import { usage } from './usage'
 
 /**
@@ -38,5 +39,6 @@ export const en = {
   sessions,
   settings,
   shell,
+  skills,
   usage,
 } as const
