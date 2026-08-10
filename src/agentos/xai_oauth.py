@@ -166,13 +166,26 @@ def _read_store() -> dict[str, Any]:
 
 
 def _write_store(store: dict[str, Any]) -> None:
+    """Write the store atomically, owner-only where the platform supports it.
+
+    Windows has no POSIX mode bits, so the file there is protected by the
+    profile directory's ACL rather than by ``chmod``. Mirrors the tolerant
+    handling in :mod:`agentos.env_store`.
+    """
     path = auth_store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(store, indent=2, sort_keys=True), encoding="utf-8")
-    os.chmod(tmp, 0o600)
+    _restrict(tmp)
     tmp.replace(path)
-    os.chmod(path, 0o600)
+    _restrict(path)
+
+
+def _restrict(path: Path) -> None:
+    try:
+        os.chmod(path, 0o600)
+    except OSError:  # pragma: no cover - no-op on Windows
+        pass
 
 
 def _dict_field(source: dict[str, Any], key: str) -> dict[str, Any]:

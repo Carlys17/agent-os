@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -93,9 +94,19 @@ class TestTokenStore:
         _isolated_store.write_text("{not json", encoding="utf-8")
         assert oauth.read_oauth_state() == {}
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Windows has no POSIX mode bits; the store is protected by the profile ACL.",
+    )
     def test_the_store_is_written_owner_only(self, _isolated_store: Path) -> None:
         oauth.write_oauth_state({"tokens": {"refresh_token": "r"}})
         assert _isolated_store.stat().st_mode & 0o077 == 0
+
+    def test_the_store_is_written_atomically(self, _isolated_store: Path) -> None:
+        """A crash mid-write must not leave a half-parsed token file behind."""
+        oauth.write_oauth_state({"tokens": {"refresh_token": "r"}})
+        assert json.loads(_isolated_store.read_text(encoding="utf-8"))["providers"]
+        assert not list(_isolated_store.parent.glob("*.tmp"))
 
     def test_logout_removes_only_the_xai_entry(self, _isolated_store: Path) -> None:
         _isolated_store.write_text(
