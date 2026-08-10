@@ -403,17 +403,73 @@ class PendingDeviceLogin:
 
     @property
     def expired(self) -> bool:
-        return time.monotonic() >= self.expires_at
+        return time.time() >= self.expires_at
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "login_id": self.login_id,
+            "device_code": self.device_code,
+            "user_code": self.user_code,
+            "verification_uri": self.verification_uri,
+            "interval": self.interval,
+            "expires_at": self.expires_at,
+            "token_endpoint": self.token_endpoint,
+            "discovery": dict(self.discovery),
+        }
+
+    @classmethod
+    def from_json(cls, raw: dict[str, Any]) -> PendingDeviceLogin | None:
+        try:
+            return cls(
+                login_id=str(raw["login_id"]),
+                device_code=str(raw["device_code"]),
+                user_code=str(raw["user_code"]),
+                verification_uri=str(raw["verification_uri"]),
+                interval=max(1, int(raw["interval"])),
+                expires_at=float(raw["expires_at"]),
+                token_endpoint=str(raw["token_endpoint"]),
+                discovery=_dict_field(raw, "discovery"),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
 
 
-# Logins in flight, keyed by an opaque id. A caller that starts a login and
-# never finishes it leaves one entry that the next start sweeps out.
-_pending_logins: dict[str, PendingDeviceLogin] = {}
+# Pending logins live in the token store rather than in memory, because the
+# half that starts a login and the half that finishes it are often different
+# processes: `agentos auth login --no-wait` in one shell, `--resume` in
+# another, or an agent driving both through exec_command. Keeping them in RAM
+# also meant a gateway restart silently voided a login the operator was in the
+# middle of approving. Expiry is wall-clock for the same reason — a monotonic
+# deadline means nothing to the next process.
+_PENDING_KEY = "pending_logins"
 
 
-def _sweep_pending() -> None:
-    for login_id in [lid for lid, p in _pending_logins.items() if p.expired]:
-        _pending_logins.pop(login_id, None)
+def _read_pending() -> dict[str, Any]:
+    return _dict_field(_read_store(), _PENDING_KEY)
+
+
+def _write_pending(entries: dict[str, Any]) -> None:
+    store = _read_store()
+    store[_PENDING_KEY] = entries
+    _write_store(store)
+
+
+def _sweep_pending() -> dict[str, Any]:
+    entries = _read_pending()
+    live = {
+        login_id: raw
+        for login_id, raw in entries.items()
+        if isinstance(raw, dict) and float(raw.get("expires_at") or 0) > time.time()
+    }
+    if len(live) != len(entries):
+        _write_pending(live)
+    return live
+
+
+def _forget_pending(login_id: str) -> None:
+    entries = _read_pending()
+    if entries.pop(login_id, None) is not None:
+        _write_pending(entries)
 
 
 def _persist_login(payload: dict[str, Any], discovery: dict[str, str]) -> dict[str, Any]:
@@ -466,17 +522,35 @@ def start_device_login(
             device.get("verification_uri_complete") or device["verification_uri"]
         ),
         interval=max(1, int(device["interval"])),
-        expires_at=time.monotonic() + max(1, int(device["expires_in"])),
+        expires_at=time.time() + max(1, int(device["expires_in"])),
         token_endpoint=discovery["token_endpoint"],
         discovery=discovery,
     )
-    _pending_logins[pending.login_id] = pending
+    entries = _sweep_pending()
+    entries[pending.login_id] = pending.as_json()
+    _write_pending(entries)
     return pending
 
 
 def get_pending_login(login_id: str) -> PendingDeviceLogin | None:
-    _sweep_pending()
-    return _pending_logins.get(login_id)
+    raw = _sweep_pending().get(login_id)
+    return PendingDeviceLogin.from_json(raw) if isinstance(raw, dict) else None
+
+
+def latest_pending_login() -> PendingDeviceLogin | None:
+    """The most recently started login still awaiting approval, if any.
+
+    Lets a caller resume without having to carry the id around — the common
+    case, since only one login is ever in flight for one operator.
+    """
+    candidates = [
+        parsed
+        for raw in _sweep_pending().values()
+        if isinstance(raw, dict) and (parsed := PendingDeviceLogin.from_json(raw)) is not None
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.expires_at)
 
 
 def poll_device_login(
@@ -489,7 +563,7 @@ def poll_device_login(
     ``False`` so the caller can wait and ask again.
     """
     if pending.expired:
-        _pending_logins.pop(pending.login_id, None)
+        _forget_pending(pending.login_id)
         raise XaiOAuthError(
             "The xAI device authorization expired before it was approved.",
             code="xai_device_code_timeout",
@@ -512,19 +586,19 @@ def poll_device_login(
     if response.status_code == 200:
         payload = response.json()
         if not payload.get("access_token") or not payload.get("refresh_token"):
-            _pending_logins.pop(pending.login_id, None)
+            _forget_pending(pending.login_id)
             raise XaiOAuthError(
                 "xAI device-code token response was missing required tokens.",
                 code="xai_device_token_invalid",
             )
+        _forget_pending(pending.login_id)
         _persist_login(dict(payload), pending.discovery)
-        _pending_logins.pop(pending.login_id, None)
         return True, pending.interval
 
     try:
         error_payload = response.json()
     except Exception:  # noqa: BLE001 - a non-JSON error is still terminal
-        _pending_logins.pop(pending.login_id, None)
+        _forget_pending(pending.login_id)
         raise XaiOAuthError(
             f"xAI device-code polling returned HTTP {response.status_code}.",
             code="xai_device_token_failed",
@@ -535,10 +609,12 @@ def poll_device_login(
         return False, pending.interval
     if error_code == "slow_down":
         widened = min(pending.interval + 1, _MAX_POLL_INTERVAL_SECONDS)
-        _pending_logins[pending.login_id] = replace(pending, interval=widened)
+        entries = _read_pending()
+        entries[pending.login_id] = replace(pending, interval=widened).as_json()
+        _write_pending(entries)
         return False, widened
 
-    _pending_logins.pop(pending.login_id, None)
+    _forget_pending(pending.login_id)
     detail = error_payload.get("error_description") or error_code or (
         f"HTTP {response.status_code}"
     )

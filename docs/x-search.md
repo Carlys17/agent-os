@@ -41,6 +41,18 @@ agentos auth status         # never prints a token
 agentos auth logout xai
 ```
 
+For a caller that cannot hold a terminal open for minutes — a chat agent, a
+script — the same flow splits in two:
+
+```sh
+agentos auth login xai --no-wait --json   # -> loginId, verificationUri, userCode
+agentos auth login xai --resume --json    # exit 0 done, 3 not yet, 1 failed
+```
+
+`--resume` picks the newest pending login unless given `--login-id`. Pending
+logins live in the token store, so the half that starts one and the half that
+finishes it can be different processes.
+
 The login is a device-code grant against `auth.x.ai`. Tokens land in
 `~/.agentos/auth.json` (owner-only, `0600`) and refresh themselves; you are not
 asked to paste anything into a prompt.

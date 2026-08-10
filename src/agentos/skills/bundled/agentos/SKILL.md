@@ -114,7 +114,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `memory` | `status`, `index`, `list`, `search`, `show`, `embedding-download`, `raw-fallbacks …` |
 | `sandbox` | `status`, `on`, `bypass`, `full`, `reset` |
 | `search` | `list`, `status`, `query`, `configure` |
-| `auth` | `login xai`, `status`, `logout xai` — xAI OAuth (SuperGrok / X Premium+) for `x_search`; tokens in `~/.agentos/auth.json`, never printed |
+| `auth` | `login xai` (`--no-wait`/`--resume`/`--json` for non-blocking use), `status`, `logout xai` — xAI OAuth (SuperGrok / X Premium+) for `x_search`; tokens in `~/.agentos/auth.json`, never printed |
 | `configure x-search` | xAI X (Twitter) search: `--api-key-env`, `--x-search-model`, `--x-search-reasoning-effort`, `--no-x-search-enabled`; catalog via `onboard catalog x-search` |
 | `cost` | usage and estimated cost report |
 | `diagnostics` | `status`, `on`, `off` |
@@ -205,6 +205,29 @@ agentos config set llm.model "anthropic/claude-sonnet-4"              # just the
 agentos configure                                                     # interactive wizard
 agentos gateway restart                                               # apply to a running gateway
 ```
+
+### Sign the user in to xAI (SuperGrok / X Premium+) from a conversation
+
+Enables `x_search` without an API key. Never run the plain `agentos auth login
+xai`: it blocks polling for up to 30 minutes and will hit the tool timeout
+before the user can approve. Use the split form.
+
+```sh
+agentos auth login xai --no-wait --json   # -> loginId, verificationUri, userCode
+```
+
+Give the user the `verificationUri` and the `userCode`, then **wait for them to
+say they have approved it**. Do not poll in a loop — approval is human-paced,
+and each check costs a turn.
+
+```sh
+agentos auth login xai --resume --json    # exit 0 done, 3 not yet, 1 failed/expired
+agentos auth status --json                # confirm; never prints a token
+```
+
+Exit 3 means keep waiting, not an error. On exit 1 the code expired — start
+over. The user code and link are safe to show in chat; neither works without
+the user's own xAI session, and no token ever reaches the conversation.
 
 ### Gateway lifecycle
 

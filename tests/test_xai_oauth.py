@@ -273,6 +273,61 @@ class TestDeviceCodeLogin:
             oauth.device_code_login(on_prompt=lambda *a: None, sleep=lambda _s: None)
         assert excinfo.value.code == "xai_device_token_failed"
 
+    def test_a_pending_login_survives_the_process_that_started_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`--no-wait` and `--resume` are different processes, as is a restarted gateway."""
+        _install_login(
+            monkeypatch,
+            [_response(DEVICE_PAYLOAD, url=oauth.XAI_OAUTH_DEVICE_CODE_URL)],
+        )
+        pending = oauth.start_device_login()
+
+        # Nothing in memory: a fresh reader sees it only because it is on disk.
+        recovered = oauth.get_pending_login(pending.login_id)
+        assert recovered is not None
+        assert recovered.device_code == pending.device_code
+        assert oauth.latest_pending_login() is not None
+
+    def test_an_expired_pending_login_is_swept(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install_login(
+            monkeypatch,
+            [
+                _response(
+                    {**DEVICE_PAYLOAD, "expires_in": 1},
+                    url=oauth.XAI_OAUTH_DEVICE_CODE_URL,
+                )
+            ],
+        )
+        pending = oauth.start_device_login()
+        monkeypatch.setattr(oauth.time, "time", lambda: pending.expires_at + 1)
+        assert oauth.get_pending_login(pending.login_id) is None
+        assert oauth.latest_pending_login() is None
+
+    def test_completing_a_login_clears_its_pending_entry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A completed grant left on disk would be replayed by the next resume."""
+        _install_login(
+            monkeypatch,
+            [_response(DEVICE_PAYLOAD, url=oauth.XAI_OAUTH_DEVICE_CODE_URL)],
+        )
+        pending = oauth.start_device_login()
+        _install_refresh(monkeypatch, [])
+        monkeypatch.setattr(
+            oauth.httpx,
+            "Client",
+            lambda **kwargs: _FakeClient(
+                [_response({"access_token": _jwt(3600), "refresh_token": "r-1"})]
+            ),
+        )
+
+        complete, _interval = oauth.poll_device_login(pending)
+
+        assert complete is True
+        assert oauth.get_pending_login(pending.login_id) is None
+        assert oauth.has_oauth_credentials() is True
+
     def test_the_client_id_is_overridable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("AGENTOS_XAI_OAUTH_CLIENT_ID", "my-own-registration")
         client = _install_login(
