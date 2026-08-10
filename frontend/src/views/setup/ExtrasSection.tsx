@@ -369,12 +369,18 @@ function XaiLoginButton({ disabled }: { disabled: boolean }) {
       <div className="setup-advanced__body" aria-label={t('setup.xSearchLoginPending')}>
         <p className="setup-muted">{t('setup.xSearchLoginWaiting')}</p>
         <p>
-          <a href={login.verificationUri} target="_blank" rel="noreferrer noopener">
+          <a
+            className="setup-xai-login__link"
+            href={login.verificationUri}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
             {t('setup.xSearchLoginOpen')}
           </a>
         </p>
         <p>
-          {t('setup.xSearchLoginCode')} <code>{login.userCode}</code>
+          {t('setup.xSearchLoginCode')}{' '}
+          <code className="setup-xai-login__code">{login.userCode}</code>
         </p>
         <Button
           type="button"
@@ -465,12 +471,12 @@ function XSearchCard({
         <h3 className="t-label">{t('setup.xSearchTitle')}</h3>
       </div>
       <p className="setup-muted">{t('setup.xSearchHint')}</p>
-      <p className="setup-muted">{xSearchCredentialText(authStatus, config)}</p>
-      <XaiLoginButton disabled={saving} />
       <NeedList
         items={credentialNeedList(spec.whatYouNeed, apiKeyEnv || envKey)}
         label={t('setup.xSearchNeeds')}
       />
+      <p className="setup-muted">{xSearchCredentialText(authStatus, config)}</p>
+      <XaiLoginButton disabled={saving} />
       <SetupCheckbox
         ariaLabel={t('setup.xSearchEnabledAria')}
         checked={enabled}

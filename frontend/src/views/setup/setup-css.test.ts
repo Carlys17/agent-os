@@ -27,6 +27,12 @@ describe('Setup embedded surface CSS contract', () => {
     expect(css).toContain(".setup-tier-table input:not([type='checkbox'])")
   })
 
+  it('makes the xAI approval link look clickable', () => {
+    // It is the only actionable thing in the pending state; unstyled it
+    // inherits body text and reads as another line of copy.
+    expect(css).toMatch(/\.setup-xai-login__link \{[\s\S]*?color: var\(--primary\);/)
+  })
+
   it('uses a soft disclosure surface instead of another hard nested border', () => {
     expect(css).toMatch(/\.setup-advanced \{[\s\S]*?border: 0;[\s\S]*?background: color-mix\(/)
   })

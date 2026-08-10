@@ -127,7 +127,8 @@ def get_x_search_setup_spec() -> XSearchSetupSpec:
         deployment="cloud",
         what_you_need=(
             f"An xAI API key via {X_SEARCH_ENV_KEY} or a one-time paste,",
-            "or a SuperGrok / X Premium+ login: run `agentos auth login xai`.",
+            "or a SuperGrok / X Premium+ login (sign in below, or "
+            "`agentos auth login xai`).",
             "A login is preferred over a key when both are present.",
         ),
         capabilities=("x_posts", "citations", "image_understanding", "video_understanding"),
