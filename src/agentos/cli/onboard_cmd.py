@@ -39,6 +39,7 @@ from agentos.onboarding.section_status import SectionStatus
 from agentos.onboarding.setup_engine import (
     IMAGE_GENERATION_SECTION_ALIASES,
     MEMORY_EMBEDDING_SECTION_ALIASES,
+    X_SEARCH_SECTION_ALIASES,
     setup_catalog_payload,
 )
 from agentos.onboarding.setup_paths import web_setup_url
@@ -589,6 +590,7 @@ _CATALOG_COMMANDS = {
         "agentos onboard configure search --search-provider <provider> "
         "--api-key-env <ENV_NAME>"
     ),
+    "xSearch": "agentos onboard configure x-search --api-key-env XAI_API_KEY",
     "channels": (
         "agentos onboard configure channels --channel-type <type> --name <name> "
         "--field key=value"
@@ -607,6 +609,7 @@ _CATALOG_SECTION_COMMANDS = {
     "providers": "agentos onboard catalog providers",
     "routerProfiles": "agentos onboard catalog router",
     "searchProviders": "agentos onboard catalog search",
+    "xSearch": "agentos onboard catalog x-search",
     "channels": "agentos onboard catalog channels",
     "imageGenerationProviders": "agentos onboard catalog image",
     "memoryEmbeddingProviders": "agentos onboard catalog memory",
@@ -616,6 +619,7 @@ _CATALOG_TITLES = {
     "providers": "Text providers",
     "routerProfiles": "Pilot Router profiles",
     "searchProviders": "Web search providers",
+    "xSearch": "X (Twitter) search",
     "channels": "Channel types",
     "imageGenerationProviders": "Image generation providers",
     "memoryEmbeddingProviders": "Memory embedding providers",
@@ -695,6 +699,10 @@ def _catalog_try_command(
         if row.get("requiresApiKey"):
             command += f" --api-key-env {_catalog_value(row, 'envKey', '<ENV_NAME>')}"
         return f"{command}{config_arg}"
+
+    if name == "xSearch":
+        env_key = _catalog_value(row, "envKey", "XAI_API_KEY")
+        return f"agentos onboard configure x-search --api-key-env {env_key}{config_arg}"
 
     if name == "channels":
         channel_type = _catalog_value(row, "type", "<type>")
@@ -780,6 +788,18 @@ def _print_list_catalog(
                 f" | route {_catalog_provider_route(row)}"
                 f" | key {_catalog_key_requirement(row)}"
                 f" | default {_catalog_value(row, 'defaultDirectModel', 'custom')}"
+            )
+            _print_catalog_try_command(name, row, config_arg)
+        return
+
+    if name == "xSearch":
+        console.print("[bold]AgentOS X (Twitter) search[/bold]")
+        _print_catalog_recipe_hint()
+        for row in rows:
+            _print_catalog_line(
+                f"- {_catalog_value(row, 'providerId')}: {_catalog_value(row, 'label')}"
+                f" | key {_catalog_key_requirement(row)}"
+                f" | {_catalog_value(row, 'deployment')}"
             )
             _print_catalog_try_command(name, row, config_arg)
         return
@@ -1026,7 +1046,7 @@ def configure_command(
         metavar="SECTION",
         help=(
             "Section to configure: provider, router, channels, search, "
-            "image (alias for image-generation), or memory "
+            "x-search, image (alias for image-generation), or memory "
             "(alias for memory-embedding)."
         ),
     ),
@@ -1035,7 +1055,7 @@ def configure_command(
         "--section",
         help=(
             "Section to configure: provider, router, channels, search, "
-            "image (alias for image-generation), or memory "
+            "x-search, image (alias for image-generation), or memory "
             "(alias for memory-embedding)."
         ),
         rich_help_panel="Target section",
@@ -1117,6 +1137,24 @@ def configure_command(
         "--diagnostics/--no-diagnostics",
         help="Include search provider attempt/error details for troubleshooting.",
         rich_help_panel="Search",
+    ),
+    x_search_model: str = typer.Option(
+        "",
+        "--x-search-model",
+        help="Grok model used for X Search, e.g. grok-4.5.",
+        rich_help_panel="X Search",
+    ),
+    x_search_enabled: bool = typer.Option(
+        True,
+        "--x-search-enabled/--no-x-search-enabled",
+        help="Offer the x_search tool when an xAI credential is present.",
+        rich_help_panel="X Search",
+    ),
+    x_search_reasoning_effort: str = typer.Option(
+        "",
+        "--x-search-reasoning-effort",
+        help="X Search reasoning effort: low, medium, high, or xhigh.",
+        rich_help_panel="X Search",
     ),
     channel_type: str = typer.Option(
         "",
@@ -1228,6 +1266,24 @@ def configure_command(
                 )
                 result = engine.persist()
                 _print_saved_path(result.path)
+                _print_env_reference_warnings(_load_config_for_cli(result.path))
+                return
+            if normalized in X_SEARCH_SECTION_ALIASES:
+                engine = SetupEngine(path=config_path)
+                res = engine.apply(
+                    "x-search",
+                    {
+                        "enabled": x_search_enabled,
+                        "apiKey": api_key,
+                        "apiKeyEnv": api_key_env,
+                        "model": x_search_model,
+                        "reasoningEffort": x_search_reasoning_effort,
+                    },
+                )
+                result = engine.persist()
+                _print_saved_path(result.path)
+                for warning in res.warnings:
+                    console.print(f"[yellow]Note:[/yellow] {markup_escape(warning)}")
                 _print_env_reference_warnings(_load_config_for_cli(result.path))
                 return
             if normalized in {"channel", "channels"} and channel_type and name:

@@ -207,6 +207,50 @@ export const setup = defineNamespace('setup', {
   searchDiagnostics: 'Diagnostics',
   searchSave: 'Save web search',
 
+  // X (Twitter) search card.
+  xSearchTitle: 'X (Twitter) search',
+  xSearchHint:
+    'Searches X posts through xAI and returns a synthesized answer with citations. ' +
+    'Read-only, and billed to your xAI account rather than tracked in AgentOS usage.',
+  xSearchNeeds: 'X Search needs',
+  xSearchEnabled: 'Enable X Search',
+  xSearchEnabledAria: 'Enable X Search',
+  xSearchApiKeyAria: 'xAI API key',
+  xSearchApiKeyEnvAria: 'xAI API key env',
+  xSearchModel: 'Grok model',
+  xSearchModelAria: 'X Search Grok model',
+  xSearchAdvanced: 'Advanced X Search options',
+  xSearchBehavior: 'X Search behavior',
+  xSearchEffort: 'Reasoning effort',
+  xSearchEffortAria: 'X Search reasoning effort',
+  xSearchEffortDefault: 'Model default',
+  xSearchTimeout: 'Per-attempt timeout (s)',
+  xSearchTimeoutAria: 'X Search per-attempt timeout in seconds',
+  xSearchTotalTimeout: 'Total timeout (s)',
+  xSearchTotalTimeoutAria: 'X Search total timeout in seconds',
+  xSearchRetries: 'Retries',
+  xSearchRetriesAria: 'X Search retries',
+  xSearchOauthActive: 'Signed in to xAI — x_search will use that subscription.',
+  xSearchOauthIncomplete: 'Signed in to xAI, but the login has no refresh token. Sign in again.',
+  // One literal, not a concatenation: the catalog's types read placeholders off
+  // the string literal, and `a + b` widens it to `string` so {envKey} is lost.
+  xSearchOauthAbsent:
+    'Not signed in to xAI. Using {envKey} if set. Sign in below to use a SuperGrok / X Premium+ subscription instead.',
+  xSearchSignIn: 'Sign in with xAI',
+  xSearchSignOut: 'Sign out of xAI',
+  xSearchSignOutDone: 'Signed out of xAI. x_search will fall back to XAI_API_KEY if set.',
+  xSearchLoginStarting: 'Starting sign-in…',
+  xSearchLoginPending: 'xAI sign-in in progress',
+  xSearchLoginWaiting: 'Waiting for you to approve this device on xAI.',
+  xSearchLoginOpen: 'Open the xAI approval page',
+  xSearchLoginCode: 'Enter this code if asked:',
+  xSearchLoginCancel: 'Cancel sign-in',
+  xSearchLoginDone: 'Signed in to xAI.',
+  xSearchLoginExpired: 'The sign-in code expired. Start again.',
+  xSearchLoginFailed: 'Sign-in failed:',
+  xSearchSignOutFailed: 'Sign-out failed:',
+  xSearchSave: 'Save X Search',
+
   // Memory embedding card.
   memoryEmbeddingTitle: 'Memory embedding',
   memoryNeeds: 'Memory needs',

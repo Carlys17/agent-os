@@ -359,6 +359,12 @@ def sync_search(config: Any) -> None:
     )
 
 
+def sync_x_search(config: Any) -> None:
+    from agentos.tools.builtin.x_search import configure_x_search
+
+    configure_x_search(getattr(config, "x_search", None))
+
+
 def _runtime_steps(ctx: RpcContext, changed_paths: set[str]) -> list[tuple[str, HotApply]]:
     if getattr(ctx, "config", None) is None:
         return []
@@ -382,6 +388,8 @@ def _runtime_steps(ctx: RpcContext, changed_paths: set[str]) -> list[tuple[str, 
         steps.append(("media", sync_media))
     if _touches(changed_paths, search_roots):
         steps.append(("search", sync_search))
+    if _touches(changed_paths, {"x_search"}):
+        steps.append(("x_search", sync_x_search))
     return steps
 
 

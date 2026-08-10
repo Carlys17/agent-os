@@ -277,6 +277,7 @@ agentos configure router --router recommended
 agentos configure router --router openrouter-mix
 agentos configure router --router disabled
 agentos configure search --search-provider brave --api-key-env BRAVE_SEARCH_API_KEY
+agentos configure x-search --api-key-env XAI_API_KEY
 agentos configure channels
 agentos configure image-generation
 agentos configure memory-embedding
@@ -288,6 +289,7 @@ Supported sections:
 - `router`
 - `channels`
 - `search`
+- `x-search`
 - `image-generation`
 - `memory-embedding`
 
@@ -556,6 +558,42 @@ DuckDuckGo. Additional provider metadata may be present for future or
 not-yet-runtime-supported integrations.
 
 Read: [`search.md`](search.md)
+
+## X (Twitter) Search Configuration
+
+`x_search` is a separate tool, not a `web_search` backend: xAI runs the search
+against X's post index and returns a synthesized answer with citations.
+
+Credentials come from either a SuperGrok / X Premium+ login or an xAI API key,
+and the login wins when both exist:
+
+```sh
+agentos auth login xai
+agentos auth status
+```
+
+```sh
+agentos onboard catalog x-search
+agentos configure x-search --api-key-env XAI_API_KEY
+agentos configure x-search --x-search-model grok-4.5
+```
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `x_search.enabled` | `true` | Off hides the tool even when a key is present. |
+| `x_search.model` | `grok-4.5` | Any Grok model with server-side `x_search` access. |
+| `x_search.base_url` | `https://api.x.ai/v1` | Must be HTTPS; a rejected value falls back to the default. |
+| `x_search.api_key` | `""` | Pasted key. Persisted to config like other capability keys. |
+| `x_search.api_key_env` | `XAI_API_KEY` | Read at call time, so no restart after changing the variable. |
+| `x_search.reasoning_effort` | `""` | `low`, `medium`, `high`, `xhigh`, or empty for the model default. |
+| `x_search.timeout_seconds` | `180.0` | One attempt. Range 30-300. |
+| `x_search.total_timeout_seconds` | `300.0` | Whole call including retries. Range 30-600. |
+| `x_search.retries` | `2` | 5xx, timeout, and connection errors only. Range 0-5. |
+
+The tool is hidden from the model until a credential resolves, and its usage
+bills xAI directly rather than appearing in `agentos cost`.
+
+Read: [`x-search.md`](x-search.md)
 
 ## Channel Configuration
 

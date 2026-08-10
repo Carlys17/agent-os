@@ -32,6 +32,7 @@ import {
   setupHeadline,
   stepStatus,
   STEPS,
+  type AuthStatus,
   type Catalog,
   type OnboardingStatus,
   type RouterConfigureParams,
@@ -73,6 +74,7 @@ type GuidedResetTarget =
   | 'provider'
   | 'router'
   | 'search'
+  | 'xSearch'
   | 'memoryEmbedding'
   | 'memorySettings'
   | 'image'
@@ -83,6 +85,7 @@ const INITIAL_RESET_VERSIONS: Record<GuidedResetTarget, number> = {
   provider: 0,
   router: 0,
   search: 0,
+  xSearch: 0,
   memoryEmbedding: 0,
   memorySettings: 0,
   image: 0,
@@ -138,6 +141,20 @@ export function SetupPage({
       return (await rpc.call<OnboardingStatus>('onboarding.status')) ?? {}
     },
     enabled: !usesExternalSnapshot,
+    refetchOnWindowFocus: false,
+  })
+  // Deliberately not gated on `usesExternalSnapshot`. Provider logins are not
+  // part of the config snapshot: they carry no revision, are never edited
+  // through a config commit, and so have no coherency requirement with it.
+  // Gating this the way the config reads are gated left the embedded Settings
+  // workspace — which is how the real app mounts this page — reporting every
+  // signed-in user as signed out.
+  const authQuery = useQuery<AuthStatus>({
+    queryKey: ['setup', 'auth'],
+    queryFn: async () => {
+      await rpc.waitForConnection()
+      return (await rpc.call<AuthStatus>('auth.status')) ?? {}
+    },
     refetchOnWindowFocus: false,
   })
   const configQuery = useQuery<SetupConfig>({
@@ -381,6 +398,23 @@ export function SetupPage({
       adoptTargetRevision('search', fresh?.revision ?? undefined)
     },
     onError: (err) => saveError('setup-search', err),
+  })
+
+  const xSearchMutation = useMutation({
+    mutationFn: (params: Record<string, unknown>) =>
+      rpc.call<{ warnings?: string[] }>(
+        'onboarding.x_search.configure',
+        withExpectedRevision('xSearch', params),
+      ),
+    onSuccess: async (result) => {
+      const warning = result?.warnings?.[0]
+      if (warning) toast.info(warning, { id: 'setup-x-search' })
+      else toast.info('X Search saved.', { id: 'setup-x-search' })
+      resetSavedTarget('xSearch')
+      const fresh = await reloadAfterSave('setup-x-search')
+      adoptTargetRevision('xSearch', fresh?.revision ?? undefined)
+    },
+    onError: (err) => saveError('setup-x-search', err),
   })
 
   interface ConfigureResult {
@@ -667,9 +701,11 @@ export function SetupPage({
               catalog={catalog}
               status={status}
               config={config}
+              authStatus={authQuery.data ?? {}}
               saving={
                 writeBlocked ||
                 searchMutation.isPending ||
+                xSearchMutation.isPending ||
                 memoryMutation.isPending ||
                 memorySettingsMutation.isPending ||
                 imageMutation.isPending ||
@@ -677,6 +713,7 @@ export function SetupPage({
               }
               resetVersions={{
                 search: resetVersions.search,
+                xSearch: resetVersions.xSearch,
                 memoryEmbedding: resetVersions.memoryEmbedding,
                 memorySettings: resetVersions.memorySettings,
                 image: resetVersions.image,
@@ -684,6 +721,7 @@ export function SetupPage({
               }}
               conflicts={{
                 search: targetConflicted('search'),
+                xSearch: targetConflicted('xSearch'),
                 memoryEmbedding: targetConflicted('memoryEmbedding'),
                 memorySettings: targetConflicted('memorySettings'),
                 image: targetConflicted('image'),
@@ -691,6 +729,7 @@ export function SetupPage({
               }}
               onDirtyChange={markTargetDirty}
               onSaveSearch={(params) => searchMutation.mutate(params)}
+              onSaveXSearch={(params) => xSearchMutation.mutate(params)}
               onSaveMemory={(params) => memoryMutation.mutate(params)}
               onSaveMemorySettings={(patches) => memorySettingsMutation.mutate(patches)}
               onSaveImage={(params) => imageMutation.mutate(params)}

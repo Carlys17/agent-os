@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import platform
+import time
 import tomllib
 
 import pytest
@@ -763,6 +765,171 @@ async def test_search_configure_accepts_webui_string_max_results(tmp_path, monke
 
     assert res.error is None, res.error
     assert res.payload["entry"]["max_results"] == 5
+
+
+@pytest.mark.asyncio
+async def test_xai_logout_clears_the_stored_login(tmp_path, monkeypatch):
+    from agentos import xai_oauth
+
+    monkeypatch.setenv("AGENTOS_AUTH_STORE", str(tmp_path / "auth.json"))
+    xai_oauth.write_oauth_state({"tokens": {"refresh_token": "r-1"}})
+
+    first = await get_dispatcher().dispatch("r1", "auth.xai.logout", {}, _admin_ctx())
+    second = await get_dispatcher().dispatch("r2", "auth.xai.logout", {}, _admin_ctx())
+
+    assert first.payload == {"cleared": True}
+    # Idempotent: a double click must not read as a failure.
+    assert second.payload == {"cleared": False}
+    assert xai_oauth.has_oauth_credentials() is False
+
+
+@pytest.mark.asyncio
+async def test_xai_login_start_returns_only_what_the_operator_must_approve(monkeypatch):
+    from agentos import xai_oauth
+
+    pending = xai_oauth.PendingDeviceLogin(
+        login_id="login-1",
+        device_code="dev-secret",
+        user_code="ABCD-EFGH",
+        verification_uri="https://accounts.x.ai/oauth2/device?code=ABCD",
+        interval=5,
+        expires_at=time.monotonic() + 600,
+        token_endpoint="https://auth.x.ai/oauth2/token",
+        discovery={"token_endpoint": "https://auth.x.ai/oauth2/token"},
+    )
+    monkeypatch.setattr(xai_oauth, "start_device_login", lambda: pending)
+
+    res = await get_dispatcher().dispatch("r1", "auth.xai.login.start", {}, _admin_ctx())
+
+    assert res.error is None, res.error
+    assert res.payload == {
+        "loginId": "login-1",
+        "verificationUri": "https://accounts.x.ai/oauth2/device?code=ABCD",
+        "userCode": "ABCD-EFGH",
+        "interval": 5,
+    }
+    # The device code is the client's half of the grant and has no business
+    # crossing the wire to the browser.
+    assert "dev-secret" not in json.dumps(res.payload)
+
+
+@pytest.mark.asyncio
+async def test_xai_login_poll_reports_pending_then_complete(monkeypatch):
+    from agentos import xai_oauth
+
+    pending = xai_oauth.PendingDeviceLogin(
+        login_id="login-1",
+        device_code="dev",
+        user_code="ABCD",
+        verification_uri="https://accounts.x.ai/oauth2/device",
+        interval=5,
+        expires_at=time.monotonic() + 600,
+        token_endpoint="https://auth.x.ai/oauth2/token",
+        discovery={},
+    )
+    monkeypatch.setattr(xai_oauth, "get_pending_login", lambda _id: pending)
+    answers = iter([(False, 5), (True, 5)])
+    monkeypatch.setattr(xai_oauth, "poll_device_login", lambda _p: next(answers))
+
+    first = await get_dispatcher().dispatch(
+        "r1", "auth.xai.login.poll", {"loginId": "login-1"}, _admin_ctx()
+    )
+    second = await get_dispatcher().dispatch(
+        "r2", "auth.xai.login.poll", {"loginId": "login-1"}, _admin_ctx()
+    )
+
+    assert first.payload == {"status": "pending", "interval": 5}
+    assert second.payload == {"status": "complete", "interval": 5}
+
+
+@pytest.mark.asyncio
+async def test_xai_login_poll_reports_an_unknown_id_as_expired(monkeypatch):
+    """A gateway restart drops pending logins; the UI must be told to start over."""
+    from agentos import xai_oauth
+
+    monkeypatch.setattr(xai_oauth, "get_pending_login", lambda _id: None)
+
+    res = await get_dispatcher().dispatch(
+        "r1", "auth.xai.login.poll", {"loginId": "gone"}, _admin_ctx()
+    )
+
+    assert res.error is None, res.error
+    assert res.payload == {"status": "expired"}
+
+
+@pytest.mark.asyncio
+async def test_x_search_configure_redacts_api_key_and_persists(tmp_path, monkeypatch):
+    target = tmp_path / "c.toml"
+    monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(target))
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+
+    res = await get_dispatcher().dispatch(
+        "r1",
+        "onboarding.x_search.configure",
+        {"apiKey": "xai-secret", "model": "grok-4.5", "retries": "3"},
+        _admin_ctx(),
+    )
+
+    assert res.error is None, res.error
+    assert res.payload["changed"] is True
+    assert res.payload["entry"]["api_key"] == "***"
+    assert res.payload["entry"]["retries"] == 3
+    # x_search config is hot-applied, so saving it must not demand a restart.
+    assert res.payload["restartRequired"] is False
+    # A pasted key is persisted like every other one; only the RPC echo is masked.
+    assert 'api_key = "xai-secret"' in target.read_text()
+
+
+@pytest.mark.asyncio
+async def test_x_search_configure_keeps_an_env_only_credential_out_of_the_file(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "c.toml"
+    monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(target))
+    monkeypatch.setenv("XAI_API_KEY", "from-the-environment")
+
+    res = await get_dispatcher().dispatch(
+        "r1",
+        "onboarding.x_search.configure",
+        {"enabled": True, "model": "grok-4.5"},
+        _admin_ctx(),
+    )
+
+    assert res.error is None, res.error
+    assert res.payload["entry"]["api_key_source"] == "env"
+    assert "from-the-environment" not in target.read_text()
+
+
+@pytest.mark.asyncio
+async def test_x_search_configure_warns_when_no_credential_is_reachable(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(tmp_path / "c.toml"))
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+
+    res = await get_dispatcher().dispatch(
+        "r1",
+        "onboarding.x_search.configure",
+        {"enabled": True},
+        _admin_ctx(),
+    )
+
+    assert res.error is None, res.error
+    assert any("XAI_API_KEY" in w for w in res.payload["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_x_search_configure_rejects_an_unknown_reasoning_effort(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(tmp_path / "c.toml"))
+
+    res = await get_dispatcher().dispatch(
+        "r1",
+        "onboarding.x_search.configure",
+        {"apiKey": "xai-secret", "reasoningEffort": "turbo"},
+        _admin_ctx(),
+    )
+
+    assert res.error is not None
+    assert "reasoning_effort" in res.error.message
+    assert "xai-secret" not in res.error.message
 
 
 @pytest.mark.asyncio

@@ -67,10 +67,39 @@ export interface ChannelSpec {
   [key: string]: unknown
 }
 
+/** auth.xai.login.start response. Neither field is a secret on its own. */
+export interface XaiPendingLogin {
+  loginId: string
+  verificationUri: string
+  userCode: string
+  interval: number
+}
+
+/** auth.xai.login.poll response. */
+export interface XaiLoginPoll {
+  status: 'pending' | 'complete' | 'expired'
+  interval?: number
+}
+
+/** auth.status response. Token values are never included. */
+export interface AuthStatus {
+  xai?: {
+    loggedIn?: boolean
+    logged_in?: boolean
+    expires_at?: string | null
+    expiring_soon?: boolean
+    has_refresh_token?: boolean
+    [key: string]: unknown
+  }
+  [key: string]: unknown
+}
+
 /** onboarding.catalog response. */
 export interface Catalog {
   providers?: ProviderSpec[]
   searchProviders?: ProviderSpec[]
+  /** One-row list: the catalog is uniform, and the CLI renderer walks rows. */
+  xSearch?: ProviderSpec[]
   imageGenerationProviders?: ProviderSpec[]
   audioProviders?: ProviderSpec[]
   memoryEmbeddingProviders?: ProviderSpec[]
@@ -188,6 +217,17 @@ export interface SetupConfig {
   search_use_env_proxy?: boolean
   search_fallback_policy?: string
   search_diagnostics?: boolean
+  x_search?: {
+    enabled?: boolean
+    model?: string
+    base_url?: string
+    api_key_env?: string
+    reasoning_effort?: string
+    timeout_seconds?: number
+    total_timeout_seconds?: number
+    retries?: number
+    [key: string]: unknown
+  }
   image_generation?: { providers?: Record<string, Record<string, unknown>>; [key: string]: unknown }
   audio?: {
     enabled?: boolean
@@ -630,6 +670,31 @@ export function searchStatusText(status: OnboardingStatus, config: SetupConfig):
   return t('setup.searchNeedsKey')
 }
 
+/**
+ * Which xAI credential x_search will actually use.
+ *
+ * OAuth wins over an API key at call time, so the card has to say which one is
+ * in play — "you have a key configured" is misleading when a SuperGrok login is
+ * quietly taking precedence.
+ */
+/** Whether a SuperGrok / X Premium+ login is stored. */
+export function xSearchSignedIn(auth: AuthStatus): boolean {
+  const xai = auth.xai || {}
+  return xai.loggedIn === true || xai.logged_in === true
+}
+
+export function xSearchCredentialText(auth: AuthStatus, config: SetupConfig): string {
+  const xai = auth.xai || {}
+  const loggedIn = xSearchSignedIn(auth)
+  if (loggedIn) {
+    return xai.has_refresh_token === false
+      ? t('setup.xSearchOauthIncomplete')
+      : t('setup.xSearchOauthActive')
+  }
+  const envKey = config.x_search?.api_key_env || 'XAI_API_KEY'
+  return t('setup.xSearchOauthAbsent', { envKey })
+}
+
 /** setup.js:994-1012 — image generation status text. */
 export function imageGenerationStatusText(status: OnboardingStatus): string {
   if (status.imageGenerationEnabled === false) {
@@ -932,6 +997,25 @@ export function buildSearchConfigureParams(
   fields: CapabilityField[],
 ): Record<string, unknown> {
   const params: Record<string, unknown> = { providerId: providerId || 'duckduckgo' }
+  fields.forEach((f) => {
+    if (f.value === '' && f.secret) return
+    const key = camel(f.name)
+    if (f.type === 'checkbox') params[key] = f.checked
+    else params[key] = f.type === 'number' ? Number.parseInt(f.value || '0', 10) : f.value
+  })
+  return params
+}
+
+/**
+ * onboarding.x_search.configure params. Same blank-secret rule as search — an
+ * empty api_key means "keep the stored one" — plus an explicit `enabled` flag
+ * so the card can turn the tool off without clearing the credential.
+ */
+export function buildXSearchConfigureParams(
+  enabled: boolean,
+  fields: CapabilityField[],
+): Record<string, unknown> {
+  const params: Record<string, unknown> = { enabled }
   fields.forEach((f) => {
     if (f.value === '' && f.secret) return
     const key = camel(f.name)

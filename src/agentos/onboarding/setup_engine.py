@@ -25,12 +25,14 @@ from agentos.onboarding.mutations import (
     upsert_memory_embedding,
     upsert_router,
     upsert_search_provider,
+    upsert_x_search,
 )
 from agentos.onboarding.next_steps import format_next_steps
 from agentos.onboarding.provider_specs import provider_catalog_payload
 from agentos.onboarding.router_specs import router_catalog_payload
 from agentos.onboarding.search_specs import search_provider_catalog_payload
 from agentos.onboarding.status import OnboardingStatus, get_onboarding_status
+from agentos.onboarding.x_search_specs import x_search_catalog_payload
 
 IMAGE_GENERATION_SECTION_ALIASES = frozenset(
     {"image", "image-generation", "image_generation"}
@@ -39,12 +41,14 @@ MEMORY_EMBEDDING_SECTION_ALIASES = frozenset(
     {"memory", "memory-embedding", "memory_embedding"}
 )
 AUDIO_SECTION_ALIASES = frozenset({"audio", "voice-audio", "voice_audio"})
+X_SEARCH_SECTION_ALIASES = frozenset({"x-search", "x_search", "xsearch"})
 
 _CATALOG_SECTION_ALIASES = {
     "provider": "providers",
     "providers": "providers",
     "router": "routerProfiles",
     "search": "searchProviders",
+    **{alias: "xSearch" for alias in X_SEARCH_SECTION_ALIASES},
     "channels": "channels",
     "channel": "channels",
     **{alias: "imageGenerationProviders" for alias in IMAGE_GENERATION_SECTION_ALIASES},
@@ -58,6 +62,7 @@ def setup_catalog_payload(section: str | None = None) -> dict[str, Any]:
         "providers": provider_catalog_payload(),
         "routerProfiles": router_catalog_payload(),
         "searchProviders": search_provider_catalog_payload(),
+        "xSearch": x_search_catalog_payload(),
         "channels": channel_catalog_payload(),
         "imageGenerationProviders": image_generation_provider_catalog_payload(),
         "audioProviders": audio_provider_catalog_payload(),
@@ -131,6 +136,19 @@ class SetupEngine:
                 use_env_proxy=bool(payload.get("useEnvProxy", False)),
                 fallback_policy=str(payload.get("fallbackPolicy", "off")),
                 diagnostics=bool(payload.get("diagnostics", False)),
+            )
+        elif normalized in X_SEARCH_SECTION_ALIASES:
+            res = upsert_x_search(
+                self.config,
+                enabled=bool(payload.get("enabled", True)),
+                api_key=str(payload.get("apiKey", "")),
+                api_key_env=str(payload.get("apiKeyEnv", "")),
+                model=str(payload.get("model", "")),
+                base_url=str(payload.get("baseUrl", "")),
+                reasoning_effort=str(payload.get("reasoningEffort", "")),
+                timeout_seconds=payload.get("timeoutSeconds"),
+                total_timeout_seconds=payload.get("totalTimeoutSeconds"),
+                retries=payload.get("retries"),
             )
         elif normalized in {"channel", "channels"}:
             entry = payload.get("entry", payload)

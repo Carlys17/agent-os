@@ -849,3 +849,16 @@
     transition: none;
   }
 }
+
+/* The device-code approval link is the whole point of the pending state, so it
+   has to read as clickable. Without a colour it inherits body text and looks
+   like another line of copy. */
+.setup-xai-login__link {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+.setup-xai-login__code {
+  font-family: var(--font-mono, monospace);
+  letter-spacing: 0.04em;
+}

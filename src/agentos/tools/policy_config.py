@@ -25,7 +25,7 @@ _TOOL_GROUPS: Mapping[str, frozenset[str]] = {
         {"sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"}
     ),
     "group:memory": frozenset({"memory_search", "memory_get"}),
-    "group:web": frozenset({"web_search", "web_fetch", "http_request"}),
+    "group:web": frozenset({"web_search", "web_fetch", "http_request", "x_search"}),
     "group:messaging": frozenset({"message"}),
     "channel:chat": frozenset(
         {

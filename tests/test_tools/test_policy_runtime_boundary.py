@@ -156,6 +156,10 @@ def test_policy_runtime_builds_capabilities_from_injected_dependencies() -> None
         channel_manager=None,
         originating_envelope=object(),
         image_generation=False,
+        # Both credential-backed capabilities are passed explicitly: left to
+        # auto-detection they would read the ambient environment and flip on a
+        # machine that happens to export the provider key.
+        x_search=False,
     )
 
     assert caps == ToolSurfaceCapabilities(
@@ -165,6 +169,7 @@ def test_policy_runtime_builds_capabilities_from_injected_dependencies() -> None
         gateway_config=True,
         channel_backing=True,
         image_generation=False,
+        x_search=False,
     )
 
 

@@ -313,6 +313,100 @@ async def _channel_probe(params: Any, ctx: RpcContext) -> dict[str, Any]:
     }
 
 
+@_d.method("auth.status")
+async def _auth_status(params: Any, ctx: RpcContext) -> dict[str, Any]:
+    """Report stored provider logins. Never returns a token value."""
+    from agentos.xai_oauth import oauth_status
+
+    return {"xai": oauth_status()}
+
+
+@_d.method("auth.xai.logout")
+async def _auth_xai_logout(params: Any, ctx: RpcContext) -> dict[str, Any]:
+    """Forget the stored xAI login. Local only — nothing is revoked at xAI."""
+    from agentos.xai_oauth import clear_oauth_state
+
+    return {"cleared": clear_oauth_state()}
+
+
+@_d.method("auth.xai.login.start")
+async def _auth_xai_login_start(params: Any, ctx: RpcContext) -> dict[str, Any]:
+    """Begin a device-code login and return what the operator has to approve.
+
+    The two halves are separate calls because approval takes as long as it
+    takes: a single blocking method would hold the request open for minutes and
+    never get the code in front of the person who needs it.
+    """
+    from agentos.xai_oauth import XaiOAuthError, start_device_login
+
+    try:
+        pending = await asyncio.to_thread(start_device_login)
+    except XaiOAuthError as exc:
+        raise ValueError(str(exc)) from exc
+
+    return {
+        "loginId": pending.login_id,
+        "verificationUri": pending.verification_uri,
+        "userCode": pending.user_code,
+        "interval": pending.interval,
+    }
+
+
+@_d.method("auth.xai.login.poll")
+async def _auth_xai_login_poll(params: Any, ctx: RpcContext) -> dict[str, Any]:
+    """Poll a pending login once. Returns ``pending`` or ``complete``."""
+    from agentos.xai_oauth import XaiOAuthError, get_pending_login, poll_device_login
+
+    login_id = _require(params, "loginId")
+    pending = get_pending_login(str(login_id))
+    if pending is None:
+        # Expired, already completed, or from a previous gateway process.
+        return {"status": "expired"}
+
+    try:
+        complete, interval = await asyncio.to_thread(poll_device_login, pending)
+    except XaiOAuthError as exc:
+        raise ValueError(str(exc)) from exc
+
+    return {"status": "complete" if complete else "pending", "interval": interval}
+
+
+@_d.method("onboarding.x_search.configure")
+async def _x_search_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
+    from agentos.onboarding.mutations import upsert_x_search
+
+    fields = params if isinstance(params, dict) else {}
+    cfg = _active_config(ctx)
+    res = upsert_x_search(
+        cfg,
+        enabled=bool(fields.get("enabled", True)),
+        api_key=fields.get("apiKey", ""),
+        api_key_env=fields.get("apiKeyEnv", ""),
+        model=fields.get("model", ""),
+        base_url=fields.get("baseUrl", ""),
+        reasoning_effort=fields.get("reasoningEffort", ""),
+        timeout_seconds=fields.get("timeoutSeconds"),
+        total_timeout_seconds=fields.get("totalTimeoutSeconds"),
+        retries=fields.get("retries"),
+    )
+    commit = _commit_mutation(
+        ctx,
+        cfg,
+        res.config,
+        params,
+        changed_paths={"x_search"},
+        restart_required=res.restart_required,
+        restart_reason="x_search",
+    )
+    return {
+        "changed": res.changed,
+        "restartRequired": commit.restart_required,
+        "configPath": str(commit.path),
+        "entry": res.public_payload,
+        "warnings": res.warnings,
+    }
+
+
 @_d.method("onboarding.search.configure")
 async def _search_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_search_provider

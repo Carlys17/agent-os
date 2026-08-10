@@ -23,6 +23,30 @@ describe('chat markdown renderer', () => {
     expect(root.querySelector('a')?.getAttribute('href')).toBe('https://example.com')
   })
 
+  it('opens external links in a new tab', () => {
+    // Following a link in place unmounts the transcript, losing scroll
+    // position and any in-flight turn — painful for a link the assistant just
+    // asked the user to open, like an OAuth approval page.
+    const root = fragment('[approve](https://accounts.x.ai/oauth2/device?user_code=ABCD)')
+    const link = root.querySelector('a')
+
+    expect(link?.getAttribute('target')).toBe('_blank')
+    expect(link?.getAttribute('rel')).toContain('noopener')
+    expect(link?.getAttribute('rel')).toContain('noreferrer')
+  })
+
+  it('leaves in-page and app-relative links alone', () => {
+    const root = fragment('[top](#section) and [settings](/control/setup)')
+    const targets = Array.from(root.querySelectorAll('a')).map((a) => a.getAttribute('target'))
+
+    expect(targets).toEqual([null, null])
+  })
+
+  it('does not let the model choose its own browsing context', () => {
+    const root = fragment('<a href="/control/setup" target="_top">go</a>')
+    expect(root.querySelector('a')?.getAttribute('target')).toBeNull()
+  })
+
   it('sanitizes scripts, event handlers, and unsafe link protocols', () => {
     const root = fragment(
       '<script>alert(1)</script><img src="x" onerror="alert(2)"><a href="javascript:alert(3)">bad</a>',

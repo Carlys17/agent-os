@@ -3,7 +3,10 @@
 // its own draft state, conditional field enablement (from logic.ts), masked
 // secrets, and a Save wired to the matching onboarding.*.configure RPC (memory
 // settings uses config.patch). All decision-shaped derivation lives in logic.ts.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
+import { useRpc } from '@/app/providers'
 import { Button } from '@/components/ui/button'
 import { t } from '@/i18n'
 import '@/i18n/en/setup'
@@ -22,6 +25,7 @@ import {
   buildMemoryConfigureParams,
   buildMemorySettingsPatches,
   buildSearchConfigureParams,
+  buildXSearchConfigureParams,
   capabilityIsPrimary,
   credentialNeedList,
   envRecoveryCommand,
@@ -31,14 +35,20 @@ import {
   memoryNeedList,
   memorySettingsOverBudget,
   searchStatusText,
+  xSearchCredentialText,
+  xSearchSignedIn,
+  type AuthStatus,
   type CapabilityField,
   type Catalog,
   type OnboardingStatus,
   type ProviderSpec,
   type SetupConfig,
+  type XaiLoginPoll,
+  type XaiPendingLogin,
 } from './logic'
 
-type ExtrasResetTarget = 'search' | 'memoryEmbedding' | 'memorySettings' | 'image' | 'audio'
+type ExtrasResetTarget =
+  'search' | 'xSearch' | 'memoryEmbedding' | 'memorySettings' | 'image' | 'audio'
 
 function saveVariant(status: OnboardingStatus, name: string): 'default' | 'outline' {
   return capabilityIsPrimary(status, name) ? 'default' : 'outline'
@@ -259,6 +269,349 @@ function SearchCard({
         onClick={collect}
       >
         {t('setup.searchSave')}
+      </Button>
+    </div>
+  )
+}
+
+// xAI API values, not display copy: these are sent verbatim and must never be
+// translated. Kept as identifiers so the i18n lint does not read them as text.
+const X_SEARCH_DEFAULT_MODEL = 'grok-4.5'
+const X_SEARCH_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
+
+const DEFAULT_POLL_SECONDS = 5
+
+/** Seconds to wait before the next poll. `0` is a real answer, not a missing one. */
+function pollDelay(interval: number | undefined, fallback: number): number {
+  return typeof interval === 'number' && interval >= 0 ? interval : fallback
+}
+
+/**
+ * The xAI device-code login, as a button.
+ *
+ * Unlike the cards around it this talks to the RPC layer directly rather than
+ * through props: it owns a multi-step flow (start → poll → refresh status)
+ * whose intermediate states nothing above it needs to see, and threading four
+ * callbacks and a state machine through two levels of props to avoid one hook
+ * would not make it clearer.
+ *
+ * It also lives outside XSearchCard on purpose — that component binds a state
+ * setter named `setTimeout`, which shadows the global this polling needs.
+ */
+function XaiLoginButton({ disabled, signedIn }: { disabled: boolean; signedIn: boolean }) {
+  const rpc = useRpc()
+  const queryClient = useQueryClient()
+  const [phase, setPhase] = useState<'idle' | 'starting' | 'awaiting' | 'error'>('idle')
+  const [login, setLogin] = useState<XaiPendingLogin | null>(null)
+  const [errorMessage, setErrorMessage] = useState('')
+  const [errorAction, setErrorAction] = useState<'signIn' | 'signOut'>('signIn')
+
+  // Survives unmount mid-flight: a resolved poll must not setState on a card
+  // the operator has already navigated away from.
+  const cancelled = useRef(false)
+  useEffect(() => {
+    cancelled.current = false
+    return () => {
+      cancelled.current = true
+    }
+  }, [])
+
+  const fail = (message: string, action: 'signIn' | 'signOut' = 'signIn') => {
+    if (cancelled.current) return
+    setPhase('error')
+    setErrorMessage(message)
+    setErrorAction(action)
+    setLogin(null)
+  }
+
+  const errorLabel = () =>
+    errorAction === 'signOut' ? t('setup.xSearchSignOutFailed') : t('setup.xSearchLoginFailed')
+
+  const poll = async (pending: XaiPendingLogin, wait: number) => {
+    await new Promise((resolve) => window.setTimeout(resolve, wait * 1000))
+    if (cancelled.current) return
+    try {
+      const result = await rpc.call<XaiLoginPoll>('auth.xai.login.poll', {
+        loginId: pending.loginId,
+      })
+      if (cancelled.current) return
+      if (result?.status === 'complete') {
+        setPhase('idle')
+        setLogin(null)
+        await queryClient.invalidateQueries({ queryKey: ['setup', 'auth'] })
+        toast.info(t('setup.xSearchLoginDone'), { id: 'setup-xai-login' })
+        return
+      }
+      if (result?.status === 'expired') {
+        fail(t('setup.xSearchLoginExpired'))
+        return
+      }
+      void poll(pending, pollDelay(result?.interval, pending.interval))
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const signOut = async () => {
+    try {
+      await rpc.call('auth.xai.logout')
+      if (cancelled.current) return
+      await queryClient.invalidateQueries({ queryKey: ['setup', 'auth'] })
+      toast.info(t('setup.xSearchSignOutDone'), { id: 'setup-xai-login' })
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err), 'signOut')
+    }
+  }
+
+  const start = async () => {
+    setPhase('starting')
+    setErrorMessage('')
+    try {
+      const pending = await rpc.call<XaiPendingLogin>('auth.xai.login.start')
+      if (cancelled.current) return
+      if (!pending?.loginId) {
+        fail(t('setup.xSearchLoginExpired'))
+        return
+      }
+      setLogin(pending)
+      setPhase('awaiting')
+      void poll(pending, pollDelay(pending.interval, DEFAULT_POLL_SECONDS))
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  if (phase === 'awaiting' && login) {
+    return (
+      <div className="setup-advanced__body" aria-label={t('setup.xSearchLoginPending')}>
+        <p className="setup-muted">{t('setup.xSearchLoginWaiting')}</p>
+        <p>
+          <a
+            className="setup-xai-login__link"
+            href={login.verificationUri}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            {t('setup.xSearchLoginOpen')}
+          </a>
+        </p>
+        <p>
+          {t('setup.xSearchLoginCode')}{' '}
+          <code className="setup-xai-login__code">{login.userCode}</code>
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            setPhase('idle')
+            setLogin(null)
+          }}
+        >
+          {t('setup.xSearchLoginCancel')}
+        </Button>
+      </div>
+    )
+  }
+
+  // Offering "Sign in" to someone already signed in is the wrong control and
+  // reads as though the login did not take.
+  if (signedIn) {
+    return (
+      <div>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled || phase === 'starting'}
+          onClick={() => void signOut()}
+        >
+          {t('setup.xSearchSignOut')}
+        </Button>
+        {phase === 'error' ? (
+          <p className="setup-muted">
+            {errorLabel()} {errorMessage}
+          </p>
+        ) : null}
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <Button
+        type="button"
+        variant="outline"
+        disabled={disabled || phase === 'starting'}
+        onClick={() => void start()}
+      >
+        {phase === 'starting' ? t('setup.xSearchLoginStarting') : t('setup.xSearchSignIn')}
+      </Button>
+      {phase === 'error' ? (
+        <p className="setup-muted">
+          {errorLabel()} {errorMessage}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+// ── X (Twitter) search ──────────────────────────────────────────────────────
+// Not a web-search provider: it answers from X's post index through xAI, so it
+// gets its own card rather than a row in the search provider select.
+function XSearchCard({
+  catalog,
+  config,
+  authStatus,
+  onSave,
+  saving,
+}: {
+  catalog: Catalog
+  config: SetupConfig
+  authStatus: AuthStatus
+  onSave: (params: Record<string, unknown>) => void
+  saving: boolean
+}) {
+  const spec: ProviderSpec = catalog.xSearch?.[0] || { providerId: 'x_search' }
+  const current = config.x_search || {}
+  const envKey = spec.envKey || 'XAI_API_KEY'
+
+  const [enabled, setEnabled] = useState(current.enabled !== false)
+  const [apiKey, setApiKey] = useState('')
+  const [apiKeyEnv, setApiKeyEnv] = useState(current.api_key_env || envKey)
+  const [model, setModel] = useState(current.model || X_SEARCH_DEFAULT_MODEL)
+  const [effort, setEffort] = useState(current.reasoning_effort || '')
+  const [timeout, setTimeout] = useState(String(current.timeout_seconds ?? 180))
+  const [totalTimeout, setTotalTimeout] = useState(String(current.total_timeout_seconds ?? 300))
+  const [retries, setRetries] = useState(String(current.retries ?? 2))
+
+  const collect = () => {
+    const field = (name: string, value: string, type: string, secret = false): CapabilityField => ({
+      name,
+      value,
+      checked: false,
+      type,
+      secret,
+      disabled: false,
+    })
+    const fields: CapabilityField[] = [
+      field('api_key', apiKey, 'password', true),
+      field('api_key_env', apiKeyEnv, 'text'),
+      field('model', model, 'text'),
+      field('reasoning_effort', effort, 'text'),
+      field('timeout_seconds', timeout, 'number'),
+      field('total_timeout_seconds', totalTimeout, 'number'),
+      field('retries', retries, 'number'),
+    ]
+    onSave(buildXSearchConfigureParams(enabled, fields))
+  }
+
+  return (
+    <div className="setup-mini panel">
+      <div className="setup-mini__head">
+        <h3 className="t-label">{t('setup.xSearchTitle')}</h3>
+      </div>
+      <p className="setup-muted">{t('setup.xSearchHint')}</p>
+      <NeedList
+        items={credentialNeedList(spec.whatYouNeed, apiKeyEnv || envKey)}
+        label={t('setup.xSearchNeeds')}
+      />
+      <p className="setup-muted">{xSearchCredentialText(authStatus, config)}</p>
+      <XaiLoginButton disabled={saving} signedIn={xSearchSignedIn(authStatus)} />
+      <SetupCheckbox
+        ariaLabel={t('setup.xSearchEnabledAria')}
+        checked={enabled}
+        onChange={setEnabled}
+      >
+        {t('setup.xSearchEnabled')}
+      </SetupCheckbox>
+      <label>
+        <span>{t('setup.fieldApiKey')}</span>
+        <input
+          type="password"
+          aria-label={t('setup.xSearchApiKeyAria')}
+          placeholder={t('setup.keepCurrentPlaceholder')}
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+        />
+      </label>
+      <label>
+        <span>{t('setup.fieldApiKeyEnv')}</span>
+        <input
+          aria-label={t('setup.xSearchApiKeyEnvAria')}
+          value={apiKeyEnv}
+          placeholder={envKey}
+          onChange={(e) => setApiKeyEnv(e.target.value)}
+        />
+      </label>
+      <label>
+        <span>{t('setup.xSearchModel')}</span>
+        <input
+          aria-label={t('setup.xSearchModelAria')}
+          value={model}
+          placeholder={X_SEARCH_DEFAULT_MODEL}
+          onChange={(e) => setModel(e.target.value)}
+        />
+      </label>
+      <details
+        className="setup-advanced"
+        open={Boolean(effort || timeout !== '180' || totalTimeout !== '300' || retries !== '2')}
+      >
+        <summary>{t('setup.xSearchAdvanced')}</summary>
+        <div className="setup-advanced__body" aria-label={t('setup.xSearchBehavior')}>
+          <label>
+            <span>{t('setup.xSearchEffort')}</span>
+            <SetupSelect
+              aria-label={t('setup.xSearchEffortAria')}
+              value={effort}
+              onChange={(e) => setEffort(e.target.value)}
+            >
+              <option value="">{t('setup.xSearchEffortDefault')}</option>
+              {X_SEARCH_EFFORTS.map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </SetupSelect>
+          </label>
+          <label>
+            <span>{t('setup.xSearchTimeout')}</span>
+            <input
+              type="number"
+              min={30}
+              max={300}
+              step={1}
+              aria-label={t('setup.xSearchTimeoutAria')}
+              value={timeout}
+              onChange={(e) => setTimeout(e.target.value)}
+            />
+          </label>
+          <label>
+            <span>{t('setup.xSearchTotalTimeout')}</span>
+            <input
+              type="number"
+              min={30}
+              max={600}
+              step={1}
+              aria-label={t('setup.xSearchTotalTimeoutAria')}
+              value={totalTimeout}
+              onChange={(e) => setTotalTimeout(e.target.value)}
+            />
+          </label>
+          <label>
+            <span>{t('setup.xSearchRetries')}</span>
+            <input
+              type="number"
+              min={0}
+              max={5}
+              step={1}
+              aria-label={t('setup.xSearchRetriesAria')}
+              value={retries}
+              onChange={(e) => setRetries(e.target.value)}
+            />
+          </label>
+        </div>
+      </details>
+      <Button type="button" variant="outline" disabled={saving} onClick={collect}>
+        {t('setup.xSearchSave')}
       </Button>
     </div>
   )
@@ -924,7 +1277,9 @@ export function ExtrasSection({
   catalog,
   status,
   config,
+  authStatus,
   onSaveSearch,
+  onSaveXSearch,
   onSaveMemory,
   onSaveMemorySettings,
   onSaveImage,
@@ -939,7 +1294,9 @@ export function ExtrasSection({
   catalog: Catalog
   status: OnboardingStatus
   config: SetupConfig
+  authStatus: AuthStatus
   onSaveSearch: (params: Record<string, unknown>) => void
+  onSaveXSearch: (params: Record<string, unknown>) => void
   onSaveMemory: (params: Record<string, unknown>) => void
   onSaveMemorySettings: (patches: Record<string, unknown>) => void
   onSaveImage: (params: Record<string, unknown>) => void
@@ -949,6 +1306,7 @@ export function ExtrasSection({
   saving: boolean
   resetVersions: {
     search: number
+    xSearch: number
     memoryEmbedding: number
     memorySettings: number
     image: number
@@ -969,6 +1327,16 @@ export function ExtrasSection({
             config={config}
             onSave={onSaveSearch}
             saving={saving || conflicts.search}
+          />
+        </div>
+        <div className="setup-capability-slot" onChangeCapture={() => onDirtyChange('xSearch')}>
+          <XSearchCard
+            key={`x-search:${resetVersions.xSearch}`}
+            catalog={catalog}
+            config={config}
+            authStatus={authStatus}
+            onSave={onSaveXSearch}
+            saving={saving || conflicts.xSearch}
           />
         </div>
         <div

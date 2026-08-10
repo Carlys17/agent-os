@@ -1476,6 +1476,32 @@ class AudioConfig(BaseSettings):
     providers: AudioProvidersConfig = Field(default_factory=AudioProvidersConfig)
 
 
+class XSearchConfig(BaseSettings):
+    """xAI-backed X (Twitter) search.
+
+    ``enabled`` only says the operator wants the tool; it still needs an xAI
+    credential before the model is shown its schema. ``timeout_seconds`` bounds
+    one attempt and ``total_timeout_seconds`` bounds the whole call including
+    retries — the tool declares a static execution ceiling above the latter so
+    the engine's own tool timeout never cuts a live attempt.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AGENTOS_X_SEARCH_",
+        env_nested_delimiter="__",
+    )
+
+    enabled: bool = True
+    model: str = "grok-4.5"
+    base_url: str = "https://api.x.ai/v1"
+    api_key: str = ""
+    api_key_env: str = "XAI_API_KEY"
+    reasoning_effort: Literal["", "low", "medium", "high", "xhigh"] = ""
+    timeout_seconds: float = Field(default=180.0, ge=30.0, le=300.0)
+    total_timeout_seconds: float = Field(default=300.0, ge=30.0, le=600.0)
+    retries: int = Field(default=2, ge=0, le=5)
+
+
 # ---------------------------------------------------------------------------
 # Channel config (BaseModel — no env-var binding, validated at TOML load)
 # Names use *Entry suffix to avoid shadowing adapter-level *ChannelConfig.
@@ -1771,6 +1797,7 @@ class GatewayConfig(BaseSettings):
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     image_generation: ImageGenerationConfig = Field(default_factory=ImageGenerationConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
+    x_search: XSearchConfig = Field(default_factory=XSearchConfig)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     agents: list[AgentEntryConfig] = Field(default_factory=list)

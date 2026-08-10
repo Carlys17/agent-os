@@ -35,6 +35,7 @@ EXTERNAL_TOOL_NAMES: frozenset[str] = frozenset(
         "http_request",
         "web_fetch",
         "web_search",
+        "x_search",
     }
 )
 
