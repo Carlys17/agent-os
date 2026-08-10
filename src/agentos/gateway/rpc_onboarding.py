@@ -313,6 +313,14 @@ async def _channel_probe(params: Any, ctx: RpcContext) -> dict[str, Any]:
     }
 
 
+@_d.method("auth.status")
+async def _auth_status(params: Any, ctx: RpcContext) -> dict[str, Any]:
+    """Report stored provider logins. Never returns a token value."""
+    from agentos.xai_oauth import oauth_status
+
+    return {"xai": oauth_status()}
+
+
 @_d.method("onboarding.x_search.configure")
 async def _x_search_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_x_search

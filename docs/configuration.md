@@ -564,6 +564,14 @@ Read: [`search.md`](search.md)
 `x_search` is a separate tool, not a `web_search` backend: xAI runs the search
 against X's post index and returns a synthesized answer with citations.
 
+Credentials come from either a SuperGrok / X Premium+ login or an xAI API key,
+and the login wins when both exist:
+
+```sh
+agentos auth login xai
+agentos auth status
+```
+
 ```sh
 agentos onboard catalog x-search
 agentos configure x-search --api-key-env XAI_API_KEY

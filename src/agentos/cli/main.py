@@ -60,6 +60,7 @@ warn_if_proxy_ignored()
 
 from agentos.cli.agent_cmd import run_agent_command  # noqa: E402
 from agentos.cli.agents_cmd import agents_app  # noqa: E402
+from agentos.cli.auth_cmd import auth_app  # noqa: E402
 from agentos.cli.channels_cmd import channels_app  # noqa: E402
 from agentos.cli.config_cmd import app as config_app  # noqa: E402
 from agentos.cli.context_cmd import app as context_app  # noqa: E402
@@ -91,6 +92,7 @@ app = typer.Typer(
 
 # ── Sub-apps ─────────────────────────────────────────────────────────────────
 
+app.add_typer(auth_app, name="auth")
 app.add_typer(channels_app, name="channels")
 app.add_typer(agents_app, name="agents")
 app.add_typer(config_app, name="config")

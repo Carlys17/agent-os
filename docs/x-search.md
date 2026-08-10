@@ -20,19 +20,54 @@ and `web_fetch`.
   surface; an `x_search` answer is never evidence that anything was written.
 - **Not model-agnostic.** Only xAI has access to X's post index. Your agent can
   run on any provider — the tool makes its own call to xAI regardless.
+- **Not the X developer platform.** `developer.x.com` sells access to the X API
+  (raw posts, writes) and bills separately. This tool talks to `x.ai`.
 
 ## Credentials
 
-An xAI API key, and nothing else:
+Two paths. **OAuth wins when both are present**, because it spends a
+subscription you already pay for instead of API credit.
 
-| Path | How |
-| --- | --- |
-| `XAI_API_KEY` | Set it in `~/.agentos/.env` or the gateway environment. |
-| Pasted key | `agentos configure x-search --api-key <key>`, or the Setup page. |
+| Path | How | `credential_source` |
+| --- | --- | --- |
+| SuperGrok / X Premium+ | `agentos auth login xai` | `xai-oauth` |
+| xAI API key | `XAI_API_KEY` in `~/.agentos/.env`, or `agentos configure x-search --api-key <key>` | `xai` |
 
-SuperGrok / X Premium+ OAuth is **not** supported. Hermes Agent accepts it;
-AgentOS has no OAuth subsystem, so `credential_source` in the result is always
-`"xai"`.
+### Signing in with a subscription
+
+```sh
+agentos auth login xai      # device-code flow: open a URL, enter a code
+agentos auth status         # never prints a token
+agentos auth logout xai
+```
+
+The login is a device-code grant against `auth.x.ai`. Tokens land in
+`~/.agentos/auth.json` (owner-only, `0600`) and refresh themselves; you are not
+asked to paste anything into a prompt.
+
+Two things worth knowing:
+
+- **A subscription is not automatically entitled to API access.** xAI restricts
+  API/OAuth use to certain SuperGrok tiers, and an account outside them gets
+  HTTP 403 on refresh even though the in-app subscription is active. AgentOS
+  reports that as a tier problem rather than telling you to log in again,
+  because logging in again cannot fix it.
+- **A broken login is reported, not skipped.** If OAuth is configured but
+  unusable, `x_search` says so instead of quietly falling back to an API key
+  you may not have set.
+
+### Client identity
+
+The device-code flow uses xAI's public Grok CLI client id — the OAuth scope
+literally reads `grok-cli:access` — because xAI publishes no self-service client
+registration. It is a public client with no secret. Override it with
+`AGENTOS_XAI_OAUTH_CLIENT_ID` if you have your own registration.
+
+### Browser sign-in
+
+The Setup page shows which credential is in play but cannot run the login
+itself; the device-code flow is CLI-only for now. The card tells you the command
+to run.
 
 Without a reachable credential the tool is removed from the model's schema
 entirely. That is deliberate: every tool schema is fixed overhead on every
@@ -153,8 +188,17 @@ Common causes:
 ## Troubleshooting
 
 **The agent says it has no `x_search` tool.** No credential resolved. Check
-`agentos env list` for `XAI_API_KEY`, or that `[x_search] api_key` is set, and
-that `enabled` is not `false`.
+`agentos auth status`, `agentos env list` for `XAI_API_KEY`, or that
+`[x_search] api_key` is set, and that `enabled` is not `false`.
+
+**`xai_oauth_tier_denied`.** The OAuth grant is valid but xAI will not let the
+account use the API. Logging in again will not help — upgrade the subscription,
+or set `XAI_API_KEY` and use the key path.
+
+**The tool is offered but every call fails after a long break.** The stored
+refresh token was revoked or already used. AgentOS clears dead tokens when the
+refresh returns 400/401 so the next call fails locally instead of over the
+wire; run `agentos auth login xai` again.
 
 **`x_search is not enabled for this model`.** The configured `model` lacks
 access to xAI's server-side tool. Switch back to `grok-4.5` or another Grok

@@ -32,6 +32,7 @@ import {
   setupHeadline,
   stepStatus,
   STEPS,
+  type AuthStatus,
   type Catalog,
   type OnboardingStatus,
   type RouterConfigureParams,
@@ -138,6 +139,15 @@ export function SetupPage({
     queryFn: async () => {
       await rpc.waitForConnection()
       return (await rpc.call<OnboardingStatus>('onboarding.status')) ?? {}
+    },
+    enabled: !usesExternalSnapshot,
+    refetchOnWindowFocus: false,
+  })
+  const authQuery = useQuery<AuthStatus>({
+    queryKey: ['setup', 'auth'],
+    queryFn: async () => {
+      await rpc.waitForConnection()
+      return (await rpc.call<AuthStatus>('auth.status')) ?? {}
     },
     enabled: !usesExternalSnapshot,
     refetchOnWindowFocus: false,
@@ -686,6 +696,7 @@ export function SetupPage({
               catalog={catalog}
               status={status}
               config={config}
+              authStatus={authQuery.data ?? {}}
               saving={
                 writeBlocked ||
                 searchMutation.isPending ||

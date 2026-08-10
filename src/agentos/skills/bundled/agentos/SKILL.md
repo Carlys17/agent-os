@@ -114,6 +114,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `memory` | `status`, `index`, `list`, `search`, `show`, `embedding-download`, `raw-fallbacks …` |
 | `sandbox` | `status`, `on`, `bypass`, `full`, `reset` |
 | `search` | `list`, `status`, `query`, `configure` |
+| `auth` | `login xai`, `status`, `logout xai` — xAI OAuth (SuperGrok / X Premium+) for `x_search`; tokens in `~/.agentos/auth.json`, never printed |
 | `configure x-search` | xAI X (Twitter) search: `--api-key-env`, `--x-search-model`, `--x-search-reasoning-effort`, `--no-x-search-enabled`; catalog via `onboard catalog x-search` |
 | `cost` | usage and estimated cost report |
 | `diagnostics` | `status`, `on`, `off` |

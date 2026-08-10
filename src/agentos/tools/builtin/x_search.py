@@ -13,10 +13,13 @@ shapes do not compose, so this stays a distinct tool rather than a
 
 Credentials
 -----------
-An xAI API key only (``XAI_API_KEY`` by default). Hermes also accepts a
-SuperGrok / X Premium+ OAuth token; AgentOS has no OAuth subsystem, so that
-path is deliberately absent and ``credential_source`` is always ``"xai"``.
-Without a key the tool is hidden from the model's schema entirely — see
+Two paths, and SuperGrok / X Premium+ OAuth wins when both are present — it
+spends a subscription the user already pays for instead of API credit:
+
+1. OAuth via ``agentos auth login xai`` (``credential_source: "xai-oauth"``)
+2. ``XAI_API_KEY``, or a pasted key in config (``credential_source: "xai"``)
+
+With neither, the tool is hidden from the model's schema entirely — see
 :func:`x_search_available` and ``tools.policy_runtime``.
 
 Defensive output
@@ -157,7 +160,7 @@ def reset_x_search_runtime() -> None:
 
 
 def _resolve_api_key() -> str:
-    """Return the xAI bearer, preferring the pasted key over the environment."""
+    """Return the pasted key, else the one named by ``api_key_env``."""
     import os
 
     if _active_api_key:
@@ -166,18 +169,59 @@ def _resolve_api_key() -> str:
     return os.environ.get(env_name, "").strip()
 
 
+def _oauth_login_present() -> bool:
+    try:
+        from agentos.xai_oauth import has_oauth_credentials
+
+        return has_oauth_credentials()
+    except Exception:  # noqa: BLE001 - capability checks must never raise
+        return False
+
+
+async def _resolve_credential() -> tuple[str, str, str]:
+    """Return ``(bearer, base_url, source)``.
+
+    OAuth is tried first so a SuperGrok subscriber spends their subscription
+    rather than API credit. A *broken* OAuth login is reported rather than
+    skipped: falling through to an API key the user may not have would turn
+    "your xAI login expired" into "no credentials configured".
+    """
+    from agentos.xai_oauth import XaiOAuthError, resolve_oauth_bearer
+
+    try:
+        resolved = await resolve_oauth_bearer()
+    except XaiOAuthError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a store problem must not mask the key path
+        log.warning("x_search.oauth_resolve_failed", error_type=type(exc).__name__)
+        resolved = None
+
+    if resolved is not None:
+        access_token, oauth_base_url = resolved
+        return access_token, oauth_base_url, "xai-oauth"
+
+    api_key = _resolve_api_key()
+    if api_key:
+        return api_key, _active_base_url, "xai"
+    raise XaiOAuthError(
+        "No xAI credentials available. Run `agentos auth login xai` to use a "
+        "SuperGrok / X Premium+ subscription, or set XAI_API_KEY.",
+        code="xai_no_credentials",
+    )
+
+
 def x_search_available() -> bool:
     """Whether ``x_search`` has everything it needs to run.
 
-    Called every time the tool surface is rebuilt. A tool schema is fixed
-    overhead on every provider call, so a user with no xAI credential should
-    never pay for this one — returning ``False`` here removes it from the
-    model's schema rather than letting it fail at call time.
+    Called every time the tool surface is rebuilt, so it stays local: an
+    OAuth login counts as present without validating it over the network. A
+    revoked token surfaces as a call error, which is better than a tool that
+    disappears from the schema partway through a session.
     """
     if not _active_enabled:
         return False
     try:
-        return bool(_resolve_api_key())
+        return bool(_resolve_api_key()) or _oauth_login_present()
     except Exception:  # noqa: BLE001 - capability checks must never raise
         return False
 
@@ -341,6 +385,7 @@ def _failure(message: str, *, error_type: str = "ToolError") -> str:
 
 async def _post_with_retries(
     api_key: str,
+    base_url: str,
     payload: dict[str, Any],
     deadline: float,
 ) -> httpx.Response:
@@ -355,7 +400,7 @@ async def _post_with_retries(
             attempt_timeout = min(_active_timeout_seconds, remaining)
             try:
                 response = await client.post(
-                    f"{_active_base_url}/responses",
+                    f"{base_url}/responses",
                     headers={
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
@@ -492,12 +537,12 @@ async def x_search(
     if not query or not query.strip():
         return _failure("query is required for x_search")
 
-    api_key = _resolve_api_key()
-    if not api_key:
-        return _failure(
-            "No xAI credentials available. Set XAI_API_KEY in ~/.agentos/.env or "
-            "configure x_search.api_key."
-        )
+    from agentos.xai_oauth import XaiOAuthError
+
+    try:
+        api_key, base_url, credential_source = await _resolve_credential()
+    except XaiOAuthError as exc:
+        return _failure(str(exc), error_type=exc.code)
 
     try:
         allowed = _normalize_handles(allowed_x_handles, "allowed_x_handles")
@@ -529,7 +574,7 @@ async def x_search(
 
     deadline = time.monotonic() + _active_total_timeout_seconds
     try:
-        response = await _post_with_retries(api_key, payload, deadline)
+        response = await _post_with_retries(api_key, base_url, payload, deadline)
         data = response.json()
     except httpx.HTTPStatusError as exc:
         log.warning("x_search.failed", status=exc.response.status_code)
@@ -555,7 +600,7 @@ async def x_search(
         {
             "success": True,
             "provider": "xai",
-            "credential_source": "xai",
+            "credential_source": credential_source,
             "tool": "x_search",
             "model": _active_model,
             "query": query.strip(),

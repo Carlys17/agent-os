@@ -49,6 +49,7 @@ import {
   resolveJudgeModelParam,
   routerMode,
   searchStatusText,
+  xSearchCredentialText,
   setupHeadline,
   setupStepForSection,
   shellArg,
@@ -339,6 +340,20 @@ describe('credentialNeedList / memoryNeedList (setup.js:333-353)', () => {
 })
 
 describe('capability status text (setup.js:977-1058)', () => {
+  it('xSearchCredentialText names the credential that actually wins', () => {
+    // OAuth beats an API key at call time, so a configured key must not be
+    // reported as the thing in use while a subscription login exists.
+    expect(xSearchCredentialText({ xai: { logged_in: true, has_refresh_token: true } }, {})).toBe(
+      'Signed in to xAI — x_search will use that subscription.',
+    )
+    expect(xSearchCredentialText({ xai: { logged_in: true, has_refresh_token: false } }, {})).toBe(
+      'Signed in to xAI, but the login has no refresh token. Sign in again.',
+    )
+    expect(xSearchCredentialText({}, {})).toContain('XAI_API_KEY')
+    expect(xSearchCredentialText({}, { x_search: { api_key_env: 'MY_KEY' } })).toContain('MY_KEY')
+    expect(xSearchCredentialText({}, {})).toContain('agentos auth login xai')
+  })
+
   it('searchStatusText branches', () => {
     expect(searchStatusText({}, {})).toBe('Web search is off until a provider is selected.')
     expect(searchStatusText({ searchConfigured: true }, { search_provider: 'brave' })).toBe(

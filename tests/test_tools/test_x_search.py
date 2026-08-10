@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -84,7 +85,11 @@ class _Recorder:
 
 
 @pytest.fixture(autouse=True)
-def _clean_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clean_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Point the OAuth store at an empty temp file. Without this the tests read
+    # the developer's real ~/.agentos/auth.json, and a machine that happens to
+    # be logged in to xAI would take the OAuth branch instead of the key path.
+    monkeypatch.setenv("AGENTOS_AUTH_STORE", str(tmp_path / "auth.json"))
     monkeypatch.setenv(ENV_KEY, FAKE_KEY)
     x_search_mod.reset_x_search_runtime()
     yield
@@ -555,6 +560,98 @@ class TestConfiguration:
         monkeypatch.setenv(ENV_KEY, FAKE_KEY)
         x_search_mod.configure_x_search(_Cfg(enabled=False))
         assert x_search_mod.x_search_available() is False
+
+
+class TestCredentialSelection:
+    """OAuth wins over an API key: it spends a subscription the user already has."""
+
+    @staticmethod
+    def _login(monkeypatch: pytest.MonkeyPatch, token: str = "oauth-access-token") -> None:
+        from agentos import xai_oauth
+
+        async def _resolve(**_kwargs: Any) -> tuple[str, str]:
+            return token, "https://api.x.ai/v1"
+
+        monkeypatch.setattr(xai_oauth, "resolve_oauth_bearer", _resolve)
+
+    @pytest.mark.asyncio
+    async def test_oauth_is_preferred_over_the_api_key(
+        self, answered: _Recorder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._login(monkeypatch)
+        result = await _call(query="grok")
+        assert result["credential_source"] == "xai-oauth"
+        assert answered.requests[-1]["headers"]["Authorization"] == "Bearer oauth-access-token"
+
+    @pytest.mark.asyncio
+    async def test_the_api_key_is_used_when_no_login_exists(
+        self, answered: _Recorder
+    ) -> None:
+        result = await _call(query="grok")
+        assert result["credential_source"] == "xai"
+        assert answered.requests[-1]["headers"]["Authorization"] == f"Bearer {FAKE_KEY}"
+
+    @pytest.mark.asyncio
+    async def test_a_broken_login_is_reported_rather_than_skipped(
+        self, answered: _Recorder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Falling back would turn "your login expired" into "no credentials"."""
+        from agentos import xai_oauth
+
+        async def _resolve(**_kwargs: Any) -> tuple[str, str]:
+            raise xai_oauth.XaiOAuthError(
+                "xAI refused this OAuth account for API access (HTTP 403).",
+                code="xai_oauth_tier_denied",
+            )
+
+        monkeypatch.setattr(xai_oauth, "resolve_oauth_bearer", _resolve)
+        result = await _call(query="grok")
+        assert result["success"] is False
+        assert result["error_type"] == "xai_oauth_tier_denied"
+        assert answered.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_the_oauth_base_url_overrides_the_configured_one(
+        self, answered: _Recorder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The bearer belongs to the OAuth origin, not to x_search.base_url."""
+        from agentos import xai_oauth
+
+        async def _resolve(**_kwargs: Any) -> tuple[str, str]:
+            return "oauth-token", "https://staging.x.ai/v1"
+
+        monkeypatch.setattr(xai_oauth, "resolve_oauth_bearer", _resolve)
+        monkeypatch.setattr(x_search_mod, "_active_base_url", "https://proxy.example.test/v1")
+        await _call(query="grok")
+        assert answered.requests[-1]["url"] == "https://staging.x.ai/v1/responses"
+
+    def test_a_stored_login_alone_makes_the_tool_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from agentos import xai_oauth
+
+        monkeypatch.delenv(ENV_KEY, raising=False)
+        x_search_mod.reset_x_search_runtime()
+        assert x_search_mod.x_search_available() is False
+
+        xai_oauth.write_oauth_state({"tokens": {"refresh_token": "r-1"}})
+        assert x_search_mod.x_search_available() is True
+
+    def test_availability_never_makes_a_request(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """It runs on every tool-surface rebuild; a network call there is a per-turn cost."""
+        from agentos import xai_oauth
+
+        monkeypatch.delenv(ENV_KEY, raising=False)
+        xai_oauth.write_oauth_state({"tokens": {"refresh_token": "r-1"}})
+
+        def _explode(**_kwargs: Any) -> None:
+            raise AssertionError("availability must not open a client")
+
+        monkeypatch.setattr(xai_oauth.httpx, "AsyncClient", _explode)
+        monkeypatch.setattr(xai_oauth.httpx, "Client", _explode)
+        assert x_search_mod.x_search_available() is True
 
 
 class TestToolVisibility:

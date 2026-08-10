@@ -67,6 +67,19 @@ export interface ChannelSpec {
   [key: string]: unknown
 }
 
+/** auth.status response. Token values are never included. */
+export interface AuthStatus {
+  xai?: {
+    loggedIn?: boolean
+    logged_in?: boolean
+    expires_at?: string | null
+    expiring_soon?: boolean
+    has_refresh_token?: boolean
+    [key: string]: unknown
+  }
+  [key: string]: unknown
+}
+
 /** onboarding.catalog response. */
 export interface Catalog {
   providers?: ProviderSpec[]
@@ -641,6 +654,25 @@ export function searchStatusText(status: OnboardingStatus, config: SetupConfig):
     )
   }
   return t('setup.searchNeedsKey')
+}
+
+/**
+ * Which xAI credential x_search will actually use.
+ *
+ * OAuth wins over an API key at call time, so the card has to say which one is
+ * in play — "you have a key configured" is misleading when a SuperGrok login is
+ * quietly taking precedence.
+ */
+export function xSearchCredentialText(auth: AuthStatus, config: SetupConfig): string {
+  const xai = auth.xai || {}
+  const loggedIn = xai.loggedIn === true || xai.logged_in === true
+  if (loggedIn) {
+    return xai.has_refresh_token === false
+      ? t('setup.xSearchOauthIncomplete')
+      : t('setup.xSearchOauthActive')
+  }
+  const envKey = config.x_search?.api_key_env || 'XAI_API_KEY'
+  return t('setup.xSearchOauthAbsent', { envKey })
 }
 
 /** setup.js:994-1012 — image generation status text. */

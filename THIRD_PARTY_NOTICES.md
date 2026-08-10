@@ -289,8 +289,14 @@ SOFTWARE.
   - `src/agentos/tools/builtin/x_search.py` — adapted from
     `tools/x_search_tool.py`. The tool's request shape, client-side date
     validation, citation extraction, and degraded-result semantics follow the
-    upstream implementation; the credential path, HTTP client, retry budgeting,
-    and AgentOS wiring are original.
+    upstream implementation; the HTTP client, retry budgeting, and AgentOS
+    wiring are original.
+  - `src/agentos/xai_oauth.py` — adapted from the xAI OAuth section of
+    `hermes_cli/auth.py`. The device-code flow, OIDC discovery, endpoint and
+    inference-origin pinning, refresh-skew heuristics, tier-denial (HTTP 403)
+    handling, and dead-token quarantine follow the upstream implementation;
+    the token store, async refresh path, and network-free availability check
+    are original.
   - Cron prompt-injection scanner reference material (reviewed, not copied).
 - Upstream project: https://github.com/NousResearch/hermes-agent
 - License: MIT

@@ -435,6 +435,34 @@ describe('SetupPage', () => {
     expect(params).not.toHaveProperty('apiKey')
   })
 
+  it('x search card reports which xAI credential is in play', async () => {
+    mockRpc.call.mockImplementation((method: string) => {
+      if (method === 'onboarding.catalog') return Promise.resolve(CATALOG)
+      if (method === 'onboarding.status') return Promise.resolve(statusFor())
+      if (method === 'config.get') return Promise.resolve(CONFIG)
+      if (method === 'auth.status')
+        return Promise.resolve({ xai: { logged_in: true, has_refresh_token: true } })
+      if (method === 'doctor.memory.status') return Promise.resolve(null)
+      return Promise.resolve({})
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Setup')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /^Capabilities:/ }))
+    await waitFor(() =>
+      expect(
+        screen.getByText('Signed in to xAI — x_search will use that subscription.'),
+      ).toBeInTheDocument(),
+    )
+  })
+
+  it('x search card falls back to the api key hint when not signed in', async () => {
+    wireCalls()
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Setup')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /^Capabilities:/ }))
+    await waitFor(() => expect(screen.getByText(/agentos auth login xai/)).toBeInTheDocument())
+  })
+
   it('switching search provider re-seeds api_key_env to the new provider envKey', async () => {
     wireCalls()
     renderPage()

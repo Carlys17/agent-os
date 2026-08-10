@@ -32,6 +32,8 @@ import {
   memoryNeedList,
   memorySettingsOverBudget,
   searchStatusText,
+  xSearchCredentialText,
+  type AuthStatus,
   type CapabilityField,
   type Catalog,
   type OnboardingStatus,
@@ -277,11 +279,13 @@ const X_SEARCH_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
 function XSearchCard({
   catalog,
   config,
+  authStatus,
   onSave,
   saving,
 }: {
   catalog: Catalog
   config: SetupConfig
+  authStatus: AuthStatus
   onSave: (params: Record<string, unknown>) => void
   saving: boolean
 }) {
@@ -325,6 +329,7 @@ function XSearchCard({
         <h3 className="t-label">{t('setup.xSearchTitle')}</h3>
       </div>
       <p className="setup-muted">{t('setup.xSearchHint')}</p>
+      <p className="setup-muted">{xSearchCredentialText(authStatus, config)}</p>
       <NeedList
         items={credentialNeedList(spec.whatYouNeed, apiKeyEnv || envKey)}
         label={t('setup.xSearchNeeds')}
@@ -1090,6 +1095,7 @@ export function ExtrasSection({
   catalog,
   status,
   config,
+  authStatus,
   onSaveSearch,
   onSaveXSearch,
   onSaveMemory,
@@ -1106,6 +1112,7 @@ export function ExtrasSection({
   catalog: Catalog
   status: OnboardingStatus
   config: SetupConfig
+  authStatus: AuthStatus
   onSaveSearch: (params: Record<string, unknown>) => void
   onSaveXSearch: (params: Record<string, unknown>) => void
   onSaveMemory: (params: Record<string, unknown>) => void
@@ -1145,6 +1152,7 @@ export function ExtrasSection({
             key={`x-search:${resetVersions.xSearch}`}
             catalog={catalog}
             config={config}
+            authStatus={authStatus}
             onSave={onSaveXSearch}
             saving={saving || conflicts.xSearch}
           />
