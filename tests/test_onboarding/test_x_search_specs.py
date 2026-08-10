@@ -64,6 +64,9 @@ def test_the_section_is_reachable_by_each_alias() -> None:
         assert setup_catalog_payload(alias) == {"xSearch": x_search_catalog_payload()}
 
 
-def test_oauth_is_called_out_as_unsupported() -> None:
-    """Hermes Agent accepts SuperGrok OAuth; arriving from its docs should not confuse."""
-    assert any("OAuth" in line for line in get_x_search_setup_spec().what_you_need)
+def test_both_credential_paths_are_offered() -> None:
+    """The card is the only place a key-only user learns the login exists."""
+    needs = " ".join(get_x_search_setup_spec().what_you_need)
+    assert X_SEARCH_ENV_KEY in needs
+    assert "agentos auth login xai" in needs
+    assert "preferred" in needs

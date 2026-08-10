@@ -143,13 +143,18 @@ export function SetupPage({
     enabled: !usesExternalSnapshot,
     refetchOnWindowFocus: false,
   })
+  // Deliberately not gated on `usesExternalSnapshot`. Provider logins are not
+  // part of the config snapshot: they carry no revision, are never edited
+  // through a config commit, and so have no coherency requirement with it.
+  // Gating this the way the config reads are gated left the embedded Settings
+  // workspace — which is how the real app mounts this page — reporting every
+  // signed-in user as signed out.
   const authQuery = useQuery<AuthStatus>({
     queryKey: ['setup', 'auth'],
     queryFn: async () => {
       await rpc.waitForConnection()
       return (await rpc.call<AuthStatus>('auth.status')) ?? {}
     },
-    enabled: !usesExternalSnapshot,
     refetchOnWindowFocus: false,
   })
   const configQuery = useQuery<SetupConfig>({

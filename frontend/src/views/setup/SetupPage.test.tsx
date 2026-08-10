@@ -463,6 +463,28 @@ describe('SetupPage', () => {
     await waitFor(() => expect(screen.getByText(/agentos auth login xai/)).toBeInTheDocument())
   })
 
+  it('reads the xAI login even when mounted from a Settings snapshot', async () => {
+    // How the real app mounts this page. Provider logins are not part of the
+    // config snapshot, so gating that read alongside the config reads made
+    // every signed-in user render as signed out.
+    mockRpc.call.mockImplementation((method: string) => {
+      if (method === 'auth.status')
+        return Promise.resolve({ xai: { logged_in: true, has_refresh_token: true } })
+      if (method === 'doctor.memory.status') return Promise.resolve(null)
+      return Promise.resolve({})
+    })
+    renderPage({
+      embedded: true,
+      externalSnapshot: { catalog: CATALOG, status: statusFor(), config: CONFIG },
+    })
+    await waitFor(() =>
+      expect(
+        screen.getByText('Signed in to xAI — x_search will use that subscription.'),
+      ).toBeInTheDocument(),
+    )
+    expect(mockRpc.call.mock.calls.map((c: unknown[]) => c[0])).toContain('auth.status')
+  })
+
   it('switching search provider re-seeds api_key_env to the new provider envKey', async () => {
     wireCalls()
     renderPage()
