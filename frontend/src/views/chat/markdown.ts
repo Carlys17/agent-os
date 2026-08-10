@@ -123,6 +123,32 @@ function fallbackRender(text: string): string {
   return html.replace(/\n\n/g, '<br><br>')
 }
 
+/**
+ * Send external links to a new tab.
+ *
+ * The transcript is a long-lived surface: following a link in place unmounts
+ * the chat and loses the scroll position and any in-flight turn. Assistant
+ * markdown is untrusted, so this runs before the final sanitize pass and
+ * touches only http(s) hrefs — in-page anchors and app-relative paths keep
+ * their default behaviour.
+ */
+function openExternalLinksInNewTab(html: string): string {
+  const template = document.createElement('template')
+  template.innerHTML = html
+  for (const anchor of template.content.querySelectorAll('a[href]')) {
+    if (!/^https?:/i.test(anchor.getAttribute('href') || '')) {
+      // Anything the model wrote itself is not trusted to pick a browsing
+      // context — only the branch below gets to set one.
+      anchor.removeAttribute('target')
+      continue
+    }
+    anchor.setAttribute('target', '_blank')
+    // noopener also blunts reverse-tabnabbing from a link the model wrote.
+    anchor.setAttribute('rel', 'noreferrer noopener')
+  }
+  return template.innerHTML
+}
+
 /** Render untrusted assistant Markdown to sanitized terminal-chat HTML. */
 export function render(text: string): string {
   if (!text) return ''
@@ -134,9 +160,12 @@ export function render(text: string): string {
     html = wrapCodeBlocks(html)
     html = markInlineCode(html)
     html = restoreMath(html, stash)
+    html = openExternalLinksInNewTab(html)
     // The transforms above add only controlled markup, but sanitize the final
     // result as the last operation so every innerHTML call receives clean HTML.
-    return String(DOMPurify.sanitize(html))
+    // `target` is allowed through because the pass above is what sets it, and
+    // strips any the model tried to choose for itself.
+    return String(DOMPurify.sanitize(html, { ADD_ATTR: ['target'] }))
   } catch {
     return fallbackRender(text)
   }

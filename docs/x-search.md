@@ -45,8 +45,8 @@ For a caller that cannot hold a terminal open for minutes — a chat agent, a
 script — the same flow splits in two:
 
 ```sh
-agentos auth login xai --no-wait --json   # -> loginId, verificationUri, userCode
-agentos auth login xai --resume --json    # exit 0 done, 3 not yet, 1 failed
+agentos auth login xai --no-wait --json 2>/dev/null   # -> loginId, verificationUri, userCode
+agentos auth login xai --resume --json 2>/dev/null    # exit 0 done, 3 not yet, 1 failed
 ```
 
 `--resume` picks the newest pending login unless given `--login-id`. Pending

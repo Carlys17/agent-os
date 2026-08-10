@@ -1,6 +1,6 @@
 ---
 name: agentos
-description: "Operate and configure AgentOS itself: the `agentos` CLI, agentos.toml, gateway/Web UI, providers and models, skills, channels, sessions, cron, sandbox, and memory. Use when: (1) the user asks to change an AgentOS setting (model, provider, router tier, auth, channels, search), (2) starting, stopping, or debugging the gateway or Web UI, (3) installing, updating, or removing skills and taps, (4) inspecting sessions, usage/cost, cron jobs, or diagnostics, (5) migrating from another agent runtime. NOT for: authoring new skills (see docs/features/skills.md), operating other agent CLIs, or modifying AgentOS source code."
+description: "Operate and configure AgentOS itself: the `agentos` CLI, agentos.toml, gateway/Web UI, providers and models, web search, X (Twitter) search via xAI (`x_search`; SuperGrok login or XAI_API_KEY), skills, channels, sessions, cron, sandbox, and memory. Use when: (1) the user asks to change an AgentOS setting or turn a capability on (model, provider, router tier, auth/login, channels, search), (2) starting, stopping, or debugging the gateway or Web UI, (3) installing, updating, or removing skills and taps, (4) inspecting sessions, usage/cost, cron jobs, or diagnostics, (5) migrating from another agent runtime. NOT for: authoring new skills (see docs/features/skills.md), operating other agent CLIs, or modifying AgentOS source code."
 always: false
 triggers:
   - agentos
@@ -12,6 +12,11 @@ triggers:
   - "install skill"
   - onboard
   - doctor
+  - x search
+  - x_search
+  - twitter
+  - xai
+  - supergrok
 provenance:
   origin: agentos-original
   license: MIT
@@ -206,6 +211,21 @@ agentos configure                                                     # interact
 agentos gateway restart                                               # apply to a running gateway
 ```
 
+### Enable X (Twitter) search
+
+`x_search` searches X posts through xAI and returns a synthesized answer with
+citations. It is **hidden from your own tool list until a credential resolves**,
+so if you cannot see it, that is why — say so and offer one of these:
+
+```sh
+agentos auth status                       # is a SuperGrok / X Premium+ login stored?
+agentos configure x-search --api-key-env XAI_API_KEY   # or use an xAI API key
+```
+
+A subscription login is preferred over a key when both exist. The Web UI has
+the same controls under Capabilities. Billing goes to the user's xAI account
+and does not appear in `agentos cost`.
+
 ### Sign the user in to xAI (SuperGrok / X Premium+) from a conversation
 
 Enables `x_search` without an API key. Never run the plain `agentos auth login
@@ -213,16 +233,20 @@ xai`: it blocks polling for up to 30 minutes and will hit the tool timeout
 before the user can approve. Use the split form.
 
 ```sh
-agentos auth login xai --no-wait --json   # -> loginId, verificationUri, userCode
+agentos auth login xai --no-wait --json 2>/dev/null   # -> loginId, verificationUri, userCode
 ```
+
+**Keep the `2>/dev/null`.** Every `agentos` invocation writes startup logs to
+stderr, and merged into the result they bury the one line that matters — the
+JSON. With stderr dropped the output is a single object you can read reliably.
 
 Give the user the `verificationUri` and the `userCode`, then **wait for them to
 say they have approved it**. Do not poll in a loop — approval is human-paced,
 and each check costs a turn.
 
 ```sh
-agentos auth login xai --resume --json    # exit 0 done, 3 not yet, 1 failed/expired
-agentos auth status --json                # confirm; never prints a token
+agentos auth login xai --resume --json 2>/dev/null    # exit 0 done, 3 not yet, 1 failed/expired
+agentos auth status --json 2>/dev/null                # confirm; never prints a token
 ```
 
 Exit 3 means keep waiting, not an error. On exit 1 the code expired — start

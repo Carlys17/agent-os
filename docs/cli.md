@@ -331,8 +331,8 @@ agentos auth login xai      # device-code flow; preferred over XAI_API_KEY
 agentos auth status         # never prints a token
 agentos auth logout xai
 
-agentos auth login xai --no-wait --json   # start, print link + code, exit
-agentos auth login xai --resume --json    # exit 0 done, 3 not yet, 1 failed
+agentos auth login xai --no-wait --json 2>/dev/null   # start, print link + code, exit
+agentos auth login xai --resume --json 2>/dev/null    # exit 0 done, 3 not yet, 1 failed
 ```
 
 ```sh
