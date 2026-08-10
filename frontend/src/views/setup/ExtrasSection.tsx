@@ -304,6 +304,7 @@ function XaiLoginButton({ disabled, signedIn }: { disabled: boolean; signedIn: b
   const [phase, setPhase] = useState<'idle' | 'starting' | 'awaiting' | 'error'>('idle')
   const [login, setLogin] = useState<XaiPendingLogin | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
+  const [errorAction, setErrorAction] = useState<'signIn' | 'signOut'>('signIn')
 
   // Survives unmount mid-flight: a resolved poll must not setState on a card
   // the operator has already navigated away from.
@@ -315,12 +316,16 @@ function XaiLoginButton({ disabled, signedIn }: { disabled: boolean; signedIn: b
     }
   }, [])
 
-  const fail = (message: string) => {
+  const fail = (message: string, action: 'signIn' | 'signOut' = 'signIn') => {
     if (cancelled.current) return
     setPhase('error')
     setErrorMessage(message)
+    setErrorAction(action)
     setLogin(null)
   }
+
+  const errorLabel = () =>
+    errorAction === 'signOut' ? t('setup.xSearchSignOutFailed') : t('setup.xSearchLoginFailed')
 
   const poll = async (pending: XaiPendingLogin, wait: number) => {
     await new Promise((resolve) => window.setTimeout(resolve, wait * 1000))
@@ -354,7 +359,7 @@ function XaiLoginButton({ disabled, signedIn }: { disabled: boolean; signedIn: b
       await queryClient.invalidateQueries({ queryKey: ['setup', 'auth'] })
       toast.info(t('setup.xSearchSignOutDone'), { id: 'setup-xai-login' })
     } catch (err) {
-      fail(err instanceof Error ? err.message : String(err))
+      fail(err instanceof Error ? err.message : String(err), 'signOut')
     }
   }
 
@@ -423,7 +428,7 @@ function XaiLoginButton({ disabled, signedIn }: { disabled: boolean; signedIn: b
         </Button>
         {phase === 'error' ? (
           <p className="setup-muted">
-            {t('setup.xSearchLoginFailed')} {errorMessage}
+            {errorLabel()} {errorMessage}
           </p>
         ) : null}
       </div>
@@ -442,7 +447,7 @@ function XaiLoginButton({ disabled, signedIn }: { disabled: boolean; signedIn: b
       </Button>
       {phase === 'error' ? (
         <p className="setup-muted">
-          {t('setup.xSearchLoginFailed')} {errorMessage}
+          {errorLabel()} {errorMessage}
         </p>
       ) : null}
     </div>

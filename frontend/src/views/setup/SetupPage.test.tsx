@@ -551,6 +551,28 @@ describe('SetupPage', () => {
     expect(screen.getByRole('button', { name: 'Sign in with xAI' })).toBeEnabled()
   })
 
+  it('a failed sign-out is not reported as a failed sign-in', async () => {
+    // Both paths shared one label, so a stale gateway rejecting the logout RPC
+    // told the operator their sign-in had failed.
+    mockRpc.call.mockImplementation((method: string) => {
+      if (method === 'onboarding.catalog') return Promise.resolve(CATALOG)
+      if (method === 'onboarding.status') return Promise.resolve(statusFor())
+      if (method === 'config.get') return Promise.resolve(CONFIG)
+      if (method === 'auth.status')
+        return Promise.resolve({ xai: { logged_in: true, has_refresh_token: true } })
+      if (method === 'auth.xai.logout')
+        return Promise.reject(new Error('Method not found: auth.xai.logout'))
+      return Promise.resolve({})
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Setup')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /^Capabilities:/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out of xAI' }))
+
+    await waitFor(() => expect(screen.getByText(/Sign-out failed:/)).toBeInTheDocument())
+    expect(screen.queryByText(/Sign-in failed:/)).not.toBeInTheDocument()
+  })
+
   it('switching search provider re-seeds api_key_env to the new provider envKey', async () => {
     wireCalls()
     renderPage()

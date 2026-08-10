@@ -248,6 +248,7 @@ export const setup = defineNamespace('setup', {
   xSearchLoginDone: 'Signed in to xAI.',
   xSearchLoginExpired: 'The sign-in code expired. Start again.',
   xSearchLoginFailed: 'Sign-in failed:',
+  xSearchSignOutFailed: 'Sign-out failed:',
   xSearchSave: 'Save X Search',
 
   // Memory embedding card.
