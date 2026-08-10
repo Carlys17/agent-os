@@ -79,8 +79,12 @@ registration. It is a public client with no secret. Override it with
 
 The Setup page can run the same flow: **Capabilities → X (Twitter) search →
 Sign in with xAI**. It shows the approval link and the code, then polls until
-you approve. The card also reports which credential is currently in play, so a
-key configured alongside a login does not look like the one being used.
+you approve. Once signed in the same control becomes **Sign out of xAI**. The
+card reports which credential is currently in play, so a key configured
+alongside a login does not look like the one being used.
+
+Signing out only forgets the local tokens; nothing is revoked at xAI, and
+`x_search` falls back to `XAI_API_KEY` if one is set.
 
 Without a reachable credential the tool is removed from the model's schema
 entirely. That is deliberate: every tool schema is fixed overhead on every

@@ -50,6 +50,7 @@ import {
   routerMode,
   searchStatusText,
   xSearchCredentialText,
+  xSearchSignedIn,
   setupHeadline,
   setupStepForSection,
   shellArg,
@@ -340,6 +341,13 @@ describe('credentialNeedList / memoryNeedList (setup.js:333-353)', () => {
 })
 
 describe('capability status text (setup.js:977-1058)', () => {
+  it('xSearchSignedIn accepts either casing the gateway might send', () => {
+    expect(xSearchSignedIn({ xai: { logged_in: true } })).toBe(true)
+    expect(xSearchSignedIn({ xai: { loggedIn: true } })).toBe(true)
+    expect(xSearchSignedIn({ xai: { logged_in: false } })).toBe(false)
+    expect(xSearchSignedIn({})).toBe(false)
+  })
+
   it('xSearchCredentialText names the credential that actually wins', () => {
     // OAuth beats an API key at call time, so a configured key must not be
     // reported as the thing in use while a subscription login exists.

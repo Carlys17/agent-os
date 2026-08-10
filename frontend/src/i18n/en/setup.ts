@@ -237,6 +237,8 @@ export const setup = defineNamespace('setup', {
   xSearchOauthAbsent:
     'Not signed in to xAI. Using {envKey} if set. Sign in below to use a SuperGrok / X Premium+ subscription instead.',
   xSearchSignIn: 'Sign in with xAI',
+  xSearchSignOut: 'Sign out of xAI',
+  xSearchSignOutDone: 'Signed out of xAI. x_search will fall back to XAI_API_KEY if set.',
   xSearchLoginStarting: 'Starting sign-in…',
   xSearchLoginPending: 'xAI sign-in in progress',
   xSearchLoginWaiting: 'Waiting for you to approve this device on xAI.',

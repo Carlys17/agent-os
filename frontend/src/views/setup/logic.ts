@@ -677,9 +677,15 @@ export function searchStatusText(status: OnboardingStatus, config: SetupConfig):
  * in play — "you have a key configured" is misleading when a SuperGrok login is
  * quietly taking precedence.
  */
+/** Whether a SuperGrok / X Premium+ login is stored. */
+export function xSearchSignedIn(auth: AuthStatus): boolean {
+  const xai = auth.xai || {}
+  return xai.loggedIn === true || xai.logged_in === true
+}
+
 export function xSearchCredentialText(auth: AuthStatus, config: SetupConfig): string {
   const xai = auth.xai || {}
-  const loggedIn = xai.loggedIn === true || xai.logged_in === true
+  const loggedIn = xSearchSignedIn(auth)
   if (loggedIn) {
     return xai.has_refresh_token === false
       ? t('setup.xSearchOauthIncomplete')

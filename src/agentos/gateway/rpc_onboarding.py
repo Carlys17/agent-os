@@ -321,6 +321,14 @@ async def _auth_status(params: Any, ctx: RpcContext) -> dict[str, Any]:
     return {"xai": oauth_status()}
 
 
+@_d.method("auth.xai.logout")
+async def _auth_xai_logout(params: Any, ctx: RpcContext) -> dict[str, Any]:
+    """Forget the stored xAI login. Local only — nothing is revoked at xAI."""
+    from agentos.xai_oauth import clear_oauth_state
+
+    return {"cleared": clear_oauth_state()}
+
+
 @_d.method("auth.xai.login.start")
 async def _auth_xai_login_start(params: Any, ctx: RpcContext) -> dict[str, Any]:
     """Begin a device-code login and return what the operator has to approve.

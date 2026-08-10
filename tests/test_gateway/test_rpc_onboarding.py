@@ -768,6 +768,22 @@ async def test_search_configure_accepts_webui_string_max_results(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_xai_logout_clears_the_stored_login(tmp_path, monkeypatch):
+    from agentos import xai_oauth
+
+    monkeypatch.setenv("AGENTOS_AUTH_STORE", str(tmp_path / "auth.json"))
+    xai_oauth.write_oauth_state({"tokens": {"refresh_token": "r-1"}})
+
+    first = await get_dispatcher().dispatch("r1", "auth.xai.logout", {}, _admin_ctx())
+    second = await get_dispatcher().dispatch("r2", "auth.xai.logout", {}, _admin_ctx())
+
+    assert first.payload == {"cleared": True}
+    # Idempotent: a double click must not read as a failure.
+    assert second.payload == {"cleared": False}
+    assert xai_oauth.has_oauth_credentials() is False
+
+
+@pytest.mark.asyncio
 async def test_xai_login_start_returns_only_what_the_operator_must_approve(monkeypatch):
     from agentos import xai_oauth
 

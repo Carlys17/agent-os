@@ -36,6 +36,7 @@ import {
   memorySettingsOverBudget,
   searchStatusText,
   xSearchCredentialText,
+  xSearchSignedIn,
   type AuthStatus,
   type CapabilityField,
   type Catalog,
@@ -297,7 +298,7 @@ function pollDelay(interval: number | undefined, fallback: number): number {
  * It also lives outside XSearchCard on purpose — that component binds a state
  * setter named `setTimeout`, which shadows the global this polling needs.
  */
-function XaiLoginButton({ disabled }: { disabled: boolean }) {
+function XaiLoginButton({ disabled, signedIn }: { disabled: boolean; signedIn: boolean }) {
   const rpc = useRpc()
   const queryClient = useQueryClient()
   const [phase, setPhase] = useState<'idle' | 'starting' | 'awaiting' | 'error'>('idle')
@@ -341,6 +342,17 @@ function XaiLoginButton({ disabled }: { disabled: boolean }) {
         return
       }
       void poll(pending, pollDelay(result?.interval, pending.interval))
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const signOut = async () => {
+    try {
+      await rpc.call('auth.xai.logout')
+      if (cancelled.current) return
+      await queryClient.invalidateQueries({ queryKey: ['setup', 'auth'] })
+      toast.info(t('setup.xSearchSignOutDone'), { id: 'setup-xai-login' })
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err))
     }
@@ -392,6 +404,28 @@ function XaiLoginButton({ disabled }: { disabled: boolean }) {
         >
           {t('setup.xSearchLoginCancel')}
         </Button>
+      </div>
+    )
+  }
+
+  // Offering "Sign in" to someone already signed in is the wrong control and
+  // reads as though the login did not take.
+  if (signedIn) {
+    return (
+      <div>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled || phase === 'starting'}
+          onClick={() => void signOut()}
+        >
+          {t('setup.xSearchSignOut')}
+        </Button>
+        {phase === 'error' ? (
+          <p className="setup-muted">
+            {t('setup.xSearchLoginFailed')} {errorMessage}
+          </p>
+        ) : null}
       </div>
     )
   }
@@ -476,7 +510,7 @@ function XSearchCard({
         label={t('setup.xSearchNeeds')}
       />
       <p className="setup-muted">{xSearchCredentialText(authStatus, config)}</p>
-      <XaiLoginButton disabled={saving} />
+      <XaiLoginButton disabled={saving} signedIn={xSearchSignedIn(authStatus)} />
       <SetupCheckbox
         ariaLabel={t('setup.xSearchEnabledAria')}
         checked={enabled}
