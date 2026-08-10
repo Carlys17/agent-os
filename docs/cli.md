@@ -18,7 +18,7 @@ agentos <command> --help
 | `agentos upgrade` | Upgrade AgentOS and restart the managed gateway to match. |
 | `agentos doctor` | Diagnose readiness and print recovery steps. |
 | `agentos onboard` | Run or inspect first-run setup. |
-| `agentos configure` | Reconfigure provider, router, channels, search, image generation, or memory embedding. |
+| `agentos configure` | Reconfigure provider, router, channels, search, x-search, image generation, or memory embedding. |
 | `agentos gateway` | Run and manage the gateway server. |
 | `agentos chat` | Start interactive terminal chat. |
 | `agentos agent` | Run a single automation-friendly agent turn. |
@@ -321,6 +321,18 @@ agentos search configure duckduckgo
 agentos search query "latest AgentOS release"
 agentos configure search --search-provider duckduckgo
 ```
+
+X (Twitter) search — a separate xAI-backed tool, not a `web_search` backend:
+
+```sh
+agentos onboard catalog x-search
+agentos configure x-search --api-key-env XAI_API_KEY
+agentos configure x-search --x-search-model grok-4.5 --x-search-reasoning-effort low
+agentos configure x-search --no-x-search-enabled
+```
+
+The `x_search` tool stays hidden from the agent until an xAI credential is
+reachable. See [`x-search.md`](x-search.md).
 
 Channels:
 

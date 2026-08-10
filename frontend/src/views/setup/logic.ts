@@ -71,6 +71,8 @@ export interface ChannelSpec {
 export interface Catalog {
   providers?: ProviderSpec[]
   searchProviders?: ProviderSpec[]
+  /** One-row list: the catalog is uniform, and the CLI renderer walks rows. */
+  xSearch?: ProviderSpec[]
   imageGenerationProviders?: ProviderSpec[]
   audioProviders?: ProviderSpec[]
   memoryEmbeddingProviders?: ProviderSpec[]
@@ -188,6 +190,17 @@ export interface SetupConfig {
   search_use_env_proxy?: boolean
   search_fallback_policy?: string
   search_diagnostics?: boolean
+  x_search?: {
+    enabled?: boolean
+    model?: string
+    base_url?: string
+    api_key_env?: string
+    reasoning_effort?: string
+    timeout_seconds?: number
+    total_timeout_seconds?: number
+    retries?: number
+    [key: string]: unknown
+  }
   image_generation?: { providers?: Record<string, Record<string, unknown>>; [key: string]: unknown }
   audio?: {
     enabled?: boolean
@@ -932,6 +945,25 @@ export function buildSearchConfigureParams(
   fields: CapabilityField[],
 ): Record<string, unknown> {
   const params: Record<string, unknown> = { providerId: providerId || 'duckduckgo' }
+  fields.forEach((f) => {
+    if (f.value === '' && f.secret) return
+    const key = camel(f.name)
+    if (f.type === 'checkbox') params[key] = f.checked
+    else params[key] = f.type === 'number' ? Number.parseInt(f.value || '0', 10) : f.value
+  })
+  return params
+}
+
+/**
+ * onboarding.x_search.configure params. Same blank-secret rule as search — an
+ * empty api_key means "keep the stored one" — plus an explicit `enabled` flag
+ * so the card can turn the tool off without clearing the credential.
+ */
+export function buildXSearchConfigureParams(
+  enabled: boolean,
+  fields: CapabilityField[],
+): Record<string, unknown> {
+  const params: Record<string, unknown> = { enabled }
   fields.forEach((f) => {
     if (f.value === '' && f.secret) return
     const key = camel(f.name)

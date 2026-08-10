@@ -114,6 +114,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `memory` | `status`, `index`, `list`, `search`, `show`, `embedding-download`, `raw-fallbacks …` |
 | `sandbox` | `status`, `on`, `bypass`, `full`, `reset` |
 | `search` | `list`, `status`, `query`, `configure` |
+| `configure x-search` | xAI X (Twitter) search: `--api-key-env`, `--x-search-model`, `--x-search-reasoning-effort`, `--no-x-search-enabled`; catalog via `onboard catalog x-search` |
 | `cost` | usage and estimated cost report |
 | `diagnostics` | `status`, `on`, `off` |
 | `migrate` | `openclaw`, `hermes` (`--source`, `--profile`, `--apply`, `--migrate-secrets`; dry-run without `--apply`) |
@@ -173,6 +174,7 @@ Main `agentos.toml` sections (full commented reference:
 | Section | Controls |
 | --- | --- |
 | top-level | `workspace_dir`, `state_dir`, logging, `search_provider`/`search_api_key`, timeouts |
+| `[x_search]` | xAI-backed X (Twitter) search: `enabled`, `model` (default `grok-4.5`), `api_key`/`api_key_env` (`XAI_API_KEY`), `reasoning_effort`, `timeout_seconds`, `total_timeout_seconds`, `retries`. The `x_search` tool is hidden until a credential resolves |
 | `[llm]` | `provider`, `model`, `api_key`, `base_url`, `proxy`, `[llm.provider_routing]` |
 | `[agentos_router]` | router on/off, `strategy` (`pilot-v1`), tier settings under `[agentos_router.tiers.c0..c3]` |
 | `[skills]` | skill filtering/injection: `filter_strategy`, `filter_top_k`, `injection_mode`, `max_skills_prompt_chars` (default 24000), `max_skill_view_chars` (default 10000, 0 disables) |

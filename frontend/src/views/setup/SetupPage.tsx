@@ -73,6 +73,7 @@ type GuidedResetTarget =
   | 'provider'
   | 'router'
   | 'search'
+  | 'xSearch'
   | 'memoryEmbedding'
   | 'memorySettings'
   | 'image'
@@ -83,6 +84,7 @@ const INITIAL_RESET_VERSIONS: Record<GuidedResetTarget, number> = {
   provider: 0,
   router: 0,
   search: 0,
+  xSearch: 0,
   memoryEmbedding: 0,
   memorySettings: 0,
   image: 0,
@@ -383,6 +385,23 @@ export function SetupPage({
     onError: (err) => saveError('setup-search', err),
   })
 
+  const xSearchMutation = useMutation({
+    mutationFn: (params: Record<string, unknown>) =>
+      rpc.call<{ warnings?: string[] }>(
+        'onboarding.x_search.configure',
+        withExpectedRevision('xSearch', params),
+      ),
+    onSuccess: async (result) => {
+      const warning = result?.warnings?.[0]
+      if (warning) toast.info(warning, { id: 'setup-x-search' })
+      else toast.info('X Search saved.', { id: 'setup-x-search' })
+      resetSavedTarget('xSearch')
+      const fresh = await reloadAfterSave('setup-x-search')
+      adoptTargetRevision('xSearch', fresh?.revision ?? undefined)
+    },
+    onError: (err) => saveError('setup-x-search', err),
+  })
+
   interface ConfigureResult {
     entry?: { api_key_env?: string; api_key?: string; api_key_source?: string }
     restartRequired?: boolean
@@ -670,6 +689,7 @@ export function SetupPage({
               saving={
                 writeBlocked ||
                 searchMutation.isPending ||
+                xSearchMutation.isPending ||
                 memoryMutation.isPending ||
                 memorySettingsMutation.isPending ||
                 imageMutation.isPending ||
@@ -677,6 +697,7 @@ export function SetupPage({
               }
               resetVersions={{
                 search: resetVersions.search,
+                xSearch: resetVersions.xSearch,
                 memoryEmbedding: resetVersions.memoryEmbedding,
                 memorySettings: resetVersions.memorySettings,
                 image: resetVersions.image,
@@ -684,6 +705,7 @@ export function SetupPage({
               }}
               conflicts={{
                 search: targetConflicted('search'),
+                xSearch: targetConflicted('xSearch'),
                 memoryEmbedding: targetConflicted('memoryEmbedding'),
                 memorySettings: targetConflicted('memorySettings'),
                 image: targetConflicted('image'),
@@ -691,6 +713,7 @@ export function SetupPage({
               }}
               onDirtyChange={markTargetDirty}
               onSaveSearch={(params) => searchMutation.mutate(params)}
+              onSaveXSearch={(params) => xSearchMutation.mutate(params)}
               onSaveMemory={(params) => memoryMutation.mutate(params)}
               onSaveMemorySettings={(patches) => memorySettingsMutation.mutate(patches)}
               onSaveImage={(params) => imageMutation.mutate(params)}

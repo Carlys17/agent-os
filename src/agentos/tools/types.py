@@ -128,6 +128,9 @@ CRON_AGENT_ALLOW: frozenset[str] = frozenset(
         "skill_view",
         "web_fetch",
         "web_search",
+        # Read-only external discovery, same shape as the two above. A cron job
+        # watching X is the obvious use for it, and it can only read.
+        "x_search",
     }
 )
 

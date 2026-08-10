@@ -10,6 +10,7 @@ _PRIVATE_MEMORY_READ_TOOL_NAMES: frozenset[str] = frozenset(
     {"memory_get", "memory_search", "session_search"}
 )
 _IMAGE_GENERATION_TOOL_NAMES: frozenset[str] = frozenset({"image_generate"})
+_X_SEARCH_TOOL_NAMES: frozenset[str] = frozenset({"x_search"})
 _SESSION_READ_TOOL_NAMES: frozenset[str] = frozenset(
     {"session_status", "sessions_history", "sessions_list"}
 )
@@ -32,6 +33,7 @@ class ToolSurfaceCapabilities:
     gateway_config: bool = False
     channel_backing: bool = False
     image_generation: bool = True
+    x_search: bool = True
 
 
 def private_memory_read_tools_blocked(ctx: ToolContext | None) -> bool:
@@ -71,6 +73,15 @@ def _detect_image_generation_capability() -> bool:
         return False
 
 
+def _detect_x_search_capability() -> bool:
+    try:
+        from agentos.tools.builtin.x_search import x_search_available
+
+        return x_search_available()
+    except Exception:
+        return False
+
+
 def tool_surface_capabilities_from_runtime(
     *,
     session_manager: object | None = None,
@@ -80,6 +91,7 @@ def tool_surface_capabilities_from_runtime(
     channel_manager: object | None = None,
     originating_envelope: object | None = None,
     image_generation: bool | None = None,
+    x_search: bool | None = None,
 ) -> ToolSurfaceCapabilities:
     """Build tool-surface capabilities from injected runtime dependencies."""
 
@@ -94,6 +106,7 @@ def tool_surface_capabilities_from_runtime(
             if image_generation is None
             else image_generation
         ),
+        x_search=(_detect_x_search_capability() if x_search is None else x_search),
     )
 
 
@@ -119,6 +132,8 @@ def resolve_runtime_tool_surface(
 
     if not caps.image_generation:
         denied_tools |= set(_IMAGE_GENERATION_TOOL_NAMES)
+    if not caps.x_search:
+        denied_tools |= set(_X_SEARCH_TOOL_NAMES)
     if not caps.session_manager:
         denied_tools |= set(_SESSION_READ_TOOL_NAMES | _SESSION_RUNTIME_TOOL_NAMES)
     if not caps.task_runtime:
@@ -170,4 +185,5 @@ def detect_runtime_tool_surface_capabilities(
         gateway_config=gateway_config,
         channel_backing=channel_backing,
         image_generation=_detect_image_generation_capability(),
+        x_search=_detect_x_search_capability(),
     )

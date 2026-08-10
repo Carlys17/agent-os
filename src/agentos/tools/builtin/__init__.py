@@ -26,6 +26,7 @@ _NAMES = [
     "shell",
     "web",
     "web_fetch",
+    "x_search",
 ]
 
 log = structlog.get_logger(__name__)

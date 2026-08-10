@@ -22,6 +22,7 @@ import {
   buildMemoryConfigureParams,
   buildMemorySettingsPatches,
   buildSearchConfigureParams,
+  buildXSearchConfigureParams,
   capabilityIsPrimary,
   credentialNeedList,
   envRecoveryCommand,
@@ -38,7 +39,8 @@ import {
   type SetupConfig,
 } from './logic'
 
-type ExtrasResetTarget = 'search' | 'memoryEmbedding' | 'memorySettings' | 'image' | 'audio'
+type ExtrasResetTarget =
+  'search' | 'xSearch' | 'memoryEmbedding' | 'memorySettings' | 'image' | 'audio'
 
 function saveVariant(status: OnboardingStatus, name: string): 'default' | 'outline' {
   return capabilityIsPrimary(status, name) ? 'default' : 'outline'
@@ -259,6 +261,170 @@ function SearchCard({
         onClick={collect}
       >
         {t('setup.searchSave')}
+      </Button>
+    </div>
+  )
+}
+
+// xAI API values, not display copy: these are sent verbatim and must never be
+// translated. Kept as identifiers so the i18n lint does not read them as text.
+const X_SEARCH_DEFAULT_MODEL = 'grok-4.5'
+const X_SEARCH_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
+
+// ── X (Twitter) search ──────────────────────────────────────────────────────
+// Not a web-search provider: it answers from X's post index through xAI, so it
+// gets its own card rather than a row in the search provider select.
+function XSearchCard({
+  catalog,
+  config,
+  onSave,
+  saving,
+}: {
+  catalog: Catalog
+  config: SetupConfig
+  onSave: (params: Record<string, unknown>) => void
+  saving: boolean
+}) {
+  const spec: ProviderSpec = catalog.xSearch?.[0] || { providerId: 'x_search' }
+  const current = config.x_search || {}
+  const envKey = spec.envKey || 'XAI_API_KEY'
+
+  const [enabled, setEnabled] = useState(current.enabled !== false)
+  const [apiKey, setApiKey] = useState('')
+  const [apiKeyEnv, setApiKeyEnv] = useState(current.api_key_env || envKey)
+  const [model, setModel] = useState(current.model || X_SEARCH_DEFAULT_MODEL)
+  const [effort, setEffort] = useState(current.reasoning_effort || '')
+  const [timeout, setTimeout] = useState(String(current.timeout_seconds ?? 180))
+  const [totalTimeout, setTotalTimeout] = useState(String(current.total_timeout_seconds ?? 300))
+  const [retries, setRetries] = useState(String(current.retries ?? 2))
+
+  const collect = () => {
+    const field = (name: string, value: string, type: string, secret = false): CapabilityField => ({
+      name,
+      value,
+      checked: false,
+      type,
+      secret,
+      disabled: false,
+    })
+    const fields: CapabilityField[] = [
+      field('api_key', apiKey, 'password', true),
+      field('api_key_env', apiKeyEnv, 'text'),
+      field('model', model, 'text'),
+      field('reasoning_effort', effort, 'text'),
+      field('timeout_seconds', timeout, 'number'),
+      field('total_timeout_seconds', totalTimeout, 'number'),
+      field('retries', retries, 'number'),
+    ]
+    onSave(buildXSearchConfigureParams(enabled, fields))
+  }
+
+  return (
+    <div className="setup-mini panel">
+      <div className="setup-mini__head">
+        <h3 className="t-label">{t('setup.xSearchTitle')}</h3>
+      </div>
+      <p className="setup-muted">{t('setup.xSearchHint')}</p>
+      <NeedList
+        items={credentialNeedList(spec.whatYouNeed, apiKeyEnv || envKey)}
+        label={t('setup.xSearchNeeds')}
+      />
+      <SetupCheckbox
+        ariaLabel={t('setup.xSearchEnabledAria')}
+        checked={enabled}
+        onChange={setEnabled}
+      >
+        {t('setup.xSearchEnabled')}
+      </SetupCheckbox>
+      <label>
+        <span>{t('setup.fieldApiKey')}</span>
+        <input
+          type="password"
+          aria-label={t('setup.xSearchApiKeyAria')}
+          placeholder={t('setup.keepCurrentPlaceholder')}
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+        />
+      </label>
+      <label>
+        <span>{t('setup.fieldApiKeyEnv')}</span>
+        <input
+          aria-label={t('setup.xSearchApiKeyEnvAria')}
+          value={apiKeyEnv}
+          placeholder={envKey}
+          onChange={(e) => setApiKeyEnv(e.target.value)}
+        />
+      </label>
+      <label>
+        <span>{t('setup.xSearchModel')}</span>
+        <input
+          aria-label={t('setup.xSearchModelAria')}
+          value={model}
+          placeholder={X_SEARCH_DEFAULT_MODEL}
+          onChange={(e) => setModel(e.target.value)}
+        />
+      </label>
+      <details
+        className="setup-advanced"
+        open={Boolean(effort || timeout !== '180' || totalTimeout !== '300' || retries !== '2')}
+      >
+        <summary>{t('setup.xSearchAdvanced')}</summary>
+        <div className="setup-advanced__body" aria-label={t('setup.xSearchBehavior')}>
+          <label>
+            <span>{t('setup.xSearchEffort')}</span>
+            <SetupSelect
+              aria-label={t('setup.xSearchEffortAria')}
+              value={effort}
+              onChange={(e) => setEffort(e.target.value)}
+            >
+              <option value="">{t('setup.xSearchEffortDefault')}</option>
+              {X_SEARCH_EFFORTS.map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </SetupSelect>
+          </label>
+          <label>
+            <span>{t('setup.xSearchTimeout')}</span>
+            <input
+              type="number"
+              min={30}
+              max={300}
+              step={1}
+              aria-label={t('setup.xSearchTimeoutAria')}
+              value={timeout}
+              onChange={(e) => setTimeout(e.target.value)}
+            />
+          </label>
+          <label>
+            <span>{t('setup.xSearchTotalTimeout')}</span>
+            <input
+              type="number"
+              min={30}
+              max={600}
+              step={1}
+              aria-label={t('setup.xSearchTotalTimeoutAria')}
+              value={totalTimeout}
+              onChange={(e) => setTotalTimeout(e.target.value)}
+            />
+          </label>
+          <label>
+            <span>{t('setup.xSearchRetries')}</span>
+            <input
+              type="number"
+              min={0}
+              max={5}
+              step={1}
+              aria-label={t('setup.xSearchRetriesAria')}
+              value={retries}
+              onChange={(e) => setRetries(e.target.value)}
+            />
+          </label>
+        </div>
+      </details>
+      <Button type="button" variant="outline" disabled={saving} onClick={collect}>
+        {t('setup.xSearchSave')}
       </Button>
     </div>
   )
@@ -925,6 +1091,7 @@ export function ExtrasSection({
   status,
   config,
   onSaveSearch,
+  onSaveXSearch,
   onSaveMemory,
   onSaveMemorySettings,
   onSaveImage,
@@ -940,6 +1107,7 @@ export function ExtrasSection({
   status: OnboardingStatus
   config: SetupConfig
   onSaveSearch: (params: Record<string, unknown>) => void
+  onSaveXSearch: (params: Record<string, unknown>) => void
   onSaveMemory: (params: Record<string, unknown>) => void
   onSaveMemorySettings: (patches: Record<string, unknown>) => void
   onSaveImage: (params: Record<string, unknown>) => void
@@ -949,6 +1117,7 @@ export function ExtrasSection({
   saving: boolean
   resetVersions: {
     search: number
+    xSearch: number
     memoryEmbedding: number
     memorySettings: number
     image: number
@@ -969,6 +1138,15 @@ export function ExtrasSection({
             config={config}
             onSave={onSaveSearch}
             saving={saving || conflicts.search}
+          />
+        </div>
+        <div className="setup-capability-slot" onChangeCapture={() => onDirtyChange('xSearch')}>
+          <XSearchCard
+            key={`x-search:${resetVersions.xSearch}`}
+            catalog={catalog}
+            config={config}
+            onSave={onSaveXSearch}
+            saving={saving || conflicts.xSearch}
           />
         </div>
         <div

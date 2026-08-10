@@ -236,6 +236,7 @@ class ServiceContainer:
     - tools.builtin.skill_tools (create_skill_tools)
     - tools.builtin.control (set_gateway_config, set_scheduler)
     - search.providers (configure_search)
+    - tools.builtin.x_search (configure_x_search)
     Do not call build_services() twice in the same process without
     understanding these side effects.
     """
@@ -1813,6 +1814,15 @@ async def build_services(
         log.info("build_services.search_provider_initialized", provider=provider)
     except Exception as e:
         log.warning("build_services.search_provider_failed", error=str(e))
+
+    # ── X (Twitter) search via xAI ──────────────────────────────────
+    try:
+        from agentos.tools.builtin.x_search import configure_x_search, x_search_available
+
+        configure_x_search(config.x_search)
+        log.info("build_services.x_search_initialized", available=x_search_available())
+    except Exception as e:
+        log.warning("build_services.x_search_failed", error=str(e))
 
     # ── MCP discovery (boot order 22) ───────────────────────────────
     await _discover_configured_mcp_servers(config, tool_registry)

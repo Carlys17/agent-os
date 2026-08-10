@@ -207,6 +207,31 @@ export const setup = defineNamespace('setup', {
   searchDiagnostics: 'Diagnostics',
   searchSave: 'Save web search',
 
+  // X (Twitter) search card.
+  xSearchTitle: 'X (Twitter) search',
+  xSearchHint:
+    'Searches X posts through xAI and returns a synthesized answer with citations. ' +
+    'Read-only, and billed to your xAI account rather than tracked in AgentOS usage.',
+  xSearchNeeds: 'X Search needs',
+  xSearchEnabled: 'Enable X Search',
+  xSearchEnabledAria: 'Enable X Search',
+  xSearchApiKeyAria: 'xAI API key',
+  xSearchApiKeyEnvAria: 'xAI API key env',
+  xSearchModel: 'Grok model',
+  xSearchModelAria: 'X Search Grok model',
+  xSearchAdvanced: 'Advanced X Search options',
+  xSearchBehavior: 'X Search behavior',
+  xSearchEffort: 'Reasoning effort',
+  xSearchEffortAria: 'X Search reasoning effort',
+  xSearchEffortDefault: 'Model default',
+  xSearchTimeout: 'Per-attempt timeout (s)',
+  xSearchTimeoutAria: 'X Search per-attempt timeout in seconds',
+  xSearchTotalTimeout: 'Total timeout (s)',
+  xSearchTotalTimeoutAria: 'X Search total timeout in seconds',
+  xSearchRetries: 'Retries',
+  xSearchRetriesAria: 'X Search retries',
+  xSearchSave: 'Save X Search',
+
   // Memory embedding card.
   memoryEmbeddingTitle: 'Memory embedding',
   memoryNeeds: 'Memory needs',

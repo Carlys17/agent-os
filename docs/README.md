@@ -38,6 +38,8 @@ root release README with task-oriented guides.
 - [`providers-and-models.md`](providers-and-models.md) - LLM provider catalog,
   model selection, and runtime-backed model inspection.
 - [`search.md`](search.md) - web search providers and query workflow.
+- [`x-search.md`](x-search.md) - xAI-backed X (Twitter) search: setup,
+  credentials, and reading the `degraded` flag.
 - [`artifacts-and-media.md`](artifacts-and-media.md) - artifacts, generated
   files, images, PDF, and TTS.
 - [`tools-and-sandbox.md`](tools-and-sandbox.md) - built-in tools, approvals,

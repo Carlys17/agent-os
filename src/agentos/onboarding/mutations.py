@@ -36,6 +36,7 @@ from agentos.onboarding.redaction import (
     redact_memory_embedding_payload,
     redact_provider_payload,
     redact_search_payload,
+    redact_x_search_payload,
 )
 from agentos.onboarding.search_specs import get_search_provider_setup_spec
 from agentos.provider.registry import is_local_provider
@@ -156,6 +157,31 @@ def _positive_int(value: int | str, *, label: str) -> int:
     if parsed < 1:
         raise ValueError(f"{label} must be >= 1")
     return parsed
+
+
+def _non_negative_int(value: int | str, *, label: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} must be an integer >= 0") from None
+    if parsed < 0:
+        raise ValueError(f"{label} must be >= 0")
+    return parsed
+
+
+def _validation_detail(exc: ValidationError, *, fallback: str) -> str:
+    """Summarize a pydantic failure without echoing the rejected input.
+
+    ``str(ValidationError)`` embeds ``input_value``, which for these sections is
+    routinely a credential. Keep the field locations and messages, drop the
+    values.
+    """
+    issues: list[str] = []
+    for issue in exc.errors(include_url=False, include_input=False):
+        location = ".".join(str(part) for part in issue.get("loc", ()))
+        message = str(issue.get("msg") or "invalid value")
+        issues.append(f"{location}: {message}" if location else message)
+    return "; ".join(issues) or fallback
 
 
 # Only the routing-relevant flags survive a local-tier rewrite. thinking_level
@@ -918,6 +944,92 @@ def upsert_router(
         restart_required=False,
         warnings=warnings,
         public_payload=public_payload,
+    )
+
+
+def upsert_x_search(
+    config: GatewayConfig,
+    *,
+    enabled: bool = True,
+    api_key: str = "",
+    api_key_env: str = "",
+    model: str = "",
+    base_url: str = "",
+    reasoning_effort: str = "",
+    timeout_seconds: int | str | None = None,
+    total_timeout_seconds: int | str | None = None,
+    retries: int | str | None = None,
+) -> MutationResult:
+    """Persist the ``[x_search]`` section from a setup form.
+
+    A blank ``api_key`` means "keep whatever is already configured" so the form
+    can render a masked field without the operator having to retype the key.
+    """
+    from agentos.gateway.config import XSearchConfig
+
+    current = config.x_search
+    effective_api_key = clean_header_secret(api_key, label="xAI API key")
+    effective_api_key_env = api_key_env.strip() or current.api_key_env
+    if not effective_api_key:
+        effective_api_key = current.api_key
+
+    # The allowed set lives on XSearchConfig.reasoning_effort as a Literal, so
+    # normalizing case here is enough — pydantic rejects anything else below.
+    effort = (reasoning_effort or "").strip().lower()
+
+    payload: dict[str, Any] = {
+        "enabled": bool(enabled),
+        "model": (model or "").strip() or current.model,
+        "base_url": (base_url or "").strip() or current.base_url,
+        "api_key": effective_api_key,
+        "api_key_env": effective_api_key_env,
+        "reasoning_effort": effort,
+        "timeout_seconds": (
+            current.timeout_seconds
+            if timeout_seconds is None
+            else _positive_int(timeout_seconds, label="timeout_seconds")
+        ),
+        "total_timeout_seconds": (
+            current.total_timeout_seconds
+            if total_timeout_seconds is None
+            else _positive_int(total_timeout_seconds, label="total_timeout_seconds")
+        ),
+        "retries": (
+            current.retries if retries is None else _non_negative_int(retries, label="retries")
+        ),
+    }
+
+    try:
+        section = XSearchConfig(**payload)
+    except ValidationError as exc:
+        raise ValueError(_validation_detail(exc, fallback="invalid x_search settings")) from exc
+
+    new_cfg = _clone(config)
+    new_cfg.x_search = section
+    if api_key:
+        new_cfg.clear_runtime_secret("x_search.api_key")
+
+    warnings: list[str] = []
+    if not section.api_key and not os.environ.get(section.api_key_env, "").strip():
+        warnings.append(
+            f"No xAI credential found: set {section.api_key_env} or paste a key. "
+            "x_search stays hidden from the agent until one is present."
+        )
+
+    public_payload = dict(payload)
+    if section.api_key:
+        api_key_source = "explicit"
+    elif os.environ.get(section.api_key_env):
+        api_key_source = "env"
+    else:
+        api_key_source = "none"
+    public_payload["api_key_source"] = api_key_source
+    return MutationResult(
+        config=new_cfg,
+        changed=True,
+        restart_required=False,
+        warnings=warnings,
+        public_payload=redact_x_search_payload(public_payload),
     )
 
 

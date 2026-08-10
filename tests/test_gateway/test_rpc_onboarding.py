@@ -766,6 +766,81 @@ async def test_search_configure_accepts_webui_string_max_results(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_x_search_configure_redacts_api_key_and_persists(tmp_path, monkeypatch):
+    target = tmp_path / "c.toml"
+    monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(target))
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+
+    res = await get_dispatcher().dispatch(
+        "r1",
+        "onboarding.x_search.configure",
+        {"apiKey": "xai-secret", "model": "grok-4.5", "retries": "3"},
+        _admin_ctx(),
+    )
+
+    assert res.error is None, res.error
+    assert res.payload["changed"] is True
+    assert res.payload["entry"]["api_key"] == "***"
+    assert res.payload["entry"]["retries"] == 3
+    # x_search config is hot-applied, so saving it must not demand a restart.
+    assert res.payload["restartRequired"] is False
+    # A pasted key is persisted like every other one; only the RPC echo is masked.
+    assert 'api_key = "xai-secret"' in target.read_text()
+
+
+@pytest.mark.asyncio
+async def test_x_search_configure_keeps_an_env_only_credential_out_of_the_file(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "c.toml"
+    monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(target))
+    monkeypatch.setenv("XAI_API_KEY", "from-the-environment")
+
+    res = await get_dispatcher().dispatch(
+        "r1",
+        "onboarding.x_search.configure",
+        {"enabled": True, "model": "grok-4.5"},
+        _admin_ctx(),
+    )
+
+    assert res.error is None, res.error
+    assert res.payload["entry"]["api_key_source"] == "env"
+    assert "from-the-environment" not in target.read_text()
+
+
+@pytest.mark.asyncio
+async def test_x_search_configure_warns_when_no_credential_is_reachable(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(tmp_path / "c.toml"))
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+
+    res = await get_dispatcher().dispatch(
+        "r1",
+        "onboarding.x_search.configure",
+        {"enabled": True},
+        _admin_ctx(),
+    )
+
+    assert res.error is None, res.error
+    assert any("XAI_API_KEY" in w for w in res.payload["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_x_search_configure_rejects_an_unknown_reasoning_effort(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(tmp_path / "c.toml"))
+
+    res = await get_dispatcher().dispatch(
+        "r1",
+        "onboarding.x_search.configure",
+        {"apiKey": "xai-secret", "reasoningEffort": "turbo"},
+        _admin_ctx(),
+    )
+
+    assert res.error is not None
+    assert "reasoning_effort" in res.error.message
+    assert "xai-secret" not in res.error.message
+
+
+@pytest.mark.asyncio
 async def test_image_generation_configure_redacts_api_key(tmp_path, monkeypatch):
     target = tmp_path / "c.toml"
     monkeypatch.setenv("AGENTOS_GATEWAY_CONFIG_PATH", str(target))

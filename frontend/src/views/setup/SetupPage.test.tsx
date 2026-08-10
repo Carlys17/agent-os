@@ -104,6 +104,15 @@ const CATALOG = {
       whatYouNeed: ['API key via BRAVE_API_KEY or a one-time paste.'],
     },
   ],
+  xSearch: [
+    {
+      providerId: 'x_search',
+      label: 'X (Twitter) Search',
+      requiresApiKey: true,
+      envKey: 'XAI_API_KEY',
+      whatYouNeed: ['An xAI API key via XAI_API_KEY or a one-time paste.'],
+    },
+  ],
   memoryEmbeddingProviders: [
     { providerId: 'auto', label: 'Auto' },
     { providerId: 'openai', label: 'OpenAI', requiresApiKey: true, envKey: 'OPENAI_API_KEY' },
@@ -393,6 +402,37 @@ describe('SetupPage', () => {
         expect.objectContaining({ providerId: 'brave' }),
       ),
     )
+  })
+
+  it('x search save posts the card fields; a blank key is omitted so the stored one survives', async () => {
+    wireCalls()
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Setup')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /^Capabilities:/ }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save X Search' })).toBeInTheDocument(),
+    )
+    const key = screen.getByLabelText('xAI API key') as HTMLInputElement
+    expect(key.type).toBe('password')
+    expect((screen.getByLabelText('xAI API key env') as HTMLInputElement).value).toBe('XAI_API_KEY')
+    fireEvent.change(screen.getByLabelText('X Search Grok model'), {
+      target: { value: 'grok-4.20-multi-agent' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save X Search' }))
+    await waitFor(() =>
+      expect(mockRpc.call).toHaveBeenCalledWith(
+        'onboarding.x_search.configure',
+        expect.objectContaining({
+          enabled: true,
+          model: 'grok-4.20-multi-agent',
+          apiKeyEnv: 'XAI_API_KEY',
+        }),
+      ),
+    )
+    const params = mockRpc.call.mock.calls.find(
+      (c: unknown[]) => c[0] === 'onboarding.x_search.configure',
+    )?.[1] as Record<string, unknown>
+    expect(params).not.toHaveProperty('apiKey')
   })
 
   it('switching search provider re-seeds api_key_env to the new provider envKey', async () => {

@@ -313,6 +313,42 @@ async def _channel_probe(params: Any, ctx: RpcContext) -> dict[str, Any]:
     }
 
 
+@_d.method("onboarding.x_search.configure")
+async def _x_search_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
+    from agentos.onboarding.mutations import upsert_x_search
+
+    fields = params if isinstance(params, dict) else {}
+    cfg = _active_config(ctx)
+    res = upsert_x_search(
+        cfg,
+        enabled=bool(fields.get("enabled", True)),
+        api_key=fields.get("apiKey", ""),
+        api_key_env=fields.get("apiKeyEnv", ""),
+        model=fields.get("model", ""),
+        base_url=fields.get("baseUrl", ""),
+        reasoning_effort=fields.get("reasoningEffort", ""),
+        timeout_seconds=fields.get("timeoutSeconds"),
+        total_timeout_seconds=fields.get("totalTimeoutSeconds"),
+        retries=fields.get("retries"),
+    )
+    commit = _commit_mutation(
+        ctx,
+        cfg,
+        res.config,
+        params,
+        changed_paths={"x_search"},
+        restart_required=res.restart_required,
+        restart_reason="x_search",
+    )
+    return {
+        "changed": res.changed,
+        "restartRequired": commit.restart_required,
+        "configPath": str(commit.path),
+        "entry": res.public_payload,
+        "warnings": res.warnings,
+    }
+
+
 @_d.method("onboarding.search.configure")
 async def _search_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_search_provider

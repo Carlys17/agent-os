@@ -283,16 +283,20 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## Hermes Agent reference material
+## Hermes Agent derived material
 
-- Component: cron prompt-injection scanner reference material.
+- Components:
+  - `src/agentos/tools/builtin/x_search.py` — adapted from
+    `tools/x_search_tool.py`. The tool's request shape, client-side date
+    validation, citation extraction, and degraded-result semantics follow the
+    upstream implementation; the credential path, HTTP client, retry budgeting,
+    and AgentOS wiring are original.
+  - Cron prompt-injection scanner reference material (reviewed, not copied).
 - Upstream project: https://github.com/NousResearch/hermes-agent
 - License: MIT
 - Copyright notice: Copyright (c) 2025 Nous Research
 
-AgentOS does not redistribute Hermes Agent. This notice records conservative
-attribution for reference material reviewed while hardening AgentOS's cron
-prompt scanner.
+AgentOS does not redistribute Hermes Agent as a whole.
 
 ```
 MIT License

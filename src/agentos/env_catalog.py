@@ -102,10 +102,12 @@ def _provider_specs() -> list[EnvVarSpec]:
     )
     from agentos.onboarding.provider_specs import list_provider_setup_specs
     from agentos.onboarding.search_specs import list_search_provider_setup_specs
+    from agentos.onboarding.x_search_specs import get_x_search_setup_spec
 
     families: list[tuple[Category, str, list[Any]]] = [
         (CATEGORY_PROVIDER, "LLM provider", list(list_provider_setup_specs())),
         (CATEGORY_SEARCH, "Search provider", list(list_search_provider_setup_specs())),
+        (CATEGORY_SEARCH, "X Search provider", [get_x_search_setup_spec()]),
         (
             CATEGORY_IMAGE,
             "Image generation provider",
