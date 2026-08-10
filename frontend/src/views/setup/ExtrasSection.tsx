@@ -3,7 +3,10 @@
 // its own draft state, conditional field enablement (from logic.ts), masked
 // secrets, and a Save wired to the matching onboarding.*.configure RPC (memory
 // settings uses config.patch). All decision-shaped derivation lives in logic.ts.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
+import { useRpc } from '@/app/providers'
 import { Button } from '@/components/ui/button'
 import { t } from '@/i18n'
 import '@/i18n/en/setup'
@@ -39,6 +42,8 @@ import {
   type OnboardingStatus,
   type ProviderSpec,
   type SetupConfig,
+  type XaiLoginPoll,
+  type XaiPendingLogin,
 } from './logic'
 
 type ExtrasResetTarget =
@@ -273,6 +278,137 @@ function SearchCard({
 const X_SEARCH_DEFAULT_MODEL = 'grok-4.5'
 const X_SEARCH_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
 
+const DEFAULT_POLL_SECONDS = 5
+
+/** Seconds to wait before the next poll. `0` is a real answer, not a missing one. */
+function pollDelay(interval: number | undefined, fallback: number): number {
+  return typeof interval === 'number' && interval >= 0 ? interval : fallback
+}
+
+/**
+ * The xAI device-code login, as a button.
+ *
+ * Unlike the cards around it this talks to the RPC layer directly rather than
+ * through props: it owns a multi-step flow (start → poll → refresh status)
+ * whose intermediate states nothing above it needs to see, and threading four
+ * callbacks and a state machine through two levels of props to avoid one hook
+ * would not make it clearer.
+ *
+ * It also lives outside XSearchCard on purpose — that component binds a state
+ * setter named `setTimeout`, which shadows the global this polling needs.
+ */
+function XaiLoginButton({ disabled }: { disabled: boolean }) {
+  const rpc = useRpc()
+  const queryClient = useQueryClient()
+  const [phase, setPhase] = useState<'idle' | 'starting' | 'awaiting' | 'error'>('idle')
+  const [login, setLogin] = useState<XaiPendingLogin | null>(null)
+  const [errorMessage, setErrorMessage] = useState('')
+
+  // Survives unmount mid-flight: a resolved poll must not setState on a card
+  // the operator has already navigated away from.
+  const cancelled = useRef(false)
+  useEffect(() => {
+    cancelled.current = false
+    return () => {
+      cancelled.current = true
+    }
+  }, [])
+
+  const fail = (message: string) => {
+    if (cancelled.current) return
+    setPhase('error')
+    setErrorMessage(message)
+    setLogin(null)
+  }
+
+  const poll = async (pending: XaiPendingLogin, wait: number) => {
+    await new Promise((resolve) => window.setTimeout(resolve, wait * 1000))
+    if (cancelled.current) return
+    try {
+      const result = await rpc.call<XaiLoginPoll>('auth.xai.login.poll', {
+        loginId: pending.loginId,
+      })
+      if (cancelled.current) return
+      if (result?.status === 'complete') {
+        setPhase('idle')
+        setLogin(null)
+        await queryClient.invalidateQueries({ queryKey: ['setup', 'auth'] })
+        toast.info(t('setup.xSearchLoginDone'), { id: 'setup-xai-login' })
+        return
+      }
+      if (result?.status === 'expired') {
+        fail(t('setup.xSearchLoginExpired'))
+        return
+      }
+      void poll(pending, pollDelay(result?.interval, pending.interval))
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const start = async () => {
+    setPhase('starting')
+    setErrorMessage('')
+    try {
+      const pending = await rpc.call<XaiPendingLogin>('auth.xai.login.start')
+      if (cancelled.current) return
+      if (!pending?.loginId) {
+        fail(t('setup.xSearchLoginExpired'))
+        return
+      }
+      setLogin(pending)
+      setPhase('awaiting')
+      void poll(pending, pollDelay(pending.interval, DEFAULT_POLL_SECONDS))
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  if (phase === 'awaiting' && login) {
+    return (
+      <div className="setup-advanced__body" aria-label={t('setup.xSearchLoginPending')}>
+        <p className="setup-muted">{t('setup.xSearchLoginWaiting')}</p>
+        <p>
+          <a href={login.verificationUri} target="_blank" rel="noreferrer noopener">
+            {t('setup.xSearchLoginOpen')}
+          </a>
+        </p>
+        <p>
+          {t('setup.xSearchLoginCode')} <code>{login.userCode}</code>
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            setPhase('idle')
+            setLogin(null)
+          }}
+        >
+          {t('setup.xSearchLoginCancel')}
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <Button
+        type="button"
+        variant="outline"
+        disabled={disabled || phase === 'starting'}
+        onClick={() => void start()}
+      >
+        {phase === 'starting' ? t('setup.xSearchLoginStarting') : t('setup.xSearchSignIn')}
+      </Button>
+      {phase === 'error' ? (
+        <p className="setup-muted">
+          {t('setup.xSearchLoginFailed')} {errorMessage}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 // ── X (Twitter) search ──────────────────────────────────────────────────────
 // Not a web-search provider: it answers from X's post index through xAI, so it
 // gets its own card rather than a row in the search provider select.
@@ -330,6 +466,7 @@ function XSearchCard({
       </div>
       <p className="setup-muted">{t('setup.xSearchHint')}</p>
       <p className="setup-muted">{xSearchCredentialText(authStatus, config)}</p>
+      <XaiLoginButton disabled={saving} />
       <NeedList
         items={credentialNeedList(spec.whatYouNeed, apiKeyEnv || envKey)}
         label={t('setup.xSearchNeeds')}

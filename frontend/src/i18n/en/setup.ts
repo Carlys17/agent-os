@@ -235,7 +235,17 @@ export const setup = defineNamespace('setup', {
   // One literal, not a concatenation: the catalog's types read placeholders off
   // the string literal, and `a + b` widens it to `string` so {envKey} is lost.
   xSearchOauthAbsent:
-    'Not signed in to xAI. Using {envKey} if set. For SuperGrok / X Premium+, run: agentos auth login xai',
+    'Not signed in to xAI. Using {envKey} if set. Sign in below to use a SuperGrok / X Premium+ subscription instead.',
+  xSearchSignIn: 'Sign in with xAI',
+  xSearchLoginStarting: 'Starting sign-in…',
+  xSearchLoginPending: 'xAI sign-in in progress',
+  xSearchLoginWaiting: 'Waiting for you to approve this device on xAI.',
+  xSearchLoginOpen: 'Open the xAI approval page',
+  xSearchLoginCode: 'Enter this code if asked:',
+  xSearchLoginCancel: 'Cancel sign-in',
+  xSearchLoginDone: 'Signed in to xAI.',
+  xSearchLoginExpired: 'The sign-in code expired. Start again.',
+  xSearchLoginFailed: 'Sign-in failed:',
   xSearchSave: 'Save X Search',
 
   // Memory embedding card.

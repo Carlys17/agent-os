@@ -65,9 +65,10 @@ registration. It is a public client with no secret. Override it with
 
 ### Browser sign-in
 
-The Setup page shows which credential is in play but cannot run the login
-itself; the device-code flow is CLI-only for now. The card tells you the command
-to run.
+The Setup page can run the same flow: **Capabilities → X (Twitter) search →
+Sign in with xAI**. It shows the approval link and the code, then polls until
+you approve. The card also reports which credential is currently in play, so a
+key configured alongside a login does not look like the one being used.
 
 Without a reachable credential the tool is removed from the model's schema
 entirely. That is deliberate: every tool schema is fixed overhead on every

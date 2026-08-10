@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import platform
+import time
 import tomllib
 
 import pytest
@@ -763,6 +765,80 @@ async def test_search_configure_accepts_webui_string_max_results(tmp_path, monke
 
     assert res.error is None, res.error
     assert res.payload["entry"]["max_results"] == 5
+
+
+@pytest.mark.asyncio
+async def test_xai_login_start_returns_only_what_the_operator_must_approve(monkeypatch):
+    from agentos import xai_oauth
+
+    pending = xai_oauth.PendingDeviceLogin(
+        login_id="login-1",
+        device_code="dev-secret",
+        user_code="ABCD-EFGH",
+        verification_uri="https://accounts.x.ai/oauth2/device?code=ABCD",
+        interval=5,
+        expires_at=time.monotonic() + 600,
+        token_endpoint="https://auth.x.ai/oauth2/token",
+        discovery={"token_endpoint": "https://auth.x.ai/oauth2/token"},
+    )
+    monkeypatch.setattr(xai_oauth, "start_device_login", lambda: pending)
+
+    res = await get_dispatcher().dispatch("r1", "auth.xai.login.start", {}, _admin_ctx())
+
+    assert res.error is None, res.error
+    assert res.payload == {
+        "loginId": "login-1",
+        "verificationUri": "https://accounts.x.ai/oauth2/device?code=ABCD",
+        "userCode": "ABCD-EFGH",
+        "interval": 5,
+    }
+    # The device code is the client's half of the grant and has no business
+    # crossing the wire to the browser.
+    assert "dev-secret" not in json.dumps(res.payload)
+
+
+@pytest.mark.asyncio
+async def test_xai_login_poll_reports_pending_then_complete(monkeypatch):
+    from agentos import xai_oauth
+
+    pending = xai_oauth.PendingDeviceLogin(
+        login_id="login-1",
+        device_code="dev",
+        user_code="ABCD",
+        verification_uri="https://accounts.x.ai/oauth2/device",
+        interval=5,
+        expires_at=time.monotonic() + 600,
+        token_endpoint="https://auth.x.ai/oauth2/token",
+        discovery={},
+    )
+    monkeypatch.setattr(xai_oauth, "get_pending_login", lambda _id: pending)
+    answers = iter([(False, 5), (True, 5)])
+    monkeypatch.setattr(xai_oauth, "poll_device_login", lambda _p: next(answers))
+
+    first = await get_dispatcher().dispatch(
+        "r1", "auth.xai.login.poll", {"loginId": "login-1"}, _admin_ctx()
+    )
+    second = await get_dispatcher().dispatch(
+        "r2", "auth.xai.login.poll", {"loginId": "login-1"}, _admin_ctx()
+    )
+
+    assert first.payload == {"status": "pending", "interval": 5}
+    assert second.payload == {"status": "complete", "interval": 5}
+
+
+@pytest.mark.asyncio
+async def test_xai_login_poll_reports_an_unknown_id_as_expired(monkeypatch):
+    """A gateway restart drops pending logins; the UI must be told to start over."""
+    from agentos import xai_oauth
+
+    monkeypatch.setattr(xai_oauth, "get_pending_login", lambda _id: None)
+
+    res = await get_dispatcher().dispatch(
+        "r1", "auth.xai.login.poll", {"loginId": "gone"}, _admin_ctx()
+    )
+
+    assert res.error is None, res.error
+    assert res.payload == {"status": "expired"}
 
 
 @pytest.mark.asyncio

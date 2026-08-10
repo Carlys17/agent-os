@@ -321,6 +321,48 @@ async def _auth_status(params: Any, ctx: RpcContext) -> dict[str, Any]:
     return {"xai": oauth_status()}
 
 
+@_d.method("auth.xai.login.start")
+async def _auth_xai_login_start(params: Any, ctx: RpcContext) -> dict[str, Any]:
+    """Begin a device-code login and return what the operator has to approve.
+
+    The two halves are separate calls because approval takes as long as it
+    takes: a single blocking method would hold the request open for minutes and
+    never get the code in front of the person who needs it.
+    """
+    from agentos.xai_oauth import XaiOAuthError, start_device_login
+
+    try:
+        pending = await asyncio.to_thread(start_device_login)
+    except XaiOAuthError as exc:
+        raise ValueError(str(exc)) from exc
+
+    return {
+        "loginId": pending.login_id,
+        "verificationUri": pending.verification_uri,
+        "userCode": pending.user_code,
+        "interval": pending.interval,
+    }
+
+
+@_d.method("auth.xai.login.poll")
+async def _auth_xai_login_poll(params: Any, ctx: RpcContext) -> dict[str, Any]:
+    """Poll a pending login once. Returns ``pending`` or ``complete``."""
+    from agentos.xai_oauth import XaiOAuthError, get_pending_login, poll_device_login
+
+    login_id = _require(params, "loginId")
+    pending = get_pending_login(str(login_id))
+    if pending is None:
+        # Expired, already completed, or from a previous gateway process.
+        return {"status": "expired"}
+
+    try:
+        complete, interval = await asyncio.to_thread(poll_device_login, pending)
+    except XaiOAuthError as exc:
+        raise ValueError(str(exc)) from exc
+
+    return {"status": "complete" if complete else "pending", "interval": interval}
+
+
 @_d.method("onboarding.x_search.configure")
 async def _x_search_configure(params: Any, ctx: RpcContext) -> dict[str, Any]:
     from agentos.onboarding.mutations import upsert_x_search

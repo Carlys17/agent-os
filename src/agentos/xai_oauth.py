@@ -36,6 +36,8 @@ import base64
 import json
 import os
 import time
+import uuid
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -381,97 +383,40 @@ def _request_device_code(client: httpx.Client) -> dict[str, Any]:
     return dict(payload)
 
 
-def _poll_device_token(
-    client: httpx.Client,
-    *,
-    token_endpoint: str,
-    device_code: str,
-    expires_in: int,
-    poll_interval: int,
-    sleep: Any = time.sleep,
-) -> dict[str, Any]:
-    deadline = time.monotonic() + max(1, int(expires_in))
-    interval = max(1, int(poll_interval))
-    while time.monotonic() < deadline:
-        response = client.post(
-            token_endpoint,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
-            data={
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                "client_id": client_id(),
-                "device_code": device_code,
-            },
-        )
-        if response.status_code == 200:
-            payload = response.json()
-            if not payload.get("access_token") or not payload.get("refresh_token"):
-                raise XaiOAuthError(
-                    "xAI device-code token response was missing required tokens.",
-                    code="xai_device_token_invalid",
-                )
-            return dict(payload)
+@dataclass(frozen=True)
+class PendingDeviceLogin:
+    """A device authorization awaiting the user's approval.
 
-        try:
-            error_payload = response.json()
-        except Exception:  # noqa: BLE001 - a non-JSON error is still terminal
-            raise XaiOAuthError(
-                f"xAI device-code polling returned HTTP {response.status_code}.",
-                code="xai_device_token_failed",
-            ) from None
-        error_code = str(error_payload.get("error") or "")
-        if error_code == "authorization_pending":
-            sleep(interval)
-            continue
-        if error_code == "slow_down":
-            interval = min(interval + 1, _MAX_POLL_INTERVAL_SECONDS)
-            sleep(interval)
-            continue
-        detail = (
-            error_payload.get("error_description") or error_code or f"HTTP {response.status_code}"
-        )
-        raise XaiOAuthError(
-            f"xAI device-code polling failed: {detail}", code="xai_device_token_failed"
-        )
-    raise XaiOAuthError(
-        "Timed out waiting for xAI device authorization.", code="xai_device_code_timeout"
-    )
-
-
-def device_code_login(
-    *,
-    on_prompt: Any,
-    timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
-    sleep: Any = time.sleep,
-) -> dict[str, Any]:
-    """Run the device-code flow and persist the result.
-
-    ``on_prompt(verification_url, user_code, interval)`` is called once the
-    codes are known, so the caller decides how to present them — the CLI prints
-    them, and nothing here opens a browser or writes to stdout on its own.
+    Carries no secret the user must handle: ``user_code`` is meaningless
+    without their own xAI session, and ``device_code`` is the client's half of
+    a grant that only becomes a token once they approve it.
     """
-    discovery = _discover_sync(timeout_seconds)
-    timeout = httpx.Timeout(max(20.0, float(timeout_seconds)))
-    with httpx.Client(
-        timeout=timeout, headers={"Accept": "application/json"}, trust_env=_trust_env()
-    ) as client:
-        device = _request_device_code(client)
-        on_prompt(
-            str(device.get("verification_uri_complete") or device["verification_uri"]),
-            str(device["user_code"]),
-            int(device["interval"]),
-        )
-        payload = _poll_device_token(
-            client,
-            token_endpoint=discovery["token_endpoint"],
-            device_code=str(device["device_code"]),
-            expires_in=int(device["expires_in"]),
-            poll_interval=int(device["interval"]),
-            sleep=sleep,
-        )
 
+    login_id: str
+    device_code: str
+    user_code: str
+    verification_uri: str
+    interval: int
+    expires_at: float
+    token_endpoint: str
+    discovery: dict[str, str]
+
+    @property
+    def expired(self) -> bool:
+        return time.monotonic() >= self.expires_at
+
+
+# Logins in flight, keyed by an opaque id. A caller that starts a login and
+# never finishes it leaves one entry that the next start sweeps out.
+_pending_logins: dict[str, PendingDeviceLogin] = {}
+
+
+def _sweep_pending() -> None:
+    for login_id in [lid for lid, p in _pending_logins.items() if p.expired]:
+        _pending_logins.pop(login_id, None)
+
+
+def _persist_login(payload: dict[str, Any], discovery: dict[str, str]) -> dict[str, Any]:
     state = {
         "tokens": {
             "access_token": str(payload.get("access_token") or "").strip(),
@@ -488,6 +433,148 @@ def device_code_login(
     }
     write_oauth_state(state)
     return state
+
+
+def _new_client(timeout_seconds: float) -> httpx.Client:
+    return httpx.Client(
+        timeout=httpx.Timeout(max(20.0, float(timeout_seconds))),
+        headers={"Accept": "application/json"},
+        trust_env=_trust_env(),
+    )
+
+
+def start_device_login(
+    *, timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
+) -> PendingDeviceLogin:
+    """Ask xAI for a device code and return what the user needs to see.
+
+    Split from the polling half so a caller that cannot block — a Web UI
+    request, or an agent turn — can show the code immediately and poll on its
+    own schedule. :func:`device_code_login` is the blocking composition of the
+    two, for the CLI.
+    """
+    _sweep_pending()
+    discovery = _discover_sync(timeout_seconds)
+    with _new_client(timeout_seconds) as client:
+        device = _request_device_code(client)
+
+    pending = PendingDeviceLogin(
+        login_id=uuid.uuid4().hex,
+        device_code=str(device["device_code"]),
+        user_code=str(device["user_code"]),
+        verification_uri=str(
+            device.get("verification_uri_complete") or device["verification_uri"]
+        ),
+        interval=max(1, int(device["interval"])),
+        expires_at=time.monotonic() + max(1, int(device["expires_in"])),
+        token_endpoint=discovery["token_endpoint"],
+        discovery=discovery,
+    )
+    _pending_logins[pending.login_id] = pending
+    return pending
+
+
+def get_pending_login(login_id: str) -> PendingDeviceLogin | None:
+    _sweep_pending()
+    return _pending_logins.get(login_id)
+
+
+def poll_device_login(
+    pending: PendingDeviceLogin, *, timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
+) -> tuple[bool, int]:
+    """Poll once. Returns ``(complete, next_interval)``.
+
+    On completion the tokens are persisted and the pending entry is dropped.
+    A denial or an expiry raises; ``authorization_pending`` simply returns
+    ``False`` so the caller can wait and ask again.
+    """
+    if pending.expired:
+        _pending_logins.pop(pending.login_id, None)
+        raise XaiOAuthError(
+            "The xAI device authorization expired before it was approved.",
+            code="xai_device_code_timeout",
+        )
+
+    with _new_client(timeout_seconds) as client:
+        response = client.post(
+            pending.token_endpoint,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+            data={
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "client_id": client_id(),
+                "device_code": pending.device_code,
+            },
+        )
+
+    if response.status_code == 200:
+        payload = response.json()
+        if not payload.get("access_token") or not payload.get("refresh_token"):
+            _pending_logins.pop(pending.login_id, None)
+            raise XaiOAuthError(
+                "xAI device-code token response was missing required tokens.",
+                code="xai_device_token_invalid",
+            )
+        _persist_login(dict(payload), pending.discovery)
+        _pending_logins.pop(pending.login_id, None)
+        return True, pending.interval
+
+    try:
+        error_payload = response.json()
+    except Exception:  # noqa: BLE001 - a non-JSON error is still terminal
+        _pending_logins.pop(pending.login_id, None)
+        raise XaiOAuthError(
+            f"xAI device-code polling returned HTTP {response.status_code}.",
+            code="xai_device_token_failed",
+        ) from None
+
+    error_code = str(error_payload.get("error") or "")
+    if error_code == "authorization_pending":
+        return False, pending.interval
+    if error_code == "slow_down":
+        widened = min(pending.interval + 1, _MAX_POLL_INTERVAL_SECONDS)
+        _pending_logins[pending.login_id] = replace(pending, interval=widened)
+        return False, widened
+
+    _pending_logins.pop(pending.login_id, None)
+    detail = error_payload.get("error_description") or error_code or (
+        f"HTTP {response.status_code}"
+    )
+    raise XaiOAuthError(
+        f"xAI device-code polling failed: {detail}", code="xai_device_token_failed"
+    )
+
+
+def device_code_login(
+    *,
+    on_prompt: Any,
+    timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+    sleep: Any = time.sleep,
+) -> dict[str, Any]:
+    """Run the whole device-code flow, blocking until approval. Used by the CLI.
+
+    ``on_prompt(verification_url, user_code, interval)`` fires once the codes
+    are known, so the caller decides how to present them — nothing here opens a
+    browser or writes to stdout on its own.
+    """
+    pending = start_device_login(timeout_seconds=timeout_seconds)
+    on_prompt(pending.verification_uri, pending.user_code, pending.interval)
+
+    interval = pending.interval
+    while True:
+        complete, interval = poll_device_login(pending, timeout_seconds=timeout_seconds)
+        if complete:
+            return read_oauth_state()
+        sleep(interval)
+        refreshed = get_pending_login(pending.login_id)
+        if refreshed is None:
+            raise XaiOAuthError(
+                "The xAI device authorization expired before it was approved.",
+                code="xai_device_code_timeout",
+            )
+        pending = refreshed
 
 
 async def _refresh(

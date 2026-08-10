@@ -351,7 +351,7 @@ describe('capability status text (setup.js:977-1058)', () => {
     )
     expect(xSearchCredentialText({}, {})).toContain('XAI_API_KEY')
     expect(xSearchCredentialText({}, { x_search: { api_key_env: 'MY_KEY' } })).toContain('MY_KEY')
-    expect(xSearchCredentialText({}, {})).toContain('agentos auth login xai')
+    expect(xSearchCredentialText({}, {})).toContain('Sign in below')
   })
 
   it('searchStatusText branches', () => {

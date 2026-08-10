@@ -67,6 +67,20 @@ export interface ChannelSpec {
   [key: string]: unknown
 }
 
+/** auth.xai.login.start response. Neither field is a secret on its own. */
+export interface XaiPendingLogin {
+  loginId: string
+  verificationUri: string
+  userCode: string
+  interval: number
+}
+
+/** auth.xai.login.poll response. */
+export interface XaiLoginPoll {
+  status: 'pending' | 'complete' | 'expired'
+  interval?: number
+}
+
 /** auth.status response. Token values are never included. */
 export interface AuthStatus {
   xai?: {

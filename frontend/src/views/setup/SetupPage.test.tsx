@@ -455,12 +455,13 @@ describe('SetupPage', () => {
     )
   })
 
-  it('x search card falls back to the api key hint when not signed in', async () => {
+  it('x search card names the api key and offers sign-in when not signed in', async () => {
     wireCalls()
     renderPage()
     await waitFor(() => expect(screen.getByText('Setup')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: /^Capabilities:/ }))
-    await waitFor(() => expect(screen.getByText(/agentos auth login xai/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/Not signed in to xAI/)).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Sign in with xAI' })).toBeInTheDocument()
   })
 
   it('reads the xAI login even when mounted from a Settings snapshot', async () => {
@@ -483,6 +484,71 @@ describe('SetupPage', () => {
       ).toBeInTheDocument(),
     )
     expect(mockRpc.call.mock.calls.map((c: unknown[]) => c[0])).toContain('auth.status')
+  })
+
+  it('xai sign-in shows the code, polls, and refreshes the credential line', async () => {
+    let signedIn = false
+    let polls = 0
+    mockRpc.call.mockImplementation((method: string) => {
+      if (method === 'onboarding.catalog') return Promise.resolve(CATALOG)
+      if (method === 'onboarding.status') return Promise.resolve(statusFor())
+      if (method === 'config.get') return Promise.resolve(CONFIG)
+      if (method === 'auth.status')
+        return Promise.resolve({ xai: { logged_in: signedIn, has_refresh_token: signedIn } })
+      if (method === 'auth.xai.login.start')
+        return Promise.resolve({
+          loginId: 'login-1',
+          verificationUri: 'https://accounts.x.ai/oauth2/device?code=ABCD',
+          userCode: 'ABCD-EFGH',
+          interval: 0,
+        })
+      if (method === 'auth.xai.login.poll') {
+        polls += 1
+        // Approval never lands on the first poll in practice.
+        if (polls < 2) return Promise.resolve({ status: 'pending', interval: 0 })
+        signedIn = true
+        return Promise.resolve({ status: 'complete' })
+      }
+      return Promise.resolve({})
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Setup')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /^Capabilities:/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in with xAI' }))
+
+    // The operator needs both halves before they can approve anything.
+    expect(await screen.findByText('ABCD-EFGH')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open the xAI approval page' })).toHaveAttribute(
+      'href',
+      'https://accounts.x.ai/oauth2/device?code=ABCD',
+    )
+
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText('Signed in to xAI — x_search will use that subscription.'),
+        ).toBeInTheDocument(),
+      { timeout: 5000 },
+    )
+    expect(polls).toBeGreaterThanOrEqual(2)
+  })
+
+  it('xai sign-in surfaces a start failure instead of hanging on a spinner', async () => {
+    mockRpc.call.mockImplementation((method: string) => {
+      if (method === 'onboarding.catalog') return Promise.resolve(CATALOG)
+      if (method === 'onboarding.status') return Promise.resolve(statusFor())
+      if (method === 'config.get') return Promise.resolve(CONFIG)
+      if (method === 'auth.xai.login.start')
+        return Promise.reject(new Error('xAI OIDC discovery failed'))
+      return Promise.resolve({})
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Setup')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /^Capabilities:/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in with xAI' }))
+
+    await waitFor(() => expect(screen.getByText(/xAI OIDC discovery failed/)).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Sign in with xAI' })).toBeEnabled()
   })
 
   it('switching search provider re-seeds api_key_env to the new provider envKey', async () => {
