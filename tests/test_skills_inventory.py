@@ -11,7 +11,7 @@ from agentos.skills.availability import REASON_PROMPT_BUDGET, REASON_TOOL_GATE
 from agentos.skills.hub.installer import SkillInstaller
 from agentos.skills.hub.lockfile import LockEntry, Lockfile
 from agentos.skills.hub.source import SkillBundle, SkillMeta
-from agentos.skills.inventory import SkillRow, build_skill_inventory
+from agentos.skills.inventory import SkillRow, build_skill_inventory, lock_key_for_skill
 from agentos.skills.loader import SkillLoader
 from agentos.skills.publishers import RECOGNIZED_PUBLISHERS
 from agentos.skills.types import AcquisitionKind, SkillPublisher
@@ -699,3 +699,149 @@ def test_a_row_reports_the_budget_that_will_drop_it(tmp_path: Path) -> None:
         loader, config=_RoomyConfig(), lockfile_path=lock, available_tools=set()
     )
     assert all(r.availability is not None and r.availability.offered for r in rows)
+
+
+# ── The lockfile key is a directory name, not a manifest name ────────────────
+
+
+def _write_renamed_skill(root: Path, directory: str, manifest_name: str) -> Path:
+    """Install-shaped directory whose SKILL.md declares a different name.
+
+    Published skills do this: ``ytdlp-transcript`` on the hub ships a manifest
+    named ``youtube-transcript``. The installer keys the lockfile by the
+    directory it wrote (``bundle.name``), so the two names diverge on disk.
+    """
+    skill_dir = root / directory
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {manifest_name}\ndescription: Synthetic skill.\n---\n\n# body\n",
+        encoding="utf-8",
+    )
+    return skill_dir
+
+
+def test_a_hub_install_is_still_a_hub_install_when_its_manifest_renames_it(
+    tmp_path: Path,
+) -> None:
+    """Regression: the manifest name missed the entry and the row read as local.
+
+    Every hub fact — source, version, trust, the Remove button — hung off a
+    lookup keyed by the wrong name, so a perfectly ordinary install rendered as
+    a directory the user had hand-copied.
+    """
+    managed = tmp_path / "managed"
+    install_dir = _write_renamed_skill(managed, "ytdlp-transcript", "youtube-transcript")
+    lock = _lockfile(
+        tmp_path / "lock.json",
+        "ytdlp-transcript",
+        source="clawhub",
+        identifier="https://example.com/skills/ytdlp-transcript",
+        version="1.2.0",
+        path=str(install_dir),
+        source_trust="community",
+        scan_verdict="safe",
+    )
+
+    rows = build_skill_inventory(_loader(tmp_path, managed_dir=managed), lockfile_path=lock)
+
+    acquisition = _row(rows, "youtube-transcript").acquisition
+    assert acquisition.kind is AcquisitionKind.HUB
+    assert acquisition.source_id == "clawhub"
+    assert acquisition.version == "1.2.0"
+    assert acquisition.scan_verdict == "safe"
+    # The uninstall target is the directory the entry records, which exists.
+    assert acquisition.removable is True
+    assert acquisition.detail == ""
+    assert acquisition.updatable is True
+
+
+def test_a_renamed_install_resolves_to_the_key_uninstall_acts_on(tmp_path: Path) -> None:
+    """`skills.uninstall` deletes `<managed_dir>/<key>`; the key is the directory."""
+    managed = tmp_path / "managed"
+    install_dir = _write_renamed_skill(managed, "ytdlp-transcript", "youtube-transcript")
+    lock_path = _lockfile(
+        tmp_path / "lock.json",
+        "ytdlp-transcript",
+        identifier="id",
+        path=str(install_dir),
+    )
+    loader = _loader(tmp_path, managed_dir=managed)
+    spec = next(s for s in loader.load_all() if s.name == "youtube-transcript")
+
+    assert lock_key_for_skill(spec, Lockfile.load(lock_path)) == "ytdlp-transcript"
+
+
+def test_an_unmatched_skill_resolves_to_its_own_name(tmp_path: Path) -> None:
+    """No entry, no translation — the caller's name is passed through unchanged."""
+    workspace = tmp_path / "workspace"
+    _write_skill(workspace, "hand-written")
+    loader = _loader(tmp_path, workspace_dir=workspace)
+    spec = next(s for s in loader.load_all() if s.name == "hand-written")
+
+    assert lock_key_for_skill(spec, Lockfile()) == "hand-written"
+
+
+def test_an_entry_with_no_recorded_path_still_matches_by_name(tmp_path: Path) -> None:
+    """`path` postdates the lockfile; entries written before it must still bind."""
+    managed = tmp_path / "managed"
+    _write_skill(managed, "legacy")
+    lock = _lockfile(tmp_path / "lock.json", "legacy", identifier="id")
+
+    rows = build_skill_inventory(_loader(tmp_path, managed_dir=managed), lockfile_path=lock)
+
+    assert rows[0].acquisition.kind is AcquisitionKind.HUB
+    assert rows[0].acquisition.removable is True
+
+
+def test_a_renamed_directory_does_not_borrow_an_unrelated_entry(tmp_path: Path) -> None:
+    """Matching is by path, so a same-named manifest elsewhere claims nothing.
+
+    Two skills, one installed and one hand-written under a different root, whose
+    manifests both say ``shared``. Only the directory the lockfile recorded is
+    the install; the other must stay local or the Remove button would delete
+    somebody else's files.
+    """
+    managed = tmp_path / "managed"
+    workspace = tmp_path / "workspace"
+    install_dir = _write_renamed_skill(managed, "shared-from-hub", "shared")
+    _write_renamed_skill(workspace, "shared-by-hand", "also-shared")
+    lock = _lockfile(
+        tmp_path / "lock.json",
+        "shared-from-hub",
+        identifier="id",
+        path=str(install_dir),
+    )
+
+    rows = build_skill_inventory(
+        _loader(tmp_path, managed_dir=managed, workspace_dir=workspace),
+        lockfile_path=lock,
+    )
+
+    assert _row(rows, "shared").acquisition.kind is AcquisitionKind.HUB
+    assert _row(rows, "also-shared").acquisition.kind is AcquisitionKind.LOCAL
+
+
+def test_a_stale_entry_pointing_at_a_bundled_directory_is_still_ignored(
+    tmp_path: Path,
+) -> None:
+    """The BUNDLED exception survives the path join.
+
+    Matching by path would otherwise re-open the hole the name-keyed check was
+    already closing: an entry that records the packaged bundled directory must
+    not turn a shipped skill into a removable hub install.
+    """
+    bundled = tmp_path / "bundled"
+    install_dir = _write_skill(bundled, "shipped-collides")
+    lock = _lockfile(
+        tmp_path / "lock.json",
+        "shipped-collides",
+        identifier="id",
+        path=str(install_dir),
+        publisher_id="bankr",
+    )
+
+    rows = build_skill_inventory(_loader(tmp_path, bundled_dir=bundled), lockfile_path=lock)
+
+    assert rows[0].acquisition.kind is AcquisitionKind.SHIPPED
+    assert rows[0].acquisition.removable is False
+    assert rows[0].publisher == SkillPublisher()

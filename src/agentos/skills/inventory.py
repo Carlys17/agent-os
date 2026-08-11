@@ -46,6 +46,7 @@ __all__ = [
     "acquisition_payload",
     "availability_payload",
     "build_skill_inventory",
+    "lock_key_for_skill",
     "publisher_payload",
 ]
 
@@ -120,19 +121,92 @@ def build_skill_inventory(
         )
         availability = {**availability, **plan.availability}
 
+    by_path = _entries_by_path(lockfile)
     rows: list[SkillRow] = []
     for spec in skills:
-        entry = lockfile.get(spec.name)
+        key, entry = _bind_lock_entry(spec, lockfile, by_path)
         rows.append(
             SkillRow(
                 spec=spec,
                 eligibility=diagnose_eligibility(spec, elig_ctx),
-                acquisition=_derive_acquisition(spec, entry, managed_dir),
+                acquisition=_derive_acquisition(spec, key, entry, managed_dir),
                 publisher=_derive_publisher(spec, entry),
                 availability=availability.get(spec.name),
             )
         )
     return rows
+
+
+def _entries_by_path(lockfile: Lockfile) -> dict[Path, tuple[str, LockEntry]]:
+    """Index the lockfile by the resolved directory each entry records.
+
+    Built once per sweep rather than per skill: ``Path.resolve`` hits the
+    filesystem, and an install with a hundred skills would otherwise stat every
+    recorded path a hundred times.
+    """
+    index: dict[Path, tuple[str, LockEntry]] = {}
+    for key, entry in lockfile.installed.items():
+        if not entry.path:
+            continue
+        try:
+            resolved = Path(entry.path).expanduser().resolve()
+        except OSError:  # pragma: no cover - resolve() only raises on exotic filesystems
+            continue
+        # First writer wins: two entries recording the same directory is a
+        # corrupt lockfile, and picking the earlier one at least stays stable
+        # across reloads.
+        index.setdefault(resolved, (key, entry))
+    return index
+
+
+def lock_key_for_skill(spec: SkillSpec, lockfile: Lockfile) -> str:
+    """Return the lockfile key for a loaded skill, or its name when unmatched.
+
+    ``skills.uninstall`` and ``skills.update`` are addressed by the name a user
+    sees, which is the manifest's; the installer addresses the key the lockfile
+    is written under, which is the install *directory*. Resolving between them
+    lives here so both actions and the Installed rows agree on which entry a
+    skill is.
+    """
+    key, _ = _bind_lock_entry(spec, lockfile, _entries_by_path(lockfile))
+    return key or spec.name
+
+
+def _bind_lock_entry(
+    spec: SkillSpec,
+    lockfile: Lockfile,
+    by_path: dict[Path, tuple[str, LockEntry]],
+) -> tuple[str, LockEntry | None]:
+    """Match a loaded skill to its lockfile entry, by path and then by name.
+
+    The lockfile is keyed by the install *directory* — ``bundle.name``, the
+    source's slug, which is also the directory the installer writes into (see
+    ``SkillInstaller.install``). A ``SKILL.md`` is free to declare a different
+    ``name:``, and several published skills do: ``ytdlp-transcript`` installs a
+    manifest named ``youtube-transcript``. Looking the entry up by the manifest
+    name alone therefore missed, and the install was reported as a hand-copied
+    local directory with no source, no version, and no working Remove button.
+
+    The recorded ``path`` is the unambiguous join key, so it is tried first. The
+    name is the fallback for entries written before ``path`` was recorded, which
+    is also the only case where the two can disagree without the filesystem
+    saying so.
+    """
+    if spec.layer == SkillLayer.BUNDLED:
+        # Nothing can be installed into the packaged bundled directory, so any
+        # entry naming a shipped skill belongs to a different, since-removed
+        # install. See :func:`_derive_acquisition`.
+        return "", None
+    directory = Path(spec.base_dir) if spec.base_dir else spec.path
+    if directory is not None:
+        try:
+            hit = by_path.get(directory.expanduser().resolve())
+        except OSError:  # pragma: no cover - resolve() only raises on exotic filesystems
+            hit = None
+        if hit is not None:
+            return hit
+    entry = lockfile.get(spec.name)
+    return (spec.name, entry) if entry is not None else ("", None)
 
 
 def publisher_payload(publisher: SkillPublisher | None) -> dict[str, Any]:
@@ -218,6 +292,7 @@ def _derive_publisher(spec: SkillSpec, entry: LockEntry | None) -> SkillPublishe
 
 def _derive_acquisition(
     spec: SkillSpec,
+    key: str,
     entry: LockEntry | None,
     managed_dir: Path | None,
 ) -> SkillAcquisition:
@@ -238,7 +313,11 @@ def _derive_acquisition(
         shipped = spec.layer == SkillLayer.BUNDLED
         return SkillAcquisition(kind=AcquisitionKind.SHIPPED if shipped else AcquisitionKind.LOCAL)
 
-    removable, detail = _removability(spec.name, entry, managed_dir)
+    # ``key``, not ``spec.name``: uninstall deletes ``<managed_dir>/<key>``,
+    # which is the directory the entry was written for. Checking the manifest
+    # name instead reported a perfectly removable install as an orphan whenever
+    # a SKILL.md declared a name other than its directory's.
+    removable, detail = _removability(key, entry, managed_dir)
     return SkillAcquisition(
         kind=AcquisitionKind.HUB,
         source_id=entry.source,
