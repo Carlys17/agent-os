@@ -1,0 +1,106 @@
+"""Tavily Search provider — uses the Tavily Search API."""
+
+from __future__ import annotations
+
+import os
+
+import httpx
+
+from agentos.search.registry import register_provider
+from agentos.search.types import SearchErrorKind, SearchProviderError, SearchResult
+from agentos.secrets import clean_header_secret
+
+_API_URL = "https://api.tavily.com/search"
+
+
+class TavilySearchProvider:
+    """Search provider using the Tavily Search API."""
+
+    name: str = "tavily"
+
+    def __init__(
+        self,
+        api_key: str = "",
+        proxy: str = "",
+        use_env_proxy: bool = False,
+        diagnostics: bool = False,
+    ) -> None:
+        self._api_key = clean_header_secret(
+            api_key or os.environ.get("TAVILY_API_KEY", ""),
+            label="Tavily Search API key",
+        )
+        self._proxy = proxy or None
+        self._trust_env = bool(use_env_proxy) and not self._proxy
+        self._diagnostics = bool(diagnostics)
+
+    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        if not self._api_key:
+            raise SearchProviderError(
+                provider=self.name,
+                kind="auth",
+                message="Tavily search API key not set",
+                retryable=False,
+            )
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=15.0,
+                proxy=self._proxy,
+                trust_env=self._trust_env,
+            ) as client:
+                response = await client.post(
+                    _API_URL,
+                    json={
+                        "api_key": self._api_key,
+                        "query": query,
+                        "search_depth": "basic",
+                        "max_results": min(max_results, 20),
+                    },
+                )
+                response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise SearchProviderError(
+                provider=self.name,
+                kind="timeout",
+                message=str(exc) or "Tavily search request timed out.",
+                retryable=True,
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if status_code in {401, 403}:
+                kind: SearchErrorKind = "auth"
+            elif status_code == 429:
+                kind = "rate_limit"
+            else:
+                kind = "http"
+            raise SearchProviderError(
+                provider=self.name,
+                kind=kind,
+                message=str(exc) or f"Tavily search failed with HTTP {status_code}.",
+                retryable=kind in {"rate_limit", "http"},
+                status_code=status_code,
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise SearchProviderError(
+                provider=self.name,
+                kind="network",
+                message=str(exc) or "Tavily search network request failed.",
+                retryable=True,
+            ) from exc
+
+        data = response.json()
+        results: list[SearchResult] = []
+
+        for item in (data.get("results") or [])[:max_results]:
+            results.append(
+                SearchResult(
+                    title=item.get("title", ""),
+                    url=item.get("url", ""),
+                    snippet=item.get("content", ""),
+                )
+            )
+
+        return results
+
+
+register_provider("tavily", TavilySearchProvider)

@@ -1789,6 +1789,7 @@ async def build_services(
     try:
         import agentos.search.providers.brave  # noqa: F401 — registers provider
         import agentos.search.providers.duckduckgo  # noqa: F401 — registers provider
+        import agentos.search.providers.tavily  # noqa: F401 — registers provider
         from agentos.search.registry import get_provider_spec
         from agentos.tools.builtin.web import configure_search
 
