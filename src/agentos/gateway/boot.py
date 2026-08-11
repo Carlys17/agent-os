@@ -324,7 +324,6 @@ class ServiceContainer:
             except Exception:
                 pass
 
-
         # ── 2. Tear down memory tier through MemoryManager ──
         # In real boot, the legacy `memory_watchers` / `memory_stores` below
         # are the SAME object identities as those reachable via memory_managers,
@@ -2014,7 +2013,6 @@ async def start_gateway_server(
     # Patch deferred callback so memory writes refresh TurnRunner snapshots
     if hasattr(svc, "_turn_runner_ref"):
         svc._turn_runner_ref.append(turn_runner)  # type: ignore[attr-defined]
-
 
     # Lazy ref for channel_manager — cron handler captures it via closure,
     # populated after channel_manager is constructed below.
