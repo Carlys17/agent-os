@@ -29,6 +29,7 @@ from agentos.skills.inventory import (
     acquisition_payload,
     availability_payload,
     build_skill_inventory,
+    lock_key_for_skill,
     publisher_payload,
 )
 from agentos.skills.loader import SkillLoader
@@ -393,6 +394,26 @@ def _installed_names() -> set[str]:
     return installed_skill_names()
 
 
+def _lock_key(ctx: RpcContext, name: str) -> str:
+    """Translate a skill's displayed name into the key its lockfile entry uses.
+
+    Both actions below address the installer, which is keyed by the install
+    directory, while every surface addresses a skill by the name its ``SKILL.md``
+    declares. Those differ whenever a published skill's manifest names itself
+    something other than its directory — ``ytdlp-transcript`` ships a manifest
+    named ``youtube-transcript`` — and without this translation Remove and
+    Update reported "not found" for an install sitting right there on disk.
+
+    The name is returned unchanged when no skill loads under it, so cleaning up
+    a stale lockfile entry by its own key still works.
+    """
+    loader = _get_loader(ctx)
+    spec = loader.get_by_name(name) if loader is not None else None
+    if spec is None:
+        return name
+    return lock_key_for_skill(spec, Lockfile.load(default_lockfile_path()))
+
+
 def _installed_lock_entries() -> dict[str, LockEntry]:
     """Return the lockfile's installed entries, keyed by installed skill name."""
     return Lockfile.load(default_lockfile_path()).installed
@@ -594,7 +615,7 @@ async def _handle_skills_update(params: dict | None, ctx: RpcContext) -> dict[st
 
     name = (params or {}).get("name")
     try:
-        results = await installer.update(name)
+        results = await installer.update(_lock_key(ctx, name) if name else None)
     except OSError as exc:
         return {
             "results": [],
@@ -618,7 +639,7 @@ async def _handle_skills_uninstall(params: dict | None, ctx: RpcContext) -> dict
     if installer is None:
         return {"success": False, "message": "No skill installer configured"}
 
-    result = await installer.uninstall(params["name"])
+    result = await installer.uninstall(_lock_key(ctx, params["name"]))
     if result.success:
         _invalidate_loader(ctx)
     return {"success": result.success, "name": result.name, "message": result.message}

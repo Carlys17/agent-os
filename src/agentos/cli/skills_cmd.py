@@ -94,28 +94,18 @@ def _emit_skill_mutation_result(
     raise typer.Exit(1)
 
 
-def _load_skill_rows() -> list[dict[str, Any]]:
-    """Build the offline ``skills list`` rows from the shared inventory.
+def _offline_loader() -> tuple[Any, Any]:
+    """Build the layer loader (and its config) this process reads skills through.
 
-    This runs without a gateway, so it re-derives the layer directories, but the
-    facts it reports — eligibility, acquisition, publisher — come from
-    :func:`~agentos.skills.inventory.build_skill_inventory`, the same builder the
-    RPC surfaces use. That is the point: the CLI and the Web UI used to answer
-    "where did this skill come from" differently for the same skill.
-
-    ``availability`` is the one block this surface omits. It is a question about
-    a chat session's tool surface, and a CLI process has none; a fabricated
-    verdict here would be worse than an absent key.
+    Only the no-gateway paths need it: every command prefers the running
+    gateway, which already owns a loader. Extracted so ``skills list`` and
+    ``skills uninstall`` resolve a skill the same way offline — they disagreed
+    once and the CLI reported a skill it could not then remove.
     """
     import os
     from pathlib import Path
 
     from agentos.gateway.config import GatewayConfig
-    from agentos.skills.inventory import (
-        acquisition_payload,
-        build_skill_inventory,
-        publisher_payload,
-    )
     from agentos.skills.loader import SkillLoader
     from agentos.skills.paths import resolve_skill_layer_dirs
 
@@ -137,6 +127,52 @@ def _load_skill_rows() -> list[dict[str, Any]]:
         project_agents_dir=layer_dirs.project_agents_dir,
         extra_dirs=layer_dirs.extra_dirs,
     )
+    return loader, config
+
+
+def _offline_lock_key(name: str) -> str:
+    """Return the lockfile key for ``name``, or ``name`` when nothing loads.
+
+    The installer is keyed by the install directory while a user types the name
+    a manifest declares; see
+    :func:`~agentos.skills.inventory.lock_key_for_skill`. Best-effort: a broken
+    config must not turn ``skills uninstall`` into a traceback, so a failure to
+    build the loader falls back to the typed name — exactly what this command
+    passed before.
+    """
+    from agentos.skills.hub.lockfile import Lockfile, default_lockfile_path
+    from agentos.skills.inventory import lock_key_for_skill
+
+    try:
+        loader, _ = _offline_loader()
+        spec = loader.get_by_name(name)
+    except Exception:  # pragma: no cover - config/IO shapes vary by install
+        return name
+    if spec is None:
+        return name
+    return lock_key_for_skill(spec, Lockfile.load(default_lockfile_path()))
+
+
+def _load_skill_rows() -> list[dict[str, Any]]:
+    """Build the offline ``skills list`` rows from the shared inventory.
+
+    This runs without a gateway, so it re-derives the layer directories, but the
+    facts it reports — eligibility, acquisition, publisher — come from
+    :func:`~agentos.skills.inventory.build_skill_inventory`, the same builder the
+    RPC surfaces use. That is the point: the CLI and the Web UI used to answer
+    "where did this skill come from" differently for the same skill.
+
+    ``availability`` is the one block this surface omits. It is a question about
+    a chat session's tool surface, and a CLI process has none; a fabricated
+    verdict here would be worse than an absent key.
+    """
+    from agentos.skills.inventory import (
+        acquisition_payload,
+        build_skill_inventory,
+        publisher_payload,
+    )
+
+    loader, config = _offline_loader()
     inventory = build_skill_inventory(loader, config=config)
     rows: list[dict[str, Any]] = []
     for row in sorted(inventory, key=lambda r: r.spec.name):
@@ -415,7 +451,7 @@ def skills_uninstall(
         from agentos.skills.hub.defaults import build_default_skill_installer
 
         installer = build_default_skill_installer()
-        result = await installer.uninstall(name)
+        result = await installer.uninstall(_offline_lock_key(name))
 
         if json_output:
             print_json(_install_result_payload(result))
