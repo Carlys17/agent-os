@@ -18,6 +18,7 @@ from agentos.router_control import (
     RouterControlValidationError,
     build_router_control_targets,
     render_router_control_prompt_block,
+    resolve_router_control_model_target,
     resolve_router_control_target,
 )
 
@@ -264,6 +265,46 @@ async def test_agentos_router_applies_hold_before_normal_classification(monkeypa
     assert out.metadata["routing_source"] == "router_control_hold"
     assert out.metadata["router_control_hold_applied"] is True
     assert out.metadata["router_control_target_tier"] == "c3"
+
+
+@pytest.mark.asyncio
+async def test_a_model_hold_routes_to_that_model_not_its_host_tier(monkeypatch) -> None:
+    """A directly-named model must actually run — the host tier only lends settings.
+
+    The hold carries both a tier (where thinking level and the pricing baseline
+    come from) and a model. Nothing downstream may substitute the tier's own
+    configured model for the one the user named.
+    """
+
+    cfg = _router_cfg(_router_tier_profile_defaults("openrouter"))
+    cfg.default_tier = "c1"
+    target = resolve_router_control_model_target(cfg, "z-ai/glm-5.2")
+    store = RouterControlHoldStore()
+    store.set_hold("agent:main:test-model", target, evidence="use glm")
+
+    def fail_strategy(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("router classification should not run while hold is valid")
+
+    monkeypatch.setattr("agentos.engine.steps.agentos_router._get_strategy", fail_strategy)
+    ctx = TurnContext(
+        message="review this",
+        session_key="agent:main:test-model",
+        config=SimpleNamespace(agentos_router=cfg),
+        provider=None,
+        model="default-model",
+        tool_defs=[],
+        system_prompt="system",
+        metadata={"router_control_hold_store": store},
+    )
+
+    out = await apply_agentos_router(ctx)
+
+    assert out.model == "z-ai/glm-5.2"
+    assert out.metadata["routed_model"] == "z-ai/glm-5.2"
+    # The tier rides along for settings, and must remain a REAL configured tier
+    # so `tiers[decision.tier]` downstream cannot raise.
+    assert out.metadata["routed_tier"] == "c1"
+    assert out.metadata["routed_tier"] in cfg.tiers
 
 
 @pytest.mark.asyncio

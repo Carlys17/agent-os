@@ -73,7 +73,11 @@ class CommandRegistry:
         if match is None:
             return None
         name, method, params_factory = match
-        params = params_factory(envelope)
+        # Everything after the command word. Most factories ignore it; the ones
+        # that take an argument (`/use <model-id>`) would otherwise have no way
+        # to see what the user typed.
+        _head, _sep, args = message_content.strip().partition(" ")
+        params = params_factory(envelope, args.strip())
         if method == "chat.history":
             params = {**params, "limit": 10}
         res = await rpc_dispatcher.dispatch(

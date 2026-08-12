@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The chat composer now carries a route picker, so choosing which model answers
+  no longer means remembering a slash command. It lists the text tiers your
+  `[agentos_router]` config actually defines — labelled with the model each
+  resolves to, e.g. `c1 · gpt-5.6-luna` — plus `Auto`, which hands routing back
+  to the Pilot Router and reports the tier it last chose (`Auto · c2`) so
+  automatic routing stays legible. The pin is read back from the gateway over a
+  new `router.hold.get` RPC rather than mirrored in the browser, so a reload
+  shows the pin that is really in force and a pin set from `/c3` and one set
+  from the picker agree. With no Pilot Router configured the control is disabled
+  rather than hidden, keeping the composer from reflowing when the router is
+  toggled.
+- The picker is a searchable list, so the choice is not limited to the four
+  configured tiers: it also offers every model of the active provider, and
+  `/use <model-id>` does the same from a slash command on web, TUI and channels.
+  A directly-named model rides on the default tier, inheriting the thinking
+  level and pricing baseline that live on a tier and not on a model id — which
+  also keeps the router step's `tiers[hold.tier]` lookup valid. Only the active
+  provider's models are offered: every turn runs through the single configured
+  `llm.provider` (a tier's `provider` field is metadata, not a client selector),
+  so anything else is refused when chosen rather than failing on the next turn.
+  `/use` is a new verb rather than an argument to `/model`, whose argument
+  already filters the listing. Only models the provider publishes in its
+  catalog can be pinned — on OpenCAP that is the bare canonical ids, not the
+  namespaced `<upstream>/<model>` aliases its inference endpoint also answers to.
+- The router-fx strip is suppressed while a tier or model is pinned. It exists
+  to show the router weighing candidates and settling on one; a pin decides the
+  route up front, so the animation was dramatizing a deliberation that never
+  happened and restating the composer's own picker every turn. It returns the
+  moment routing goes back to Auto.
+- A pin now withdraws the model's own `router_control` tool for the duration,
+  along with its target menu in the system prompt. The user's choice already
+  outranked the model inside the router step; leaving the lever on the surface
+  only invited calls that could not take effect and paid tokens to describe
+  them. Holds the model installs for itself are unaffected — hiding the tool on
+  its own hold would strand a session on a transient escalation.
+
+### Changed
+
+- **Breaking:** a tier pin set by a user is now sticky. `/c0`…`/c3` — in the Web
+  UI, the TUI, and every channel — hold until `/auto` clears them instead of
+  lapsing after ten idle minutes. A pin is a standing instruction, and a
+  selection that silently reverted would have made the new composer control lie
+  about what is running. The practical consequence is a bill: pin `/c3` and
+  forget, and every later turn keeps paying for `c3` until someone runs `/auto`.
+  Routing the model chooses for itself mid-turn is unchanged and still lapses on
+  its own. Two things still outrank a pin, both pre-existing: image turns are
+  routed to a vision tier before pins are consulted (the Web UI flags such a
+  turn), and a pinned turn skips the large-context tier floor, so it fails at
+  the provider rather than being upgraded if the conversation outgrows the
+  pinned model's context window.
+
 ## [2026.8.11] - 2026-08-11
 
 ### Added

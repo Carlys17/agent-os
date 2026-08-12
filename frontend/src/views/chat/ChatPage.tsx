@@ -26,11 +26,13 @@ import {
 } from './logic'
 import { PendingQueue } from './PendingQueue'
 import { resetSession as requestSessionReset } from './resetSession'
+import { RoutePicker } from './RoutePicker'
 import { SessionChip } from './SessionChip'
 import { SlashMenu, type SlashMenuHandle } from './SlashMenu'
 import { Toolbar } from './Toolbar'
 import { useApprovalPending } from './useApprovalPending'
 import { usePendingQueue, type PendingComposerBridge } from './usePendingQueue'
+import { useRoutePin } from './useRoutePin'
 import { useSlashCommands } from './useSlashCommands'
 import { useTranscript } from './useTranscript'
 import { t } from '@/i18n'
@@ -232,6 +234,10 @@ export function ChatPage() {
     setComposerValue(text)
   }, [])
 
+  // Declared before useTranscript: the router-fx animation is suppressed while a
+  // tier is pinned, so the transcript needs the pin state as an input.
+  const route = useRoutePin(rpc, sessionKey)
+
   const {
     containerRef,
     routerFxDockRef,
@@ -251,6 +257,9 @@ export function ChatPage() {
     onEditMessage: editMessage,
     onRegenerateMessage: regenerateMessage,
     onSessionKeyResolved: switchToSession,
+    // Either kind of pin removes the router's choice, so both suppress the
+    // router-fx strip — a model pin is no less decided than a tier pin.
+    routePinned: route.isPinned,
   })
   const attachments = useAttachments()
 
@@ -671,6 +680,7 @@ export function ChatPage() {
         routerFxDock={
           <div id="chat-routerfx-dock" className="chat-routerfx-dock" ref={routerFxDockRef} />
         }
+        routePicker={<RoutePicker route={route} />}
         toolbar={
           <Toolbar
             sessionKey={sessionKey}

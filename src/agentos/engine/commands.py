@@ -55,7 +55,11 @@ def parse_surface(value: str) -> Surface:
 # Callable to avoid a cycle with agentos.gateway.routing.RouteEnvelope at
 # import time — the channel dispatcher passes its own envelope and we only
 # require attribute access (`session_key`).
-ParamsFactory = Callable[[Any], dict[str, Any]]
+#
+# The second argument is the command's argument text — everything after the
+# command word, already stripped, "" when the user typed the bare command. A
+# factory that ignores it (most do) simply takes it and drops it.
+ParamsFactory = Callable[[Any, str], dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -178,27 +182,38 @@ class SlashCommandRegistry:
 # ---------------------------------------------------------------------------
 
 
-def _key(envelope: Any) -> dict[str, str]:
+def _key(envelope: Any, _args: str = "") -> dict[str, str]:
     return {"key": envelope.session_key}
 
 
-def _session_key(envelope: Any) -> dict[str, str]:
+def _session_key(envelope: Any, _args: str = "") -> dict[str, str]:
     return {"sessionKey": envelope.session_key}
 
 
-def _channel_commands(_envelope: Any) -> dict[str, str]:
+def _channel_commands(_envelope: Any, _args: str = "") -> dict[str, str]:
     return {"surface": Surface.CHANNEL.value}
 
 
-def _empty(_envelope: Any) -> dict[str, Any]:
+def _empty(_envelope: Any, _args: str = "") -> dict[str, Any]:
     return {}
 
 
 def _tier_hold(tier: str) -> ParamsFactory:
-    def factory(envelope: Any) -> dict[str, str]:
+    def factory(envelope: Any, _args: str = "") -> dict[str, str]:
         return {"key": envelope.session_key, "tier": tier}
 
     return factory
+
+
+def _model_hold(envelope: Any, args: str = "") -> dict[str, str]:
+    """`/use <model-id>` — pin the route to a directly-named model.
+
+    The id is passed through verbatim; ``router.hold.set`` is what checks it
+    against the active provider's catalog, so a typo comes back as one readable
+    error instead of a hold that fails every later turn.
+    """
+
+    return {"key": envelope.session_key, "model": args.strip()}
 
 
 _W = Surface.WEB_CHAT
@@ -277,6 +292,23 @@ _COMMANDS: tuple[CommandDef, ...] = (
             },
         )
         for tier in ("c0", "c1", "c2", "c3")
+    ),
+    # `/use <model-id>` pins the route to a model that is not one of the four
+    # configured tiers. It is a separate verb rather than an argument to
+    # `/model`, whose argument already filters the listing — overloading it
+    # would make `/model gpt` ambiguous between "show me the gpt models" and
+    # "switch to gpt". The model rides on the default tier for its thinking
+    # level and pricing baseline, and must belong to the active provider.
+    CommandDef(
+        name="/use",
+        usage="/use <model-id>",
+        description="Pin the route to a specific model for this session.",
+        execution={
+            _W: _rpc("router.hold.set", _model_hold),
+            _T: _rpc("router.hold.set", _model_hold),
+            _S: _local("router.hold.set_model"),
+            _C: _rpc("router.hold.set", _model_hold),
+        },
     ),
     CommandDef(
         name="/auto",

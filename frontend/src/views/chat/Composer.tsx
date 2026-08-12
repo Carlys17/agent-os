@@ -133,6 +133,12 @@ export interface ComposerProps {
   /** Imperative router-fx mount point, rendered as a compact status above the input row. */
   routerFxDock?: React.ReactNode
   /**
+   * Optional route picker, mounted at the right of the input bar next to the
+   * send button so the active model route is readable without opening the
+   * settings popover, and sits with the other per-send controls.
+   */
+  routePicker?: React.ReactNode
+  /**
    * Optional composer-settings toolbar (execution mode + Pilot Router + usage),
    * mounted behind a gear trigger in the input bar (chat.js:1248-1281
    * `chat-toolbar-wrap`). Absent when the view has no toolbar.
@@ -173,6 +179,7 @@ export function Composer({
   onAttachFiles,
   tray,
   routerFxDock,
+  routePicker,
   toolbar,
   pendingCount = 0,
   onRecoverPending,
@@ -576,6 +583,7 @@ export function Composer({
           aria-controls={slashActiveDescendant ? slashListboxId : undefined}
           aria-activedescendant={slashActiveDescendant}
         />
+        {routePicker}
         {busy ? (
           <button
             type="button"

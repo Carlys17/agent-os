@@ -149,7 +149,24 @@ export const chat = defineNamespace('chat', {
   slashRoutingRestored: 'Automatic routing restored',
   slashRoutingAlready: 'Automatic routing already active',
   slashRouterUnpinFailed: 'Router unpin failed: {message}',
+  slashUseNeedsModel: 'Usage: /use <model-id>',
   slashUnsupported: 'Unsupported command: {command}',
+
+  // Composer route picker.
+  routeLabel: 'Model route',
+  routeAuto: 'Auto',
+  routeAutoHint: 'Let the Pilot Router choose',
+  routeAutoWithTier: 'Auto · {tier}',
+  routeAutoTitle: 'The Pilot Router picks a tier for each turn',
+  routePinned: 'Pinned to {target}',
+  routePinnedTitle: 'Pinned to {tier} until you change it',
+  routeModelPinnedTitle: 'Pinned to {model} until you change it',
+  routeSearchPlaceholder: 'Search tiers and models',
+  routeNoMatch: 'No route matches',
+  routeDisabledTitle: 'Turn on the Pilot Router to pick a tier',
+  routeImageOverride: 'image route',
+  routeImageOverrideTitle:
+    'This turn used the image tier: image turns are routed before the pin is applied',
 
   // Transcript wiring.
   attachmentsPrompt: 'Describe these attachments',

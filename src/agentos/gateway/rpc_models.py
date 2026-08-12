@@ -30,10 +30,33 @@ def _model_info_to_wire(m: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@_d.method("models.list", CONTROL_AND_CHANNEL)
-async def _handle_models_list(params: dict | None, ctx: RpcContext) -> list[dict[str, Any]]:
-    provider_filter = (params or {}).get("provider")
-    capabilities_filter: list[str] | None = (params or {}).get("capabilities")
+def active_provider_id(ctx: RpcContext) -> str:
+    """The single provider every turn runs through (``llm.provider``).
+
+    The runtime never builds a per-tier or per-model provider client, so this is
+    the only provider whose models can actually be reached — see
+    ``_degrade_model_for_local_provider`` in the router step.
+    """
+
+    return str(getattr(getattr(ctx.config, "llm", None), "provider", "") or "").strip()
+
+
+async def collect_models(
+    ctx: RpcContext,
+    *,
+    provider_filter: str | None = None,
+    capabilities_filter: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Gather the model catalog in wire format.
+
+    Shared with ``router.hold.set``, which validates a user-named model against
+    it before pinning: a typo'd id would otherwise install a hold that fails
+    every subsequent turn at the provider.
+
+    Note on OpenCAP: its inference endpoint also serves namespaced ``<upstream>/
+    <model>`` aliases, but the PUBLIC catalog this reads publishes only the bare
+    canonical ids, so those aliases never appear here and are not pinnable.
+    """
 
     models: list[dict[str, Any]] = []
     catalog = ctx.model_catalog or getattr(ctx.turn_runner, "_model_catalog", None)
@@ -43,8 +66,7 @@ async def _handle_models_list(params: dict | None, ctx: RpcContext) -> list[dict
         except Exception:
             pass
 
-    active_provider = str(getattr(getattr(ctx.config, "llm", None), "provider", "") or "")
-    catalog_is_canonical = bool(models) and active_provider.strip().lower() == "opencap"
+    catalog_is_canonical = bool(models) and active_provider_id(ctx).lower() == "opencap"
     if ctx.provider_selector is not None and not catalog_is_canonical:
         try:
             raw = await ctx.provider_selector.list_models()
@@ -64,3 +86,12 @@ async def _handle_models_list(params: dict | None, ctx: RpcContext) -> list[dict
         models = [m for m in models if required.issubset(set(m["capabilities"]))]
 
     return models
+
+
+@_d.method("models.list", CONTROL_AND_CHANNEL)
+async def _handle_models_list(params: dict | None, ctx: RpcContext) -> list[dict[str, Any]]:
+    return await collect_models(
+        ctx,
+        provider_filter=(params or {}).get("provider"),
+        capabilities_filter=(params or {}).get("capabilities"),
+    )

@@ -48,6 +48,7 @@ STANDALONE_SLASH_HANDLER_WORDS = frozenset(
         "/save",
         "/session",
         "/status",
+        "/use",
     }
 )
 
@@ -403,11 +404,16 @@ async def _apply_router_hold_standalone(
     context: StandaloneSlashContext,
     *,
     tier: str | None,
+    model: str | None = None,
 ) -> None:
     """Mutate the in-process Pilot Router hold store for the active session.
 
     ``tier=None`` means "clear" (restore automatic routing); a non-empty
-    string pins the router to that tier. Mirrors what the gateway's
+    string pins the router to that tier. ``model`` pins a directly-named model
+    instead — unlike the gateway path this cannot check the id against a
+    catalog, because standalone mode has no model listing at all (``/models``
+    says as much), so a bad id surfaces as a provider error on the next turn.
+    Mirrors what the gateway's
     ``router.hold.set`` / ``router.hold.clear`` RPCs do, but touches the
     ``TurnRunner`` instance living in this process directly. The store
     and config come from ``turn_runner.router_control_hold_store`` /
@@ -425,12 +431,33 @@ async def _apply_router_hold_standalone(
     # Lazily import so the slash adapter never pays the router_control
     # import cost when no tier command is issued.
     from agentos.router_control import (
+        HOLD_SOURCE_USER,
         RouterControlValidationError,
+        resolve_router_control_model_target,
         resolve_router_control_target,
     )
     from agentos.session.keys import canonicalize_session_key
 
     session_key = canonicalize_session_key(context.session_key)
+
+    if model:
+        try:
+            model_target = resolve_router_control_model_target(cfg, model)
+        except RouterControlValidationError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            return
+        store.set_hold(
+            session_key,
+            model_target,
+            evidence=f"slash command /use {model}",
+            source=HOLD_SOURCE_USER,
+        )
+        # The chip shows the model, not the tier hosting it — the tier is an
+        # implementation detail of where the settings come from.
+        context.state.router_hold_tier = model
+        sync_session_chrome_from_state(context.state)
+        console.print(f"[{ACCENT}]router pinned to model[/] {model}")
+        return
 
     if tier is None:
         cleared = store.clear(session_key)
@@ -449,7 +476,14 @@ async def _apply_router_hold_standalone(
             f"[yellow]Tier '{tier}' is not configured on the Pilot Router.[/yellow]"
         )
         return
-    store.set_hold(session_key, target, evidence=f"slash command /{tier}")
+    # A slash pin is the user speaking, so it is sticky: it holds until /auto
+    # clears it, unlike the self-expiring hold the model installs for itself.
+    store.set_hold(
+        session_key,
+        target,
+        evidence=f"slash command /{tier}",
+        source=HOLD_SOURCE_USER,
+    )
     context.state.router_hold_tier = tier
     sync_session_chrome_from_state(context.state)
     model_suffix = f" · {target.model}" if target.model else ""
@@ -519,6 +553,13 @@ async def handle_standalone_slash_command(
 
     if cmd == "/cost":
         console.print(state.usage.render())
+        return True
+
+    if parts := _slash_parts(cmd, "/use"):
+        if len(parts) == 1:
+            console.print("[yellow]Usage: /use <model-id>[/yellow]")
+        else:
+            await _apply_router_hold_standalone(context, tier=None, model=parts[1].strip())
         return True
 
     if cmd in {"/c0", "/c1", "/c2", "/c3"}:

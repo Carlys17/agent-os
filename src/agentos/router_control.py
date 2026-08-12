@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from dataclasses import dataclass, fields, is_dataclass
@@ -16,6 +17,19 @@ from agentos.router_tiers import (
 # Zero means no turn-count cap; the hold expires after an idle TTL.
 DEFAULT_HOLD_TURNS = 0
 DEFAULT_HOLD_TTL_SECONDS = 600.0
+
+# Hold provenance. A hold the MODEL installed for itself through the
+# ``router_control`` tool is an in-turn escalation and must decay on its own —
+# it keeps the idle TTL above. A hold the USER pinned (the composer route picker
+# or a /c0-/c3 slash command) is a standing instruction: it holds until the user
+# clears it, so it carries no TTL at all. `RouterControlHoldStore.set_hold`
+# derives the TTL from the source unless a caller overrides it explicitly.
+HOLD_SOURCE_TOOL = "router_control_tool"
+HOLD_SOURCE_USER = "user"
+# math.inf rather than a large finite number: `is_expired` compares
+# ``now - last_activity >= ttl_seconds``, which is False for every finite
+# elapsed time against inf, so a user hold never expires on its own.
+USER_HOLD_TTL_SECONDS = math.inf
 
 
 class RouterControlValidationError(ValueError):
@@ -44,7 +58,13 @@ class RouterControlHold:
     last_activity_at_monotonic: float | None = None
     turns_remaining: int = DEFAULT_HOLD_TURNS
     ttl_seconds: float = DEFAULT_HOLD_TTL_SECONDS
-    source: str = "router_control_tool"
+    source: str = HOLD_SOURCE_TOOL
+
+    @property
+    def sticky(self) -> bool:
+        """True when nothing but an explicit clear can end this hold."""
+
+        return self.turns_remaining <= 0 and not math.isfinite(self.ttl_seconds)
 
     def is_expired(self, now_monotonic: float) -> tuple[bool, str | None]:
         if self.turns_remaining < 0:
@@ -118,6 +138,47 @@ def resolve_router_control_target(
         ) from exc
 
 
+def resolve_router_control_model_target(
+    router_cfg: object | None,
+    model: str,
+) -> RouterControlTarget:
+    """Build a target for a model the user named directly, off the tier list.
+
+    Tiers carry more than a model id — ``thinking_level``, ``provider``, and the
+    baseline the savings figure is computed against all live on the tier, not on
+    the model. A bare model id therefore cannot stand alone: it is HOSTED on the
+    default text tier and inherits that tier's settings. That also keeps the
+    router step's ``tiers[decision.tier]`` lookup valid, which would raise a
+    ``KeyError`` and kill the turn if a hold ever named a tier that is not
+    configured.
+
+    The model itself is not validated here. Whether an id exists is a question
+    about the live provider catalog, which this module has no access to; the RPC
+    layer checks it against the active provider before installing a hold.
+    """
+
+    chosen = str(model or "").strip()
+    if not chosen:
+        raise RouterControlValidationError("router_control model is required")
+
+    text_tiers = _text_tiers(router_cfg)
+    if not text_tiers:
+        raise RouterControlValidationError("no text tier is configured to host a model choice")
+    default_tier = str(getattr(router_cfg, "default_tier", "") or "").strip().lower()
+    host_tier = default_tier if default_tier in text_tiers else next(iter(text_tiers))
+    host_cfg = text_tiers[host_tier]
+    thinking = host_cfg.get("thinking_level", host_cfg.get("thinking"))
+    return RouterControlTarget(
+        target_id=f"model:{chosen}",
+        target_type="model",
+        tier=host_tier,
+        model=chosen,
+        provider=str(host_cfg.get("provider") or "").strip() or None,
+        description=None,
+        thinking_level=str(thinking).strip() if thinking is not None else None,
+    )
+
+
 def render_router_control_prompt_block(router_cfg: object | None) -> str:
     targets = [
         target
@@ -181,9 +242,22 @@ class RouterControlHoldStore:
         evidence: str,
         now_monotonic: float | None = None,
         turns_remaining: int = DEFAULT_HOLD_TURNS,
-        ttl_seconds: float = DEFAULT_HOLD_TTL_SECONDS,
+        ttl_seconds: float | None = None,
+        source: str = HOLD_SOURCE_TOOL,
     ) -> RouterControlHold:
+        """Install a hold for ``session_key``, replacing any existing one.
+
+        ``ttl_seconds`` defaults to the source's own lifetime — infinite for a
+        user pin, the idle TTL for a tool escalation — so callers that do not
+        care about expiry cannot accidentally give a user pin the tool's TTL
+        (or vice versa) by omitting the argument.
+        """
+
         now = time.monotonic() if now_monotonic is None else now_monotonic
+        if ttl_seconds is None:
+            ttl_seconds = (
+                USER_HOLD_TTL_SECONDS if source == HOLD_SOURCE_USER else DEFAULT_HOLD_TTL_SECONDS
+            )
         hold = RouterControlHold(
             tier=target.tier,
             model=target.model,
@@ -194,9 +268,28 @@ class RouterControlHoldStore:
             last_activity_at_monotonic=now,
             turns_remaining=turns_remaining,
             ttl_seconds=ttl_seconds,
+            source=source,
         )
         with self._lock:
             self._holds[session_key] = hold
+        return hold
+
+    def get_user_hold(
+        self,
+        session_key: str,
+        *,
+        now_monotonic: float | None = None,
+    ) -> RouterControlHold | None:
+        """Return the live USER hold for ``session_key``, else None.
+
+        A pure peek: it never decrements a turn budget nor refreshes the idle
+        TTL, so callers outside the router step (tool-surface gating, the
+        ``router.hold.get`` RPC) cannot keep a hold alive just by observing it.
+        """
+
+        hold = self.get_valid(session_key, now_monotonic=now_monotonic)
+        if hold is None or hold.source != HOLD_SOURCE_USER:
+            return None
         return hold
 
     def clear(self, session_key: str) -> RouterControlHold | None:
