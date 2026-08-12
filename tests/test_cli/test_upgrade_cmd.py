@@ -93,7 +93,9 @@ def _json_payload(stdout: str) -> dict[str, Any]:
 
 def test_check_reports_newer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(upgrade_cmd, "build_upgrade_plan", _delegated_plan)
-    monkeypatch.setattr("agentos.cli.pypi_client.latest_version", lambda timeout=5.0: "99999.1.1")
+    monkeypatch.setattr(
+        "agentos.compat.pypi_client.latest_version", lambda timeout=5.0: "99999.1.1"
+    )
     result = runner.invoke(_app(), ["upgrade", "--check"])
     assert result.exit_code == 0
     assert "newer version is available" in result.stdout
@@ -101,7 +103,7 @@ def test_check_reports_newer(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_check_offline_exit_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(upgrade_cmd, "build_upgrade_plan", _delegated_plan)
-    monkeypatch.setattr("agentos.cli.pypi_client.latest_version", lambda timeout=5.0: None)
+    monkeypatch.setattr("agentos.compat.pypi_client.latest_version", lambda timeout=5.0: None)
     result = runner.invoke(_app(), ["upgrade", "--check"])
     assert result.exit_code == 0
     assert "could not check (offline)" in result.stdout
@@ -110,7 +112,9 @@ def test_check_offline_exit_zero(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_check_changes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     called = {"run": False}
     monkeypatch.setattr(upgrade_cmd, "build_upgrade_plan", _delegated_plan)
-    monkeypatch.setattr("agentos.cli.pypi_client.latest_version", lambda timeout=5.0: "99999.1.1")
+    monkeypatch.setattr(
+        "agentos.compat.pypi_client.latest_version", lambda timeout=5.0: "99999.1.1"
+    )
     monkeypatch.setattr(
         upgrade_cmd,
         "_run_upgrade_subprocess",

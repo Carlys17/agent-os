@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 import sys
 
-from agentos.cli.version_utils import compare_versions
+from agentos.compat.version_utils import compare_versions
 
 ALLOW_SKEW_ENV = "AGENTOS_ALLOW_VERSION_SKEW"
 

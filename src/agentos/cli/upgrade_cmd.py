@@ -259,8 +259,8 @@ def upgrade_command(
 
     # --check: query PyPI without changing anything.
     if check:
-        from agentos.cli.pypi_client import latest_version
-        from agentos.cli.version_utils import is_newer
+        from agentos.compat.pypi_client import latest_version
+        from agentos.compat.version_utils import is_newer
 
         latest = latest_version(timeout=5.0)
         if latest is None:

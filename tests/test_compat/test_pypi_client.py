@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from agentos.cli import pypi_client
+from agentos.compat import pypi_client
 
 
 class _FakeResponse:
