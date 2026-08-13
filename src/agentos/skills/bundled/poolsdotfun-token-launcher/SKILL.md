@@ -9,7 +9,7 @@ provenance:
   maintained_by: AgentOS
 metadata:
   agentos:
-    emoji: "🎈"
+    emoji: "🦩"
     category: crypto
     risk: high
     capabilities: [network-read, network-write, signing]
