@@ -365,6 +365,66 @@ def tier6_metadata() -> None:
         check("non-image returns None", sniff_image_mime(staged / ("c" * 64)), None)
         check("missing file returns None", sniff_image_mime(staged / "nope"), None)
 
+        # The transcript is the authority. Build a miniature sessions.db with a
+        # recent inline attachment and a much older staged one from a different
+        # session, and assert the recent one wins — the disk scan gets this
+        # exactly backwards, which is how an unrelated 3-day-old blob was once
+        # offered as a token logo.
+        import sqlite3
+
+        from poolsfun.metadata import find_chat_images, materialize_chat_image
+
+        db = root / "sessions.db"
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE transcript_entries "
+                    "(id INTEGER PRIMARY KEY, session_key TEXT, role TEXT, "
+                    " content TEXT, created_at INTEGER)")
+        png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x01" * 64).decode()
+        con.execute(
+            "INSERT INTO transcript_entries VALUES (1,'agent:main:webchat:old','user',?,?)",
+            (json.dumps({"text": "old", "attachments": [
+                {"sha256_ref": "f" * 64, "name": "old.png",
+                 "mime": "image/png", "size": 999}]}), 1_000_000_000_000))
+        con.execute(
+            "INSERT INTO transcript_entries VALUES (2,'agent:main:webchat:new','user',?,?)",
+            (json.dumps({"text": "logo", "attachments": [
+                {"type": "image/png", "name": "image.png", "data": png}]}),
+             2_000_000_000_000))
+        # A non-image attachment must not be offered as a logo.
+        con.execute(
+            "INSERT INTO transcript_entries VALUES (3,'agent:main:webchat:new','user',?,?)",
+            (json.dumps({"text": "doc", "attachments": [
+                {"type": "application/pdf", "name": "a.pdf", "data": "eA=="}]}),
+             2_100_000_000_000))
+        con.commit()
+        con.close()
+
+        chat = find_chat_images(db_path=db)
+        check("transcript lookup finds both images", len(chat), 2)
+        check("newest message wins, not newest file", chat[0]["session_key"],
+              "agent:main:webchat:new")
+        check("inline source is labelled", chat[0]["source"], "inline")
+        check("staged source is labelled", chat[1]["source"], "staged")
+        check("non-image attachments are excluded",
+              all(c["mime"].startswith("image/") for c in chat), True)
+        check("carries the message timestamp", chat[0]["sent_at"], 2_000_000_000.0)
+        check("filters by session",
+              len(find_chat_images(db_path=db, session="old")), 1)
+        check("missing database returns empty, does not raise",
+              find_chat_images(db_path=root / "nope.db"), [])
+
+        # Extraction must reproduce the exact bytes the user sent.
+        out = materialize_chat_image(chat[0], dest_dir=root / "out", db_path=db)
+        check("extracted file exists", out.is_file(), True)
+        check("extracted bytes round-trip", out.read_bytes(), base64.b64decode(png))
+        check("extension comes from the attachment", out.suffix, ".png")
+        check("extraction is idempotent",
+              materialize_chat_image(chat[0], dest_dir=root / "out", db_path=db), out)
+        raises("a staged ref with no blob on disk fails loudly",
+               lambda: materialize_chat_image(chat[1], dest_dir=root / "out",
+                                              db_path=db, media_root=root / "empty"),
+               contains="not under")
+
         found = find_attachment_images(media_root=root)
         check("finds both staged images, skips the text blob", len(found), 2)
         check("reports a usable absolute path",

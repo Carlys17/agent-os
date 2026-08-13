@@ -152,53 +152,55 @@ attach a logo.
 
 **Read this before hunting for a path.** When a user attaches an image and says
 "use this as the logo", you receive the *pixels* — an image content block. You
-are never told a filename or a path, and for anything under about 2 MB **no file
-is written at all**: AgentOS keeps small attachments inline in the transcript.
-Guessing at paths like `./logo.png` or `/tmp/image.png` will fail, and repeated
-guessing is the failure mode this section exists to prevent.
+are never told a filename or a path, and anything under about 2 MB (most logos)
+is never written to the filesystem at all.
 
-Larger attachments (and everything arriving through a channel adapter) *are*
-staged to disk, content-addressed and with no file extension:
-
-```
-~/.agentos/media/transcripts/<session-id>/<sha256-of-the-bytes>
-```
-
-Nothing hands you that sha, so run:
+The bytes are not lost, though: every attachment is recorded in the transcript
+database. Run:
 
 ```bash
 python3 "$S/pools_read.py" find-image
 ```
 
-It lists staged images newest-first with type, size and full path, and prints
-the exact `launch --image …` line to use. If it finds nothing, that is a real
-answer — the image is not on disk — and it prints the alternatives.
+It reads the transcript, lists image attachments **newest message first** with
+age and session, extracts the newest to a real file, and prints the
+`launch --image …` line to use:
 
-**In order of preference:**
+```
+  WHEN         AGE  NAME        TYPE     SIZE  SOURCE  SESSION
+  08-13 14:27   8m  image.png   png    210 KB  inline  twan0934
+  08-10 07:42   3d  shot.png    png   3088 KB  staged  9ep5wkxp
 
-1. `find-image` returns a candidate whose type and size match what was sent →
-   pass that path to `--image`.
-2. Otherwise **ask the user for the file path** on their machine. In the CLI they
-   can run `! ls ~/Downloads/*.png`, or drag the file into the terminal to paste
-   its path. This is the reliable route and it is not a failure to ask.
-3. If the logo is already hosted anywhere, skip Pinata: `--metadata-uri
-   ipfs://…` or an `https://…` URL pointing at the metadata JSON.
-4. Launch with no logo. The metadata still inlines and the token still launches —
-   but say so explicitly first, because **a logo cannot be added afterwards**.
+  newest written to: /tmp/poolsfun-logos/1fac1c53dc6af1cd.png
+```
 
-Never fabricate a path, and never silently launch without the image when the
-user asked for one.
+**Always open the extracted file and confirm it is the right picture before
+pinning it.** A token's logo is immutable once the transaction lands.
 
-### Dev buys
+Two things that make this trustworthy, and which a directory listing cannot do:
 
-Two funding modes, never both (the factory reverts `AmbiguousDevBuy()`):
+* Ordering is by the **message's own timestamp**, so "newest" means "most
+  recently sent", not "most recently written to disk".
+* Each row carries its **session**. A candidate from another session, or one
+  hours old, is flagged — it is almost certainly not what was just sent.
 
-* `--dev-buy <eth>` sends native ETH. **WETH pairs only.**
-* `--dev-buy-asset <amount>` pulls the paired ERC20 and needs an allowance first:
-  `python3 "$S/pools_write.py" approve --paired usdg`
+Do not fall back to scanning `~/.agentos/media` by hand. Blobs there are
+content-addressed with no extension and no link back to a message; picking the
+newest one has already produced a completely unrelated image.
 
-The quoted fill is exact, not an estimate — the swap is the pool's first, inside
-the launch transaction.
+**If `find-image` reports nothing**, in order of preference:
+
+1. **Ask the user for the file path** on their machine. In the CLI they can run
+   `! ls ~/Downloads/*.png`, or drag the file into the terminal. This is not a
+   failure — it is the reliable route.
+2. If the logo is already hosted, skip Pinata: `--metadata-uri ipfs://…` or an
+   `https://…` URL pointing at the metadata JSON.
+3. Launch with no logo. The metadata still inlines and the token still
+   launches — but say so explicitly first, because **a logo cannot be added
+   afterwards**.
+
+Never fabricate a path, never pin an image you have not looked at, and never
+silently launch without the image when the user asked for one.
 
 ## Part C — Creator fees
 
