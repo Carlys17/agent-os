@@ -330,6 +330,57 @@ def tier6_metadata() -> None:
         check("falls back to the extension", _guess_mime(Path("a.webp"), b"???"),
               "image/webp")
 
+        # Attachment discovery. AgentOS never surfaces a path, so this is the
+        # only way a skill can turn "the image I just sent" into a file.
+        from poolsfun.metadata import agentos_media_root, find_attachment_images, sniff_image_mime
+
+        saved_root = os.environ.pop("AGENTOS_ATTACHMENTS_MEDIA_ROOT", None)
+        saved_state = os.environ.pop("AGENTOS_STATE_DIR", None)
+        try:
+            check("media root defaults under ~/.agentos",
+                  str(agentos_media_root()).endswith("/.agentos/media"), True)
+            os.environ["AGENTOS_STATE_DIR"] = "/tmp/xyz"
+            check("AGENTOS_STATE_DIR relocates it",
+                  str(agentos_media_root()), "/tmp/xyz/media")
+            os.environ["AGENTOS_ATTACHMENTS_MEDIA_ROOT"] = "/tmp/explicit"
+            check("explicit media root wins", str(agentos_media_root()), "/tmp/explicit")
+        finally:
+            os.environ.pop("AGENTOS_ATTACHMENTS_MEDIA_ROOT", None)
+            os.environ.pop("AGENTOS_STATE_DIR", None)
+            if saved_root:
+                os.environ["AGENTOS_ATTACHMENTS_MEDIA_ROOT"] = saved_root
+            if saved_state:
+                os.environ["AGENTOS_STATE_DIR"] = saved_state
+
+        # Staged attachments have no extension, so the type must come from the
+        # bytes. A sha256-named PNG must still be recognised as a PNG.
+        root = Path(tempfile.mkdtemp())
+        staged = root / "transcripts" / "sess-1"
+        staged.mkdir(parents=True)
+        (staged / ("a" * 64)).write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+        (staged / ("b" * 64)).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 64)
+        (staged / ("c" * 64)).write_bytes(b"just some text, not an image")
+        check("sniffs an extensionless PNG",
+              sniff_image_mime(staged / ("a" * 64)), "image/png")
+        check("non-image returns None", sniff_image_mime(staged / ("c" * 64)), None)
+        check("missing file returns None", sniff_image_mime(staged / "nope"), None)
+
+        found = find_attachment_images(media_root=root)
+        check("finds both staged images, skips the text blob", len(found), 2)
+        check("reports a usable absolute path",
+              all(Path(f["path"]).is_file() for f in found), True)
+        check("reports the session", {f["session"] for f in found}, {"sess-1"})
+        check("filters by session",
+              len(find_attachment_images(media_root=root, session="sess-1")), 2)
+        check("unknown session yields nothing",
+              find_attachment_images(media_root=root, session="nope"), [])
+        check("honours the limit",
+              len(find_attachment_images(media_root=root, limit=1)), 1)
+        # The empty case is the *common* one — a small webchat image is never
+        # written to disk — so it must return cleanly, not raise.
+        check("absent media root returns empty, does not raise",
+              find_attachment_images(media_root=Path("/nonexistent/xyz")), [])
+
         body, content_type = _multipart({"f": "v"}, "l.png", "image/png", b"data")
         boundary = content_type.split("boundary=")[1]
         check("multipart has 3 boundary occurrences", body.count(boundary.encode()), 3)
@@ -409,7 +460,8 @@ def tier8_cli_contract() -> None:
     read_mod = importlib.import_module("pools_read")
     write_mod = importlib.import_module("pools_write")
     check("read commands", sorted(read_mod.COMMANDS),
-          ["assets", "fees", "mine-salt", "preflight", "simulate", "token"])
+          ["assets", "fees", "find-image", "mine-salt", "preflight", "simulate",
+           "token"])
     check("write commands", sorted(write_mod.COMMANDS),
           ["approve", "claim", "collect", "collect-and-claim", "launch",
            "set-fee-recipient"])

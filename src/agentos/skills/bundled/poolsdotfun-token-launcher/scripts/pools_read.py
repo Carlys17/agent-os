@@ -84,6 +84,11 @@ pools_read.py — read pools.fun launch state (never signs, never spends)
   fees <address>
       Creator fee position for a launched token.
 
+  find-image [--session <id>] [--limit <n>]
+      Locate an image the user attached in chat, so it can be passed to
+      `launch --image`. AgentOS never tells you the path, and small images
+      are never written to disk at all — this reports what is actually there.
+
 Common flags
   --json          machine-readable output
   --paired        weth (default) or usdg
@@ -426,6 +431,63 @@ def cmd_fees(client: RpcClient, args: dict) -> None:
     _emit(args, payload, render)
 
 
+def cmd_find_image(client: RpcClient, args: dict) -> None:
+    """Locate a user-attached image on disk, or explain why there is none.
+
+    Exists because AgentOS never tells the model where an attachment lives, so
+    an agent asked to "use the image I just sent as the logo" has nothing to
+    pass to --image and will otherwise guess at paths that do not exist.
+    """
+    import time as _time
+
+    from poolsfun.metadata import agentos_media_root, find_attachment_images
+
+    session = opt_str(args, "session")
+    limit = opt_int(args, "limit", 10, minimum=1, maximum=200)
+    root = agentos_media_root()
+    images = find_attachment_images(session=session, limit=limit)
+
+    payload = {"mediaRoot": str(root), "session": session,
+               "images": images, "found": len(images)}
+
+    def render() -> None:
+        print(heading("attached images found on disk"))
+        if not images:
+            print(f"  none under {root}/transcripts\n")
+            print("  This usually means the image was never written to disk. AgentOS")
+            print("  keeps attachments under ~2 MB inline in the transcript, so the")
+            print("  model receives the pixels but no file exists to pin.")
+            print("\n  To attach a logo anyway, pick one:")
+            print("    - Ask the user for the image's path on their machine, then")
+            print("      pass it to `pools_write.py launch --image <path>`.")
+            print("    - If the logo is already hosted, skip Pinata entirely:")
+            print("      `--metadata-uri ipfs://…` or an https URL.")
+            print("    - Launch without a logo now; the metadata is inlined and the")
+            print("      token still launches. Note it cannot be added later.")
+            return
+        print(render_table([
+            {"key": "when", "label": "WHEN"},
+            {"key": "mime", "label": "TYPE"},
+            {"key": "size", "label": "SIZE", "align": "right"},
+            {"key": "session", "label": "SESSION"},
+            {"key": "path", "label": "PATH"},
+        ], [
+            {
+                "when": _time.strftime("%Y-%m-%d %H:%M", _time.localtime(i["mtime"])),
+                "mime": i["mime"].split("/")[-1],
+                "size": f"{i['bytes'] / 1024:.0f} KB",
+                "session": i["session"][:12],
+                "path": i["path"],
+            }
+            for i in images
+        ]))
+        print("\n  Newest first. Staged attachments are named after their sha256 and")
+        print("  carry no extension — confirm it is the right picture before pinning.")
+        print(f"\n  Then: pools_write.py launch --name … --symbol … --image {images[0]['path']}")
+
+    _emit(args, payload, render)
+
+
 def _parse_eth(value: Any) -> int:
     if value is None:
         return 0
@@ -445,6 +507,7 @@ COMMANDS = {
     "simulate": cmd_simulate,
     "token": cmd_token,
     "fees": cmd_fees,
+    "find-image": cmd_find_image,
 }
 
 

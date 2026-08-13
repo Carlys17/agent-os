@@ -1,8 +1,8 @@
 ---
 name: poolsdotfun-token-launcher
-description: "Launch a token on pools.fun (Robinhood Chain, 4663) through the PartyFactory, and manage the creator fees afterwards. Use when the user wants to create, launch, or deploy a memecoin or token on pools.fun, asks what a launch would cost or what price it would open at, wants to simulate or dry-run a launch, wants to mine a launch salt, or wants to collect/claim creator fees or change the fee recipient for a token they launched. NOT for: buying or selling existing tokens, Uniswap v3/v4 LP positions, or launches on any other chain or launchpad."
+description: "Launch a token on pools.fun (Robinhood Chain, 4663) through the PartyFactory, and manage the creator fees afterwards. Use when the user wants to create, launch, or deploy a memecoin or token on pools.fun, asks what a launch would cost or what price it would open at, wants to simulate or dry-run a launch, wants to mine a launch salt, wants to attach an image or logo to a token they are launching, or wants to collect/claim creator fees or change the fee recipient for a token they launched. NOT for: buying or selling existing tokens, Uniswap v3/v4 LP positions, or launches on any other chain or launchpad."
 homepage: https://pools.fun/
-triggers: [pools.fun, poolsdotfun, launch token, create token, memecoin launch, robinhood chain, party factory, dev buy]
+triggers: [pools.fun, poolsdotfun, launch token, create token, memecoin launch, robinhood chain, party factory, dev buy, token logo]
 provenance:
   origin: agentos-original
   license: MIT
@@ -86,6 +86,7 @@ python3 "$S/pools_read.py" mine-salt --name "My Token" --symbol MYT --deployer 0
 python3 "$S/pools_read.py" simulate --name "My Token" --symbol MYT --dev-buy 0.001 --from 0xYou
 python3 "$S/pools_read.py" token 0xTokenAddress   # a launched token's pool, price, LP
 python3 "$S/pools_read.py" fees  0xTokenAddress   # creator fee position
+python3 "$S/pools_read.py" find-image             # locate a chat-attached logo
 ```
 
 Start with `preflight`. It answers the three questions that decide whether a
@@ -136,9 +137,9 @@ Identity flags: `--description`, `--website`, `--twitter`, `--metadata-uri`,
 Three paths, picked automatically:
 
 1. `--metadata-uri ipfs://…` — you already host it. Never touches Pinata.
-2. `--image ./logo.png` — pins the logo and the metadata JSON to IPFS.
-   **Requires `PINATA_JWT`.** In AgentOS webchat, an attached image lands on disk;
-   pass that path here.
+2. `--image <path>` — pins the logo and the metadata JSON to IPFS.
+   **Requires `PINATA_JWT`.** `<path>` is a real file on this machine — see
+   "Getting the image" below, because a chat attachment usually is not one.
 3. Neither — the metadata JSON is inlined as a `data:application/json;base64,…`
    URI. **No secret, no network.** This is the default and it works everywhere.
 
@@ -146,6 +147,47 @@ If `--image` is passed without `PINATA_JWT` the command **fails** rather than
 launching without the picture. That is deliberate: the token's identity is
 immutable the moment the transaction lands, and there is no second chance to
 attach a logo.
+
+### Getting the image when the user attached it in chat
+
+**Read this before hunting for a path.** When a user attaches an image and says
+"use this as the logo", you receive the *pixels* — an image content block. You
+are never told a filename or a path, and for anything under about 2 MB **no file
+is written at all**: AgentOS keeps small attachments inline in the transcript.
+Guessing at paths like `./logo.png` or `/tmp/image.png` will fail, and repeated
+guessing is the failure mode this section exists to prevent.
+
+Larger attachments (and everything arriving through a channel adapter) *are*
+staged to disk, content-addressed and with no file extension:
+
+```
+~/.agentos/media/transcripts/<session-id>/<sha256-of-the-bytes>
+```
+
+Nothing hands you that sha, so run:
+
+```bash
+python3 "$S/pools_read.py" find-image
+```
+
+It lists staged images newest-first with type, size and full path, and prints
+the exact `launch --image …` line to use. If it finds nothing, that is a real
+answer — the image is not on disk — and it prints the alternatives.
+
+**In order of preference:**
+
+1. `find-image` returns a candidate whose type and size match what was sent →
+   pass that path to `--image`.
+2. Otherwise **ask the user for the file path** on their machine. In the CLI they
+   can run `! ls ~/Downloads/*.png`, or drag the file into the terminal to paste
+   its path. This is the reliable route and it is not a failure to ask.
+3. If the logo is already hosted anywhere, skip Pinata: `--metadata-uri
+   ipfs://…` or an `https://…` URL pointing at the metadata JSON.
+4. Launch with no logo. The metadata still inlines and the token still launches —
+   but say so explicitly first, because **a logo cannot be added afterwards**.
+
+Never fabricate a path, and never silently launch without the image when the
+user asked for one.
 
 ### Dev buys
 
@@ -188,6 +230,7 @@ and is usually what you want. Each takes the same `--broadcast --confirm` gate.
 | `--broadcast needs --confirm` | Dry run not confirmed | Re-run with the printed hash |
 | `plan changed since it was printed` | Feed moved, or a flag differs from the dry run | Re-read the plan, confirm the new hash |
 | `PINATA_JWT is not set` | `--image` without Pinata | Set it, or drop `--image` |
+| `image not found: …` | Guessed a path for a chat attachment | Run `find-image`; if empty, ask the user for the real path |
 | `no qualifying salt in N attempts` | Unlucky search | Raise `--max-salt-attempts` |
 | `env var POOLSFUN_PRIVATE_KEY is not set` | No signing key | Set it, or pass `--from 0x…` to plan only |
 

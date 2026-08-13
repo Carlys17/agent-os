@@ -69,6 +69,97 @@ class PinataError(RuntimeError):
     """Anything that went wrong talking to Pinata."""
 
 
+# ── finding a user-attached image ───────────────────────────────────────────
+# AgentOS never tells the model where an attachment lives. An image the user
+# drags into webchat reaches the model as pixels — a base64 image block — and
+# for anything under ~2 MB it is stored as base64 in the transcript row and
+# never touches the filesystem at all. Larger attachments (and everything
+# arriving through a channel adapter) are staged to disk, content-addressed:
+#
+#     <media_root>/transcripts/<session_id>/<sha256 of the bytes>
+#
+# with no file extension and no trace of the original filename. Nothing hands
+# the agent that sha, so the only way to locate a staged attachment is to look.
+# That is what `find_attachment_images` does — and when it finds nothing, that
+# is a real answer ("this image is not on disk"), not a failed search.
+
+_MEDIA_ROOT_ENV = "AGENTOS_ATTACHMENTS_MEDIA_ROOT"
+_STATE_DIR_ENV = "AGENTOS_STATE_DIR"
+
+
+def agentos_media_root() -> Path:
+    """Where AgentOS stages attachments, mirroring ``agentos.paths``.
+
+    Kept as a small reimplementation rather than an import: this skill's scripts
+    run as standalone python against the system interpreter and cannot assume
+    the ``agentos`` package is importable.
+    """
+    override = os.environ.get(_MEDIA_ROOT_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
+    state_dir = os.environ.get(_STATE_DIR_ENV, "").strip()
+    home = Path(state_dir).expanduser() if state_dir else Path.home() / ".agentos"
+    return home / "media"
+
+
+def sniff_image_mime(path: Path) -> str | None:
+    """The image type from magic bytes, or None when it is not an image.
+
+    Magic bytes, not the extension: staged attachments have no extension at all.
+    """
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(32)
+    except OSError:
+        return None
+    if not head:
+        return None
+    for magic, mime in _MAGIC:
+        if head.startswith(magic):
+            return mime
+    # RIFF....WEBP
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head[4:12] in (b"ftypavif", b"ftypavis"):
+        return "image/avif"
+    return None
+
+
+def find_attachment_images(*, session: str | None = None, limit: int = 10,
+                           media_root: Path | None = None) -> list[dict]:
+    """Staged attachment images, newest first.
+
+    Returns ``[{path, session, bytes, mime, mtime}]``. An empty list means no
+    attachment was staged to disk — most often because the image was small
+    enough to travel inline.
+    """
+    root = (media_root or agentos_media_root()) / "transcripts"
+    if not root.is_dir():
+        return []
+    found: list[dict] = []
+    session_dirs = [root / session] if session else sorted(
+        (d for d in root.iterdir() if d.is_dir()), reverse=True)
+    for directory in session_dirs:
+        if not directory.is_dir():
+            continue
+        for candidate in directory.iterdir():
+            if not candidate.is_file():
+                continue
+            mime = sniff_image_mime(candidate)
+            if not mime:
+                continue
+            try:
+                stat = candidate.stat()
+            except OSError:
+                continue
+            found.append({
+                "path": str(candidate), "session": directory.name,
+                "bytes": stat.st_size, "mime": mime, "mtime": stat.st_mtime,
+            })
+    found.sort(key=lambda entry: entry["mtime"], reverse=True)
+    return found[:limit]
+
+
 def pinata_configured() -> bool:
     return pinata_jwt() is not None
 
@@ -195,9 +286,15 @@ def pin_file(path: str | Path, jwt: str, *, name: str | None = None) -> str:
             f"{file_path.name} does not look like an image (detected {mime}). "
             "Pass a png/jpg/gif/webp/svg."
         )
+    # A staged AgentOS attachment is named after its sha256 with no extension.
+    # Give Pinata a sensible filename derived from the sniffed type instead, so
+    # the pinned object is not called "68c79977460f28…".
+    upload_name = file_path.name
+    if not file_path.suffix:
+        upload_name = f"{(name or 'logo').replace(' ', '-')}.{mime.split('/')[-1]}"
     body, content_type = _multipart(
-        {"pinataMetadata": json.dumps({"name": name or file_path.name})},
-        file_path.name, mime, payload,
+        {"pinataMetadata": json.dumps({"name": name or upload_name})},
+        upload_name, mime, payload,
     )
     result = _post(
         f"{PINATA_API}/pinning/pinFileToIPFS", body,
