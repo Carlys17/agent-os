@@ -84,6 +84,11 @@ pools_read.py — read pools.fun launch state (never signs, never spends)
   fees <address>
       Creator fee position for a launched token.
 
+  find-image [--session <id>] [--limit <n>]
+      Locate an image the user attached in chat, so it can be passed to
+      `launch --image`. AgentOS never tells you the path, and small images
+      are never written to disk at all — this reports what is actually there.
+
 Common flags
   --json          machine-readable output
   --paired        weth (default) or usdg
@@ -426,6 +431,115 @@ def cmd_fees(client: RpcClient, args: dict) -> None:
     _emit(args, payload, render)
 
 
+def cmd_find_image(client: RpcClient, args: dict) -> None:
+    """Locate a user-attached image on disk, or explain why there is none.
+
+    Exists because AgentOS never tells the model where an attachment lives, so
+    an agent asked to "use the image I just sent as the logo" has nothing to
+    pass to --image and will otherwise guess at paths that do not exist.
+    """
+    import time as _time
+
+    from poolsfun.metadata import (
+        STALE_ATTACHMENT_SECONDS,
+        agentos_media_root,
+        find_attachment_images,
+        find_chat_images,
+        materialize_chat_image,
+        sessions_db_path,
+    )
+
+    session = opt_str(args, "session")
+    limit = opt_int(args, "limit", 10, minimum=1, maximum=200)
+    extract = not args.get("no-extract")
+
+    images = find_chat_images(session=session, limit=limit)
+    now = _time.time()
+    written: str | None = None
+    error: str | None = None
+
+    if images and extract:
+        try:
+            written = str(materialize_chat_image(images[0]))
+        except Exception as exc:  # noqa: BLE001 — reported, not fatal
+            error = str(exc)
+
+    # Only if the transcript told us nothing: the media directory cannot say
+    # which message a blob belongs to, so it is a hint, never an answer.
+    staged = [] if images else find_attachment_images(limit=limit)
+
+    payload = {"images": images, "found": len(images), "extractedTo": written,
+               "extractError": error, "staged": staged,
+               "sessionsDb": str(sessions_db_path())}
+
+    def render() -> None:
+        print(heading("images the user attached in chat"))
+        if not images:
+            print(f"  no image attachment found in {sessions_db_path()}")
+            if staged:
+                print(f"\n  {len(staged)} image(s) exist under "
+                      f"{agentos_media_root()}/transcripts, but nothing in the")
+                print("  transcript points at them — they belong to older sessions and are")
+                print("  almost certainly NOT what the user just sent. Do not pin one.")
+            print("\n  Pick one, in this order:")
+            print("    - Ask the user for the image's path on their machine.")
+            print("      (In the CLI they can run `! ls ~/Downloads/*.png`.)")
+            print("    - If the logo is already hosted: `--metadata-uri ipfs://…`")
+            print("    - Launch with no logo — but say so first; it cannot be added later.")
+            return
+
+        rows = []
+        for image in images:
+            age = now - image["sent_at"] if image["sent_at"] else None
+            rows.append({
+                "when": (_time.strftime("%m-%d %H:%M", _time.localtime(image["sent_at"]))
+                         if image["sent_at"] else "?"),
+                "age": _age(age),
+                "name": str(image["name"])[:28],
+                "type": image["mime"].split("/")[-1],
+                "size": f"{image['bytes'] / 1024:.0f} KB",
+                "src": image["source"],
+                "session": image["session_key"].rsplit(":", 1)[-1][:12],
+            })
+        print(render_table([
+            {"key": "when", "label": "WHEN"},
+            {"key": "age", "label": "AGE", "align": "right"},
+            {"key": "name", "label": "NAME"},
+            {"key": "type", "label": "TYPE"},
+            {"key": "size", "label": "SIZE", "align": "right"},
+            {"key": "src", "label": "SOURCE"},
+            {"key": "session", "label": "SESSION"},
+        ], rows))
+
+        newest = images[0]
+        age = now - newest["sent_at"] if newest["sent_at"] else None
+        if age is not None and age > STALE_ATTACHMENT_SECONDS:
+            print(f"\n  WARNING: the newest attachment is {_age(age)} old, in session "
+                  f"{newest['session_key'].rsplit(':', 1)[-1]}.")
+            print("  That is probably NOT the image just sent. Confirm with the user")
+            print("  before pinning it — a token's logo cannot be changed afterwards.")
+        if error:
+            print(f"\n  could not extract it: {error}")
+        elif written:
+            print(f"\n  newest written to: {written}")
+            print("  Open it and confirm it is the right picture, then:")
+            print(f"    pools_write.py launch --name … --symbol … --image {written}")
+
+    _emit(args, payload, render)
+
+
+def _age(seconds: float | None) -> str:
+    if seconds is None:
+        return "?"
+    if seconds < 90:
+        return f"{int(seconds)}s"
+    if seconds < 5400:
+        return f"{int(seconds // 60)}m"
+    if seconds < 172800:
+        return f"{int(seconds // 3600)}h"
+    return f"{int(seconds // 86400)}d"
+
+
 def _parse_eth(value: Any) -> int:
     if value is None:
         return 0
@@ -445,6 +559,7 @@ COMMANDS = {
     "simulate": cmd_simulate,
     "token": cmd_token,
     "fees": cmd_fees,
+    "find-image": cmd_find_image,
 }
 
 

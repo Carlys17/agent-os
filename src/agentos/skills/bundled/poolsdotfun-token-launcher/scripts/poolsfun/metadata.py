@@ -24,9 +24,11 @@ transaction lands and there is no second chance to attach the picture.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import mimetypes
 import os
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -67,6 +69,238 @@ _MAGIC = [
 
 class PinataError(RuntimeError):
     """Anything that went wrong talking to Pinata."""
+
+
+# ── finding a user-attached image ───────────────────────────────────────────
+# AgentOS never tells the model where an attachment lives. An image the user
+# drags into webchat reaches the model as pixels — an image content block — with
+# no filename and no path. But the bytes are not lost: every attachment is
+# recorded in the transcript database, in one of two shapes.
+#
+#   inline  {"type": "image/png", "name": "image.png", "data": "<base64>"}
+#   staged  {"sha256_ref": "<sha>", "name": …, "mime": …, "size": …}
+#           bytes at <media_root>/transcripts/<session_id>/<sha>
+#
+# Anything under ~2 MB — which is most logos — is inline and never touches the
+# filesystem at all.
+#
+# The transcript is therefore the authority, and scanning the media directory is
+# not a substitute for it. An earlier version of this module did exactly that,
+# and it was actively dangerous: with no inline attachment on disk it returned
+# the newest *staged* blob, which belonged to an unrelated session three days
+# earlier, and offered it as the logo to pin into an immutable token. Ordering
+# by file mtime cannot tell "the image the user just sent" from "some image".
+# Message rows can, because they carry the message's own timestamp and session.
+
+_MEDIA_ROOT_ENV = "AGENTOS_ATTACHMENTS_MEDIA_ROOT"
+_STATE_DIR_ENV = "AGENTOS_STATE_DIR"
+
+# Past this, a candidate is almost certainly not what the user just attached.
+STALE_ATTACHMENT_SECONDS = 15 * 60
+
+
+def agentos_home() -> Path:
+    state_dir = os.environ.get(_STATE_DIR_ENV, "").strip()
+    return Path(state_dir).expanduser() if state_dir else Path.home() / ".agentos"
+
+
+def sessions_db_path() -> Path:
+    return agentos_home() / "state" / "sessions.db"
+
+
+def agentos_media_root() -> Path:
+    """Where AgentOS stages attachments, mirroring ``agentos.paths``.
+
+    Kept as a small reimplementation rather than an import: this skill's scripts
+    run as standalone python against the system interpreter and cannot assume
+    the ``agentos`` package is importable.
+    """
+    override = os.environ.get(_MEDIA_ROOT_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
+    state_dir = os.environ.get(_STATE_DIR_ENV, "").strip()
+    home = Path(state_dir).expanduser() if state_dir else Path.home() / ".agentos"
+    return home / "media"
+
+
+def sniff_image_mime(path: Path) -> str | None:
+    """The image type from magic bytes, or None when it is not an image.
+
+    Magic bytes, not the extension: staged attachments have no extension at all.
+    """
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(32)
+    except OSError:
+        return None
+    if not head:
+        return None
+    for magic, mime in _MAGIC:
+        if head.startswith(magic):
+            return mime
+    # RIFF....WEBP
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head[4:12] in (b"ftypavif", b"ftypavis"):
+        return "image/avif"
+    return None
+
+
+def find_attachment_images(*, session: str | None = None, limit: int = 10,
+                           media_root: Path | None = None) -> list[dict]:
+    """Staged attachment images on disk, newest first.
+
+    A fallback only. Prefer :func:`find_chat_images`: file mtime says when bytes
+    were written, not which message they belong to, so this cannot distinguish
+    the image the user just sent from one staged days ago in another session.
+    """
+    root = (media_root or agentos_media_root()) / "transcripts"
+    if not root.is_dir():
+        return []
+    found: list[dict] = []
+    session_dirs = [root / session] if session else sorted(
+        (d for d in root.iterdir() if d.is_dir()), reverse=True)
+    for directory in session_dirs:
+        if not directory.is_dir():
+            continue
+        for candidate in directory.iterdir():
+            if not candidate.is_file():
+                continue
+            mime = sniff_image_mime(candidate)
+            if not mime:
+                continue
+            try:
+                stat = candidate.stat()
+            except OSError:
+                continue
+            found.append({
+                "path": str(candidate), "session": directory.name,
+                "bytes": stat.st_size, "mime": mime, "mtime": stat.st_mtime,
+            })
+    found.sort(key=lambda entry: entry["mtime"], reverse=True)
+    return found[:limit]
+
+
+def find_chat_images(*, session: str | None = None, limit: int = 10,
+                     db_path: Path | None = None) -> list[dict]:
+    """Image attachments from the transcript, newest message first.
+
+    Each entry: ``{entry_id, index, session_key, sent_at, name, mime, bytes,
+    source}`` where ``source`` is ``"inline"`` or ``"staged"``. Ordering is by
+    the message's own timestamp, which is the only ordering that answers "what
+    did the user just send".
+
+    Returns an empty list if the database is missing or unreadable; the caller
+    falls back to a disk scan and says so.
+    """
+    import sqlite3
+
+    path = db_path or sessions_db_path()
+    if not path.is_file():
+        return []
+    query = """
+        SELECT e.id, a.key, e.session_key, e.created_at,
+               json_extract(a.value, '$.name'),
+               COALESCE(json_extract(a.value, '$.type'),
+                        json_extract(a.value, '$.mime')),
+               json_extract(a.value, '$.sha256_ref'),
+               json_extract(a.value, '$.size'),
+               length(json_extract(a.value, '$.data'))
+        FROM transcript_entries e, json_each(e.content, '$.attachments') a
+        WHERE e.role = 'user' AND json_valid(e.content)
+        ORDER BY e.created_at DESC
+        LIMIT 200
+    """
+    try:
+        # Read-only URI: the gateway may hold this database open for writes.
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+    except sqlite3.Error:
+        return []
+    try:
+        rows = con.execute(query).fetchall()
+    except sqlite3.Error:
+        # Old schema, or no JSON1 support in this interpreter's sqlite.
+        return []
+    finally:
+        con.close()
+
+    out: list[dict] = []
+    for (entry_id, index, session_key, created_at, name, mime,
+         sha_ref, size, b64_len) in rows:
+        if session and session not in (session_key or ""):
+            continue
+        mime = (mime or "").strip()
+        # A missing mime on a staged ref is rare but recoverable from the name.
+        if not mime and name and "." in str(name):
+            mime = _IMAGE_MIME.get("." + str(name).rsplit(".", 1)[-1].lower(), "")
+        if not mime.startswith("image/"):
+            continue
+        out.append({
+            "entry_id": int(entry_id),
+            "index": int(index),
+            "session_key": session_key or "",
+            "sent_at": (int(created_at) / 1000.0) if created_at else 0.0,
+            "name": name or "attachment",
+            "mime": mime,
+            "bytes": int(size) if size else (b64_len or 0) * 3 // 4,
+            "source": "staged" if sha_ref else "inline",
+            "sha256_ref": sha_ref or "",
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+def materialize_chat_image(entry: dict, *, dest_dir: Path | None = None,
+                           db_path: Path | None = None,
+                           media_root: Path | None = None) -> Path:
+    """Write a transcript image attachment to a real file and return its path.
+
+    This is the step that closes the gap: the bytes exist, they are simply not
+    on the filesystem where ``--image`` can reach them. Inline attachments are
+    base64-decoded out of the transcript row; staged ones are copied from the
+    content-addressed blob the row points at.
+    """
+    import sqlite3
+
+    target_dir = dest_dir or (Path(tempfile.gettempdir()) / "poolsfun-logos")
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    if entry["source"] == "staged":
+        session_id = (entry.get("session_key") or "").rsplit(":", 1)[-1]
+        blob = ((media_root or agentos_media_root()) / "transcripts" / session_id
+                / entry["sha256_ref"])
+        if not blob.is_file():
+            raise PinataError(
+                f"the transcript points at {entry['sha256_ref'][:12]}… but that blob is "
+                f"not under {agentos_media_root()}/transcripts. Ask the user for the "
+                "file path instead."
+            )
+        payload = blob.read_bytes()
+    else:
+        path = db_path or sessions_db_path()
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+        try:
+            row = con.execute(
+                "SELECT json_extract(content, '$.attachments[' || ? || '].data') "
+                "FROM transcript_entries WHERE id = ?",
+                (entry["index"], entry["entry_id"]),
+            ).fetchone()
+        finally:
+            con.close()
+        if not row or not row[0]:
+            raise PinataError("the transcript row no longer carries the image data")
+        payload = base64.b64decode(row[0])
+
+    suffix = Path(str(entry.get("name") or "")).suffix.lower()
+    if suffix not in _IMAGE_MIME:
+        suffix = "." + (entry["mime"].split("/")[-1] or "png")
+    # Content-addressed so re-running does not pile up copies, and so the same
+    # image always lands at the same path.
+    digest = hashlib.sha256(payload).hexdigest()[:16]
+    out_path = target_dir / f"{digest}{suffix}"
+    out_path.write_bytes(payload)
+    return out_path
 
 
 def pinata_configured() -> bool:
@@ -195,9 +429,15 @@ def pin_file(path: str | Path, jwt: str, *, name: str | None = None) -> str:
             f"{file_path.name} does not look like an image (detected {mime}). "
             "Pass a png/jpg/gif/webp/svg."
         )
+    # A staged AgentOS attachment is named after its sha256 with no extension.
+    # Give Pinata a sensible filename derived from the sniffed type instead, so
+    # the pinned object is not called "68c79977460f28…".
+    upload_name = file_path.name
+    if not file_path.suffix:
+        upload_name = f"{(name or 'logo').replace(' ', '-')}.{mime.split('/')[-1]}"
     body, content_type = _multipart(
-        {"pinataMetadata": json.dumps({"name": name or file_path.name})},
-        file_path.name, mime, payload,
+        {"pinataMetadata": json.dumps({"name": name or upload_name})},
+        upload_name, mime, payload,
     )
     result = _post(
         f"{PINATA_API}/pinning/pinFileToIPFS", body,

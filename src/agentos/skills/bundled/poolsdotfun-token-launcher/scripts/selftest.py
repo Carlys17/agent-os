@@ -330,6 +330,117 @@ def tier6_metadata() -> None:
         check("falls back to the extension", _guess_mime(Path("a.webp"), b"???"),
               "image/webp")
 
+        # Attachment discovery. AgentOS never surfaces a path, so this is the
+        # only way a skill can turn "the image I just sent" into a file.
+        from poolsfun.metadata import agentos_media_root, find_attachment_images, sniff_image_mime
+
+        saved_root = os.environ.pop("AGENTOS_ATTACHMENTS_MEDIA_ROOT", None)
+        saved_state = os.environ.pop("AGENTOS_STATE_DIR", None)
+        try:
+            check("media root defaults under ~/.agentos",
+                  str(agentos_media_root()).endswith("/.agentos/media"), True)
+            os.environ["AGENTOS_STATE_DIR"] = "/tmp/xyz"
+            check("AGENTOS_STATE_DIR relocates it",
+                  str(agentos_media_root()), "/tmp/xyz/media")
+            os.environ["AGENTOS_ATTACHMENTS_MEDIA_ROOT"] = "/tmp/explicit"
+            check("explicit media root wins", str(agentos_media_root()), "/tmp/explicit")
+        finally:
+            os.environ.pop("AGENTOS_ATTACHMENTS_MEDIA_ROOT", None)
+            os.environ.pop("AGENTOS_STATE_DIR", None)
+            if saved_root:
+                os.environ["AGENTOS_ATTACHMENTS_MEDIA_ROOT"] = saved_root
+            if saved_state:
+                os.environ["AGENTOS_STATE_DIR"] = saved_state
+
+        # Staged attachments have no extension, so the type must come from the
+        # bytes. A sha256-named PNG must still be recognised as a PNG.
+        root = Path(tempfile.mkdtemp())
+        staged = root / "transcripts" / "sess-1"
+        staged.mkdir(parents=True)
+        (staged / ("a" * 64)).write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+        (staged / ("b" * 64)).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 64)
+        (staged / ("c" * 64)).write_bytes(b"just some text, not an image")
+        check("sniffs an extensionless PNG",
+              sniff_image_mime(staged / ("a" * 64)), "image/png")
+        check("non-image returns None", sniff_image_mime(staged / ("c" * 64)), None)
+        check("missing file returns None", sniff_image_mime(staged / "nope"), None)
+
+        # The transcript is the authority. Build a miniature sessions.db with a
+        # recent inline attachment and a much older staged one from a different
+        # session, and assert the recent one wins — the disk scan gets this
+        # exactly backwards, which is how an unrelated 3-day-old blob was once
+        # offered as a token logo.
+        import sqlite3
+
+        from poolsfun.metadata import find_chat_images, materialize_chat_image
+
+        db = root / "sessions.db"
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE transcript_entries "
+                    "(id INTEGER PRIMARY KEY, session_key TEXT, role TEXT, "
+                    " content TEXT, created_at INTEGER)")
+        png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x01" * 64).decode()
+        con.execute(
+            "INSERT INTO transcript_entries VALUES (1,'agent:main:webchat:old','user',?,?)",
+            (json.dumps({"text": "old", "attachments": [
+                {"sha256_ref": "f" * 64, "name": "old.png",
+                 "mime": "image/png", "size": 999}]}), 1_000_000_000_000))
+        con.execute(
+            "INSERT INTO transcript_entries VALUES (2,'agent:main:webchat:new','user',?,?)",
+            (json.dumps({"text": "logo", "attachments": [
+                {"type": "image/png", "name": "image.png", "data": png}]}),
+             2_000_000_000_000))
+        # A non-image attachment must not be offered as a logo.
+        con.execute(
+            "INSERT INTO transcript_entries VALUES (3,'agent:main:webchat:new','user',?,?)",
+            (json.dumps({"text": "doc", "attachments": [
+                {"type": "application/pdf", "name": "a.pdf", "data": "eA=="}]}),
+             2_100_000_000_000))
+        con.commit()
+        con.close()
+
+        chat = find_chat_images(db_path=db)
+        check("transcript lookup finds both images", len(chat), 2)
+        check("newest message wins, not newest file", chat[0]["session_key"],
+              "agent:main:webchat:new")
+        check("inline source is labelled", chat[0]["source"], "inline")
+        check("staged source is labelled", chat[1]["source"], "staged")
+        check("non-image attachments are excluded",
+              all(c["mime"].startswith("image/") for c in chat), True)
+        check("carries the message timestamp", chat[0]["sent_at"], 2_000_000_000.0)
+        check("filters by session",
+              len(find_chat_images(db_path=db, session="old")), 1)
+        check("missing database returns empty, does not raise",
+              find_chat_images(db_path=root / "nope.db"), [])
+
+        # Extraction must reproduce the exact bytes the user sent.
+        out = materialize_chat_image(chat[0], dest_dir=root / "out", db_path=db)
+        check("extracted file exists", out.is_file(), True)
+        check("extracted bytes round-trip", out.read_bytes(), base64.b64decode(png))
+        check("extension comes from the attachment", out.suffix, ".png")
+        check("extraction is idempotent",
+              materialize_chat_image(chat[0], dest_dir=root / "out", db_path=db), out)
+        raises("a staged ref with no blob on disk fails loudly",
+               lambda: materialize_chat_image(chat[1], dest_dir=root / "out",
+                                              db_path=db, media_root=root / "empty"),
+               contains="not under")
+
+        found = find_attachment_images(media_root=root)
+        check("finds both staged images, skips the text blob", len(found), 2)
+        check("reports a usable absolute path",
+              all(Path(f["path"]).is_file() for f in found), True)
+        check("reports the session", {f["session"] for f in found}, {"sess-1"})
+        check("filters by session",
+              len(find_attachment_images(media_root=root, session="sess-1")), 2)
+        check("unknown session yields nothing",
+              find_attachment_images(media_root=root, session="nope"), [])
+        check("honours the limit",
+              len(find_attachment_images(media_root=root, limit=1)), 1)
+        # The empty case is the *common* one — a small webchat image is never
+        # written to disk — so it must return cleanly, not raise.
+        check("absent media root returns empty, does not raise",
+              find_attachment_images(media_root=Path("/nonexistent/xyz")), [])
+
         body, content_type = _multipart({"f": "v"}, "l.png", "image/png", b"data")
         boundary = content_type.split("boundary=")[1]
         check("multipart has 3 boundary occurrences", body.count(boundary.encode()), 3)
@@ -409,7 +520,8 @@ def tier8_cli_contract() -> None:
     read_mod = importlib.import_module("pools_read")
     write_mod = importlib.import_module("pools_write")
     check("read commands", sorted(read_mod.COMMANDS),
-          ["assets", "fees", "mine-salt", "preflight", "simulate", "token"])
+          ["assets", "fees", "find-image", "mine-salt", "preflight", "simulate",
+           "token"])
     check("write commands", sorted(write_mod.COMMANDS),
           ["approve", "claim", "collect", "collect-and-claim", "launch",
            "set-fee-recipient"])
