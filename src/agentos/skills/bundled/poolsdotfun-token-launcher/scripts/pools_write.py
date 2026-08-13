@@ -19,6 +19,7 @@ Everything else has a default, and every default is printed in the plan.
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 import time
 from typing import Any
@@ -41,6 +42,9 @@ from poolsfun.fmt import (
     fmt_usd,
     heading,
     json_safe,
+    opt_float,
+    opt_int,
+    opt_str,
     parse_args,
     render_kv,
     require_arg,
@@ -120,10 +124,11 @@ def resolve_signer(args: dict) -> dict:
 
 
 def _gas_opts(args: dict) -> dict:
-    cap = args.get("max-fee-gwei")
+    cap_gwei = opt_float(args, "max-fee-gwei", 0.0, minimum=0.0)
     return {
-        "gas_multiplier": float(args.get("gas-multiplier") or DEFAULT_GAS_MULTIPLIER),
-        "max_fee_cap": int(float(cap) * 10**9) if cap and cap is not True else None,
+        "gas_multiplier": opt_float(args, "gas-multiplier", DEFAULT_GAS_MULTIPLIER,
+                                    minimum=1.0),
+        "max_fee_cap": int(cap_gwei * 10**9) if cap_gwei > 0 else None,
     }
 
 
@@ -179,14 +184,19 @@ def cmd_launch(client: RpcClient, args: dict) -> None:
     creator = signer["address"]
     paired = resolve_paired_asset(args.get("paired"))
 
-    fee_recipient = args.get("fee-recipient")
-    fee_recipient = (checksum_address(fee_recipient)
-                     if fee_recipient and fee_recipient is not True else creator)
+    fee_recipient_raw = opt_str(args, "fee-recipient")
+    fee_recipient = checksum_address(fee_recipient_raw) if fee_recipient_raw else creator
 
-    dev_buy_wei = _amount(args.get("dev-buy"), 18)
-    dev_buy_asset = _amount(args.get("dev-buy-asset"), 18)
-    slippage_bps = int(args.get("slippage-bps") or DEFAULT_SLIPPAGE_BPS)
-    deadline_secs = int(args.get("deadline-secs") or DEFAULT_DEADLINE_SECS)
+    dev_buy_wei = _amount(args.get("dev-buy"), 18, "dev-buy")
+    dev_buy_asset = _amount(args.get("dev-buy-asset"), 18, "dev-buy-asset")
+    # Slippage is bounded, not merely parsed. A negative value sets devBuyMinOut
+    # *above* the exact simulated fill, producing a plan that hashes and renders
+    # normally and then reverts DevBuyTooLittle() on-chain, burning the full ~6.1M
+    # launch gas. The floor is the whole point of the flag.
+    slippage_bps = opt_int(args, "slippage-bps", DEFAULT_SLIPPAGE_BPS,
+                           minimum=0, maximum=9_999)
+    deadline_secs = opt_int(args, "deadline-secs", DEFAULT_DEADLINE_SECS, minimum=60)
+    max_salt_attempts = opt_int(args, "max-salt-attempts", 5000, minimum=1)
 
     if dev_buy_asset:
         _require_allowance(client, paired, creator, dev_buy_asset)
@@ -195,12 +205,11 @@ def cmd_launch(client: RpcClient, args: dict) -> None:
     # salt mined against a placeholder would be wrong for the real launch.
     uri, doc, how = resolve_metadata_uri(
         name=name, symbol=symbol,
-        metadata_uri=(args.get("metadata-uri")
-                      if isinstance(args.get("metadata-uri"), str) else None),
-        image=args.get("image") if isinstance(args.get("image"), str) else None,
-        description=_text(args.get("description")),
-        website=_text(args.get("website")),
-        twitter=_text(args.get("twitter")),
+        metadata_uri=opt_str(args, "metadata-uri"),
+        image=opt_str(args, "image"),
+        description=opt_str(args, "description"),
+        website=opt_str(args, "website"),
+        twitter=opt_str(args, "twitter"),
         pin=bool(args.get("pin-metadata")))
 
     deadline = int(time.time()) + deadline_secs
@@ -209,8 +218,7 @@ def cmd_launch(client: RpcClient, args: dict) -> None:
         paired_asset=paired, creator=creator, fee_recipient=fee_recipient,
         deadline=deadline, dev_buy_wei=dev_buy_wei, dev_buy_asset=dev_buy_asset,
         slippage_bps=slippage_bps, allow_fallback_tick=bool(args.get("allow-fallback-tick")),
-        salt=args.get("salt") if isinstance(args.get("salt"), str) else None,
-        max_salt_attempts=int(args.get("max-salt-attempts") or 5000))
+        salt=opt_str(args, "salt"), max_salt_attempts=max_salt_attempts)
     plan["metadataHow"] = how
     plan["metadataDoc"] = doc
 
@@ -311,6 +319,14 @@ def _render_launch_plan(plan: dict, args: dict, signer: dict) -> None:
 
 
 def _replay_command(args: dict) -> str:
+    """The copy-paste line that executes this plan.
+
+    Values go through ``shlex.quote``, not hand-rolled double quotes. A token
+    name is attacker-influenced text — it can arrive from a pasted ticker or a
+    chat message — and double quotes do not neuter ``$(…)`` or backticks in a
+    shell. Printing an unquoted name would turn "here is my token name" into
+    command execution for whoever runs the suggested line.
+    """
     parts = ["python3 pools_write.py launch"]
     for key, value in args.items():
         if key in ("_", "broadcast", "confirm", "json"):
@@ -318,8 +334,7 @@ def _replay_command(args: dict) -> str:
         if value is True:
             parts.append(f"--{key}")
         else:
-            text = str(value)
-            parts.append(f'--{key} "{text}"' if " " in text else f"--{key} {text}")
+            parts.append(f"--{key} {shlex.quote(str(value))}")
     return " ".join(parts)
 
 
@@ -410,9 +425,8 @@ def cmd_set_fee_recipient(client: RpcClient, args: dict) -> None:
 def cmd_approve(client: RpcClient, args: dict) -> None:
     signer = resolve_signer(args)
     paired = resolve_paired_asset(args.get("paired"))
-    amount_raw = args.get("amount")
-    amount = (_amount(amount_raw, 18) if amount_raw and amount_raw is not True
-              else 2**256 - 1)
+    amount_raw = _amount(args.get("amount"), 18, "amount")
+    amount = amount_raw if amount_raw else 2**256 - 1
     current = client.read(paired, ERC20_ABI, "allowance",
                           [signer["address"], PARTY_FACTORY])
 
@@ -452,14 +466,15 @@ def _require_allowance(client: RpcClient, paired: str, owner: str, needed: int) 
 
 
 # ── plumbing ────────────────────────────────────────────────────────────────
-def _amount(value: Any, decimals: int) -> int:
-    if value is None or value is True:
+def _amount(value: Any, decimals: int, flag: str) -> int:
+    if value is None:
         return 0
-    return parse_units(str(value), decimals)
-
-
-def _text(value: Any) -> str | None:
-    return value if isinstance(value, str) and value.strip() else None
+    if value is True:
+        raise ValueError(f"--{flag} needs a value")
+    amount = parse_units(str(value).strip(), decimals)
+    if amount < 0:
+        raise ValueError(f"--{flag} cannot be negative")
+    return amount
 
 
 def _trim(value: str, limit: int = 64) -> str:
@@ -489,8 +504,7 @@ def main(argv: list[str]) -> None:
             print(f"\nunknown command: {command}")
             sys.exit(1)
         return
-    client = RpcClient(rpc_url=args.get("rpc") if isinstance(args.get("rpc"), str) else None,
-                       debug=bool(args.get("debug")))
+    client = RpcClient(rpc_url=opt_str(args, "rpc"), debug=bool(args.get("debug")))
     try:
         COMMANDS[command](client, args)
     except RpcError as exc:

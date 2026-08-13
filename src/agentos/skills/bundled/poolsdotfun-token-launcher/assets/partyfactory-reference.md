@@ -109,6 +109,14 @@ name `Pools Fun`, symbol `POOL`, metadata
 
 ## Custom errors
 
+Every error PartyFactory declares, with its selector. **The code does not hardcode
+these** — `factory.py::ERROR_SIGNATURES` is keyed by signature and computes the
+selectors at import, because a hand-written constant can silently collide with a
+different error and then report the wrong cause with full confidence. (An early
+revision of this skill claimed `0x1f2a2005` for `DevBuyTooLarge`; that selector
+actually belongs to `ZeroAmount()`.) The table below is for humans reading a raw
+revert blob.
+
 | Selector | Error |
 |---|---|
 | `0xb4f54111` | `DeployFailed` |
@@ -119,9 +127,13 @@ name `Pools Fun`, symbol `POOL`, metadata
 | `0x6e4e2579` | `AmbiguousDevBuy` |
 | `0xb6dc33e4` | `DevBuyWethOnly` |
 | `0xedaf7b53` | `DevBuyTooLittle` |
+| `0x82ce2bbd` | `DevBuyTooLarge` |
 | `0x5a9b44ca` | `PairedAssetNotAllowed` |
 | `0x9e87fac8` | `Paused` |
 | `0x7983c051` | `PoolAlreadyInitialized` |
+| `0xf619c36a` | `LockerUnset` |
+| `0xce8ef7fc` | `InvalidTick` |
+| `0xd92e233d` | `ZeroAddress` |
 
 `TokenLaunched` topic0:
 `0xd1844be5e646143a1c9e6841471e58911bac843c7d033e435d304cfeba2c2153`

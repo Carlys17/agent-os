@@ -41,6 +41,8 @@ from poolsfun.fmt import (
     fmt_usd,
     heading,
     json_safe,
+    opt_int,
+    opt_str,
     parse_args,
     render_kv,
     render_table,
@@ -143,7 +145,9 @@ def cmd_preflight(client: RpcClient, args: dict) -> None:
     paired_usd = price["usd"] if price else None
     token_price = price_from_tick(tick) * paired_usd if paired_usd else None
     fdv = token_price * (TOTAL_SUPPLY / 10**18) if token_price else None
-    ready = bool(allowed) and not state.get("paused") and live
+    # `paused is None` means the call failed, not that the factory is running.
+    paused = state.get("paused")
+    ready = bool(allowed) and paused is False and live
 
     payload = {
         "paused": state.get("paused"), "locker": state.get("locker"),
@@ -159,7 +163,8 @@ def cmd_preflight(client: RpcClient, args: dict) -> None:
         print(heading("pools.fun preflight"))
         print(render_kv([
             ("factory", PARTY_FACTORY),
-            ("paused", "yes — launches disabled" if state.get("paused") else "no"),
+            ("paused", "unknown — could not read the factory" if paused is None
+             else ("yes — launches disabled" if paused else "no")),
             ("locker", state.get("locker") or "unset"),
             ("paired asset", f"{asset_label(paired)}  {paired}"),
             ("allowlisted", "yes" if allowed else "NO — cannot launch against this asset"),
@@ -225,10 +230,10 @@ def cmd_mine_salt(client: RpcClient, args: dict) -> None:
     symbol = require_arg(args, "symbol", "token symbol")
     paired = resolve_paired_asset(args.get("paired"))
     deployer, _ = _resolve_actor(args)
-    uri = args.get("metadata-uri")
-    if not uri or uri is True:
+    uri = opt_str(args, "metadata-uri")
+    if not uri:
         uri, _doc, _how = resolve_metadata_uri(name=name, symbol=symbol)
-    max_attempts = int(args.get("max-salt-attempts") or 5000)
+    max_attempts = opt_int(args, "max-salt-attempts", 5000, minimum=1)
 
     started = time.time()
     salt, token, attempts = mine_salt(client, PARTY_FACTORY, deployer, name, symbol,
@@ -265,18 +270,18 @@ def cmd_simulate(client: RpcClient, args: dict) -> None:
         )
     paired = resolve_paired_asset(args.get("paired"))
     creator, source = _resolve_actor(args)
-    uri = args.get("metadata-uri")
-    if not uri or uri is True:
+    uri = opt_str(args, "metadata-uri")
+    if not uri:
         uri, _doc, _how = resolve_metadata_uri(
-            name=name, symbol=symbol, description=args.get("description") or None)
+            name=name, symbol=symbol, description=opt_str(args, "description"))
 
     dev_buy_wei = _parse_eth(args.get("dev-buy"))
-    salt = args.get("salt") if isinstance(args.get("salt"), str) else None
+    salt = opt_str(args, "salt")
     plan = plan_launch(
         client, factory=PARTY_FACTORY, name=name, symbol=symbol, metadata_uri=uri,
         paired_asset=paired, creator=creator, fee_recipient=creator,
         deadline=int(time.time()) + 1200, dev_buy_wei=dev_buy_wei, salt=salt,
-        max_salt_attempts=int(args.get("max-salt-attempts") or 5000),
+        max_salt_attempts=opt_int(args, "max-salt-attempts", 5000, minimum=1),
         allow_fallback_tick=bool(args.get("allow-fallback-tick")))
 
     def render() -> None:
@@ -422,10 +427,15 @@ def cmd_fees(client: RpcClient, args: dict) -> None:
 
 
 def _parse_eth(value: Any) -> int:
-    if value is None or value is True:
+    if value is None:
         return 0
+    if value is True:
+        raise ValueError("--dev-buy needs a value")
     from poolsfun.hexutil import parse_units
-    return parse_units(str(value), 18)
+    amount = parse_units(str(value).strip(), 18)
+    if amount < 0:
+        raise ValueError("--dev-buy cannot be negative")
+    return amount
 
 
 COMMANDS = {
@@ -447,8 +457,7 @@ def main(argv: list[str]) -> None:
             print(f"\nunknown command: {command}")
             sys.exit(1)
         return
-    client = RpcClient(rpc_url=args.get("rpc") if isinstance(args.get("rpc"), str) else None,
-                       debug=bool(args.get("debug")))
+    client = RpcClient(rpc_url=opt_str(args, "rpc"), debug=bool(args.get("debug")))
     COMMANDS[command](client, args)
 
 

@@ -50,7 +50,13 @@ CHAINLINK_ABI: list[dict] = [
 
 
 def read_factory_state(client: Any, factory: str = PARTY_FACTORY) -> dict:
-    """The factory's global switches, in one round trip."""
+    """The factory's global switches, in one round trip.
+
+    A field whose call errored comes back as ``None``, which callers must treat
+    as *unknown* rather than as a value. ``paused`` in particular: ``None`` is
+    falsy, so testing it directly would read an unreadable factory as "not
+    paused" and launch into a disabled contract. Use :func:`require_launchable`.
+    """
     names = ["paused", "locker", "initialFdvUsd", "owner", "weth", "usdg",
              "sequencerUptimeFeed"]
     types = {"paused": "bool", "locker": "address", "initialFdvUsd": "uint256",
@@ -72,6 +78,26 @@ def read_factory_state(client: Any, factory: str = PARTY_FACTORY) -> dict:
             continue
         out[name] = decode([{"type": types[name]}], result)[0]
     return out
+
+
+def require_launchable(state: dict) -> None:
+    """Refuse a launch unless the factory is *known* to be open for business.
+
+    Fails closed on an unreadable switch. An RPC hiccup that turns `paused` into
+    ``None`` must not be indistinguishable from `paused == False`: launching into
+    a paused factory wastes the whole ~6.1M gas, and "we could not tell" is not
+    the same answer as "no".
+    """
+    if state.get("paused") is None:
+        raise RuntimeError(
+            "could not read the factory's `paused` switch — refusing to launch on an "
+            "unknown state. Re-run; if it persists the RPC endpoint is degraded."
+        )
+    if state["paused"]:
+        raise RuntimeError("the pools.fun factory is paused; launches are disabled.")
+    locker = state.get("locker")
+    if not locker or int(locker, 16) == 0:
+        raise RuntimeError("the factory has no locker configured; launches would revert.")
 
 
 def read_start_tick(client: Any, paired_asset: str,
@@ -189,10 +215,7 @@ def plan_launch(client: Any, *, factory: str, name: str, symbol: str,
         )
 
     state = read_factory_state(client, factory)
-    if state.get("paused"):
-        raise RuntimeError("the pools.fun factory is paused; launches are disabled.")
-    if not state.get("locker") or int(state["locker"], 16) == 0:
-        raise RuntimeError("the factory has no locker configured; launches would revert.")
+    require_launchable(state)
 
     allowed = client.read(factory, PARTY_FACTORY_ABI, "allowedPairedAsset", [paired_asset])
     if not allowed:

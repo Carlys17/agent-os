@@ -133,6 +133,10 @@ def resolve_paired_asset(value: str | None) -> str:
     """
     from .hexutil import checksum_address
 
+    # `parse_args` yields True for a bare `--paired`; without this the .strip()
+    # below dies with a bare AttributeError instead of saying what is wrong.
+    if value is True:
+        raise ValueError("--paired needs a value (weth, usdg, or an address)")
     if not value:
         return WETH
     key = value.strip().lower()
@@ -174,6 +178,15 @@ def resolve_private_key(signer_env: str = ENV_SIGNER) -> str:
         key = "0x" + key
     if len(key) != 66:
         raise RuntimeError(f"{signer_env} is not a 32-byte hex private key")
+    # Validate the alphabet here rather than letting int(key, 16) do it downstream.
+    # ValueError embeds the offending string in its message, so a key with one
+    # mistyped character would be printed in full by the top-level error handler
+    # and land in the agent transcript. Never let key material reach an exception.
+    if any(character not in "0123456789abcdefABCDEF" for character in key[2:]):
+        raise RuntimeError(
+            f"{signer_env} is not valid hex (32 bytes, 0-9/a-f). "
+            "The value is not shown here on purpose."
+        )
     return key
 
 

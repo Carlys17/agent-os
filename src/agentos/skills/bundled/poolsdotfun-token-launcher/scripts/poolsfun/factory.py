@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 from .abi_codec import decode, encode_function_data
-from .keccak import event_topic
+from .keccak import event_topic, function_selector
 
 # ── protocol constants (immutable in the deployed factory) ──────────────────
 TOTAL_SUPPLY = 1_000_000_000 * 10**18
@@ -194,49 +194,83 @@ V3_POOL_ABI: list[dict] = [
 # all an RPC returns. Mapping the 4-byte selector to an explanation is the
 # difference between a usable error and a dead end. Each message says what to do,
 # not just what happened.
-ERROR_MESSAGES: dict[str, str] = {
-    "0xb4f54111": (
+#
+# Keyed by SIGNATURE, with selectors computed at import. Hand-writing the hex
+# invites two failure modes that are invisible until a launch reverts: a typo
+# that simply never matches, and — worse — a wrong constant that collides with a
+# real error and confidently reports the wrong cause. Deriving them here makes
+# both impossible, and lets selftest iterate this table directly instead of a
+# hand-copied subset.
+#
+# The signature list is every `error` declared by PartyFactory.
+ERROR_SIGNATURES: dict[str, str] = {
+    "DeployFailed()": (
         "DeployFailed: a token already exists at this salt's address. "
         "Change the name/symbol/metadata, or pick a different --salt."
     ),
-    "0x0f5ddbb1": (
+    "StartTickChanged()": (
         "StartTickChanged: the protocol's launch tick moved between planning and "
         "execution (the ETH price feed updated). Re-run the command to re-plan."
     ),
-    "0xd79cce06": (
+    "TokenNotToken0()": (
         "TokenNotToken0: the salt no longer produces an address below the paired "
         "asset. Re-run without --salt to mine a fresh one."
     ),
-    "0x203d82d8": "Expired: the deadline passed before the tx landed. Re-run to re-plan.",
-    "0x7607bc0d": (
-        "CreatorNotCaller: `creator` must equal the sending wallet. Remove --creator "
-        "or set it to the signer address."
+    "Expired()": "Expired: the deadline passed before the tx landed. Re-run to re-plan.",
+    "CreatorNotCaller()": (
+        "CreatorNotCaller: `creator` must equal the sending wallet — the factory "
+        "binds the launch to msg.sender."
     ),
-    "0x6e4e2579": (
+    "AmbiguousDevBuy()": (
         "AmbiguousDevBuy: native ETH and an ERC20 dev buy were both supplied. "
         "Use either --dev-buy or --dev-buy-asset, never both."
     ),
-    "0xb6dc33e4": (
+    "DevBuyWethOnly()": (
         "DevBuyWethOnly: a native-ETH dev buy only works on WETH pairs. For a USDG "
         "pair use --dev-buy-asset (after `approve`)."
     ),
-    "0xedaf7b53": (
+    "DevBuyTooLittle()": (
         "DevBuyTooLittle: the fill came in under devBuyMinOut. Raise --slippage-bps "
         "or re-plan."
     ),
-    "0x5a9b44ca": (
+    "DevBuyTooLarge()": (
+        "DevBuyTooLarge: --dev-buy-asset exceeds the safe int256 bound."
+    ),
+    "PairedAssetNotAllowed()": (
         "PairedAssetNotAllowed: that asset is not on the factory allowlist. "
         "Run `pools_read.py assets` to see what is launchable."
     ),
-    "0x9e87fac8": "Paused: the factory is paused. Nothing to do but wait.",
-    "0x7983c051": (
+    "Paused()": "Paused: the factory is paused. Nothing to do but wait.",
+    "PoolAlreadyInitialized()": (
         "PoolAlreadyInitialized: a pool for this pair already exists and is "
         "initialized. Change the token identity so its address differs."
     ),
-    "0xd92e233d": "ZeroAddress: an address argument was zero.",
-    "0x2c5211c6": "InvalidAmount / InvalidTick: an argument failed a range check.",
-    "0x1f2a2005": "DevBuyTooLarge: the dev buy amount exceeds the safe int256 bound.",
-    "0x8e4a23d6": "LockerUnset: the factory has no locker configured.",
+    "LockerUnset()": "LockerUnset: the factory has no locker configured; launches revert.",
+    "LockerAlreadySet()": "LockerAlreadySet: the locker can only be wired once.",
+    "InvalidTick()": (
+        "InvalidTick: the start tick is not aligned to the 200 spacing, or is out "
+        "of range."
+    ),
+    "InvalidFdv()": "InvalidFdv: the requested FDV is outside the factory's bounds.",
+    "InvalidPriceAge()": "InvalidPriceAge: the feed heartbeat is outside 1 minute … 3 days.",
+    "FeedProbeFailed()": (
+        "FeedProbeFailed: the paired asset's Chainlink feed could not be read."
+    ),
+    "SequencerFeedProbeFailed()": (
+        "SequencerFeedProbeFailed: the sequencer uptime feed could not be read."
+    ),
+    "UnexpectedCallback()": (
+        "UnexpectedCallback: a swap callback arrived from an unauthorised pool."
+    ),
+    "ZeroAddress()": "ZeroAddress: an address argument was zero.",
+    "OwnershipCannotBeRenounced()": (
+        "OwnershipCannotBeRenounced: the factory refuses to renounce ownership."
+    ),
+}
+
+ERROR_MESSAGES: dict[str, str] = {
+    function_selector(signature): message
+    for signature, message in ERROR_SIGNATURES.items()
 }
 
 # Solidity's Error(string) selector, used for require() reverts from dependencies.
@@ -323,10 +357,11 @@ def mine_salt(client: Any, factory: str, deployer: str, name: str, symbol: str,
     it here would mean embedding a copy of PartyToken's creation bytecode in the
     skill — a constant that silently goes wrong the day the factory is redeployed,
     producing addresses that look plausible and revert on launch. Asking the
-    factory cannot drift. At ~4.6% hit rate against WETH a batch of 100 almost
-    always resolves on the first round trip.
+    factory cannot drift. At a ~4.6% hit rate against WETH, a batch of
+    ``SALT_BATCH_SIZE`` resolves on the first round trip about 85% of the time.
     """
     attempts = 0
+    errors = 0
     candidate = start
     while attempts < max_attempts:
         window = min(batch_size, max_attempts - attempts)
@@ -344,20 +379,36 @@ def mine_salt(client: Any, factory: str, deployer: str, name: str, symbol: str,
             for s in salts
         ]
         results = client.batch(calls, chunk_size=window)
+        batch_errors = 0
+        first_error: Any = None
         for offset, result in enumerate(results):
             attempts += 1
             if isinstance(result, dict) and "error" in result:
+                batch_errors += 1
+                errors += 1
+                first_error = first_error or result["error"]
                 continue
             token = decode([{"type": "address"}], result)[0]
             if sorts_below(token, paired_asset):
                 return salts[offset], token, attempts
+        # A whole batch failing is systemic — a rate limit, a bad endpoint, a
+        # reverting computeTokenAddress. Continuing would burn every remaining
+        # attempt and then blame the search, sending the user off to raise
+        # --max-salt-attempts for a problem that has nothing to do with luck.
+        if batch_errors == len(results) and results:
+            raise RuntimeError(
+                f"salt mining failed: every call in a batch of {len(results)} errored "
+                f"({first_error}). The RPC endpoint is refusing the requests — this is "
+                "not a mining problem. Retry in a moment."
+            )
         candidate += window
         if on_progress:
             on_progress(attempts)
 
+    suffix = f" ({errors} of them RPC errors)" if errors else ""
     raise RuntimeError(
-        f"no qualifying salt in {max_attempts} attempts. The token address must sort "
-        f"below {paired_asset} (~{salt_hit_rate(paired_asset) * 100:.1f}% of salts "
+        f"no qualifying salt in {max_attempts} attempts{suffix}. The token address must "
+        f"sort below {paired_asset} (~{salt_hit_rate(paired_asset) * 100:.1f}% of salts "
         f"qualify). Raise --max-salt-attempts, or change the name/symbol."
     )
 

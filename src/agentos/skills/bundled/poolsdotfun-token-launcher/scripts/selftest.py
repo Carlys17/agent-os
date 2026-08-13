@@ -148,6 +148,28 @@ def tier3_error_selectors() -> None:
         check(f"{signature} message is actionable",
               len(ERROR_MESSAGES[selector]) > 40, True)
 
+    # Iterate the whole table, not just the hand-listed subset above. An entry
+    # exempt from verification is exactly where a wrong selector hides — an
+    # earlier revision carried three, one of which collided with ZeroAmount()
+    # and so reported a completely different error with full confidence.
+    from poolsfun.factory import ERROR_SIGNATURES
+
+    check("every message is reachable by its computed selector",
+          all(ERROR_MESSAGES[function_selector(sig)] is msg
+              for sig, msg in ERROR_SIGNATURES.items()), True)
+    check("no two errors collide on a selector",
+          len(ERROR_MESSAGES), len(ERROR_SIGNATURES))
+    check("every signature is well formed",
+          all(s.endswith("()") and s[0].isupper() for s in ERROR_SIGNATURES), True)
+    # The selectors that used to be wrong, pinned to the right owners.
+    check("0x1f2a2005 is ZeroAmount, not DevBuyTooLarge",
+          function_selector("ZeroAmount()"), "0x1f2a2005")
+    check("ZeroAmount is not claimed by this factory's table",
+          "0x1f2a2005" in ERROR_MESSAGES, False)
+    check("DevBuyTooLarge selector", function_selector("DevBuyTooLarge()"), "0x82ce2bbd")
+    check("LockerUnset selector", function_selector("LockerUnset()"), "0xf619c36a")
+    check("InvalidTick selector", function_selector("InvalidTick()"), "0xce8ef7fc")
+
     check("TokenLaunched topic0",
           __import__("poolsfun.factory", fromlist=["x"]).TOPIC_TOKEN_LAUNCHED,
           "0xd1844be5e646143a1c9e6841471e58911bac843c7d033e435d304cfeba2c2153")
@@ -476,12 +498,97 @@ def tier10_signing_roundtrip() -> None:
           serialize_transaction(tx) != signed["raw"], True)
 
 
+def tier11_hostile_input() -> None:
+    """Argument handling under abuse. Every defect here was found by review."""
+    section("Tier 11 — hostile and malformed input")
+    import shlex
+
+    from poolsfun.chains import resolve_paired_asset, resolve_private_key
+    from poolsfun.fmt import opt_float, opt_int, opt_str, parse_args
+    from poolsfun.plan import require_launchable
+
+    # A key with one bad character must never reach an exception message.
+    bad = "0x" + "5" * 63 + "Z"
+    os.environ["POOLSFUN_PRIVATE_KEY"] = bad
+    try:
+        import poolsfun.chains as chains
+        chains._env_loaded = True
+        try:
+            resolve_private_key()
+            FAILURES.append("malformed key: expected a raise")
+        except RuntimeError as exc:
+            global CHECKS
+            CHECKS += 1
+            if bad[2:] in str(exc) or bad[2:20] in str(exc):
+                FAILURES.append("malformed key: KEY MATERIAL LEAKED into the error")
+        raises("malformed key names the variable",
+               resolve_private_key, contains="POOLSFUN_PRIVATE_KEY")
+    finally:
+        os.environ.pop("POOLSFUN_PRIVATE_KEY", None)
+
+    # Bare value-taking flags must be rejected, never coerced to 1/True.
+    for flag in ("slippage-bps", "deadline-secs", "max-salt-attempts"):
+        raises(f"bare --{flag} is rejected",
+               lambda f=flag: opt_int({f: True}, f, 100), contains="needs a value")
+    raises("bare --image is rejected",
+           lambda: opt_str({"image": True}, "image"), contains="needs a value")
+    raises("bare --gas-multiplier is rejected",
+           lambda: opt_float({"gas-multiplier": True}, "gas-multiplier", 1.3),
+           contains="needs a value")
+    raises("bare --paired is rejected",
+           lambda: resolve_paired_asset(True), contains="needs a value")
+
+    check("absent flags fall back to the default", opt_int({}, "x", 42), 42)
+    check("opt_str returns None when absent", opt_str({}, "x"), None)
+    check("opt_str trims", opt_str({"x": "  v  "}, "x"), "v")
+
+    # Slippage bounds: a negative value would set devBuyMinOut above the exact
+    # simulated fill, guaranteeing an on-chain DevBuyTooLittle() revert.
+    raises("negative slippage is rejected",
+           lambda: opt_int({"slippage-bps": "-500"}, "slippage-bps", 100,
+                           minimum=0, maximum=9_999), contains="at least 0")
+    raises("slippage >= 100% is rejected",
+           lambda: opt_int({"slippage-bps": "20000"}, "slippage-bps", 100,
+                           minimum=0, maximum=9_999), contains="at most 9999")
+    raises("non-numeric slippage is rejected",
+           lambda: opt_int({"slippage-bps": "lots"}, "slippage-bps", 100),
+           contains="whole number")
+
+    # The paused switch must fail closed when it could not be read.
+    raises("unknown paused state refuses to launch",
+           lambda: require_launchable({"paused": None, "locker": "0x" + "11" * 20}),
+           contains="unknown state")
+    raises("paused factory refuses to launch",
+           lambda: require_launchable({"paused": True, "locker": "0x" + "11" * 20}),
+           contains="paused")
+    raises("missing locker refuses to launch",
+           lambda: require_launchable({"paused": False, "locker": "0x" + "00" * 20}),
+           contains="locker")
+    require_launchable({"paused": False, "locker": "0x" + "11" * 20})
+
+    # The replay hint is a line the user is told to run: it must be shell-safe.
+    import pools_write
+
+    hostile = 'MyToken$(touch /tmp/pwned)`id`;rm -rf /'
+    line = pools_write._replay_command({"_": ["launch"], "name": hostile, "symbol": "T"})
+    check("replay quotes command substitution", "$(touch" in line and "'" in line, True)
+    check("replay round-trips through the shell lexer",
+          shlex.split(line)[shlex.split(line).index("--name") + 1], hostile)
+    check("replay leaves no bare metacharacter",
+          any(tok == hostile for tok in shlex.split(line)), True)
+
+    # parse_args' own contract, which everything above depends on.
+    args = parse_args(["launch", "--image", "--name", "T"])
+    check("bare flag before another flag yields True", args["image"], True)
+    check("the following flag is not consumed as a value", args["name"], "T")
+
+
 def main() -> int:
     print("poolsdotfun-token-launcher selftest — offline, no network")
     for tier in (tier1_reference_calldata, tier2_create2, tier3_error_selectors,
                  tier4_curve_math, tier5_plan_hash, tier6_metadata,
                  tier7_import_graph, tier8_cli_contract, tier9_chain_constants,
-                 tier10_signing_roundtrip):
+                 tier10_signing_roundtrip, tier11_hostile_input):
         try:
             tier()
             print("   ok")
