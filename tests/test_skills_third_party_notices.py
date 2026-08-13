@@ -24,6 +24,7 @@ ORIGINALS = {
     "music-and-singing-studio",
     "nano-pdf",
     "pdf-toolkit",
+    "poolsdotfun-token-launcher",
     "pptx",
     "robinhood-agentic-trading",
     "robinhood-rwa-addresses",

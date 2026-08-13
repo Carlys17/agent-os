@@ -219,6 +219,7 @@ are released under AgentOS's repository license (Apache-2.0; see `LICENSE`):
 - `multi-search-engine`
 - `nano-pdf`
 - `pdf-toolkit`
+- `poolsdotfun-token-launcher`
 - `pptx`
 - `robinhood-agentic-trading`
 - `robinhood-rwa-addresses`
