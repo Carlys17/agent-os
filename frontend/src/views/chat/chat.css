@@ -289,7 +289,7 @@
    be clicked. Inherits `pointer-events` from the toolbar, so it stays inert
    while hidden (and while streaming). */
 .msg .msg-body > .msg-actions::before {
-  content: "";
+  content: '';
   position: absolute;
   top: 0;
   bottom: 0;
