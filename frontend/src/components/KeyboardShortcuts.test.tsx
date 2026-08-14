@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ModalShell } from './ModalShell'
 import {
   comboParts,
@@ -22,6 +22,7 @@ const ORIGINAL_PLATFORM = navigator.platform
 
 afterEach(() => {
   setPlatform(ORIGINAL_PLATFORM || ORIGINAL_UA)
+  vi.useRealTimers()
 })
 
 function press(target: Element | Document, init: KeyboardEventInit) {
@@ -285,6 +286,173 @@ describe('the ? overlay', () => {
 
     expect(screen.queryByText('Start a new chat')).toBeNull()
     expect(screen.getByText('Show this list')).toBeInTheDocument()
+  })
+})
+
+describe('chords and prefix state', () => {
+  it('supports two-step chords', async () => {
+    const fired: string[] = []
+    function ChordHarness() {
+      useKeyboardShortcut(
+        {
+          combo: 'g c',
+          description: 'Go to Chat',
+          category: 'Navigation',
+        },
+        (e) => {
+          e.preventDefault()
+          fired.push('chat')
+        },
+      )
+      return <div />
+    }
+
+    render(
+      <KeyboardShortcutProvider>
+        <ChordHarness />
+      </KeyboardShortcutProvider>,
+    )
+
+    press(document, { key: 'g', code: 'KeyG' })
+    expect(fired).toEqual([])
+
+    press(document, { key: 'c', code: 'KeyC' })
+    expect(fired).toEqual(['chat'])
+  })
+
+  it('times out after 1.5 seconds', async () => {
+    vi.useFakeTimers()
+    const fired: string[] = []
+    function ChordHarness() {
+      useKeyboardShortcut(
+        {
+          combo: 'g c',
+          description: 'Go to Chat',
+          category: 'Navigation',
+        },
+        (e) => {
+          e.preventDefault()
+          fired.push('chat')
+        },
+      )
+      return <div />
+    }
+
+    render(
+      <KeyboardShortcutProvider>
+        <ChordHarness />
+      </KeyboardShortcutProvider>,
+    )
+
+    press(document, { key: 'g', code: 'KeyG' })
+
+    act(() => {
+      vi.advanceTimersByTime(1500)
+    })
+
+    press(document, { key: 'c', code: 'KeyC' })
+    expect(fired).toEqual([])
+
+    vi.useRealTimers()
+  })
+
+  it('re-arms on repeated prefix key', async () => {
+    vi.useFakeTimers()
+    const fired: string[] = []
+    function ChordHarness() {
+      useKeyboardShortcut(
+        {
+          combo: 'g c',
+          description: 'Go to Chat',
+          category: 'Navigation',
+        },
+        (e) => {
+          e.preventDefault()
+          fired.push('chat')
+        },
+      )
+      return <div />
+    }
+
+    render(
+      <KeyboardShortcutProvider>
+        <ChordHarness />
+      </KeyboardShortcutProvider>,
+    )
+
+    press(document, { key: 'g', code: 'KeyG' })
+
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+
+    press(document, { key: 'g', code: 'KeyG' })
+
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+
+    press(document, { key: 'c', code: 'KeyC' })
+    expect(fired).toEqual(['chat'])
+
+    vi.useRealTimers()
+  })
+
+  it('is cancelled by Escape', async () => {
+    const fired: string[] = []
+    function ChordHarness() {
+      useKeyboardShortcut(
+        {
+          combo: 'g c',
+          description: 'Go to Chat',
+          category: 'Navigation',
+        },
+        (e) => {
+          e.preventDefault()
+          fired.push('chat')
+        },
+      )
+      return <div />
+    }
+
+    render(
+      <KeyboardShortcutProvider>
+        <ChordHarness />
+      </KeyboardShortcutProvider>,
+    )
+
+    press(document, { key: 'g', code: 'KeyG' })
+    press(document, { key: 'Escape', code: 'Escape' })
+    press(document, { key: 'c', code: 'KeyC' })
+    expect(fired).toEqual([])
+  })
+
+  it('is cancelled by any modifier key being held', async () => {
+    const fired: string[] = []
+    function ChordHarness() {
+      useKeyboardShortcut(
+        {
+          combo: 'g c',
+          description: 'Go to Chat',
+          category: 'Navigation',
+        },
+        (e) => {
+          e.preventDefault()
+          fired.push('chat')
+        },
+      )
+      return <div />
+    }
+
+    render(
+      <KeyboardShortcutProvider>
+        <ChordHarness />
+      </KeyboardShortcutProvider>,
+    )
+
+    press(document, { key: 'g', code: 'KeyG' })
+    press(document, { key: 'c', code: 'KeyC', ctrlKey: true })
+    expect(fired).toEqual([])
   })
 })
 
