@@ -184,7 +184,7 @@ async def test_sessions_send_different_targets_run_concurrent() -> None:
     await _collect(agent)
     elapsed = time.monotonic() - t0
 
-    assert elapsed < 0.65, (
+    assert elapsed < 0.35, (
         f"Expected sends to different sessions to overlap, got {elapsed:.3f} s."
     )
     assert len(intervals) == len(tool_calls)
@@ -258,14 +258,14 @@ async def test_six_safe_tools_run_concurrent() -> None:
     elapsed = time.monotonic() - t0
 
     # Concurrent: should be ~0.2 s; serial would be ~1.2 s
-    assert elapsed < 0.90, (
-        f"Expected concurrent execution (<0.90 s), got {elapsed:.3f} s. "
+    assert elapsed < 0.60, (
+        f"Expected concurrent execution (<0.60 s), got {elapsed:.3f} s. "
         "Safe tools may still be running serially."
     )
     # Speed-up vs serial lower bound
     serial_estimate = len(_SAFE_SAMPLE) * _TOOL_SLEEP_S
-    assert elapsed * 2 < serial_estimate, (
-        f"Expected at least 2x speedup over serial ({serial_estimate:.1f} s), "
+    assert elapsed * 3 < serial_estimate, (
+        f"Expected at least 3x speedup over serial ({serial_estimate:.1f} s), "
         f"got {elapsed:.3f} s"
     )
     # All 6 tools were called
@@ -304,7 +304,7 @@ async def test_safe_tool_concurrency_limit_caps_in_flight_tasks() -> None:
     elapsed = time.monotonic() - t0
 
     assert max_in_flight == 2
-    assert 2 * _TOOL_SLEEP_S <= elapsed < 4.5 * _TOOL_SLEEP_S
+    assert 2 * _TOOL_SLEEP_S <= elapsed < 4 * _TOOL_SLEEP_S
 
 
 # ---------------------------------------------------------------------------

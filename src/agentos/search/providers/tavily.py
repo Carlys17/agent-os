@@ -50,8 +50,11 @@ class TavilySearchProvider:
             ) as client:
                 response = await client.post(
                     _API_URL,
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
                     json={
-                        "api_key": self._api_key,
                         "query": query,
                         "search_depth": "basic",
                         "max_results": min(max_results, 20),
