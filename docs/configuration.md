@@ -551,10 +551,11 @@ Configure search:
 ```sh
 agentos configure search --search-provider duckduckgo
 agentos configure search --search-provider brave --api-key-env BRAVE_SEARCH_API_KEY
+agentos configure search --search-provider tavily --api-key-env TAVILY_API_KEY
 ```
 
-Runtime-supported search providers in this build include Brave Search and
-DuckDuckGo. Additional provider metadata may be present for future or
+Runtime-supported search providers in this build include Brave Search, DuckDuckGo,
+and Tavily Search. Additional provider metadata may be present for future or
 not-yet-runtime-supported integrations.
 
 Read: [`search.md`](search.md)

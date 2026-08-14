@@ -1656,7 +1656,7 @@ def test_search_provider_requiring_key_rejects_missing_key():
 def test_unsupported_search_provider_rejected():
     cfg = GatewayConfig()
     with pytest.raises(ValueError, match="not runtime-supported"):
-        upsert_search_provider(cfg, provider_id="tavily", api_key="k")
+        upsert_search_provider(cfg, provider_id="exa", api_key="k")
 
 
 def test_upsert_channel_preserves_secret_when_blank():

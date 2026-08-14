@@ -324,7 +324,6 @@ class ServiceContainer:
             except Exception:
                 pass
 
-
         # ── 2. Tear down memory tier through MemoryManager ──
         # In real boot, the legacy `memory_watchers` / `memory_stores` below
         # are the SAME object identities as those reachable via memory_managers,
@@ -1789,6 +1788,7 @@ async def build_services(
     try:
         import agentos.search.providers.brave  # noqa: F401 — registers provider
         import agentos.search.providers.duckduckgo  # noqa: F401 — registers provider
+        import agentos.search.providers.tavily  # noqa: F401 — registers provider
         from agentos.search.registry import get_provider_spec
         from agentos.tools.builtin.web import configure_search
 
@@ -2013,7 +2013,6 @@ async def start_gateway_server(
     # Patch deferred callback so memory writes refresh TurnRunner snapshots
     if hasattr(svc, "_turn_runner_ref"):
         svc._turn_runner_ref.append(turn_runner)  # type: ignore[attr-defined]
-
 
     # Lazy ref for channel_manager — cron handler captures it via closure,
     # populated after channel_manager is constructed below.

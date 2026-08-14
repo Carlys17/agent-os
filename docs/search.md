@@ -16,6 +16,7 @@ Runtime-supported providers in this build include:
 
 - Brave Search
 - DuckDuckGo
+- Tavily Search
 
 The catalog may include metadata for providers that are not runtime-supported
 in the current build. Check JSON output when integrating.
@@ -39,6 +40,13 @@ Brave Search:
 ```sh
 export BRAVE_SEARCH_API_KEY="..."
 agentos configure search --search-provider brave --api-key-env BRAVE_SEARCH_API_KEY
+```
+
+Tavily Search:
+
+```sh
+export TAVILY_API_KEY="..."
+agentos configure search --search-provider tavily --api-key-env TAVILY_API_KEY
 ```
 
 Provider-specific fields such as max results, proxy, environment-proxy usage,
