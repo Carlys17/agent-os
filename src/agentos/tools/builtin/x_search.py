@@ -397,7 +397,11 @@ async def _post_with_retries(
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            attempt_timeout = min(_active_timeout_seconds, remaining)
+            # `remaining` comes from `deadline`, itself a rounded float sum, so it can
+            # exceed the total budget by an ulp when both `monotonic()` reads land in
+            # the same clock tick (Windows granularity is ~15.6ms). Cap on the budget
+            # itself so an attempt can never outlive it.
+            attempt_timeout = min(_active_timeout_seconds, remaining, _active_total_timeout_seconds)
             try:
                 response = await client.post(
                     f"{base_url}/responses",
