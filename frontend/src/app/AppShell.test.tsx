@@ -45,10 +45,6 @@ vi.mock('./providers', async (importOriginal) => {
   return { ...actual, useBootstrap: () => mockBootstrap, useRpc: () => noopRpc }
 })
 
-afterEach(() => {
-  useConnection.getState().setState('disconnected')
-})
-
 // Render the route tree without AppProviders (no network): test harness
 // provides QueryClient only; lazy route modules still resolve normally.
 function renderAt(path: string) {
@@ -177,9 +173,6 @@ describe('app shell chrome', () => {
     document.body.style.overflow = ''
     document.querySelector('base[data-test-skip-link]')?.remove()
     mockBootstrap = { ...mockBootstrap, version: '' }
-    useConnection.getState().setState('disconnected')
-    mockRpcCall.mockReset()
-    mockRpcCall.mockImplementation(() => new Promise(() => {}))
   })
 
   function stubMatchMedia(matches: boolean) {
