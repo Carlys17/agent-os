@@ -4,7 +4,7 @@ import { RouterProvider, createMemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getViews, routeChildren } from './routes'
 import { AppProviders } from './providers'
-import { AppShell, SIDEBAR_COLLAPSED_STORAGE_KEY } from './AppShell'
+import { AppShell, SIDEBAR_COLLAPSED_STORAGE_KEY, NAV_SHORTCUTS } from './AppShell'
 import { KeyboardShortcutProvider } from '@/components/KeyboardShortcuts'
 import { useConnection } from '@/stores/connection'
 import { useApprovals } from '@/services/approval-monitor'
@@ -87,6 +87,13 @@ describe('routes', () => {
   it('sets the 404 document title to "Not Found - AgentOS Control"', () => {
     renderAt('/definitely-not-a-route')
     expect(document.title).toBe('Not Found - AgentOS Control')
+  })
+
+  it('aligns navigation shortcut paths with registered view routes', () => {
+    const views = getViews()
+    for (const shortcut of NAV_SHORTCUTS) {
+      expect(views.some((view) => view.path === shortcut.path)).toBe(true)
+    }
   })
 })
 
@@ -693,5 +700,94 @@ describe('keyboard shortcuts entry point', () => {
       </QueryClientProvider>,
     )
     expect(screen.queryByRole('button', { name: 'Keyboard shortcuts' })).toBeNull()
+  })
+})
+
+describe('navigation shortcuts in AppShell', () => {
+  function stubMatchMedia(matches: boolean) {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({
+        matches,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    )
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function renderShellAt(path: string) {
+    const router = createMemoryRouter([{ element: <AppShell />, children: routeChildren }], {
+      initialEntries: [path],
+    })
+    return {
+      router,
+      ...render(
+        <QueryClientProvider client={new QueryClient()}>
+          <KeyboardShortcutProvider>
+            <RouterProvider router={router} />
+          </KeyboardShortcutProvider>
+        </QueryClientProvider>,
+      ),
+    }
+  }
+
+  function press(init: KeyboardEventInit) {
+    return fireEvent.keyDown(document, { bubbles: true, ...init })
+  }
+
+  it('navigates to sidebar views via g-prefixed chords', async () => {
+    stubMatchMedia(false)
+    const { router } = renderShellAt('/overview')
+    expect(router.state.location.pathname).toBe('/overview')
+
+    press({ key: 'g', code: 'KeyG' })
+    press({ key: 'c', code: 'KeyC' })
+    await waitFor(() => expect(router.state.location.pathname).toBe('/chat'))
+
+    // Wait for the composer to autofocus, then blur it so it is not focused
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus())
+    act(() => {
+      ;(document.activeElement as HTMLElement)?.blur()
+    })
+
+    press({ key: 'g', code: 'KeyG' })
+    press({ key: 'h', code: 'KeyH' })
+    await waitFor(() => expect(router.state.location.pathname).toBe('/health'))
+  })
+
+  it('closes the mobile drawer and focuses the main element on navigation', async () => {
+    stubMatchMedia(true)
+    const { router } = renderShellAt('/cron')
+    const toggle = screen.getByRole('button', { name: 'Toggle menu' })
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+    press({ key: 'g', code: 'KeyG' })
+    press({ key: 'c', code: 'KeyC' })
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/chat'))
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    await waitFor(() => expect(screen.getByRole('main')).toHaveFocus())
+  })
+
+  it('does not navigate when typing in an input/textarea', async () => {
+    stubMatchMedia(false)
+    const { router } = renderShellAt('/chat')
+    expect(router.state.location.pathname).toBe('/chat')
+
+    const composer = await screen.findByRole('textbox', { name: 'Message' })
+    composer.focus()
+    expect(composer).toHaveFocus()
+
+    fireEvent.keyDown(composer, { bubbles: true, key: 'g', code: 'KeyG' })
+    fireEvent.keyDown(composer, { bubbles: true, key: 'o', code: 'KeyO' })
+
+    expect(router.state.location.pathname).toBe('/chat')
   })
 })

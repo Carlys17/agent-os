@@ -49,6 +49,7 @@ export const HELP_SHORTCUT: RegisteredShortcut = {
 /** Categories render in this order; anything else falls in after it. */
 export const CATEGORY_ORDER = [
   'Global',
+  'Navigation',
   'Chat',
   'Composer',
   'Slash commands',
