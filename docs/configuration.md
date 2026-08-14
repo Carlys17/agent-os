@@ -767,20 +767,22 @@ Bind precedence:
 
 On commands that connect to the gateway, the CLI checks PyPI at most once every
 24h and, if a newer release of `use-agent-os` exists, prints a one-line notice
-on stderr suggesting `agentos upgrade`. The check is silent on failure and is
-suppressed on non-interactive runs (no TTY) and in CI.
+on stderr suggesting `agentos upgrade`. Similarly, the Web UI queries the gateway
+on connection and displays a dismissible banner if an update is available.
+The check is silent on failure and is suppressed in CI, on non-interactive CLI runs
+(no TTY), or via environment flags.
 
 ```toml
 [updates]
-notify = true   # set false to silence the "new release available" notice
+notify = true   # set false to silence the "new release available" notices
 ```
 
 `updates.notify` defaults to `true`. Set it from the setup UI (Finish step →
 Updates), with `agentos config` (a `config.patch` on `updates.notify`), or by
 editing the config file directly. The state file
-`~/.agentos/state/update_notice.json` tracks the last check time for
-throttling; delete it to force a re-check. To silence the notice for a single
-run without changing config, set `AGENTOS_NO_UPDATE_NOTICE=1`.
+`~/.agentos/state/update_notice.json` tracks the last check times (namespaced per surface,
+e.g. `cli`, `webui`) for throttling; delete it to force a re-check. To silence the notices
+for a single run/session without changing config, set `AGENTOS_NO_UPDATE_NOTICE=1`.
 
 Related: `agentos upgrade` (the primary upgrade path), the version-skew policy,
 and the `AGENTOS_ALLOW_VERSION_SKEW=1` escape hatch are documented in the

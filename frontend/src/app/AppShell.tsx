@@ -132,6 +132,7 @@ function pillLabel(state: string): string {
 }
 
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'agentos-sidebar-collapsed'
+export const DISMISSED_VERSION_STORAGE_KEY = 'agentos.dismissedVersion'
 
 function storedSidebarCollapsed(): boolean {
   if (typeof window === 'undefined') return false
@@ -180,7 +181,7 @@ export function AppShell() {
   } | null>(null)
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(() => {
     try {
-      return localStorage.getItem('agentos.dismissedVersion')
+      return localStorage.getItem(DISMISSED_VERSION_STORAGE_KEY)
     } catch {
       return null
     }
@@ -211,7 +212,7 @@ export function AppShell() {
   const handleDismiss = () => {
     if (updateStatus?.latest) {
       try {
-        localStorage.setItem('agentos.dismissedVersion', updateStatus.latest)
+        localStorage.setItem(DISMISSED_VERSION_STORAGE_KEY, updateStatus.latest)
       } catch {
         /* ignore */
       }

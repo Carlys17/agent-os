@@ -4,7 +4,7 @@ import { RouterProvider, createMemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getViews, routeChildren } from './routes'
 import { AppProviders } from './providers'
-import { AppShell, SIDEBAR_COLLAPSED_STORAGE_KEY } from './AppShell'
+import { AppShell, SIDEBAR_COLLAPSED_STORAGE_KEY, DISMISSED_VERSION_STORAGE_KEY } from './AppShell'
 import { KeyboardShortcutProvider } from '@/components/KeyboardShortcuts'
 import { useConnection } from '@/stores/connection'
 import { useApprovals } from '@/services/approval-monitor'
@@ -161,7 +161,7 @@ describe('app shell chrome', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     window.localStorage.removeItem(SIDEBAR_COLLAPSED_STORAGE_KEY)
-    window.localStorage.removeItem('agentos.dismissedVersion')
+    window.localStorage.removeItem(DISMISSED_VERSION_STORAGE_KEY)
     document.body.style.overflow = ''
     document.querySelector('base[data-test-skip-link]')?.remove()
     mockBootstrap = { ...mockBootstrap, version: '' }
@@ -605,12 +605,12 @@ describe('app shell chrome', () => {
 
     // The banner should disappear
     await waitFor(() => expect(screen.queryByTestId('update-banner')).toBeNull())
-    expect(window.localStorage.getItem('agentos.dismissedVersion')).toBe('2026.9.9')
+    expect(window.localStorage.getItem(DISMISSED_VERSION_STORAGE_KEY)).toBe('2026.9.9')
   })
 
   it('suppresses the update banner if the version was already dismissed', async () => {
     stubMatchMedia(false)
-    window.localStorage.setItem('agentos.dismissedVersion', '2026.9.9')
+    window.localStorage.setItem(DISMISSED_VERSION_STORAGE_KEY, '2026.9.9')
     useConnection.getState().setState('connected')
     mockRpcCall.mockResolvedValue({
       current: '2026.8.11',
@@ -620,8 +620,8 @@ describe('app shell chrome', () => {
 
     renderShellAt('/cron')
 
-    // Let any async rendering complete, the banner should not be in the document
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    // Wait for the shell to render
+    await screen.findByRole('link', { name: 'Cron' })
     expect(screen.queryByTestId('update-banner')).toBeNull()
   })
 
@@ -636,7 +636,7 @@ describe('app shell chrome', () => {
 
     renderShellAt('/cron')
 
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await screen.findByRole('link', { name: 'Cron' })
     expect(screen.queryByTestId('update-banner')).toBeNull()
   })
 })
