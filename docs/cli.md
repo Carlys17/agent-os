@@ -84,7 +84,8 @@ The most useful ones:
 | `/compact` | Compact older context into a summary. |
 | `/cost` | Show per-session token and cost totals. |
 | `/save [path]` | Save the transcript to a Markdown file. |
-| `/c0` … `/c3` | Pin the Pilot Router to a configured tier for this session. The pin appears in the bottom toolbar (e.g. `tier:c3`) and stays active until you exit, run `/auto`, or the hold expires. |
+| `/c0` … `/c3` | Pin the Pilot Router to a configured tier for this session. The pin appears in the bottom toolbar (e.g. `tier:c3`) and stays active until you exit or run `/auto`. |
+| `/use <model-id>` | Pin the route to a specific model, outside the configured tiers. The model must belong to the active provider. |
 | `/auto` | Restore automatic Pilot Router routing (clears the tier pin). |
 | `/help` | List the commands available on the current surface. |
 | `/exit` / `/quit` | Leave the REPL. |
@@ -94,6 +95,32 @@ and `--standalone` modes. Tiers not present in your `[agentos_router]`
 config are rejected with a readable error. In `--standalone` mode the
 router must be enabled in config; otherwise the command reports
 "Pilot Router is disabled or unavailable."
+
+A tier pin you set is **sticky**: it holds every turn until you clear it with
+`/auto` (or the process ends). It does not time out. Pin `/c3` and forget, and
+every later turn keeps paying for `c3` — check `/status` if you are unsure what
+is in force. This differs from the routing the model may pick for itself
+mid-turn, which still lapses on its own after ten idle minutes.
+
+`/use` pins a model that is not one of your four configured tiers. It is a
+separate verb from `/model`, whose argument filters the model listing — `/model
+gpt` shows you the gpt models, `/use gpt-5.6-terra` switches to one. Because
+every turn runs through the single configured `llm.provider` (a tier's
+`provider` field is metadata, not a client selector), only that provider's
+models can be pinned; anything else is refused at the point of choosing rather
+than failing on the next turn. A directly-named model rides on the default tier,
+inheriting its thinking level and pricing baseline — settings a bare model id
+does not carry.
+
+While a pin is in force the model's own `router_control` tool is withdrawn, so
+it cannot route around your choice. Two exceptions are worth knowing:
+
+- **Image turns.** A turn with an image attachment is routed to a vision-capable
+  tier before pins are consulted, so it runs on that tier, not your pinned one.
+  The Web UI flags such a turn.
+- **Large context.** A pinned turn skips the large-context tier floor. If the
+  conversation outgrows the pinned model's context window, the turn fails at the
+  provider rather than being quietly upgraded. Pin a larger tier, or run `/auto`.
 
 ### Assistant label and session chrome
 
@@ -235,9 +262,9 @@ agentos upgrade --timeout 900   # bound the upgrade subprocess (default 600s)
 
 Per install method:
 
-- **uv tool** — delegated automatically as `uv tool install --force --python
-  <running major.minor> "use-agent-os[recommended]"`, resolving `uv` to an
-  absolute path over a hardened PATH. `install` rather than `upgrade` is
+- **uv tool** — delegated automatically as
+  `uv tool install --force --python <running major.minor> "use-agent-os[recommended]"`,
+  resolving `uv` to an absolute path over a hardened PATH. `install` rather than `upgrade` is
   load-bearing: `uv tool upgrade` takes only a bare tool name and re-resolves
   whatever uv's receipt recorded, so an install laid down from a checkout
   (`install_source.sh` passes `.`) keeps rebuilding the wheel from the working

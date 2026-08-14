@@ -229,6 +229,12 @@ export function useTranscript(opts: {
   onEditMessage?: (text: string) => void
   onRegenerateMessage?: (text: string) => void
   onSessionKeyResolved?: (key: string) => void
+  /**
+   * True while the user has pinned a router tier. A pin removes the choice the
+   * router-fx strip exists to dramatize, so the animation is suppressed for the
+   * duration — see `isRoutePinned` in `createRouterFxRenderer`.
+   */
+  routePinned?: boolean
 }): {
   containerRef: React.RefObject<HTMLDivElement | null>
   routerFxDockRef: React.RefObject<HTMLDivElement | null>
@@ -273,6 +279,9 @@ export function useTranscript(opts: {
   const containerRef = useRef<HTMLDivElement>(null)
   const routerFxDockRef = useRef<HTMLDivElement>(null)
   const routerFeatureEnabledRef = useRef(false)
+  // Read live by the router-fx renderer, which is built once; a plain prop would
+  // be captured stale in that closure.
+  const routePinnedRef = useRef(false)
   const [routerConfigGate] = useState(createRouterConfigGate)
 
   // chat.js:1470-1535 `_loadFeatureToggles` — the animation engine needs the
@@ -484,6 +493,7 @@ export function useTranscript(opts: {
             : '',
       routerFxDock: () => routerFxDockRef.current,
       routerFeatureEnabled: () => routerFeatureEnabledRef.current,
+      routePinned: () => routePinnedRef.current,
       routerFxAwaitConfig: () => awaitRouterConfigReady(routerConfigGate.promise),
       historyHasRendered: () => historyHasRenderedRef.current,
       historyHydrating: () => historyHydratingRef.current,
@@ -659,6 +669,11 @@ export function useTranscript(opts: {
     thread.addEventListener('click', onArtifactClick)
     return () => thread.removeEventListener('click', onArtifactClick)
   }, [controller])
+
+  // Mirror the pin into the ref the router-fx renderer reads live.
+  useEffect(() => {
+    routePinnedRef.current = opts.routePinned === true
+  }, [opts.routePinned])
 
   useEffect(() => {
     if (routerConfigQuery.isPending) return

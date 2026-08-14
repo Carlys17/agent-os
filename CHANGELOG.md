@@ -6,6 +6,124 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.13] - 2026-08-13
+
+### Added
+
+- A bundled `poolsdotfun-token-launcher` crypto skill launches a token on
+  pools.fun through the `PartyFactory` on Robinhood Chain (4663) and manages the
+  creator fees on the `PartyLocker` afterwards. A launch is one irreversible
+  transaction: it CREATE2-deploys a fixed-supply ERC20 with no owner and no mint
+  function, opens a SushiSwap V3 pool at the 1% fee tier, and mints the whole
+  supply as a single-sided full-range position whose LP NFT goes to the locker
+  permanently — the launcher never holds it. The chain and RPC endpoint are
+  built in, so there is nothing to configure beyond `POOLSFUN_PRIVATE_KEY`.
+- The skill separates reading from signing. `pools_read.py` quotes cost, opening
+  price and pool state, simulates a launch and mines a launch salt using only a
+  `--from` address; `pools_write.py` is the only script that can sign. A launch
+  plan is hashed, so the transaction that broadcasts is provably the one that
+  was quoted.
+- `PINATA_JWT` is optional and needed only to attach a token image. It is
+  deliberately not declared as a skill requirement, so a launch without a logo
+  still works on a machine where Pinata was never configured.
+
+### Fixed
+
+- The launcher can now find a logo the user attached in chat. Chat attachments
+  arrive in two shapes — staged to disk under a sha256 name, or inlined as
+  base64 in the transcript — and the skill previously looked only at the media
+  directory, so an inlined image was missed and a stale disk blob could be
+  uploaded in its place. A `find-image` read command now resolves the image from
+  the transcript first, materializes it, and warns when the only candidate is
+  older than the request.
+
+## [2026.8.12] - 2026-08-12
+
+### Added
+
+- The Web UI now shows the model thinking. Reasoning arrives as a typed
+  `ThinkingDeltaEvent` from the Anthropic, OpenAI-compatible and Ollama
+  providers — including models that emit `<think>` tags inline, split back out
+  of the text stream as it arrives — and renders as a live collapsible block
+  that folds itself the moment the reply text starts. A fresh block opens per
+  reasoning round, so mid-turn work stays visible rather than being appended to
+  the first one. History carries a `has_thinking` flag so a reloaded thread
+  still offers the block. `control_ui.show_thinking` (default true) gates the
+  whole surface.
+- Thinking is web-only by construction. It travels on a `session.event.thinking`
+  emit path and a CONTROL_ONLY `chat.thinking` RPC, so channel adapters never
+  receive it — reasoning is not something to page a Telegram or Discord thread
+  with.
+- The chat composer now carries a route picker, so choosing which model answers
+  no longer means remembering a slash command. It lists the text tiers your
+  `[agentos_router]` config actually defines — labelled with the model each
+  resolves to, e.g. `c1 · gpt-5.6-luna` — plus `Auto`, which hands routing back
+  to the Pilot Router and reports the tier it last chose (`Auto · c2`) so
+  automatic routing stays legible. The pin is read back from the gateway over a
+  new `router.hold.get` RPC rather than mirrored in the browser, so a reload
+  shows the pin that is really in force and a pin set from `/c3` and one set
+  from the picker agree. With no Pilot Router configured the control is disabled
+  rather than hidden, keeping the composer from reflowing when the router is
+  toggled.
+- The picker is a searchable list, so the choice is not limited to the four
+  configured tiers: it also offers every model of the active provider, and
+  `/use <model-id>` does the same from a slash command on web, TUI and channels.
+  A directly-named model rides on the default tier, inheriting the thinking
+  level and pricing baseline that live on a tier and not on a model id — which
+  also keeps the router step's `tiers[hold.tier]` lookup valid. Only the active
+  provider's models are offered: every turn runs through the single configured
+  `llm.provider` (a tier's `provider` field is metadata, not a client selector),
+  so anything else is refused when chosen rather than failing on the next turn.
+  `/use` is a new verb rather than an argument to `/model`, whose argument
+  already filters the listing. Only models the provider publishes in its
+  catalog can be pinned — on OpenCAP that is the bare canonical ids, not the
+  namespaced `<upstream>/<model>` aliases its inference endpoint also answers to.
+- The router-fx strip is suppressed while a tier or model is pinned. It exists
+  to show the router weighing candidates and settling on one; a pin decides the
+  route up front, so the animation was dramatizing a deliberation that never
+  happened and restating the composer's own picker every turn. It returns the
+  moment routing goes back to Auto.
+- A pin now withdraws the model's own `router_control` tool for the duration,
+  along with its target menu in the system prompt. The user's choice already
+  outranked the model inside the router step; leaving the lever on the surface
+  only invited calls that could not take effect and paid tokens to describe
+  them. Holds the model installs for itself are unaffected — hiding the tool on
+  its own hold would strand a session on a transient escalation.
+
+### Changed
+
+- **Breaking:** a tier pin set by a user is now sticky. `/c0`…`/c3` — in the Web
+  UI, the TUI, and every channel — hold until `/auto` clears them instead of
+  lapsing after ten idle minutes. A pin is a standing instruction, and a
+  selection that silently reverted would have made the new composer control lie
+  about what is running. The practical consequence is a bill: pin `/c3` and
+  forget, and every later turn keeps paying for `c3` until someone runs `/auto`.
+  Routing the model chooses for itself mid-turn is unchanged and still lapses on
+  its own. Two things still outrank a pin, both pre-existing: image turns are
+  routed to a vision tier before pins are consulted (the Web UI flags such a
+  turn), and a pinned turn skips the large-context tier floor, so it fails at
+  the provider rather than being upgraded if the conversation outgrows the
+  pinned model's context window.
+
+### Fixed
+
+- A hub skill whose `SKILL.md` renames itself no longer renders as a local one.
+  The lockfile is keyed by the install directory but was read back by the name
+  the frontmatter declares, and published skills do rename themselves — hub
+  `ytdlp-transcript` ships a manifest named `youtube-transcript`. The lookup
+  missed, so an ordinary hub install appeared under "Your local skills" with no
+  source, no version, no scan facts and neither a Remove nor an Update button,
+  the same wrong row reaching `agentos skills list` and the agent's
+  `skill_list`. Entries now join by the resolved path they already record,
+  falling back to the name for entries written before `path` existed. The
+  removability guard read the manifest name too and so reported a removable
+  install as an orphan; `skills.uninstall` and `skills.update` — and the CLI's
+  no-gateway uninstall path — now translate to the install key the same way.
+  The wire contract is unchanged and existing installs heal themselves: no
+  lockfile migration, no re-install.
+- OpenCAP and Bankr routes reported `supports_reasoning=False` for every model,
+  which silently no-oped a tier's `thinking_level`.
+
 ## [2026.8.11] - 2026-08-11
 
 ### Added

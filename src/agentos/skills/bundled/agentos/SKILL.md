@@ -69,8 +69,21 @@ in both gateway and `--standalone` modes:
 
 - `/c0` … `/c3` — pin the Pilot Router to a configured tier for this session.
   The active tier shows in the bottom toolbar (e.g. `tier:c3`) and in
-  `/status` until you run `/auto`, exit, or the hold expires.
+  `/status` until you run `/auto` or exit. The pin is sticky: it does not time
+  out, so a forgotten `/c3` keeps billing at `c3`.
+- `/use <model-id>` — pin the route to a specific model instead of a tier. Only
+  the active provider's models can be pinned, since every turn runs through the
+  single configured `llm.provider`; the model inherits the default tier's
+  thinking level and pricing baseline. Distinct from `/model`, whose argument
+  filters the listing rather than switching.
 - `/auto` — restore automatic Pilot Router routing (clear the pin).
+
+A pin withdraws the model's own `router_control` tool, so it cannot route
+around the choice. Image turns still go to a vision tier (they are routed
+before pins apply), and a pinned turn skips the large-context tier floor — it
+fails at the provider rather than being upgraded if the context outgrows the
+pinned model. In the Web UI the same pin is set from the route picker in the
+chat composer, which also shows which tier automatic routing last chose.
 
 The assistant speaker label on the `◢` marker defaults to `agentos`; override
 with the `AGENTOS_ASSISTANT_LABEL` env var. The active input row is framed by a

@@ -1,12 +1,13 @@
-# AgentOS — Token-Efficient AI Agent with On-Device Pilot Router
+# AgentOS — Local-First Agentic Trading AI Agent, Token-Efficient by Design
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/use-agent-os/agent-os/main/assets/agentos-hero-banner.png" alt="AgentOS — The Open Agent Operating System">
+  <img src="https://raw.githubusercontent.com/use-agent-os/agent-os/main/assets/agentos-hero-banner.jpg" alt="AgentOS — Local-first agentic trading, minimum tokens.">
 </p>
 
 <p align="center">
-  <b>Stop overpaying for AI. Let the router cook.</b><br>
-  A token-efficient AI agent with on-device Pilot Router for your CLI, Web UI, and chat channels.
+  <b>Local-first agentic trading, minimum tokens.</b><br>
+  An AI agent with native agentic trading that runs on your own machine, across CLI, Web UI, and chat channels.<br>
+  An on-device Pilot Router classifies each task locally and routes it to the cheapest capable model.
 </p>
 
 <p align="center">
@@ -36,7 +37,7 @@ OpenAI, Anthropic, Ollama, DeepSeek, Gemini, Qwen/DashScope, and 20+
 other providers. You do not need to change your code or config to
 switch providers.
 
-AgentOS 2026.8.11 is the current release. The project website is
+AgentOS 2026.8.13 is the current release. The project website is
 [useagentos.dev](https://useagentos.dev). Follow
 [@useAgentOS](https://x.com/useAgentOS) on X for updates.
 
@@ -224,14 +225,14 @@ agentos gateway run
 > new terminal window. Or run the PATH command from step 1 again.
 
 For an install pinned to one exact version, add `==<version>` — for
-example `uv tool install --python 3.12 "use-agent-os[recommended]==2026.8.11"` —
+example `uv tool install --python 3.12 "use-agent-os[recommended]==2026.8.13"` —
 or use the GitHub release wheel link directly:
-`https://github.com/use-agent-os/agent-os/releases/download/v2026.8.11/use_agent_os-2026.8.11-py3-none-any.whl`.
+`https://github.com/use-agent-os/agent-os/releases/download/v2026.8.13/use_agent_os-2026.8.13-py3-none-any.whl`.
 
 > [!NOTE]
 > Release install commands use published GitHub release assets.
 > Python wheel installs use versioned wheel filenames — for example
-> `use_agent_os-2026.8.11-py3-none-any.whl` — because the installers validate the
+> `use_agent_os-2026.8.13-py3-none-any.whl` — because the installers validate the
 > version segment inside the wheel filename, so there is no `latest`
 > wheel alias. Only the Windows portable zip has a version-independent
 > `releases/latest/download/` alias.

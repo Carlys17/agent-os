@@ -2743,6 +2743,179 @@
   }
 }
 
+/* Route picker: pin the Pilot Router to one tier from the composer input bar.
+   Sized to its label rather than the square icon buttons beside it — the label
+   carries the model name, which is the reason the control exists. */
+.chat-route-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  flex: none;
+  gap: 6px;
+  z-index: 10;
+}
+.chat-route-trigger {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 14rem;
+  height: 2.5rem;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.chat-route-trigger svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  stroke-width: 1.8;
+}
+.chat-route-trigger__label {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-route-trigger:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--elevated);
+  color: var(--foreground);
+}
+.chat-route-trigger:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.chat-route-trigger:disabled {
+  color: var(--dim);
+  cursor: default;
+}
+/* A pin is a standing override, so it reads as active rather than neutral. */
+.chat-route-trigger--pinned {
+  border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  color: var(--foreground);
+}
+.chat-route-badge {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--warning, var(--primary)) 14%, transparent);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.chat-route-menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  /* Right-anchored: the trigger sits at the right edge of the input bar, so a
+     left-anchored menu would open off the composer. */
+  right: -9px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: 16rem;
+  max-width: min(24rem, calc(100vw - 2rem));
+  /* The search box stays put while only the rows scroll — with a full model
+     catalog the list is long, and a filter you have to scroll back up to reach
+     is not a filter. */
+  max-height: min(22rem, calc(100dvh - 8rem));
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border));
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow:
+    0 18px 48px color-mix(in srgb, var(--background) 72%, transparent),
+    0 2px 10px color-mix(in srgb, var(--background) 45%, transparent);
+}
+.chat-route-search {
+  flex: none;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 7px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--radius) - 3px);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+.chat-route-search::placeholder {
+  color: var(--dim);
+}
+.chat-route-search:focus-visible {
+  border-color: var(--ring);
+  outline: none;
+}
+.chat-route-list {
+  overflow-y: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chat-route-empty {
+  padding: 9px;
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.chat-route-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: calc(var(--radius) - 3px);
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-route-option:hover,
+.chat-route-option:focus-visible {
+  background: var(--elevated);
+  outline: none;
+}
+.chat-route-option__check {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  place-items: center;
+}
+.chat-route-option__check svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.2;
+}
+.chat-route-option__tier {
+  flex: none;
+}
+.chat-route-option__model {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Gear trigger + popover holding the toolbar in the composer input bar
    (chat.js:1248-1281 chat-toolbar-wrap). */
 .chat-toolbar-wrap {

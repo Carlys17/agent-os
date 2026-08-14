@@ -272,8 +272,28 @@ export function useSlashCommands(opts?: {
             )
           return
         }
-        // chat.js:2819-2829 — pin the router to a tier (/c0-/c3).
+        // chat.js:2819-2829 — pin the router to a tier (/c0-/c3), or to a
+        // directly-named model (/use <model-id>). Both ride the same RPC; the
+        // command word says which parameter to send.
         case 'router.hold.set': {
+          if ((commandName || '').toLowerCase() === '/use') {
+            const model = args.trim()
+            if (!model) {
+              toast.warning(t('chat.slashUseNeedsModel'))
+              return
+            }
+            rpc
+              .call('router.hold.set', { key, model })
+              .then(() => toast.info(t('chat.routePinned', { target: model })))
+              .catch((err: unknown) =>
+                toast.error(
+                  t('chat.slashRouterPinFailed', {
+                    message: err instanceof Error ? err.message : String(err),
+                  }),
+                ),
+              )
+            return
+          }
           const tier = (commandName || '').replace(/^\//, '').toLowerCase()
           rpc
             .call('router.hold.set', { key, tier })

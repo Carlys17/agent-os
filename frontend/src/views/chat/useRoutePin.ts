@@ -1,0 +1,321 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
+import {
+  routerFxNormalizeTier,
+  type RouterFxDecision,
+  type RouterFxTierConfig,
+} from './transcript/routerFx'
+import type { WsRpcClient } from '@/lib/ws-rpc'
+import { t } from '@/i18n'
+import '@/i18n/en/chat'
+
+/**
+ * State for the composer's route picker: which tier the user has pinned, which
+ * tiers can be pinned, and what the router actually did last turn.
+ *
+ * The pin itself lives in the gateway's `RouterControlHoldStore` — process
+ * memory the browser cannot see — so this hook reads it back over
+ * `router.hold.get` rather than mirroring it locally. That read is what makes a
+ * reload show the real pin instead of a hopeful guess, and it is why a pin set
+ * from a slash command (`/c3`) and one set from the picker converge on the same
+ * label. `router.hold.get` deliberately does not error when the router is off,
+ * so mounting the picker on a gateway with no Pilot Router is silent.
+ */
+
+/** One pinnable route, as reported by `router.hold.get`. */
+export interface RoutePinTier {
+  tier: string
+  model: string
+}
+
+/** One directly-pinnable model from the active provider's catalog. */
+export interface RoutePinModel {
+  id: string
+  name: string
+}
+
+export interface RoutePinState {
+  /** Whether the Pilot Router is configured and on. Drives the disabled state. */
+  enabled: boolean
+  /** Pinnable text tiers, config order. Empty while loading or when disabled. */
+  tiers: RoutePinTier[]
+  /**
+   * Every model of the ACTIVE provider. Routing runs through one provider, so a
+   * model from any other provider in the catalog would be sent to this one
+   * under a name it does not know — those are filtered out server-side rather
+   * than offered and rejected.
+   */
+  models: RoutePinModel[]
+  /** The pinned tier, or null when routing is automatic or a model is pinned. */
+  pinned: string | null
+  /** The directly-pinned model id, or null when a tier (or nothing) is pinned. */
+  pinnedModel: string | null
+  /**
+   * Whether the route is pinned at all, either way. Derived here rather than
+   * recomputed per consumer: a caller that checks only `pinned` silently treats
+   * a model pin as automatic routing, which is how the router-fx strip once
+   * kept animating over a pinned model.
+   */
+  isPinned: boolean
+  /** The tier the router last actually used, pin or not. Labels the Auto state. */
+  lastRoutedTier: string | null
+  /**
+   * Set when the last turn was routed to a vision tier while a pin was active.
+   * Image turns are chosen before holds are consulted in the router step, so a
+   * pinned text tier genuinely does not run them — the picker says so rather
+   * than claiming a route the turn did not take.
+   */
+  imageOverride: boolean
+  /** True while a pin/clear round-trip is in flight. */
+  busy: boolean
+}
+
+export interface RoutePinApi extends RoutePinState {
+  pin: (tier: string) => void
+  pinModel: (model: string) => void
+  clear: () => void
+}
+
+interface HoldGetResult {
+  enabled?: boolean
+  provider?: string
+  hold?: { tier?: string; model?: string; targetType?: string } | null
+  tiers?: { tier?: string; model?: string }[]
+}
+
+const EMPTY_TIERS: RoutePinTier[] = []
+const EMPTY_MODELS: RoutePinModel[] = []
+
+interface HoldSlice {
+  session: string
+  enabled: boolean
+  provider: string
+  tiers: RoutePinTier[]
+  pinned: string | null
+  pinnedModel: string | null
+}
+
+interface RoutedSlice {
+  session: string
+  lastRoutedTier: string | null
+  imageOverride: boolean
+}
+
+const EMPTY_HOLD = {
+  enabled: false,
+  provider: '',
+  tiers: EMPTY_TIERS,
+  pinned: null,
+  pinnedModel: null,
+} as const
+const EMPTY_ROUTED = { lastRoutedTier: null, imageOverride: false } as const
+
+export function useRoutePin(
+  rpc: WsRpcClient,
+  sessionKey: string,
+  /**
+   * Tier config from `config.get`, used only as a fallback model label while the
+   * first `router.hold.get` is in flight so the button does not flash empty.
+   */
+  tierConfigs?: Record<string, RouterFxTierConfig>,
+): RoutePinApi {
+  // Both slices are STAMPED with the session they describe rather than reset on
+  // switch. Holds are per-session, so the previous session's pin must not label
+  // the new one — but clearing state from an effect costs an extra render pass
+  // and a cascading-render lint waiver. Stamping lets the reads below simply
+  // ignore anything that does not belong to the current session, which also
+  // discards a slow response that lands after the user has moved on.
+  const [hold, setHold] = useState<HoldSlice>(() => ({ session: '', ...EMPTY_HOLD }))
+  const [routed, setRouted] = useState<RoutedSlice>(() => ({ session: '', ...EMPTY_ROUTED }))
+  const [busy, setBusy] = useState(false)
+
+  const live = hold.session === sessionKey ? hold : EMPTY_HOLD
+  const liveRouted = routed.session === sessionKey ? routed : EMPTY_ROUTED
+
+  const refresh = useCallback(() => {
+    const forSession = sessionKey
+    rpc
+      .call('router.hold.get', { key: forSession })
+      .then((res: unknown) => {
+        const result = (res ?? {}) as HoldGetResult
+        // A model pin still names the tier hosting it; only `targetType` says
+        // which of the two the user actually chose, so the picker must not read
+        // the tier as a tier selection.
+        const byModel = result.hold?.targetType === 'model'
+        setHold({
+          session: forSession,
+          enabled: result.enabled === true,
+          provider: typeof result.provider === 'string' ? result.provider : '',
+          pinned: byModel ? null : routerFxNormalizeTier(result.hold?.tier || '') || null,
+          pinnedModel: byModel ? String(result.hold?.model || '') || null : null,
+          tiers: (Array.isArray(result.tiers) ? result.tiers : [])
+            .map((row) => ({
+              tier: routerFxNormalizeTier(row?.tier || ''),
+              model: typeof row?.model === 'string' ? row.model : '',
+            }))
+            .filter((row) => row.tier),
+        })
+      })
+      .catch(() => {
+        // A gateway without the RPC (older build) or a dropped socket: leave the
+        // picker disabled rather than surfacing an error the user cannot act on.
+        setHold({ session: forSession, ...EMPTY_HOLD })
+      })
+  }, [rpc, sessionKey])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  // The catalog is global, not per-session, and only worth fetching once the
+  // active provider is known — it is the filter that makes the list pinnable.
+  // Read from the raw slice, NOT the session-scoped `live`: a session switch
+  // blanks `live` until the new read lands, which would drop the provider and
+  // refetch the whole catalog for a fact that did not change.
+  const [models, setModels] = useState<RoutePinModel[]>(EMPTY_MODELS)
+  const provider = hold.provider
+  useEffect(() => {
+    if (!provider) return
+    let ignore = false
+    rpc
+      .call('models.list', { provider })
+      .then((res: unknown) => {
+        if (ignore) return
+        const rows = Array.isArray(res) ? (res as Record<string, unknown>[]) : []
+        setModels(
+          rows
+            .map((row) => ({
+              id: String(row?.id ?? ''),
+              name: String(row?.name || row?.id || ''),
+            }))
+            .filter((row) => row.id),
+        )
+      })
+      .catch(() => {
+        // No catalog is a usable state: the tier rows still pin.
+        if (!ignore) setModels(EMPTY_MODELS)
+      })
+    return () => {
+      ignore = true
+    }
+  }, [rpc, provider])
+
+  // Track what the router actually did, which is the only honest source for the
+  // Auto label and for noticing that an image turn bypassed the pin. Re-subscribed
+  // per session so the stamp is captured without a render-time ref write.
+  useEffect(() => {
+    const forSession = sessionKey
+    return rpc.on('session.event.router_decision', (payload: unknown) => {
+      const decision = (payload ?? {}) as RouterFxDecision
+      const tier = routerFxNormalizeTier(String(decision.tier || decision.routed_tier || ''))
+      if (!tier) return
+      const source = String(decision.source || decision.routing_source || '').toLowerCase()
+      setRouted({
+        session: forSession,
+        lastRoutedTier: tier,
+        imageOverride: source === 'image_route' || tier === 'image_model',
+      })
+    })
+  }, [rpc, sessionKey])
+
+  const pin = useCallback(
+    (tier: string) => {
+      const target = routerFxNormalizeTier(tier)
+      if (!target) return
+      const forSession = sessionKey
+      setBusy(true)
+      rpc
+        .call('router.hold.set', { key: sessionKey, tier: target })
+        .then((res: unknown) => {
+          const model = (res as { model?: string })?.model
+          setHold((prev) =>
+            prev.session === forSession ? { ...prev, pinned: target, pinnedModel: null } : prev,
+          )
+          toast.info(t('chat.routePinned', { target: target + (model ? ' → ' + model : '') }))
+        })
+        .catch((err: unknown) =>
+          toast.error(
+            t('chat.slashRouterPinFailed', {
+              message: err instanceof Error ? err.message : String(err),
+            }),
+          ),
+        )
+        .finally(() => setBusy(false))
+    },
+    [rpc, sessionKey],
+  )
+
+  const pinModel = useCallback(
+    (model: string) => {
+      const target = model.trim()
+      if (!target) return
+      const forSession = sessionKey
+      setBusy(true)
+      rpc
+        .call('router.hold.set', { key: forSession, model: target })
+        .then(() => {
+          setHold((prev) =>
+            prev.session === forSession ? { ...prev, pinned: null, pinnedModel: target } : prev,
+          )
+          toast.info(t('chat.routePinned', { target }))
+        })
+        .catch((err: unknown) =>
+          // `router.unknown_model` names the active provider — pass the message
+          // through rather than restating it less precisely.
+          toast.error(
+            t('chat.slashRouterPinFailed', {
+              message: err instanceof Error ? err.message : String(err),
+            }),
+          ),
+        )
+        .finally(() => setBusy(false))
+    },
+    [rpc, sessionKey],
+  )
+
+  const clear = useCallback(() => {
+    const forSession = sessionKey
+    setBusy(true)
+    rpc
+      .call('router.hold.clear', { key: forSession })
+      .then(() => {
+        setHold((prev) =>
+          prev.session === forSession ? { ...prev, pinned: null, pinnedModel: null } : prev,
+        )
+        toast.info(t('chat.slashRoutingRestored'))
+      })
+      .catch((err: unknown) =>
+        toast.error(
+          t('chat.slashRouterUnpinFailed', {
+            message: err instanceof Error ? err.message : String(err),
+          }),
+        ),
+      )
+      .finally(() => setBusy(false))
+  }, [rpc, sessionKey])
+
+  // Fall back to the config-derived tier list until the first read lands, so the
+  // menu is populated on the very first open rather than after a round-trip.
+  const effectiveTiers = useMemo(() => {
+    if (live.tiers.length > 0) return live.tiers
+    if (!tierConfigs) return EMPTY_TIERS
+    return Object.entries(tierConfigs)
+      .filter(([, cfg]) => !cfg.imageOnly)
+      .map(([tier, cfg]) => ({ tier, model: cfg.model || '' }))
+  }, [live.tiers, tierConfigs])
+
+  return {
+    enabled: live.enabled,
+    tiers: effectiveTiers,
+    models,
+    pinned: live.pinned,
+    pinnedModel: live.pinnedModel,
+    isPinned: live.pinned !== null || live.pinnedModel !== null,
+    lastRoutedTier: liveRouted.lastRoutedTier,
+    imageOverride: liveRouted.imageOverride,
+    busy,
+    pin,
+    pinModel,
+    clear,
+  }
+}

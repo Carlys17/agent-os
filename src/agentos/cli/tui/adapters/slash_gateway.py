@@ -59,6 +59,7 @@ GATEWAY_SLASH_HANDLER_WORDS = frozenset(
         "/save",
         "/status",
         "/usage",
+        "/use",
     }
 )
 
@@ -341,6 +342,29 @@ async def handle_gateway_slash_command(
             f"{payload.get('totalTokens', 0):,} tok · "
             f"${float(payload.get('totalCostUsd', 0.0) or 0.0):.6f}[/dim]"
         )
+        return True
+
+    if cmd == "/use" or cmd.startswith("/use "):
+        model = cmd[len("/use ") :].strip() if cmd.startswith("/use ") else ""
+        if not model:
+            console.print("[yellow]Usage: /use <model-id>[/yellow]")
+            return True
+        try:
+            await client.call(
+                "router.hold.set",
+                {"key": state.session_key, "model": model},
+            )
+        except Exception as exc:  # noqa: BLE001 - keep chat alive on RPC error
+            # ``router.unknown_model`` arrives when the id is not in the active
+            # provider's catalog; its message names the provider, so print it
+            # verbatim rather than guessing at the cause.
+            console.print(f"[yellow]{exc}[/yellow]")
+            return True
+        # A model pin rides on the default tier, so the tier chip would be
+        # misleading here; show the model itself as the active route.
+        state.router_hold_tier = model
+        sync_session_chrome_from_state(state)
+        console.print(f"[{ACCENT}]router pinned to model[/] {model}")
         return True
 
     if cmd in {"/c0", "/c1", "/c2", "/c3"}:

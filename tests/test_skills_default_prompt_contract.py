@@ -48,6 +48,7 @@ DEFAULTS = (
         "nano-banana-pro",
         "nano-pdf",
         "pdf-toolkit",
+        "poolsdotfun-token-launcher",
         "pptx",
         "robinhood-agentic-trading",
         "robinhood-rwa-addresses",
@@ -72,7 +73,7 @@ DEFAULTS = (
 # `requires.env`, so `gate_skills` drops them while any of those variables is unset. That is
 # the intended "Needs setup" behaviour, not a regression. The gmgn-* skills additionally
 # require the third-party `gmgn-cli` binary, which AgentOS does not ship.
-ENV_GATED_DEFAULTS = {"senior-unilp-manager"} | GMGN_DEFAULTS
+ENV_GATED_DEFAULTS = {"senior-unilp-manager", "poolsdotfun-token-launcher"} | GMGN_DEFAULTS
 PROMPT_DEFAULTS_WITHOUT_AUDIO_TOOLS = DEFAULTS - AUDIO_DEFAULTS - ENV_GATED_DEFAULTS
 INTERNAL_HELPERS = {
     "stack-trace-generic-probe",

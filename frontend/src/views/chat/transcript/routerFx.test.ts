@@ -395,6 +395,136 @@ describe('createRouterFxRenderer (factory smoke)', () => {
   })
 })
 
+describe('createRouterFxRenderer route-pin suppression', () => {
+  // A pinned tier decides the route before the router runs, so the strip would
+  // animate a deliberation that never happened — and restate what the composer's
+  // route picker already shows, every turn.
+  function pinnedHarness(pinned: boolean) {
+    const reg = seededRegistry()
+    const host = document.createElement('div')
+    const thread = document.createElement('div')
+    const dock = document.createElement('div')
+    const anchor = document.createElement('div')
+    anchor.className = 'msg user'
+    thread.appendChild(anchor)
+    host.append(thread, dock)
+    document.body.appendChild(host)
+    const renderer = createRouterFxRenderer({
+      thread: () => thread,
+      dock: () => dock,
+      getSessionKey: () => 's',
+      registry: reg,
+      pref: { enabled: true, variant: 'default' },
+      routerFeatureEnabled: () => true,
+      isRoutePinned: () => pinned,
+      esc: (s) => s,
+      scrollToBottom: () => {},
+    })
+    return { anchor, dock, reg, renderer, cleanup: () => host.remove() }
+  }
+
+  it('refuses to begin a scan while a tier is pinned', () => {
+    const h = pinnedHarness(true)
+    try {
+      expect(h.renderer.beginScan(h.anchor, 'seed')).toBe(false)
+      expect(h.dock.querySelector('.router-fx')).toBeNull()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('still scans normally when nothing is pinned', () => {
+    const h = pinnedHarness(false)
+    try {
+      expect(h.renderer.beginScan(h.anchor, 'seed')).toBe(true)
+    } finally {
+      h.renderer.clearRouterFxVisuals()
+      h.cleanup()
+    }
+  })
+
+  it('refuses to schedule a delayed scan while a tier is pinned', () => {
+    const h = pinnedHarness(true)
+    try {
+      expect(h.renderer.scheduleBeginScan(h.anchor, 'seed')).toBe(false)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('mounts no strip for a decision while a tier is pinned', async () => {
+    const h = pinnedHarness(true)
+    try {
+      await h.renderer.handleRouterDecision({ tier: 'c1', model: 'anthropic/claude-a' })
+      expect(h.dock.querySelector('.router-fx')).toBeNull()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('does not learn a tier→model pair from a pinned turn', async () => {
+    // A directly-named model rides on a HOST tier: the decision reports c1
+    // (where the settings came from) with the user's model. Learning that pair
+    // would rewrite c1's model in the registry and mislabel later strips for a
+    // tier that never ran it.
+    const h = pinnedHarness(true)
+    try {
+      await h.renderer.handleRouterDecision({ tier: 'c1', model: 'z-ai/glm-5.2' })
+      expect(h.reg.models['c1']).not.toBe('z-ai/glm-5.2')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('suppresses a hold-routed decision even when this view knows of no pin', async () => {
+    // A `/c3` slash command or another client pins without passing through the
+    // picker's state, so the decision's own source has to be enough.
+    const h = pinnedHarness(false)
+    try {
+      await h.renderer.handleRouterDecision({
+        tier: 'c1',
+        model: 'z-ai/glm-5.2',
+        source: 'router_control_hold',
+      })
+      expect(h.dock.querySelector('.router-fx')).toBeNull()
+      expect(h.reg.models['c1']).not.toBe('z-ai/glm-5.2')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('rebuilds no history strip for a turn that was pinned', () => {
+    // History outlives the pin: the turn was not a routing decision then and is
+    // not one now, so no strip is reconstructed on reload.
+    const h = pinnedHarness(false)
+    try {
+      const strip = h.renderer.buildRouterFxFromUsage(
+        {
+          routed_tier: 'c1',
+          routed_model: 'z-ai/glm-5.2',
+          routing_source: 'router_control_hold',
+        },
+        'seed-1',
+      )
+      expect(strip).toBeNull()
+      expect(h.reg.models['c1']).not.toBe('z-ai/glm-5.2')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('still learns the pair on an ordinary unpinned turn', async () => {
+    const h = pinnedHarness(false)
+    try {
+      await h.renderer.handleRouterDecision({ tier: 'c1', model: 'anthropic/claude-a' })
+      expect(h.reg.models['c1']).toBe('anthropic/claude-a')
+    } finally {
+      h.renderer.clearRouterFxVisuals()
+      h.cleanup()
+    }
+  })
+})
+
 describe('createRouterFxRenderer history reconciliation', () => {
   it('reconstructs a settled strip from persisted usage with the stable session seed', () => {
     localStorage.clear()

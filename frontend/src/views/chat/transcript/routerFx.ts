@@ -502,6 +502,15 @@ export interface RouterFxRendererDeps {
   pref: RouterFxPref
   /** chat.js `_routerFeatureEnabled` — operator routing on/off, read live. */
   routerFeatureEnabled: () => boolean
+  /**
+   * True while the user has pinned a router tier, read live. The strip exists to
+   * show the router weighing candidates and settling on one; a pin decides the
+   * route up front, so there is no deliberation to animate and the strip would
+   * just restate the composer's own route picker every turn. Suppressed exactly
+   * like the single-candidate case below — because that is what a pin is.
+   * Default: never pinned.
+   */
+  isRoutePinned?: () => boolean
   /** chat.js:661 — HTML-escape. */
   esc: (s: string) => string
   /** chat.js `_scrollToBottom`. */
@@ -533,6 +542,18 @@ export interface RouterFxRendererDeps {
  * `staticizeCompletedStrips` / … so `useTranscript` can route the
  * `session.event.router_decision` event and the stream lifecycle can drive it.
  */
+/**
+ * True when a turn was routed by a user pin rather than by the router choosing.
+ *
+ * The router step stamps this on the decision and persists it in usage, so it
+ * travels with the turn — which makes it the reliable signal: a pin set from a
+ * slash command or another client never passes through this view's state, and a
+ * turn stays "pinned" in history long after the pin itself is gone.
+ */
+function isHoldRouted(source: string | undefined | null): boolean {
+  return String(source || '').toLowerCase() === 'router_control_hold'
+}
+
 export function createRouterFxRenderer(deps: RouterFxRendererDeps) {
   const {
     thread,
@@ -544,6 +565,7 @@ export function createRouterFxRenderer(deps: RouterFxRendererDeps) {
     esc,
     scrollToBottom,
   } = deps
+  const isRoutePinned = deps.isRoutePinned ?? (() => false)
   const isSuppressedForCompactionTurn = deps.isSuppressedForCompactionTurn ?? (() => false)
   const isCompactInFlightForCurrentSession =
     deps.isCompactInFlightForCurrentSession ?? (() => false)
@@ -1062,6 +1084,10 @@ export function createRouterFxRenderer(deps: RouterFxRendererDeps) {
       })
       return false
     }
+    if (isRoutePinned()) {
+      diag('router_scan.schedule.skip.route_pinned', {})
+      return false
+    }
     if (reg.configTiers !== null && !routerFxHasMultipleCandidates(reg, requestKind, null)) {
       diag('router_scan.schedule.skip.single_candidate', {
         requestKind,
@@ -1108,6 +1134,10 @@ export function createRouterFxRenderer(deps: RouterFxRendererDeps) {
         routerFxEnabled: !!pref.enabled,
         routerFeatureEnabled: !!routerFeatureEnabled(),
       })
+      return false
+    }
+    if (isRoutePinned()) {
+      diag('router_scan.skip.route_pinned', {})
       return false
     }
     if (!routerFxHasMultipleCandidates(reg, requestKind, null)) {
@@ -1445,8 +1475,33 @@ export function createRouterFxRenderer(deps: RouterFxRendererDeps) {
       diag('router_decision.skip.no_tier', summarizePayload(payload))
       return
     }
-    reg.rememberTierDecision(tier, payload.model || '')
     const turnIndex = countUserMessages()
+    // `isRoutePinned` covers a pin this view knows about; the decision's own
+    // source covers one it does not — a `/c3` slash command or another client
+    // pins without ever passing through the picker's state.
+    if (isRoutePinned() || isHoldRouted(payload.source || payload.routing_source)) {
+      // Deliberately WITHOUT rememberTierDecision. A pinned turn is not a
+      // routing observation, it is the user's instruction, and for a
+      // directly-named model the pair is actively wrong: the hold reports the
+      // tier that lends it settings (say c1) alongside the chosen model (say
+      // glm-5.2), so learning it would rewrite c1's model in the registry and
+      // mislabel later strips for a tier that never ran that model.
+      // Also sweep a live strip already on screen: the pin may have been set
+      // mid-turn, after the scan began.
+      if (thread()) {
+        strips('.router-fx[data-live="true"]').forEach((el) => {
+          if (!el.dataset.turnIndex || el.dataset.turnIndex === String(turnIndex)) {
+            removeStrip(el)
+          }
+        })
+      }
+      diag('router_decision.skip.route_pinned', summarizePayload(payload))
+      return
+    }
+    // An unpinned turn IS a routing observation, so the tier→model pair is
+    // learned here — before the remaining suppressions, which are about whether
+    // to ANIMATE, not about whether the routing happened.
+    reg.rememberTierDecision(tier, payload.model || '')
     if (routerFxIsSuppressedForCompactionTurn(String(turnIndex))) {
       if (thread()) {
         strips('.router-fx[data-live="true"]').forEach((el) => {
@@ -1570,6 +1625,13 @@ export function createRouterFxRenderer(deps: RouterFxRendererDeps) {
   ): RouterFxDecision | null {
     if (!usage || !pref.enabled) return null
     if (reg.configTiers !== null && !routerFeatureEnabled()) return null
+    // A turn the user pinned gets no strip, now or on any later reload. Gated on
+    // the SOURCE recorded for that turn rather than on the current pin: history
+    // outlives the pin, so "was this turn a routing decision?" is the question,
+    // not "is a pin in force right now?". This is also what keeps the pair out
+    // of the registry below — a model pin records its HOST tier alongside the
+    // user's model, and learning that would rewrite the tier's own model.
+    if (isHoldRouted(usage.routing_source)) return null
     const tier = routerFxNormalizeTier(usage.routed_tier || '')
     if (!tier) return null
     if (reg.configTiers !== null && !reg.configTiers.has(tier)) return null

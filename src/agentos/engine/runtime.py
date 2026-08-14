@@ -3623,6 +3623,7 @@ class TurnRunner:
                     hard_denied=hard_denied,
                 )
             ctx = self._apply_runtime_capability_denies(ctx)
+            ctx = self._apply_user_route_pin_denies(ctx)
             log.debug(
                 "tool_policy.policy_pre",
                 allowed_tool_count=len(self._tool_registry.to_tool_definitions(ctx)),
@@ -3661,6 +3662,35 @@ class TurnRunner:
     def _filter_tool_defs_by_capability(self, tool_defs: list) -> list:
         """Compatibility shim; runtime capability filtering is resolved in ToolContext."""
         return tool_defs
+
+    def _apply_user_route_pin_denies(self, ctx: ToolContext) -> ToolContext:
+        """Withdraw ``router_control`` while the user has pinned a route.
+
+        A user pin outranks the model's own routing, so leaving the tool on the
+        surface would only invite calls that cannot take effect. Denying it
+        instead removes the tool AND — because the Router Control prompt block
+        is rendered only when the tool is in ``tool_defs`` — its target menu,
+        so the model spends no tokens describing a lever it does not have.
+
+        Only USER holds gate this. A hold the model set for itself through the
+        tool must not then hide the tool, which would strand the session on a
+        transient escalation with no way back.
+        """
+
+        session_key = ctx.session_key
+        if not session_key:
+            return ctx
+        try:
+            from agentos.session.keys import canonicalize_session_key
+
+            hold = self._router_control_hold_store.get_user_hold(
+                canonicalize_session_key(session_key)
+            )
+        except Exception:  # noqa: BLE001 - tool surfacing must survive a hold-store fault
+            return ctx
+        if hold is None:
+            return ctx
+        return replace(ctx, denied_tools=set(ctx.denied_tools) | {"router_control"})
 
     def _apply_runtime_capability_denies(self, ctx: ToolContext) -> ToolContext:
         from agentos.tools.policy import (

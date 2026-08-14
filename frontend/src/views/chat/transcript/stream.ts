@@ -262,6 +262,12 @@ export interface StreamControllerDeps {
   routerFxRegistry?: RouterFxRegistry
   routerFxPref?: RouterFxPref
   routerFeatureEnabled?: () => boolean
+  /**
+   * True while the user has pinned a router tier. Default: false (unpinned).
+   * A pin decides the route before the router runs, so the strip would animate
+   * a deliberation that never happened.
+   */
+  routePinned?: () => boolean
   routerFxDock?: () => HTMLElement | null
   /** chat.js:3569 — await the router-fx config-ready gate. Default: resolve now. */
   routerFxAwaitConfig?: () => Promise<void>
@@ -433,6 +439,7 @@ export function createStreamController(
     registry: routerFxRegistry,
     pref: routerFxPref,
     routerFeatureEnabled: deps.routerFeatureEnabled ?? (() => false),
+    isRoutePinned: deps.routePinned ?? (() => false),
     esc,
     scrollToBottom: () => scrollToBottom(),
     isCompactInFlightForCurrentSession,
