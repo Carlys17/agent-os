@@ -281,29 +281,50 @@
   background: var(--surface);
   opacity: 0;
   pointer-events: none;
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease;
+  transition: opacity 120ms ease;
+}
+/* Transparent bridge across the gutter margin. The toolbar sits outside the
+   `.msg` box that carries `:hover`, so without this the 8px gap is a dead strip
+   the pointer cannot cross — hover drops and the buttons vanish before they can
+   be clicked. Inherits `pointer-events` from the toolbar, so it stays inert
+   while hidden (and while streaming). */
+.msg .msg-body > .msg-actions::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px; /* >= the 8px margin below */
 }
 .msg.assistant .msg-body > .msg-actions {
   left: 100%;
   margin-left: 8px;
-  transform: translateX(-3px);
+}
+.msg.assistant .msg-body > .msg-actions::before {
+  right: 100%;
 }
 .msg.user .msg-body > .msg-actions {
   right: 100%;
   margin-right: 8px;
-  transform: translateX(3px);
+}
+.msg.user .msg-body > .msg-actions::before {
+  left: 100%;
 }
 .msg:hover .msg-actions,
 .msg:focus-within .msg-actions {
   opacity: 1;
   pointer-events: auto;
-  transform: translateX(0);
 }
 .msg.streaming .msg-actions {
   opacity: 0 !important;
   pointer-events: none !important;
+}
+/* Where the toolbar is not gutter-positioned (narrow layouts drop it into flow)
+   or is always visible (touch), there is no gap to bridge — drop the strip so it
+   cannot swallow taps in the margin. */
+@media (max-width: 560px), (hover: none) {
+  .msg .msg-body > .msg-actions::before {
+    display: none;
+  }
 }
 .msg-action {
   display: inline-grid;
