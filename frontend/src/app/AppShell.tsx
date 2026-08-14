@@ -30,6 +30,7 @@ import {
   ShieldCheck,
   Sun,
   History,
+  X,
   type LucideIcon,
 } from 'lucide-react'
 import { Toaster } from '@/components/ui/sonner'
@@ -45,7 +46,7 @@ import { t, tPlural, useLocale, type MessageKey } from '@/i18n'
 import { useTheme } from '@/stores/theme'
 import { useConnection } from '@/stores/connection'
 import { useApprovals } from '@/services/approval-monitor'
-import { useBootstrap } from './providers'
+import { useBootstrap, useRpc } from './providers'
 import { defaultViewPath } from './routes'
 import { ShellHeaderSlotProvider } from './ShellHeaderSlot'
 import agentosMark from '@/assets/agentos-mark.png'
@@ -131,6 +132,7 @@ function pillLabel(state: string): string {
 }
 
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'agentos-sidebar-collapsed'
+export const DISMISSED_VERSION_STORAGE_KEY = 'agentos.dismissedVersion'
 
 function storedSidebarCollapsed(): boolean {
   if (typeof window === 'undefined') return false
@@ -219,6 +221,51 @@ export function AppShell() {
   const location = useLocation()
   const shortcutOverlay = useShortcutOverlay()
   const navigate = useNavigate()
+
+  const rpc = useRpc()
+  const [updateStatus, setUpdateStatus] = useState<{
+    current: string
+    latest: string | null
+    status: 'up-to-date' | 'outdated' | 'offline'
+  } | null>(null)
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(DISMISSED_VERSION_STORAGE_KEY)
+    } catch {
+      return null
+    }
+  })
+
+  useEffect(() => {
+    if (connState !== 'connected') return
+    let active = true
+    rpc
+      .call<{
+        current: string
+        latest: string | null
+        status: 'up-to-date' | 'outdated' | 'offline'
+      }>('updates.check')
+      .then((res) => {
+        if (active && res) {
+          setUpdateStatus(res)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [rpc, connState])
+
+  const handleDismiss = () => {
+    if (updateStatus?.latest) {
+      try {
+        localStorage.setItem(DISMISSED_VERSION_STORAGE_KEY, updateStatus.latest)
+      } catch {
+        /* ignore */
+      }
+      setDismissedVersion(updateStatus.latest)
+    }
+  }
 
   // Documented, not dispatched: the drawer binds Escape itself (below) because
   // it has to run while focus is inside the drawer, which the global editable
@@ -638,6 +685,36 @@ export function AppShell() {
         >
           <Menu className="size-4" />
         </Button>
+        {updateStatus &&
+        updateStatus.status === 'outdated' &&
+        updateStatus.latest !== dismissedVersion ? (
+          <div
+            role="status"
+            className="flex items-center justify-between gap-4 border-b border-warn/20 bg-warn/10 px-4 py-2 text-sm text-warn shrink-0"
+            data-testid="update-banner"
+          >
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 font-semibold uppercase tracking-wider text-[10px] bg-warn/25 px-1.5 py-0.5 rounded-sm">
+                {t('shell.updateLabel')}
+              </span>
+              <span className="font-medium">
+                {t('shell.updateAvailable', {
+                  current: updateStatus.current,
+                  latest: updateStatus.latest ?? '',
+                })}
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleDismiss}
+              title={t('shell.updateDismiss')}
+              aria-label={t('shell.updateDismiss')}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        ) : null}
         {isChat ? (
           <section
             className="shell-chat-header"

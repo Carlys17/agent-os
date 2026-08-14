@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentos.cli.version_utils import compare_versions, is_newer, parse_version
+from agentos.compat.version_utils import compare_versions, is_newer, parse_version
 
 
 @pytest.mark.parametrize(

@@ -315,12 +315,13 @@ run:
 ### Update notifications
 
 On gateway-connected commands the CLI checks PyPI at most once every 24h and,
-if a newer release exists, prints a one-line notice on stderr. It is suppressed
-on non-interactive runs (no TTY) and in CI. Control it with:
+if a newer release exists, prints a one-line notice on stderr. Similarly, the Web UI
+queries the gateway on connection and displays a dismissible banner if an update is available.
+The check is suppressed on non-interactive CLI runs (no TTY) and in CI. Control it with:
 
 - `updates.notify = false` in `agentos.toml` (or the setup UI's Finish step) —
-  turns the notice off entirely.
-- `AGENTOS_NO_UPDATE_NOTICE=1` — silences it for a single run.
+  turns the notices off entirely (both CLI and Web UI).
+- `AGENTOS_NO_UPDATE_NOTICE=1` — silences it for a single run/session.
 
 See [`configuration.md`](configuration.md#update-notifications).
 

@@ -404,6 +404,10 @@ agentos doctor
 Use the Web UI logs and health views to correlate provider readiness, channel
 state, session state, and user-visible errors.
 
+## Update Banner
+
+If a newer release of `use-agent-os` is available on PyPI, a dismissible banner is displayed at the top of the Web UI console. The banner matches the 24h throttling behavior of the CLI update checks, and dismissing the banner suppresses it for that release version (persisted in local storage). This banner honors both the global `updates.notify` setting and the `AGENTOS_NO_UPDATE_NOTICE` environment flag.
+
 ## Safety
 
 The Web UI is local by default. If you bind the gateway to a public interface,

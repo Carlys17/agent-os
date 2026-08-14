@@ -120,4 +120,10 @@ export const shell = defineNamespace('shell', {
   commandCopied: 'Copied command',
   commandCopyFailed: 'Copy failed: {message}',
   commandCopyError: 'Copy command failed',
+
+  // Update banner.
+  updateAvailable:
+    'A new version of use-agent-os is available: {current} → {latest}. Run agentos upgrade.',
+  updateDismiss: 'Dismiss',
+  updateLabel: 'Update',
 } as const)

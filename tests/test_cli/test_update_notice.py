@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from agentos.cli import update_notice
+from agentos.compat.pypi_client import read_state
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +21,7 @@ def _state_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _mock_latest(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
     monkeypatch.setattr(
-        "agentos.cli.pypi_client.latest_version", lambda timeout=2.0: value
+        "agentos.compat.pypi_client.latest_version", lambda timeout=2.0: value
     )
 
 
@@ -94,5 +95,5 @@ def test_offline_records_check_and_stays_silent(monkeypatch: pytest.MonkeyPatch)
     _mock_latest(monkeypatch, None)
     assert update_notice.maybe_emit_update_notice(current_version="2026.7.18", now=0.0) is None
     # The offline attempt still throttles the next call.
-    state = update_notice._read_state(update_notice.notice_state_path())
-    assert "last_checked" in state
+    state = read_state(update_notice.notice_state_path())
+    assert "cli" in state and "last_checked" in state["cli"]

@@ -1,10 +1,15 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
 import { RouterProvider, createMemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getViews, routeChildren } from './routes'
 import { AppProviders } from './providers'
-import { AppShell, SIDEBAR_COLLAPSED_STORAGE_KEY, NAV_SHORTCUTS } from './AppShell'
+import {
+  AppShell,
+  SIDEBAR_COLLAPSED_STORAGE_KEY,
+  DISMISSED_VERSION_STORAGE_KEY,
+  NAV_SHORTCUTS,
+} from './AppShell'
 import { KeyboardShortcutProvider } from '@/components/KeyboardShortcuts'
 import { useConnection } from '@/stores/connection'
 import { useApprovals } from '@/services/approval-monitor'
@@ -27,9 +32,10 @@ let mockBootstrap: Bootstrap = {
 // tests drive the tree without AppProviders, so stub useRpc with a no-op RPC
 // whose waitForConnection never settles — OverviewPage mounts (shell chrome +
 // the view header render) without firing real RPC traffic in a chrome test.
+const mockRpcCall = vi.fn()
 const noopRpc = {
   waitForConnection: () => new Promise<void>(() => {}),
-  call: () => new Promise(() => {}),
+  call: mockRpcCall,
   on: () => () => {},
   connect: () => {},
   disconnect: () => {},
@@ -37,6 +43,11 @@ const noopRpc = {
 vi.mock('./providers', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./providers')>()
   return { ...actual, useBootstrap: () => mockBootstrap, useRpc: () => noopRpc }
+})
+
+beforeEach(() => {
+  mockRpcCall.mockReset()
+  mockRpcCall.mockImplementation(() => new Promise(() => {}))
 })
 
 // Render the route tree without AppProviders (no network): test harness
@@ -163,10 +174,10 @@ describe('app shell chrome', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     window.localStorage.removeItem(SIDEBAR_COLLAPSED_STORAGE_KEY)
+    window.localStorage.removeItem(DISMISSED_VERSION_STORAGE_KEY)
     document.body.style.overflow = ''
     document.querySelector('base[data-test-skip-link]')?.remove()
     mockBootstrap = { ...mockBootstrap, version: '' }
-    useConnection.getState().setState('disconnected')
   })
 
   function stubMatchMedia(matches: boolean) {
@@ -576,6 +587,67 @@ describe('app shell chrome', () => {
     expect(slot).toContainElement(controls)
     expect(document.querySelector('.chat-stage > .chat-session-bar')).toBeNull()
     expect(document.querySelector('.shell-header')).toBeNull()
+  })
+
+  it('renders a dismissible update banner when updates.check reports outdated status', async () => {
+    stubMatchMedia(false)
+    useConnection.getState().setState('connected')
+    mockRpcCall.mockResolvedValue({
+      current: '2026.8.11',
+      latest: '2026.9.9',
+      status: 'outdated',
+    })
+
+    renderShellAt('/cron')
+
+    // Wait for the banner to render
+    const banner = await screen.findByTestId('update-banner')
+    expect(banner).toBeInTheDocument()
+    expect(
+      within(banner).getByText(
+        /A new version of use-agent-os is available: 2026\.8\.11 → 2026\.9\.9/i,
+      ),
+    ).toBeInTheDocument()
+
+    // Dismiss the banner
+    const closeBtn = within(banner).getByRole('button', { name: 'Dismiss' })
+    fireEvent.click(closeBtn)
+
+    // The banner should disappear
+    await waitFor(() => expect(screen.queryByTestId('update-banner')).toBeNull())
+    expect(window.localStorage.getItem(DISMISSED_VERSION_STORAGE_KEY)).toBe('2026.9.9')
+  })
+
+  it('suppresses the update banner if the version was already dismissed', async () => {
+    stubMatchMedia(false)
+    window.localStorage.setItem(DISMISSED_VERSION_STORAGE_KEY, '2026.9.9')
+    useConnection.getState().setState('connected')
+    mockRpcCall.mockResolvedValue({
+      current: '2026.8.11',
+      latest: '2026.9.9',
+      status: 'outdated',
+    })
+
+    renderShellAt('/cron')
+
+    // Wait for the shell to render
+    await screen.findByRole('link', { name: 'Cron' })
+    expect(screen.queryByTestId('update-banner')).toBeNull()
+  })
+
+  it('shows nothing when updates.check reports up-to-date or offline', async () => {
+    stubMatchMedia(false)
+    useConnection.getState().setState('connected')
+    mockRpcCall.mockResolvedValue({
+      current: '2026.8.11',
+      latest: null,
+      status: 'offline',
+    })
+
+    renderShellAt('/cron')
+
+    await screen.findByRole('link', { name: 'Cron' })
+    expect(screen.queryByTestId('update-banner')).toBeNull()
   })
 })
 
