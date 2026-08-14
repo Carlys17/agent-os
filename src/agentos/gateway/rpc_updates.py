@@ -8,15 +8,7 @@ import time
 from typing import Any
 
 from agentos import __version__
-from agentos.compat import version_utils
-from agentos.compat.pypi_client import (
-    config_notify_enabled,
-    due_for_check,
-    latest_version,
-    notice_state_path,
-    read_state,
-    write_state,
-)
+from agentos.compat import pypi_client, version_utils
 from agentos.gateway.access import CONTROL_ONLY
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
@@ -36,7 +28,7 @@ async def _handle_updates_check(params: dict | None, ctx: RpcContext) -> dict[st
     config = getattr(ctx, "config", None)
 
     # 1. Respect preferences: AGENTOS_NO_UPDATE_NOTICE or updates.notify == False
-    if os.environ.get("AGENTOS_NO_UPDATE_NOTICE", "").strip() == "1" or not config_notify_enabled(
+    if os.environ.get("AGENTOS_NO_UPDATE_NOTICE", "").strip() == "1" or not pypi_client.config_notify_enabled(
         config
     ):
         return {
@@ -46,17 +38,17 @@ async def _handle_updates_check(params: dict | None, ctx: RpcContext) -> dict[st
         }
 
     now = time.time()
-    path = notice_state_path()
+    path = pypi_client.notice_state_path()
 
     # 2. Check if we need to contact PyPI or use cached state
     latest: str | None = None
-    due = await asyncio.to_thread(due_for_check, path, now, "webui")
+    due = await asyncio.to_thread(pypi_client.due_for_check, path, now, "webui")
     if due:
-        latest = await asyncio.to_thread(latest_version, timeout=2.0)
+        latest = await asyncio.to_thread(pypi_client.latest_version, timeout=2.0)
         # Record/cache the result
-        await asyncio.to_thread(write_state, path, now, latest, "webui")
+        await asyncio.to_thread(pypi_client.write_state, path, now, latest, "webui")
     else:
-        state = await asyncio.to_thread(read_state, path)
+        state = await asyncio.to_thread(pypi_client.read_state, path)
         latest_val = state.get("latest")
         if isinstance(latest_val, str):
             latest = latest_val
