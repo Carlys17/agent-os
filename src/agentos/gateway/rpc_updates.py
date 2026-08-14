@@ -8,20 +8,22 @@ import time
 from typing import Any
 
 from agentos import __version__
-from agentos.compat import pypi_client, version_utils
+from agentos.compat import version_utils
 from agentos.compat.pypi_client import (
     config_notify_enabled,
     due_for_check,
+    latest_version,
     notice_state_path,
     read_state,
     write_state,
 )
+from agentos.gateway.access import CONTROL_ONLY
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 
 _d = get_dispatcher()
 
 
-@_d.method("updates.check")
+@_d.method("updates.check", audiences=CONTROL_ONLY)
 async def _handle_updates_check(params: dict | None, ctx: RpcContext) -> dict[str, Any]:
     """Check for new release availability, returning version info and status.
 
@@ -50,7 +52,7 @@ async def _handle_updates_check(params: dict | None, ctx: RpcContext) -> dict[st
     latest: str | None = None
     due = await asyncio.to_thread(due_for_check, path, now, "webui")
     if due:
-        latest = await asyncio.to_thread(pypi_client.latest_version, timeout=2.0)
+        latest = await asyncio.to_thread(latest_version, timeout=2.0)
         # Record/cache the result
         await asyncio.to_thread(write_state, path, now, latest, "webui")
     else:

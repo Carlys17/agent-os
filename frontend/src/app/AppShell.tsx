@@ -250,9 +250,7 @@ export function AppShell() {
           setUpdateStatus(res)
         }
       })
-      .catch((err) => {
-        console.error('Failed to check updates', err)
-      })
+      .catch(() => {})
     return () => {
       active = false
     }
@@ -691,7 +689,6 @@ export function AppShell() {
         updateStatus.status === 'outdated' &&
         updateStatus.latest !== dismissedVersion ? (
           <div
-            id="update-banner"
             role="status"
             className="flex items-center justify-between gap-4 border-b border-warn/20 bg-warn/10 px-4 py-2 text-sm text-warn shrink-0"
             data-testid="update-banner"

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query'
 import { RouterProvider, createMemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getViews, routeChildren } from './routes'
 import { AppProviders } from './providers'
 import {
@@ -32,10 +32,10 @@ let mockBootstrap: Bootstrap = {
 // tests drive the tree without AppProviders, so stub useRpc with a no-op RPC
 // whose waitForConnection never settles — OverviewPage mounts (shell chrome +
 // the view header render) without firing real RPC traffic in a chrome test.
-const mockRpcCall = vi.fn().mockImplementation(() => new Promise(() => {}))
+const mockRpcCall = vi.fn()
 const noopRpc = {
   waitForConnection: () => new Promise<void>(() => {}),
-  call: (...args: unknown[]) => mockRpcCall(...args) || new Promise(() => {}),
+  call: mockRpcCall,
   on: () => () => {},
   connect: () => {},
   disconnect: () => {},
@@ -43,6 +43,11 @@ const noopRpc = {
 vi.mock('./providers', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./providers')>()
   return { ...actual, useBootstrap: () => mockBootstrap, useRpc: () => noopRpc }
+})
+
+beforeEach(() => {
+  mockRpcCall.mockReset()
+  mockRpcCall.mockImplementation(() => new Promise(() => {}))
 })
 
 // Render the route tree without AppProviders (no network): test harness
