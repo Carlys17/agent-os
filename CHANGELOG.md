@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.15] - 2026-08-15
+
+### Added
+
+- A built-in Tavily provider joins the `web_search` backends. It is a runtime
+  provider like `brave` and `duckduckgo` — not a skill-only engine — so
+  selecting `tavily` and setting `TAVILY_API_KEY` is all it takes; onboarding
+  offers it alongside the other keyed providers, and the key is redacted in
+  logs and transcripts like every other credential.
+- The Web UI now shows a "new release available" banner, closing the gap with
+  the CLI, which has warned about outdated installs for several releases. An
+  `updates.check` RPC method reports the running version, the latest version on
+  PyPI and a `up-to-date` / `outdated` / `offline` status; the console renders
+  the banner only on `outdated`. The check reuses the CLI's cached PyPI state
+  with its own `webui` slot, so the browser does not add PyPI traffic beyond
+  the existing interval, and it stays silent when `AGENTOS_NO_UPDATE_NOTICE=1`
+  is set or `updates.notify` is off. `pypi_client` and `version_utils` moved
+  from `agentos.cli` to `agentos.compat` so the gateway can use them without
+  importing the CLI.
+- Gmail/GitHub-style navigation chords land in the Web UI: press `g`, then a
+  destination key within 1.5s, and every sidebar view is reachable from the
+  keyboard. The prefix re-arms on a repeated `g` and is cancelled by Escape or
+  any held modifier; each chord closes the mobile drawer and moves focus to the
+  main content region. The `?` cheat sheet renders multi-step chords through
+  the `t()` seam, and `docs/web-ui.md` documents the full set.
+
+### Fixed
+
+- The per-message hover toolbar (copy / regenerate / edit) could not be
+  clicked. It sits in the outer gutter, outside the `.msg` box that carries the
+  `:hover` state, so crossing the 8px margin dropped the hover and faded the
+  buttons out — while the reveal animation slid them away from the incoming
+  pointer. A transparent bridge pseudo-element now makes the hit region
+  continuous and the `translateX` reveal is gone. The bridge is suppressed on
+  narrow viewports and under `hover: none`, where the toolbar is already in
+  normal flow.
+- `x_search` could hand a single attempt a timeout slightly larger than the
+  whole budget it was meant to fit inside. The per-attempt timeout came from
+  `deadline - time.monotonic()`, and on a coarse clock (Windows resolves
+  `monotonic()` to ~15.6ms) both reads land in the same tick, so the expression
+  collapses to a rounded `(t + total) - t` that can exceed `total`. The
+  per-attempt timeout is now capped on the total budget as well, so the
+  invariant holds at any clock granularity.
+
 ## [2026.8.13] - 2026-08-13
 
 ### Added
