@@ -10,6 +10,7 @@ import {
   CopyIcon,
   MessageSquareIcon,
   PlusIcon,
+  PencilIcon,
   RefreshCwIcon,
   SearchIcon,
   Trash2Icon,
@@ -35,6 +36,7 @@ import {
   sessionStats,
   sessionStatusChip,
   sessionStatusLabel,
+  sessionName,
   sessionVisualStatus,
   sortSessions,
   type AgentEntry,
@@ -55,6 +57,11 @@ interface RpcError {
 }
 
 const PAGE_SIZES = [10, 25, 50, 100]
+
+// Mirrors MAX_SESSION_NAME_LENGTH in src/agentos/session/naming.py — the
+// gateway truncates past this, so stop the input there instead of silently
+// dropping the tail on save.
+const SESSION_NAME_MAX = 120
 
 // ── Reusable destructive confirmation (alertdialog) ──────────────────────────
 function ConfirmDialog({
@@ -254,6 +261,9 @@ export function SessionsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
   const [createError, setCreateError] = useState<string | null>(null)
+  // Inline rename: the row key being edited, plus its in-flight input value.
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [nameDraft, setNameDraft] = useState('')
 
   useEffect(() => {
     document.title = t('sessions.documentTitle')
@@ -373,6 +383,42 @@ export function SessionsPage() {
       invalidate()
     },
   })
+
+  // ── Rename mutation (inline click-to-edit on a row) ───────────────────────
+  const renameMutation = useMutation({
+    mutationFn: (vars: { key: string; name: string }) =>
+      rpc.call('sessions.rename', { key: vars.key, name: vars.name }),
+    onSuccess: (_data, vars) => {
+      toast.success(
+        vars.name.trim() ? t('sessions.toastRenamed') : t('sessions.toastRenameCleared'),
+        {
+          id: 'sessions-rename',
+        },
+      )
+      setEditingKey(null)
+      invalidate()
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : String(err)
+      toast.error(t('sessions.toastRenameFailed', { message }), { id: 'sessions-rename-err' })
+      setEditingKey(null)
+    },
+  })
+
+  const startRename = (key: string, current: string) => {
+    setEditingKey(key)
+    setNameDraft(current)
+  }
+
+  const submitRename = (key: string) => {
+    // Skip the round-trip when nothing actually changed.
+    const row = allSessions.find((s) => (s.key ?? '') === key)
+    if (row && sessionName(row).trim() === nameDraft.trim()) {
+      setEditingKey(null)
+      return
+    }
+    renameMutation.mutate({ key, name: nameDraft })
+  }
 
   // ── Create-session mutation (optional inline agent create) ─────────────────
   const createMutation = useMutation({
@@ -698,6 +744,7 @@ export function SessionsPage() {
                     const chipTone: Tone = sessionStatusChip(visual)
                     const badge = runStatusBadge(row)
                     const agentId = row.agent_id || row.agentId || agentIdFromKey(key) || ''
+                    const name = sessionName(row)
                     const sub = agentSubline(agentId, agentsById, agentsLoaded)
                     const isSel = selected.has(key)
                     const rowClass = isSel ? 'is-selected' : undefined
@@ -728,6 +775,44 @@ export function SessionsPage() {
                             >
                               {key}
                             </button>
+                          </div>
+                          {editingKey === key ? (
+                            <form
+                              className="sess-rename"
+                              onSubmit={(e) => {
+                                e.preventDefault()
+                                submitRename(key)
+                              }}
+                            >
+                              <input
+                                className="sess-rename__input"
+                                autoFocus
+                                value={nameDraft}
+                                maxLength={SESSION_NAME_MAX}
+                                placeholder={t('sessions.renamePlaceholder')}
+                                aria-label={t('sessions.renameInput', { key })}
+                                disabled={renameMutation.isPending}
+                                onChange={(e) => setNameDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Escape') setEditingKey(null)
+                                }}
+                                onBlur={() => setEditingKey(null)}
+                              />
+                              <span className="sess-rename__hint">{t('sessions.renameHint')}</span>
+                            </form>
+                          ) : (
+                            <button
+                              type="button"
+                              className={`sess-name${name ? '' : ' sess-name--empty'}`}
+                              title={t('sessions.renameTitle')}
+                              aria-label={t('sessions.renameFor', { key })}
+                              onClick={() => startRename(key, name)}
+                            >
+                              <PencilIcon aria-hidden="true" />
+                              <span>{name || t('sessions.renamePlaceholder')}</span>
+                            </button>
+                          )}
+                          <div className="sess-key-content">
                             {sub ? (
                               <span
                                 className={`sess-key__agent${sub.orphan ? ' sess-key__agent--orphan' : ''}`}

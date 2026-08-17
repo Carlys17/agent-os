@@ -358,6 +358,13 @@ class GatewayClient:
     async def abort_session(self, key: str) -> dict[str, Any]:
         return cast(dict[str, Any], await self._call("sessions.abort", {"key": key}))
 
+    async def rename_session(self, key: str, name: str | None) -> dict[str, Any]:
+        """Set a session's display name; an empty/``None`` name clears it."""
+        return cast(
+            dict[str, Any],
+            await self._call("sessions.rename", {"key": key, "name": name}),
+        )
+
     async def patch_session(self, key: str, **fields: Any) -> dict[str, Any]:
         params: dict[str, Any] = {"key": key, **fields}
         return cast(dict[str, Any], await self._call("sessions.patch", params))

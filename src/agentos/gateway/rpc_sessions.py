@@ -47,6 +47,7 @@ from agentos.session.compaction_lifecycle import (
     new_compaction_id,
 )
 from agentos.session.keys import canonicalize_session_key, normalize_agent_id, parse_agent_id
+from agentos.session.naming import normalize_session_name
 from agentos.session.terminal_reply import build_terminal_reply, sanitize_agent_error
 
 _d = get_dispatcher()
@@ -778,6 +779,11 @@ async def _handle_sessions_list(params: dict | None, ctx: RpcContext) -> dict:
             "updatedAt": getattr(s, "updated_at", now_ms),
             "display_name": getattr(s, "display_name", None),
             "displayName": getattr(s, "display_name", None),
+            # The Web UI session filter already scores ``derived_title``;
+            # ship it so a renamed session is findable there without the
+            # client re-deriving the fallback.
+            "derived_title": getattr(s, "derived_title", None),
+            "derivedTitle": getattr(s, "derived_title", None),
             "channel": getattr(s, "channel", None),
             "chat_type": getattr(s, "chat_type", None),
             "chatType": getattr(s, "chat_type", None),
@@ -1465,7 +1471,13 @@ async def _handle_sessions_patch(params: dict | None, ctx: RpcContext) -> dict:
     updated_fields: list[str] = []
     for field, attr in field_map.items():
         if field in params and hasattr(session, attr):
-            update_values[attr] = params[field]
+            value = params[field]
+            # The display name is user-typed on every surface; funnel it
+            # through the same normalizer ``sessions.rename`` uses so a
+            # patch and a rename can never store different shapes.
+            if field == "displayName":
+                value = normalize_session_name(value)
+            update_values[attr] = value
             updated_fields.append(field)
 
     if update_values:
@@ -1480,6 +1492,58 @@ async def _handle_sessions_patch(params: dict | None, ctx: RpcContext) -> dict:
                 await upsert(session)
 
     return {"key": key, "updated": updated_fields}
+
+
+@_d.method("sessions.rename")
+async def _handle_sessions_rename(params: dict | None, ctx: RpcContext) -> dict:
+    """Set (or clear) a session's human-readable name.
+
+    Unlike ``sessions.patch``, the key is resolved through
+    :func:`_resolve_session_node`, so callers can rename by short session id
+    or by the current name — the same targeting ``/resume`` and
+    ``sessions show`` already accept. Passing an empty ``name`` clears the
+    custom name and lets ``derived_title`` fall back to the short session id.
+    """
+    key = _require_key(params)
+    assert isinstance(params, dict)
+    if "name" not in params and "displayName" not in params:
+        raise ValueError("sessions.rename requires a 'name'")
+    name = normalize_session_name(params.get("name", params.get("displayName")))
+
+    if ctx.session_manager is None:
+        raise KeyError("No session manager available")
+
+    storage = get_session_storage(ctx.session_manager)
+    if storage is None:
+        raise KeyError("No session storage available")
+
+    session = await _resolve_session_node(storage, key)
+    resolved_key = str(getattr(session, "session_key", "") or key)
+    previous = getattr(session, "display_name", None)
+
+    update = getattr(ctx.session_manager, "update", None)
+    upsert = getattr(storage, "upsert_session", None)
+    if update is not None:
+        await update(resolved_key, display_name=name)
+    elif upsert is not None:
+        session.display_name = name
+        await upsert(session)
+    else:
+        # Neither persistence path exists — report it instead of returning a
+        # success the caller's list view will immediately contradict.
+        raise RpcHandlerError(
+            "sessions.rename_unsupported",
+            "Session storage cannot persist a rename",
+        )
+
+    return {
+        "key": resolved_key,
+        "name": name,
+        "displayName": name,
+        "display_name": name,
+        "previousName": previous,
+        "previous_name": previous,
+    }
 
 
 def _transcript_to_provider_messages(transcript: list[Any]) -> list[dict[str, Any]]:

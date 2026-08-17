@@ -26,6 +26,7 @@ from agentos.session.compaction import (
     build_compaction_config_from_provider,
     call_compact_with_optional_config,
 )
+from agentos.session.naming import normalize_session_name
 
 STANDALONE_SLASH_HANDLER_WORDS = frozenset(
     {
@@ -44,6 +45,7 @@ STANDALONE_SLASH_HANDLER_WORDS = frozenset(
         "/new",
         "/path",
         "/quit",
+        "/rename",
         "/reset",
         "/save",
         "/session",
@@ -113,6 +115,10 @@ class StandaloneCreateSession(Protocol):
     ) -> Awaitable[Any]: ...
 
 
+class StandaloneUpdateSession(Protocol):
+    def __call__(self, session_key: str, **fields: Any) -> Awaitable[Any]: ...
+
+
 class StandaloneReadTranscript(Protocol):
     def __call__(self, session_key: str) -> Awaitable[Any] | Any: ...
 
@@ -133,6 +139,7 @@ class StandaloneCompactSession(Protocol):
 @dataclass
 class StandaloneSlashServices:
     create_session: StandaloneCreateSession | None = None
+    update_session: StandaloneUpdateSession | None = None
     read_transcript: StandaloneReadTranscript | None = None
     truncate_session: StandaloneTruncateSession | None = None
     compact_session: StandaloneCompactSession | None = None
@@ -515,6 +522,21 @@ async def handle_standalone_slash_command(
     if parts := _slash_parts(cmd, "/new"):
         title = parts[1].strip() if len(parts) > 1 else None
         await _replace_with_new_session(context, title=title)
+        return True
+
+    if parts := _slash_parts(cmd, "/rename"):
+        name = normalize_session_name(parts[1] if len(parts) > 1 else "")
+        update_session = context.slash_services.update_session
+        if update_session is None:
+            console.print("[yellow]/rename requires a session manager.[/yellow]")
+            return True
+        await _maybe_await(update_session(context.session_key, display_name=name))
+        state.display_name = name
+        sync_session_chrome_from_state(state)
+        if name:
+            console.print(f"[green]Renamed session to:[/green] {name}")
+        else:
+            console.print("[green]Cleared the session name.[/green]")
         return True
 
     if cmd in {"/status", "/session"}:

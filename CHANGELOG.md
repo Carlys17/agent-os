@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Sessions can be renamed. A new `sessions.rename` RPC sets (or clears) a
+  session's `display_name`, and it is reachable from every surface:
+  `agentos sessions rename <id> "<name>"` (`--clear` drops it), `/rename <name>`
+  in CLI chat — gateway and standalone — and in chat channels, and
+  click-to-edit on a row in the Web UI session list. `agentos sessions list`
+  grows a `Name` column and a `--search`/`-q` filter that matches the name,
+  key, subject, or model; `sessions.list` now ships `derived_title`, so the Web
+  UI's existing name-aware filter works on real data. Names are normalized in
+  one place (`agentos.session.naming`): whitespace collapses to a single line,
+  control characters are dropped, the value is capped at 120 characters, and an
+  empty name clears the label so the derived title takes over. Because renames
+  resolve a target the same way `/resume` does, a session can be renamed by its
+  current name instead of its full key. No migration is required — the
+  `display_name` column already existed. (#248)
+
 ## [2026.8.15] - 2026-08-15
 
 ### Added
