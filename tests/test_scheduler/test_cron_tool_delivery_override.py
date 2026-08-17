@@ -490,13 +490,22 @@ async def test_channel_mode_requires_a_channel_name(fake_scheduler):
     assert "channel_name" in str(exc.value)
 
 
-@pytest.mark.parametrize("field", ["channel_id", "account_id", "thread_id"])
-async def test_a_recipient_without_a_channel_is_rejected(fake_scheduler, field):
-    """A destination with nowhere to route must not degrade into 'send it here'."""
-    with _with_ctx(_web_ctx()), pytest.raises(SafeToolError) as exc:
-        await _add(delivery={"mode": "origin", field: "-1001234567890"})
+@pytest.mark.parametrize("field", ["channel_name", "channel_id", "account_id", "thread_id"])
+@pytest.mark.parametrize("mode", ["origin", "none"])
+async def test_a_destination_the_mode_cannot_route_to_is_rejected(fake_scheduler, field, mode):
+    """A destination with nowhere to route must not degrade into 'send it here'.
 
-    assert field in str(exc.value)
+    ``{"mode": "origin", "channel_name": "telegram"}`` is the shape a model is
+    most likely to produce — the schema lists origin first and calls it the
+    default — and delivering that to the calling chat would silently reproduce
+    the exact bug this parameter exists to fix.
+    """
+    with _with_ctx(_web_ctx()), pytest.raises(SafeToolError) as exc:
+        await _add(delivery={"mode": mode, field: "telegram"})
+
+    message = str(exc.value)
+    assert field in message
+    assert f"mode='{mode}'" in message
     assert fake_scheduler.add_calls == []
 
 
@@ -528,6 +537,47 @@ async def test_configured_channel_is_accepted(fake_scheduler, configured_channel
         )
 
     assert fake_scheduler.add_calls[-1]["delivery"].channel_name == "slack"
+
+
+async def test_a_manager_with_no_channels_rejects_channel_delivery(fake_scheduler, monkeypatch):
+    """Zero configured channels is a real answer, not a missing one."""
+
+    class _Empty:
+        def items(self):
+            return []
+
+    monkeypatch.setattr(control_mod, "_channel_manager_ref", lambda: _Empty())
+    with _with_ctx(_web_ctx()), pytest.raises(SafeToolError) as exc:
+        await _add(
+            delivery={
+                "mode": "channel",
+                "channel_name": "telegram",
+                "channel_id": "-1001234567890",
+            }
+        )
+
+    assert "no channels are configured" in str(exc.value)
+    assert fake_scheduler.add_calls == []
+
+
+async def test_an_operator_renamed_channel_entry_is_accepted(fake_scheduler, monkeypatch):
+    """The check is against the entry's name, which need not be the adapter type."""
+
+    class _Renamed:
+        def items(self):
+            return [("ops-telegram", object())]
+
+    monkeypatch.setattr(control_mod, "_channel_manager_ref", lambda: _Renamed())
+    with _with_ctx(_web_ctx()):
+        await _add(
+            delivery={
+                "mode": "channel",
+                "channel_name": "ops-telegram",
+                "channel_id": "-1001234567890",
+            }
+        )
+
+    assert fake_scheduler.add_calls[-1]["delivery"].channel_name == "ops-telegram"
 
 
 async def test_unknown_channel_check_is_skipped_without_a_channel_manager(

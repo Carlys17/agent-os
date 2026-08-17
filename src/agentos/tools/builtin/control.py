@@ -252,14 +252,23 @@ def _parse_cron_delivery(raw: Any) -> dict[str, Any] | None:
             f"delivery.mode must be {', '.join(_CRON_DELIVERY_MODES)} (got '{mode}')"
         )
     if mode != "channel":
-        # A recipient with no channel to send it through routes nowhere. Left
-        # to fall through it would read as "deliver to the caller", quietly
-        # discarding the destination the user actually named.
-        stray = [f for f in ("channel_id", "account_id", "thread_id") if parsed[f]]
+        # A destination that mode does not route to goes nowhere. Left to fall
+        # through it would read as "deliver to the caller", quietly discarding
+        # the recipient the user actually named — issue #310's own symptom,
+        # reachable through the parameter meant to fix it. A bare channel_name
+        # was already promoted to mode='channel' above, so the only way to land
+        # here is an explicitly contradictory mode: nothing legitimate is lost
+        # by refusing it.
+        stray = [
+            f
+            for f in ("channel_name", "channel_id", "account_id", "thread_id")
+            if parsed[f]
+        ]
         if stray:
             raise SafeToolError(
-                f"delivery.{stray[0]} requires delivery.channel_name and "
-                "delivery.mode='channel'"
+                f"delivery.{stray[0]} conflicts with delivery.mode='{mode}' — "
+                "use mode='channel' to deliver to a named channel, or drop the "
+                f"{stray[0]}"
             )
     elif not parsed["channel_name"]:
         raise SafeToolError("delivery.mode='channel' requires delivery.channel_name")
@@ -276,8 +285,12 @@ def _validate_cron_delivery_channel(channel_name: str) -> None:
     the channel itself, so a plausible-looking typo (``slak``) saved cleanly and
     then failed every single fire with "no adapter is registered". The model is
     the most likely source of that name, so the list of real ones is worth
-    spending a few tokens on. Silent when the manager is unavailable — in a CLI
-    process without channels this is unknowable, not invalid.
+    spending a few tokens on.
+
+    The name checked is the *configured channel name*, which is usually the
+    adapter type (``telegram``) but is whatever the operator called the entry.
+    Silent when no manager is reachable — in a CLI process without channels
+    this is unknowable, not invalid.
     """
     if _channel_manager_ref is None:
         return
@@ -288,8 +301,14 @@ def _validate_cron_delivery_channel(channel_name: str) -> None:
         known = [str(name) for name, _ in manager.items()]
     except Exception:  # noqa: BLE001 - channel manager absent or mid-boot
         return
-    if not known or channel_name in known:
+    if channel_name in known:
         return
+    if not known:
+        # A live manager with nothing in it is a real answer, not a missing one:
+        # no channel delivery can succeed at all.
+        raise SafeToolError(
+            "no channels are configured, so a cron job cannot deliver to one"
+        )
     raise SafeToolError(
         f"no channel named '{channel_name}' is configured; "
         f"available: {', '.join(sorted(known))}"
@@ -526,7 +545,10 @@ def _session_storage_or_none() -> Any:
                 "channel_name": {
                     "type": "string",
                     "description": (
-                        "Adapter key when mode=channel, e.g. telegram, slack, discord."
+                        "The configured channel's name when mode=channel — usually "
+                        "the adapter type (telegram, slack, discord), but whatever "
+                        "the operator named the entry. An unconfigured name is "
+                        "rejected and the error lists the real ones."
                     ),
                 },
                 "channel_id": {
@@ -538,17 +560,22 @@ def _session_storage_or_none() -> Any:
                 },
                 "account_id": {
                     "type": "string",
-                    "description": "Optional account binding for multi-account channels.",
+                    "description": (
+                        "Optional account binding for multi-account channels. "
+                        "Stored on the job but not yet honoured by channel delivery."
+                    ),
                 },
                 "thread_id": {
                     "type": "string",
-                    "description": "Optional thread/topic id inside the recipient chat.",
+                    "description": (
+                        "Optional thread id inside the recipient chat (Slack only today)."
+                    ),
                 },
                 "best_effort": {
                     "type": "boolean",
                     "description": (
                         "When true a delivery failure does not fail the run "
-                        "(default false)."
+                        "(default false). Applies to any mode."
                     ),
                 },
             },

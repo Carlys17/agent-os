@@ -88,23 +88,26 @@ cron(action="add", schedule={"kind": "cron", "expr": "0 9 * * 1-5"},
                "channel_id": "-1001234567890"})
 ```
 
-- `mode="channel"` needs `channel_name` — a channel that is actually
-  configured (`telegram`, `slack`, `discord`); an unknown name is rejected and
-  the error lists the real ones. `channel_id` is the id the *provider* uses — a
-  Telegram numeric chat id, negative for a group, or `@username`. It is never
-  an AgentOS session key like `agent:main:telegram:direct:1245463966`; the tool
-  rejects those with the id you probably meant. Leave `channel_id` empty to use
-  the channel's configured default chat. `thread_id` is optional (Slack only
-  today).
+- `mode="channel"` needs `channel_name`: the name of a channel that is actually
+  configured. That is usually the adapter type (`telegram`, `slack`,
+  `discord`), but an operator may have named the entry something else — where a
+  channel manager is reachable, an unconfigured name is rejected and the error
+  lists the real ones. `channel_id` is the id the *provider* uses — a Telegram
+  numeric chat id, negative for a group, or `@username`. It is never an AgentOS
+  session key like `agent:main:telegram:direct:1245463966`; the tool rejects
+  those with the id you probably meant. Leave `channel_id` empty to use the
+  channel's configured default chat. `thread_id` is optional (Slack only
+  today), and `account_id` is stored but not yet honoured by channel delivery.
 - `mode="none"` schedules a job that announces nowhere.
 - `mode="origin"` (or omitting `delivery`) keeps the calling conversation.
 - `best_effort: true` keeps a failed delivery from failing the run. It applies
   to any mode.
 
-`channel_id`, `account_id`, and `thread_id` only mean something alongside
-`channel_name`, so passing one without it is an error rather than a silent
-fallback to the calling chat. Webhook delivery and failure destinations are not
-available here — they are configured from the CLI, the Web UI, or the cron RPC.
+The destination fields only mean something under `mode="channel"`, so pairing
+one with `mode="origin"` or `mode="none"` is an error rather than a silent
+fallback to the calling chat — if you name a channel, say `mode="channel"`.
+Webhook delivery and failure destinations are not available here; they are
+configured from the CLI, the Web UI, or the cron RPC.
 
 Choosing a channel requires an interactive CLI or Web caller and a
 `session_target` other than `main` — from a chat channel the job always

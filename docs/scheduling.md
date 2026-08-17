@@ -277,9 +277,11 @@ in conversation can announce somewhere other than the chat it was asked for:
 rules as above and is validated when the job is saved, so a session key or a
 non-numeric Telegram target fails immediately rather than at the next fire; an
 empty `channel_id` uses the channel's configured default chat. `channel_name`
-is checked against the configured channels, so a typo cannot be saved. A
-recipient field without a `channel_name` is rejected rather than quietly
-falling back to the caller. `best_effort` applies to any mode.
+is checked against the configured channels, so a typo cannot be saved — note
+that it is the entry's *name*, which is the adapter type unless the operator
+renamed it. A destination field paired with `mode='origin'` or `mode='none'` is
+rejected rather than quietly falling back to the caller. `best_effort` applies
+to any mode.
 
 Unlike the Web UI, the tool does not probe the adapter to confirm the chat
 exists, and `account_id` is accepted but has no effect on channel delivery
