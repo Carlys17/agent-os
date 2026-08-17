@@ -86,12 +86,22 @@ class _SchedulerProtocol(Protocol):
 # Setter-injected dependencies (gateway boot calls these)
 _scheduler: _SchedulerProtocol | None = None
 _gateway_config = None
+#: Lazy accessor for the ChannelManager. A callable rather than the manager
+#: itself because channels are constructed after the tools are wired, the same
+#: reason the cron delivery engine takes a ref.
+_channel_manager_ref: Any = None
 
 
 def set_scheduler(engine: _SchedulerProtocol) -> None:
     """Inject the SchedulerEngine (called from gateway boot)."""
     global _scheduler
     _scheduler = engine
+
+
+def set_channel_manager_ref(ref: Any) -> None:
+    """Inject a ``() -> ChannelManager | None`` accessor (from gateway boot)."""
+    global _channel_manager_ref
+    _channel_manager_ref = ref
 
 
 def set_gateway_config(config: object) -> None:
@@ -186,6 +196,19 @@ _CRON_DELIVERY_ALIASES = {
 
 _CRON_DELIVERY_MODES = ("origin", "channel", "none")
 
+#: Delivery features the CLI, Web UI, and RPC support that this tool does not.
+#: Named explicitly so a model that copies a webhook block out of a cron listing
+#: is told the field is unavailable here, rather than having it silently
+#: dropped and its job announce somewhere else entirely.
+_CRON_DELIVERY_UNSUPPORTED = {
+    "webhook_url": "webhook delivery",
+    "webhookUrl": "webhook delivery",
+    "webhook_token": "webhook delivery",
+    "webhookToken": "webhook delivery",
+    "failure_destination": "a failure destination",
+    "failureDestination": "a failure destination",
+}
+
 
 def _parse_cron_delivery(raw: Any) -> dict[str, Any] | None:
     """Normalize the tool's ``delivery`` argument, or ``None`` when omitted.
@@ -201,6 +224,13 @@ def _parse_cron_delivery(raw: Any) -> dict[str, Any] | None:
         raise SafeToolError("'delivery' must be an object")
     if not raw:
         return None
+
+    for key, feature in _CRON_DELIVERY_UNSUPPORTED.items():
+        if raw.get(key):
+            raise SafeToolError(
+                f"delivery.{key} is not available from the cron tool: {feature} "
+                "is configured from the CLI, the Web UI, or the cron RPC"
+            )
 
     parsed: dict[str, Any] = {}
     for field, aliases in _CRON_DELIVERY_ALIASES.items():
@@ -221,12 +251,49 @@ def _parse_cron_delivery(raw: Any) -> dict[str, Any] | None:
         raise SafeToolError(
             f"delivery.mode must be {', '.join(_CRON_DELIVERY_MODES)} (got '{mode}')"
         )
-    if mode == "channel" and not parsed["channel_name"]:
+    if mode != "channel":
+        # A recipient with no channel to send it through routes nowhere. Left
+        # to fall through it would read as "deliver to the caller", quietly
+        # discarding the destination the user actually named.
+        stray = [f for f in ("channel_id", "account_id", "thread_id") if parsed[f]]
+        if stray:
+            raise SafeToolError(
+                f"delivery.{stray[0]} requires delivery.channel_name and "
+                "delivery.mode='channel'"
+            )
+    elif not parsed["channel_name"]:
         raise SafeToolError("delivery.mode='channel' requires delivery.channel_name")
 
     parsed["mode"] = mode
     parsed["best_effort"] = bool(raw.get("best_effort") or raw.get("bestEffort") or False)
     return parsed
+
+
+def _validate_cron_delivery_channel(channel_name: str) -> None:
+    """Reject a channel that no adapter is registered for.
+
+    ``validate_channel_target`` checks the *recipient*'s shape; nothing checked
+    the channel itself, so a plausible-looking typo (``slak``) saved cleanly and
+    then failed every single fire with "no adapter is registered". The model is
+    the most likely source of that name, so the list of real ones is worth
+    spending a few tokens on. Silent when the manager is unavailable — in a CLI
+    process without channels this is unknowable, not invalid.
+    """
+    if _channel_manager_ref is None:
+        return
+    try:
+        manager = _channel_manager_ref()
+        if manager is None:
+            return
+        known = [str(name) for name, _ in manager.items()]
+    except Exception:  # noqa: BLE001 - channel manager absent or mid-boot
+        return
+    if not known or channel_name in known:
+        return
+    raise SafeToolError(
+        f"no channel named '{channel_name}' is configured; "
+        f"available: {', '.join(sorted(known))}"
+    )
 
 
 def _cron_delivery_summary(config: Any) -> dict[str, Any]:
@@ -441,8 +508,10 @@ def _session_storage_or_none() -> Any:
                 "channel_id is the id the provider uses (a Telegram numeric chat "
                 "id, negative for groups, or @username), never an AgentOS session "
                 "key; leave it empty to use the channel's configured default chat. "
-                "Choosing a channel requires an interactive CLI or Web caller and "
-                "a session_target other than main."
+                "A recipient field without channel_name is an error, not a "
+                "fallback, and webhook delivery and failure destinations are not "
+                "available here. Choosing a channel requires an interactive CLI "
+                "or Web caller and a session_target other than main."
             ),
             "properties": {
                 "mode": {
@@ -676,6 +745,10 @@ async def cron(
         # An explicit destination the user named, as opposed to the calling
         # conversation the tool otherwise infers.
         override = _parse_cron_delivery(delivery)
+        # mode='origin' is the inferred destination spelled out, so it must take
+        # the same path as omitting the argument — including the snapshot
+        # fallback below. Only these two modes redirect a job.
+        redirected = override is not None and override["mode"] in ("channel", "none")
         if override is not None and override["mode"] == "channel":
             # Redirecting a job away from the conversation it was requested in
             # is an operator decision for the same reason tool_policy is: a chat
@@ -692,6 +765,7 @@ async def cron(
                     "delivery.mode='channel' is unavailable for session_target=main; "
                     "use session_target=isolated"
                 )
+            _validate_cron_delivery_channel(override["channel_name"])
             try:
                 validate_channel_target(override["channel_name"], override["channel_id"])
             except ValueError as exc:
@@ -716,7 +790,6 @@ async def cron(
                     "thread_id": override["thread_id"],
                 },
             )
-            delivery_config.best_effort = override["best_effort"]
         elif caller_session_key:
             # Auto-detect delivery target from session storage.
             try:
@@ -758,10 +831,10 @@ async def cron(
         # Snapshot fallback: when session storage did not yield a channel-
         # routable target (fresh session before last_channel was written), build
         # one from the live ToolContext so the first cron call still binds.
-        # Skipped when the caller named a destination — the point of the
-        # override is that the calling chat is not where this should land.
+        # Skipped when the caller redirected the job — the point of a channel
+        # or none override is that the calling chat is not where this lands.
         if (
-            override is None
+            not redirected
             and ctx is not None
             and getattr(ctx, "channel_kind", None)
             and getattr(delivery_config, "originating_reply_target", None) is None
@@ -792,6 +865,12 @@ async def cron(
                     delivery_config.mode = DeliveryMode.ORIGIN
                     delivery_config.channel_name = ctx.channel_kind or ""
                     delivery_config.channel_id = ctx.channel_id or ""
+
+        # best_effort is a property of the delivery attempt, not of the
+        # destination, so it applies to whichever config the branches above
+        # settled on — including the inferred one.
+        if override is not None and override["best_effort"] and delivery_config is not None:
+            delivery_config.best_effort = True
 
         normalized_script = normalize_script_value(script)
         normalized_workdir = (workdir or "").strip()

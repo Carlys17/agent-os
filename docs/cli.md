@@ -653,9 +653,10 @@ from a channel.
 
 `--announce --channel telegram --to <chat-id>` pins where a job reports, and
 `--account`, `--no-deliver`, `--best-effort`, and `--webhook-url` cover the rest.
-The in-agent `cron` tool now accepts the channel case too, through a `delivery`
+The in-agent `cron` tool accepts the channel case too, through a `delivery`
 object — also restricted to an interactive CLI or Web caller, so a chat
-participant cannot redirect a job into a room they were never in. See
+participant cannot redirect a job into a room they were never in. Webhook
+delivery and failure destinations stay CLI/Web/RPC-only. See
 [`scheduling.md`](scheduling.md#naming-a-channel-recipient).
 
 ### Letting a cron job run shell-based skills

@@ -272,18 +272,30 @@ in conversation can announce somewhere other than the chat it was asked for:
 }
 ```
 
-`mode` is `origin` (the calling conversation — the default when `delivery` is
-omitted), `channel`, or `none`. `channel_id` follows the same recipient rules
-as above and is validated when the job is saved, so a session key or a
+`mode` is `origin` (the calling conversation — identical to omitting
+`delivery`), `channel`, or `none`. `channel_id` follows the same recipient
+rules as above and is validated when the job is saved, so a session key or a
 non-numeric Telegram target fails immediately rather than at the next fire; an
-empty `channel_id` uses the channel's configured default chat. `account_id`,
-`thread_id`, and `best_effort` are optional.
+empty `channel_id` uses the channel's configured default chat. `channel_name`
+is checked against the configured channels, so a typo cannot be saved. A
+recipient field without a `channel_name` is rejected rather than quietly
+falling back to the caller. `best_effort` applies to any mode.
 
-Choosing a channel is an operator action: it needs an interactive CLI or Web
-caller and a `sessionTarget` other than `main`. Asked from a chat channel, the
-tool refuses and the job keeps delivering to that same conversation — a
-participant in one room cannot aim scheduled output at another. Webhook
-delivery and failure destinations stay CLI/Web/RPC-only.
+Unlike the Web UI, the tool does not probe the adapter to confirm the chat
+exists, and `account_id` is accepted but has no effect on channel delivery
+today. Webhook delivery and failure destinations are refused outright here —
+they stay CLI/Web/RPC-only, so an agent cannot be talked into POSTing job
+output at an arbitrary URL.
+
+`mode='channel'` needs an interactive CLI or Web caller and a `sessionTarget`
+other than `main`. Asked from a chat channel it is refused and the job keeps
+delivering to that same conversation, so a participant in one room cannot aim
+scheduled output at another. Note that this gate is the same strength as the
+one on `--elevated` and script jobs: `callerKind` says the request entered
+through the gateway, not that a human approved it. Inside a Web or CLI session
+the agent can set it without a confirmation step, so untrusted content the
+agent reads can in principle steer the destination — the `delivery` block
+echoed in the `add` response is there to be checked.
 
 ## Inspect and Run Jobs
 
