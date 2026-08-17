@@ -2264,12 +2264,36 @@
   border-left-color: var(--primary);
   color: var(--primary);
 }
+/* Name + key stack. A session that was never renamed keeps the single-line
+   key layout the switcher has always had. */
+.chat-session-popover-item-labels {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.chat-session-popover-item-name {
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .chat-session-popover-item-key {
   flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+.chat-session-popover-item-key.is-secondary {
+  flex: 0 0 auto;
+  font-size: 0.64rem;
+  color: var(--dim);
+}
+.chat-session-popover-item.is-current .chat-session-popover-item-key.is-secondary {
+  color: color-mix(in srgb, var(--primary) 70%, transparent);
 }
 .chat-session-popover-item-tag {
   flex: 0 0 auto;

@@ -1,4 +1,4 @@
-"""Session management tools: send, spawn, list, history, yield, status."""
+"""Session management tools: send, spawn, list, history, yield, status, rename."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import structlog
 from agentos.agents.limits import MAX_SPAWN_DEPTH
 from agentos.gateway.routing import build_subagent_route_envelope
 from agentos.session.keys import build_subagent_session_key, parse_agent_id
+from agentos.session.naming import normalize_session_name
 from agentos.tools.registry import tool
 from agentos.tools.types import SafeToolError, ToolError, current_tool_context
 
@@ -781,6 +782,80 @@ async def session_status() -> str:
             "runtime_ms": getattr(current, "runtime_ms", 0),
         }
         return json.dumps(data)
+    except ToolError:
+        raise
+    except (ImportError, AttributeError, NotImplementedError) as exc:
+        raise _manager_unavailable(exc) from exc
+
+
+# ---------------------------------------------------------------------------
+# session_rename
+# ---------------------------------------------------------------------------
+
+
+@tool(
+    name="session_rename",
+    description=(
+        "Rename the current session so the user can find it later in the "
+        "session list. Pass an empty name to clear the custom name."
+    ),
+    params={
+        "name": {
+            "type": "string",
+            "description": (
+                "Short human-readable label for this session, e.g. "
+                "'Speeding ticket report'. Empty clears the name."
+            ),
+        },
+    },
+    required=["name"],
+)
+async def session_rename(name: str) -> str:
+    """Set (or clear) the calling session's ``display_name``.
+
+    Deliberately scoped to the caller's own session: the key comes from the
+    ContextVar, exactly like :func:`session_status`, so an agent can label the
+    conversation it is in but cannot relabel someone else's. The name goes
+    through the same :func:`normalize_session_name` every other rename surface
+    uses (``sessions.rename`` RPC, ``/rename``, the Web UI editor), so no two
+    paths can store different shapes.
+    """
+    try:
+        mgr = _get_session_manager()
+        ctx = current_tool_context.get()
+        session_key = ctx.session_key if ctx is not None else None
+        if not session_key:
+            raise ToolError("No active session")
+        current = await mgr.get_session(session_key)
+        if current is None:
+            raise ToolError("No active session")
+
+        try:
+            normalized = normalize_session_name(name)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        previous = getattr(current, "display_name", None)
+
+        update = getattr(mgr, "update", None)
+        if update is None:
+            # Report it instead of returning a success the user's session list
+            # would immediately contradict.
+            raise ToolError("Session storage cannot persist a rename")
+        try:
+            await update(session_key, display_name=normalized)
+        except KeyError as exc:
+            # The session went away between the read and the write; report it
+            # rather than letting a bare KeyError escape into the turn.
+            raise ToolError("No active session") from exc
+
+        return json.dumps(
+            {
+                "session_key": getattr(current, "session_key", session_key),
+                "name": normalized,
+                "previous_name": previous,
+                "cleared": normalized is None,
+            }
+        )
     except ToolError:
         raise
     except (ImportError, AttributeError, NotImplementedError) as exc:

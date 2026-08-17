@@ -1124,6 +1124,74 @@ describe('ChatPage', () => {
     )
   })
 
+  // ── Session rename (issue #248 follow-up) ─────────────────────────────────
+
+  function rpcWithSessionName(name: string) {
+    const rpc = makeRpc()
+    const base = rpc.call
+    rpc.call = vi.fn((...args: unknown[]) => {
+      if (args[0] === 'sessions.resolve') return Promise.resolve({ display_name: name })
+      return base(...args)
+    })
+    return rpc
+  }
+
+  it('labels the chip with the session name resolved for the current key', async () => {
+    mockRpc = rpcWithSessionName('Speeding ticket report')
+    renderPage()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /switch chat session/i })).toHaveTextContent(
+        'Speeding ticket report',
+      ),
+    )
+  })
+
+  it('renames the current session from the chip via sessions.rename', async () => {
+    mockRpc = rpcWithSessionName('')
+    renderPage()
+    await clickChatAction('Rename session')
+    const input = await screen.findByRole('textbox', { name: 'Session name' })
+    fireEvent.change(input, { target: { value: 'Speeding ticket report' } })
+    fireEvent.submit(input.closest('form') as HTMLFormElement)
+
+    await waitFor(() =>
+      expect(mockRpc.call).toHaveBeenCalledWith('sessions.rename', {
+        key: 'agent:main:webchat:default',
+        name: 'Speeding ticket report',
+      }),
+    )
+    // Optimistic: the chip is the confirmation, so it updates without a refetch.
+    expect(screen.getByRole('button', { name: /switch chat session/i })).toHaveTextContent(
+      'Speeding ticket report',
+    )
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Session renamed'))
+  })
+
+  it('reverts the chip when the rename call fails', async () => {
+    mockRpc = rpcWithSessionName('Old name')
+    const base = mockRpc.call
+    mockRpc.call = vi.fn((...args: unknown[]) => {
+      if (args[0] === 'sessions.rename') return Promise.reject(new Error('storage down'))
+      return base(...args)
+    })
+    renderPage()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /switch chat session/i })).toHaveTextContent(
+        'Old name',
+      ),
+    )
+
+    await clickChatAction('Rename session')
+    const input = await screen.findByRole('textbox', { name: 'Session name' })
+    fireEvent.change(input, { target: { value: 'New name' } })
+    fireEvent.submit(input.closest('form') as HTMLFormElement)
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Rename failed: storage down'))
+    expect(screen.getByRole('button', { name: /switch chat session/i })).toHaveTextContent(
+      'Old name',
+    )
+  })
+
   it('closes Chat actions on Escape without aborting an active turn', async () => {
     mockRpc = makeRpc()
     renderPage()
@@ -1135,8 +1203,9 @@ describe('ChatPage', () => {
     const trigger = screen.getByRole('button', { name: 'Chat actions' })
     fireEvent.click(trigger)
     expect(await screen.findByRole('menu', { name: 'Chat actions' })).toBeInTheDocument()
+    // Rename leads the menu, so it is the item that takes initial focus.
     await waitFor(() =>
-      expect(screen.getByRole('menuitem', { name: 'Copy session key' })).toHaveFocus(),
+      expect(screen.getByRole('menuitem', { name: 'Rename session' })).toHaveFocus(),
     )
 
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -1316,10 +1385,10 @@ describe('ChatPage', () => {
     mockRpc = makeRpc()
     renderPage()
     fireEvent.click(screen.getByRole('button', { name: 'Chat actions' }))
-    const copy = await screen.findByRole('menuitem', { name: 'Copy session key' })
-    await waitFor(() => expect(copy).toHaveFocus())
+    const first = await screen.findByRole('menuitem', { name: 'Rename session' })
+    await waitFor(() => expect(first).toHaveFocus())
 
-    fireEvent.keyDown(copy, { key: 'Tab' })
+    fireEvent.keyDown(first, { key: 'Tab' })
 
     expect(screen.queryByRole('menu', { name: 'Chat actions' })).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Chat actions' })).toHaveFocus())
