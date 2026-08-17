@@ -27,6 +27,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   name containing `[/]` can no longer break `sessions list`. No migration is
   required — the `display_name` column already existed. (#248)
 
+### Fixed
+
+- The in-agent `cron` tool can now edit a job instead of replacing it. Asking
+  the agent in chat to change a scheduled job's prompt — or to "clone this one
+  but …" — used to leave it no strategy but `add` a new job and `remove` the
+  original, which deleted the job the user wanted to keep and reset every
+  setting the re-create did not name: an `agent_turn` fell back to `reminder`,
+  a job pinned to `Asia/Bangkok` moved to UTC, its tool policy was dropped,
+  and its output started landing in the current chat instead of the channel it
+  reported to. The tool gains `action="update"` (patch in place, keeping the
+  job id), `action="get"` (the full record — kind, tz, schedule, session
+  target, delivery, tool policy, wake mode, timeout, script fields), a
+  `clone_from` parameter on `add` that inherits every setting of the source and
+  overrides only what is passed, and a `name` parameter so a job's display name
+  no longer has to be its prompt. Jobs carrying a script or
+  `tool_policy.elevated` stay operator-only to clone or update, a channel
+  caller cannot clone or rewrite a job that reports to a destination its own
+  chat cannot address, and `action="get"` names a webhook's host without
+  disclosing the URL path or token. (#309)
+- Rescheduling a one-shot cron job onto a recurring expression no longer leaves
+  `delete_after_run` set, which made the edited job delete itself after its
+  first fire. Converting a job away from `agent_turn` now drops a stranded
+  `tool_policy.elevated` instead of persisting a combination `cron add` refuses
+  to create, and a `tool_policy` sent alongside a kind change is validated
+  against the new kind rather than the outgoing one. All three are in
+  `SchedulerOps.update`, so the `cron.update` RPC and the Web UI edit flow get
+  them too.
+
 ## [2026.8.15] - 2026-08-15
 
 ### Added
