@@ -75,6 +75,10 @@ capped at 120 characters. Once set, the name shows in `sessions list`, the chat
 toolbar, and the Web UI session list, and `resume`/`show`/`--search` all accept
 it in place of the key.
 
+You can also just ask the agent — "call this session api-refactor". The
+`session_rename` tool renames the session the agent is running in, and only
+that one; asking it to clear the name drops back to the auto name.
+
 ## Resume a Session
 
 ```sh
@@ -127,7 +131,10 @@ later.
 The Web UI uses the same session system. In the control console, use the chat
 session selector to switch sessions, inspect status, and continue recent work.
 On the Sessions page, click a row's name to rename it inline — Enter saves,
-Escape cancels, and an empty value clears the custom name.
+Escape cancels, and an empty value clears the custom name. In Chat, the header
+`⋯` menu has **Rename session** with the same keys, the chip shows the name once
+set (the key stays in its tooltip and in **Copy session key**), and the session
+switcher lists and searches by name as well as by key.
 
 Open:
 

@@ -42,6 +42,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   sessions, and names are Rich-escaped everywhere the CLI prints them, so a
   name containing `[/]` can no longer break `sessions list`. No migration is
   required — the `display_name` column already existed. (#248)
+- Renaming reaches the Chat view itself. The header `⋯` menu gains **Rename
+  session**, which edits the name in place — Enter saves, Escape cancels the
+  edit without closing the menu, and an empty value clears the name. Once a
+  session has one, the header chip shows the name instead of the key (the key
+  stays in the chip's tooltip and in **Copy session key**), and the session
+  switcher lists each renamed session by name with its key underneath. The
+  switcher's search now matches the name and the derived title as well as the
+  key, so a session is findable there by the label it was given — the same
+  search behaviour the Sessions page already had. Agents can rename too: the
+  new `session_rename` tool sets or clears the name of the session it is
+  running in — and only that one — so "call this one X" works as a prompt. It
+  shares the `agentos.session.naming` normalizer with every other rename path,
+  and reports rather than silently succeeding when storage cannot persist the
+  change. (#248)
 
 ### Fixed
 

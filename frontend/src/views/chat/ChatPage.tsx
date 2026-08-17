@@ -263,6 +263,53 @@ export function ChatPage() {
   })
   const attachments = useAttachments()
 
+  // ── Session name (issue #248) ─────────────────────────────────────────────
+  // The chip and its rename editor need the session's `display_name`. It is
+  // read from `sessions.resolve`, and re-read whenever the run status settles:
+  // an agent can rename its own session mid-turn (the `session_rename` tool),
+  // and that write has no push event of its own.
+  const [sessionName, setSessionName] = useState('')
+  const runStatus = runState.status
+  useEffect(() => {
+    if (!sessionKey) return
+    let cancelled = false
+    void (async () => {
+      try {
+        await rpc.waitForConnection()
+        const resolved = await rpc.call<{ display_name?: string | null }>('sessions.resolve', {
+          key: sessionKey,
+        })
+        if (!cancelled) setSessionName(String(resolved?.display_name || ''))
+      } catch {
+        // A session that does not exist yet (a fresh `/new` key) simply has no
+        // name — leaving the chip on the key is the correct fallback.
+        if (!cancelled) setSessionName('')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [rpc, sessionKey, runStatus])
+
+  const onRenameSession = useCallback(
+    (name: string) => {
+      const previous = sessionName
+      // Optimistic: the chip is the confirmation, so it must not lag the toast.
+      setSessionName(name)
+      void (async () => {
+        try {
+          await rpc.call('sessions.rename', { key: sessionKey, name })
+          toast.success(name ? t('chat.sessionRenamed') : t('chat.sessionRenameCleared'))
+        } catch (err) {
+          setSessionName(previous)
+          const message = err instanceof Error ? err.message : String(err)
+          toast.error(t('chat.sessionRenameFailed', { message }))
+        }
+      })()
+    },
+    [rpc, sessionKey, sessionName],
+  )
+
   // The per-send session intent (chat.js:335 `_pendingSessionIntent`) — rides on
   // the next send (e.g. 'new_chat'), and is carried through the pending queue
   // (chat.js:8523/8547/8612). A ref: it is not rendered, only read at send time.
@@ -635,10 +682,12 @@ export function ChatPage() {
         <div className="chat-session-bar" role="group" aria-label={t('chat.sessionControls')}>
           <SessionChip
             sessionKey={sessionKey}
+            sessionName={sessionName}
             runState={runState}
             onSwitch={switchToSession}
             onReset={resetSession}
             onExport={onExportMarkdown}
+            onRename={onRenameSession}
           />
         </div>
       </ShellHeaderPortal>

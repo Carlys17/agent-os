@@ -22,7 +22,14 @@ _TOOL_GROUPS: Mapping[str, frozenset[str]] = {
         }
     ),
     "group:sessions": frozenset(
-        {"sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"}
+        {
+            "sessions_list",
+            "sessions_history",
+            "sessions_send",
+            "sessions_spawn",
+            "session_status",
+            "session_rename",
+        }
     ),
     "group:memory": frozenset({"memory_search", "memory_get"}),
     "group:web": frozenset({"web_search", "web_fetch", "http_request", "x_search"}),
@@ -34,6 +41,9 @@ _TOOL_GROUPS: Mapping[str, frozenset[str]] = {
             "sessions_history",
             "sessions_send",
             "session_status",
+            # A chat user asking "call this one X" is the main way a session
+            # gets a name, so the rename tool belongs on the chat layer.
+            "session_rename",
         }
     ),
     "channel:media": frozenset(
@@ -107,7 +117,15 @@ _TOOL_PROFILES: Mapping[str, frozenset[str] | None] = {
         | _TOOL_GROUPS["group:memory"]
     ),
     "messaging": _TOOL_GROUPS["group:messaging"]
-    | frozenset({"sessions_list", "sessions_history", "sessions_send", "session_status"}),
+    | frozenset(
+        {
+            "sessions_list",
+            "sessions_history",
+            "sessions_send",
+            "session_status",
+            "session_rename",
+        }
+    ),
 }
 _SENDER_SCOPED_TOOL_GROUPS: frozenset[str] = frozenset({"channel:perm"})
 _SENDER_SCOPED_TOOL_NAMES: frozenset[str] = _TOOL_GROUPS["channel:perm"]

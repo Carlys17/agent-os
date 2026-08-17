@@ -451,6 +451,8 @@ agentos sessions list / show <id> / export <id> <out>
 # Label a session so it is findable later; --search matches the name.
 agentos sessions rename <id> "api-refactor"   # --clear drops the name
 agentos sessions list --search api-refactor
+# In chat, /rename does the same. The `session_rename` tool names the session
+# the agent is running in — use it when the user just asks in prose.
 agentos cron list / add / run <id> / runs
 # --job-kind decides what fires. Default 'auto' = reminder: --text is delivered
 # verbatim and NO LLM runs, so a job that should think needs agent_turn.

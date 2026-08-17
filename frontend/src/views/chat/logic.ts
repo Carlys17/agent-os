@@ -85,6 +85,12 @@ export type SessionListItem =
       key?: string
       session?: string
       sessionKey?: string
+      // Naming — `sessions.list` ships the user-set name plus the gateway's
+      // fallback title (see src/agentos/gateway/rpc_sessions.py).
+      display_name?: string | null
+      displayName?: string | null
+      derived_title?: string | null
+      derivedTitle?: string | null
       channel_kind?: string
       channelKind?: string
       channel?: string
@@ -104,6 +110,31 @@ export type SessionListItem =
 export function sessionItemKey(item: SessionListItem): string {
   if (typeof item === 'string') return item
   return item.key || item.session || item.sessionKey || ''
+}
+
+/**
+ * The user-set session name, or '' when the session has never been renamed.
+ *
+ * Mirrors `views/sessions/logic.ts#sessionName`: it deliberately does NOT fall
+ * back to `derived_title`, because the gateway derives that from the short
+ * session id — showing it as a name would make every session look renamed.
+ * Search still scores it (see {@link sessionItemSearchText}).
+ */
+export function sessionItemName(item: SessionListItem): string {
+  if (typeof item === 'string') return ''
+  return String(item.display_name || item.displayName || '')
+}
+
+/**
+ * The lowercased haystack the switcher filter matches against: the key, the
+ * user-set name, and the gateway's derived title. A renamed session must be
+ * findable by its name here exactly as it is on the Sessions page.
+ */
+export function sessionItemSearchText(item: SessionListItem): string {
+  const key = sessionItemKey(item)
+  if (typeof item === 'string') return key.toLowerCase()
+  const derived = String(item.derived_title || item.derivedTitle || '')
+  return [key, sessionItemName(item), derived].filter(Boolean).join(' ').toLowerCase()
 }
 
 /**

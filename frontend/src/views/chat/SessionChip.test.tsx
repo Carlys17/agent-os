@@ -225,3 +225,140 @@ describe('SessionChip', () => {
     expect(await screen.findByText('No sessions found.')).toBeInTheDocument()
   })
 })
+
+// ── Session naming (issue #248 follow-up) ────────────────────────────────────
+
+const NAMED_SESSIONS: SessionListItem[] = [
+  { key: CURRENT, display_name: 'Speeding ticket report' },
+  { key: 'agent:main:webchat:abc123', display_name: 'Tax filing notes' },
+  { key: 'agent:trader:cli:default', derived_title: 'trader-fallback' },
+]
+
+describe('SessionChip naming', () => {
+  it('labels the chip with the session name and keeps the key in the tooltip', () => {
+    renderChip({ sessionName: 'Speeding ticket report' })
+    const chip = screen.getByRole('button', { name: /switch chat session/i })
+    expect(chip).toHaveTextContent('Speeding ticket report')
+    expect(chip.querySelector('.chat-session-chip-key')).toHaveAttribute('title', CURRENT)
+  })
+
+  it('falls back to the key when the session has no name', () => {
+    renderChip()
+    expect(screen.getByRole('button', { name: /switch chat session/i })).toHaveTextContent(CURRENT)
+  })
+
+  it('lists a renamed session by name with its key underneath', async () => {
+    renderChip({ fetchSessions: vi.fn().mockResolvedValue(NAMED_SESSIONS) })
+    fireEvent.click(screen.getByRole('button', { name: /switch chat session/i }))
+    expect(await screen.findByText('Tax filing notes')).toBeInTheDocument()
+    expect(screen.getByText('agent:main:webchat:abc123')).toBeInTheDocument()
+  })
+
+  it('never renders the derived title as a name', async () => {
+    renderChip({ fetchSessions: vi.fn().mockResolvedValue(NAMED_SESSIONS) })
+    fireEvent.click(screen.getByRole('button', { name: /switch chat session/i }))
+    await screen.findByText('Tax filing notes')
+    expect(screen.queryByText('trader-fallback')).not.toBeInTheDocument()
+  })
+
+  it('searches by session name as well as by key', async () => {
+    renderChip({ fetchSessions: vi.fn().mockResolvedValue(NAMED_SESSIONS) })
+    fireEvent.click(screen.getByRole('button', { name: /switch chat session/i }))
+    await screen.findByText('Tax filing notes')
+    const search = screen.getByRole('searchbox', { name: /search sessions/i })
+
+    fireEvent.change(search, { target: { value: 'tax filing' } })
+    await waitFor(() => {
+      expect(screen.getByText('agent:main:webchat:abc123')).toBeInTheDocument()
+      expect(screen.queryByText('agent:trader:cli:default')).not.toBeInTheDocument()
+    })
+
+    // The key still matches — renaming must not cost the old search path.
+    fireEvent.change(search, { target: { value: 'trader' } })
+    await waitFor(() => {
+      expect(screen.getByText('agent:trader:cli:default')).toBeInTheDocument()
+      expect(screen.queryByText('Tax filing notes')).not.toBeInTheDocument()
+    })
+  })
+
+  it('matches the derived title so an unrenamed session stays findable', async () => {
+    renderChip({ fetchSessions: vi.fn().mockResolvedValue(NAMED_SESSIONS) })
+    fireEvent.click(screen.getByRole('button', { name: /switch chat session/i }))
+    await screen.findByText('Tax filing notes')
+    fireEvent.change(screen.getByRole('searchbox', { name: /search sessions/i }), {
+      target: { value: 'fallback' },
+    })
+    await waitFor(() => expect(screen.getByText('agent:trader:cli:default')).toBeInTheDocument())
+  })
+
+  it('hides the rename action when no rename handler is wired', () => {
+    renderChip()
+    fireEvent.click(screen.getByRole('button', { name: 'Chat actions' }))
+    expect(screen.queryByRole('menuitem', { name: 'Rename session' })).not.toBeInTheDocument()
+  })
+
+  it('renames the session from the actions menu, prefilled with the current name', async () => {
+    const onRename = vi.fn()
+    renderChip({ onRename, sessionName: 'Old name' })
+    fireEvent.click(screen.getByRole('button', { name: 'Chat actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename session' }))
+
+    const input = screen.getByRole('textbox', { name: 'Session name' }) as HTMLInputElement
+    expect(input.value).toBe('Old name')
+    expect(input.maxLength).toBe(120)
+
+    fireEvent.change(input, { target: { value: '  New name  ' } })
+    fireEvent.submit(input.closest('form') as HTMLFormElement)
+
+    expect(onRename).toHaveBeenCalledWith('New name')
+    // The menu closes and focus returns to its trigger.
+    expect(screen.queryByRole('menu', { name: 'Chat actions' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Chat actions' })).toHaveFocus())
+  })
+
+  it('clears the name when the field is emptied', () => {
+    const onRename = vi.fn()
+    renderChip({ onRename, sessionName: 'Old name' })
+    fireEvent.click(screen.getByRole('button', { name: 'Chat actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename session' }))
+    const input = screen.getByRole('textbox', { name: 'Session name' })
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.submit(input.closest('form') as HTMLFormElement)
+    expect(onRename).toHaveBeenCalledWith('')
+  })
+
+  it('skips the round-trip when the name is unchanged', () => {
+    const onRename = vi.fn()
+    renderChip({ onRename, sessionName: 'Same name' })
+    fireEvent.click(screen.getByRole('button', { name: 'Chat actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename session' }))
+    const input = screen.getByRole('textbox', { name: 'Session name' })
+    fireEvent.submit(input.closest('form') as HTMLFormElement)
+    expect(onRename).not.toHaveBeenCalled()
+  })
+
+  it('cancels the edit on Escape without closing the actions menu', () => {
+    const onRename = vi.fn()
+    renderChip({ onRename, sessionName: 'Old name' })
+    fireEvent.click(screen.getByRole('button', { name: 'Chat actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename session' }))
+    const input = screen.getByRole('textbox', { name: 'Session name' })
+    fireEvent.change(input, { target: { value: 'Discarded' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(onRename).not.toHaveBeenCalled()
+    expect(screen.getByRole('menu', { name: 'Chat actions' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Rename session' })).toBeInTheDocument()
+  })
+
+  it('leaves arrow keys to the caret while the rename field is open', () => {
+    const onRename = vi.fn()
+    renderChip({ onRename, onExport: vi.fn() })
+    fireEvent.click(screen.getByRole('button', { name: 'Chat actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename session' }))
+    const input = screen.getByRole('textbox', { name: 'Session name' })
+    input.focus()
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(input).toHaveFocus()
+  })
+})
