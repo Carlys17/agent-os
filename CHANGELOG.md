@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.17] - 2026-08-17
+
 ### Added
 
 - The in-agent `cron` tool can name where a job announces. `add` takes an
