@@ -75,9 +75,51 @@ Either way, scheduling a script needs an interactive CLI or Web caller — it is
 refused from a chat channel. The bundled `cron-watchers` skill ships scripts for
 RSS feeds, JSON endpoints, and GitHub repos that already follow this contract.
 
+## Editing an existing job
+
+Never re-create a job to change it. `cron(action="add", ...)` builds a fresh job
+from defaults, so a "replace it" strategy silently resets what you did not pass:
+an `agent_turn` becomes a `reminder`, a job pinned to a timezone moves to UTC,
+its tool policy disappears, and its output starts landing in the current chat
+instead of the channel it was reporting to.
+
+- Read first: `cron(action="get", job_id="<job id>")` returns every setting —
+  `job_kind`, `tz`, schedule, `session_target`, delivery target, `tool_policy`,
+  `wake_mode`, `timeout_seconds`, and the script fields. `action="list"` is a
+  summary and does not show them.
+- Change in place: `cron(action="update", job_id="<job id>", task="<new prompt>")`
+  patches only what you pass and keeps the job's id, schedule, timezone,
+  delivery, kind, and policy. The same call accepts `schedule`, `tz`, `name`,
+  `job_kind`, `session_target`, `tool_policy`, `wake_mode`, and `enabled`.
+
+```
+cron(action="update", job_id="<job id>", schedule={"kind": "cron", "expr": "30 7 * * 1-5"})
+cron(action="update", job_id="<job id>", enabled=False)
+```
+
+## Cloning a job
+
+"Make another one like that, but …" is `clone_from`, not add-then-remove. The
+clone inherits the source's timezone, kind, session target, delivery target,
+tool policy, wake mode, script, and schedule; anything passed alongside
+overrides that one field. The source keeps running.
+
+```
+cron(action="add", clone_from="<job id>", task="Summarize yesterday's incidents")
+cron(action="add", clone_from="<job id>", schedule={"kind": "cron", "expr": "0 18 * * *"})
+```
+
+Cloning a one-shot `{"kind": "at"}` job needs an explicit `schedule` — the
+source's fire time is already spent. A job that carries a script or an elevated
+tool policy can only be cloned or updated by an interactive CLI or Web caller.
+
+`name` sets the display name on both `add` and `update`, so a job can keep a
+short readable name while its prompt is long.
+
 Other actions:
 
 - List: `cron(action="list")`.
+- Inspect: `cron(action="get", job_id="<job id>")`.
 - Trigger now: `cron(action="run", job_id="<job id>")`.
 - Cancel: `cron(action="remove", job_id="<job id>")`.
 

@@ -308,6 +308,37 @@ agentos cron remove <job-id> --yes
 Primary delivery destinations are not patched in place from the CLI. Remove and
 re-add a job when the primary channel or webhook destination needs to change.
 
+### Editing and cloning a job from chat
+
+The in-agent `cron` tool edits jobs the same way, so "change that reminder to
+7:30" does not have to become a delete-and-recreate — which would reset the
+job's kind, timezone, tool policy, and delivery target to defaults:
+
+```json
+{"action": "get",    "job_id": "<job-id>"}
+{"action": "update", "job_id": "<job-id>", "task": "Summarize yesterday's PRs"}
+{"action": "update", "job_id": "<job-id>", "schedule": {"kind": "cron", "expr": "30 7 * * 1-5"}}
+{"action": "update", "job_id": "<job-id>", "enabled": false}
+```
+
+`action="get"` returns the full record — kind, timezone, schedule, session
+target, delivery, tool policy, wake mode, timeout, script fields — which
+`action="list"` does not. `action="update"` patches only the keys it is given
+and keeps the job's id and everything else.
+
+Deriving a second job from an existing one is `clone_from` on `add`. The clone
+inherits every setting of the source and overrides only what is passed
+alongside; the source keeps running:
+
+```json
+{"action": "add", "clone_from": "<job-id>", "task": "Summarize yesterday's incidents"}
+```
+
+Both paths keep the operator gates: a job carrying a script or
+`tool_policy.elevated` can only be cloned or updated by an interactive CLI or
+Web caller, and a webhook token is reported as present without being disclosed.
+Cloning a one-shot `at` job requires an explicit new schedule.
+
 ## Troubleshooting
 
 Check the gateway and job state:

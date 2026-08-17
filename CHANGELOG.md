@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The in-agent `cron` tool can now edit a job instead of replacing it. Asking
+  the agent in chat to change a scheduled job's prompt — or to "clone this one
+  but …" — used to leave it no strategy but `add` a new job and `remove` the
+  original, which deleted the job the user wanted to keep and reset every
+  setting the re-create did not name: an `agent_turn` fell back to `reminder`,
+  a job pinned to `Asia/Bangkok` moved to UTC, its tool policy was dropped,
+  and its output started landing in the current chat instead of the channel it
+  reported to. The tool gains `action="update"` (patch in place, keeping the
+  job id), `action="get"` (the full record — kind, tz, schedule, session
+  target, delivery, tool policy, wake mode, timeout, script fields), a
+  `clone_from` parameter on `add` that inherits every setting of the source and
+  overrides only what is passed, and a `name` parameter so a job's display name
+  no longer has to be its prompt. Jobs carrying a script or
+  `tool_policy.elevated` stay operator-only to clone or update, and a webhook
+  token is reported as present without being disclosed. (#309)
+
 ## [2026.8.15] - 2026-08-15
 
 ### Added
