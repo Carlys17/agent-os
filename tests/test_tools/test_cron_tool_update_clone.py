@@ -74,6 +74,13 @@ def _channel_delivery() -> DeliveryConfig:
     )
 
 
+def _channel_delivery_with_topic() -> DeliveryConfig:
+    """A job that already has websocket subscribers watching it."""
+    config = _channel_delivery()
+    config.ws_topic = "cron:seeded"
+    return config
+
+
 async def _seed_agent_turn(sched: _OpsScheduler, **overrides: Any) -> Any:
     """A job with every setting a naive re-create would silently drop."""
     defaults: dict[str, Any] = {
@@ -920,9 +927,131 @@ async def test_delivery_none_silences_a_clone_that_inherited_a_channel(
     assert clone.delivery.channel_id == ""
 
 
+# ---------------------------------------------------------------------------
+# update: delivery
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_update_refuses_delivery_rather_than_dropping_it(tmp_path: Path) -> None:
-    """Accepting and ignoring it would report success while the job stayed put."""
+async def test_update_repoints_delivery_to_a_named_channel(tmp_path: Path) -> None:
+    """The edit the model reached for; refusing it drove remove + re-create."""
+    store, sched = await _open(tmp_path)
+    try:
+        job = await _seed_agent_turn(sched, delivery=_channel_delivery_with_topic())
+        payload = await _call(
+            sched,
+            _cli_ctx(),
+            action="update",
+            job_id=job.id,
+            delivery={
+                "mode": "channel",
+                "channel_name": "telegram",
+                "channel_id": "-100777",
+            },
+        )
+        stored = await sched.get_job(job.id)
+    finally:
+        await store.close()
+
+    assert stored is not None and stored.delivery is not None
+    assert stored.delivery.mode == DeliveryMode.CHANNEL
+    assert stored.delivery.channel_name == "telegram"
+    assert stored.delivery.channel_id == "-100777"
+    # The websocket topic is per-job, not per-destination: repointing must not
+    # orphan the subscribers already watching this job.
+    assert stored.delivery.ws_topic == "cron:seeded"
+    assert payload["job"]["delivery"]["channel_id"] == "-100777"
+    # The rest of the job is untouched by a delivery-only edit.
+    assert stored.tz == "Asia/Bangkok"
+    assert stored.tool_policy == {"profile": "messaging"}
+
+
+@pytest.mark.asyncio
+async def test_update_delivery_alone_is_a_change(tmp_path: Path) -> None:
+    """It must not trip the "needs at least one field" guard."""
+    store, sched = await _open(tmp_path)
+    try:
+        job = await _seed_agent_turn(sched)
+        payload = await _call(
+            sched,
+            _cli_ctx(),
+            action="update",
+            job_id=job.id,
+            delivery={"mode": "none"},
+        )
+        stored = await sched.get_job(job.id)
+    finally:
+        await store.close()
+
+    assert payload["job"]["delivery"]["mode"] == "none"
+    assert stored is not None and stored.delivery is not None
+    assert stored.delivery.mode == DeliveryMode.NONE
+    assert stored.delivery.channel_id == ""
+
+
+@pytest.mark.asyncio
+async def test_update_delivery_channel_needs_an_operator_caller(tmp_path: Path) -> None:
+    """A chat participant must not aim a job at a room they were never in."""
+    store, sched = await _open(tmp_path)
+    try:
+        job = await _seed_agent_turn(
+            sched,
+            delivery=DeliveryConfig(
+                mode=DeliveryMode.CHANNEL,
+                channel_name="telegram",
+                channel_id="42",
+            ),
+            tool_policy={},
+        )
+        with pytest.raises(ToolError) as excinfo:
+            await _call(
+                sched,
+                _channel_ctx(),
+                action="update",
+                job_id=job.id,
+                delivery={
+                    "mode": "channel",
+                    "channel_name": "telegram",
+                    "channel_id": "-100777",
+                },
+            )
+        stored = await sched.get_job(job.id)
+    finally:
+        await store.close()
+
+    assert "interactive CLI or Web caller" in str(excinfo.value)
+    assert stored is not None and stored.delivery is not None
+    assert stored.delivery.channel_id == "42"
+
+
+@pytest.mark.asyncio
+async def test_update_delivery_refused_when_the_job_answers_elsewhere(
+    tmp_path: Path,
+) -> None:
+    """Silencing a job that reports to another room is the same grant as editing it."""
+    store, sched = await _open(tmp_path)
+    try:
+        job = await _seed_agent_turn(sched, tool_policy={})
+        with pytest.raises(ToolError) as excinfo:
+            await _call(
+                sched,
+                _channel_ctx(),
+                action="update",
+                job_id=job.id,
+                delivery={"mode": "none"},
+            )
+        stored = await sched.get_job(job.id)
+    finally:
+        await store.close()
+
+    assert "cannot address" in str(excinfo.value)
+    assert stored is not None and stored.delivery is not None
+    assert stored.delivery.channel_id == "-100999"
+
+
+@pytest.mark.asyncio
+async def test_update_delivery_rejects_an_unusable_recipient(tmp_path: Path) -> None:
+    """Caught at save time rather than at every fire."""
     store, sched = await _open(tmp_path)
     try:
         job = await _seed_agent_turn(sched)
@@ -932,12 +1061,16 @@ async def test_update_refuses_delivery_rather_than_dropping_it(tmp_path: Path) -
                 _cli_ctx(),
                 action="update",
                 job_id=job.id,
-                delivery={"mode": "none"},
+                delivery={
+                    "mode": "channel",
+                    "channel_name": "telegram",
+                    "channel_id": "agent:main:telegram:42",
+                },
             )
         stored = await sched.get_job(job.id)
     finally:
         await store.close()
 
-    assert "delivery cannot be changed" in str(excinfo.value)
+    assert "session key" in str(excinfo.value).lower()
     assert stored is not None and stored.delivery is not None
     assert stored.delivery.channel_id == "-100999"

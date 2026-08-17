@@ -501,6 +501,85 @@ def _cron_delivery_summary(config: Any) -> dict[str, Any]:
     return summary
 
 
+async def _cron_update_delivery(
+    override: dict[str, Any],
+    target_job: Any,
+    ctx: Any,
+    caller_session_key: str,
+    session_target: str,
+) -> DeliveryConfig:
+    """The delivery config an ``action=update`` repoint should persist.
+
+    ``ws_topic`` is per-job, not per-destination, so it is carried across the
+    move: dropping it would orphan every websocket subscriber already watching
+    the job. A failure destination cannot be set from the tool, so whatever the
+    job carries survives the edit rather than being silently cleared.
+    """
+    existing = getattr(target_job, "delivery", None)
+    ws_topic = str(getattr(existing, "ws_topic", "") or "") or f"cron:{target_job.id}"
+    mode = override["mode"]
+
+    config: DeliveryConfig
+    if mode == "none":
+        config = DeliveryConfig(mode=DeliveryMode.NONE, ws_topic=ws_topic)
+    elif mode == "channel":
+        config = DeliveryConfig(
+            mode=DeliveryMode.CHANNEL,
+            channel_name=override["channel_name"],
+            channel_id=override["channel_id"],
+            account_id=override["account_id"],
+            thread_id=override["thread_id"],
+            ws_topic=ws_topic,
+        )
+    else:
+        # mode='origin' means "report back to the conversation asking for this",
+        # which is the calling session — the same inference a bare add makes.
+        from agentos.scheduler.delivery import infer_delivery
+
+        config = await infer_delivery(
+            session_storage=_session_storage_or_none(),
+            session_key=caller_session_key,
+            user_overrides=None,
+        )
+        config.ws_topic = ws_topic
+        if (
+            config.mode == DeliveryMode.NONE
+            and ctx is not None
+            and getattr(ctx, "channel_kind", None)
+        ):
+            # Session storage has no routing target yet (a fresh session before
+            # last_channel was written); the live context still knows one.
+            config.mode = DeliveryMode.ORIGIN
+            config.channel_name = ctx.channel_kind or ""
+            config.channel_id = ctx.channel_id or ""
+        if (
+            config.mode == DeliveryMode.ORIGIN
+            and config.channel_name
+            and config.originating_reply_target is None
+        ):
+            config.originating_reply_target = ReplyTargetSnapshot(
+                channel_name=config.channel_name,
+                channel_type=config.channel_name,
+                to=config.channel_id,
+                account_id=config.account_id,
+                thread_id=config.thread_id,
+            )
+        if session_target == "main":
+            # Persistence forces NONE for main; the snapshot is what pins the
+            # reply target, so it is the only part worth keeping.
+            config = DeliveryConfig(
+                mode=DeliveryMode.NONE,
+                ws_topic=ws_topic,
+                originating_reply_target=config.originating_reply_target,
+            )
+
+    if override["best_effort"]:
+        config.best_effort = True
+    if existing is not None and getattr(existing, "failure_destination", None) is not None:
+        config.failure_destination = existing.failure_destination
+    return config
+
+
 def _session_storage_or_none() -> Any:
     """The session store ``infer_delivery`` reads, or ``None`` when unavailable."""
     try:
@@ -728,6 +807,8 @@ def _session_storage_or_none() -> Any:
                 "'remind me' wants. Pass it only when the user names a different "
                 "destination: mode='channel' with channel_name and channel_id "
                 "posts to that chat instead, mode='none' keeps the run silent. "
+                "Works on update too, so moving a job's announcement is an edit "
+                "— never remove the job and add a replacement to change it. "
                 "channel_id is the id the provider uses (a Telegram numeric chat "
                 "id, negative for groups, or @username), never an AgentOS session "
                 "key; leave it empty to use the channel's configured default chat. "
@@ -1321,15 +1402,12 @@ async def cron(
 
     if action == "update":
         assert job_id is not None
-        if delivery:
-            # Repointing a live job is not implemented here, and silently
-            # dropping the argument would leave the job announcing where it
-            # always did while the caller believes it was moved — the discard
-            # this parameter exists to stop.
-            raise SafeToolError(
-                "delivery cannot be changed with action='update'; set it when the "
-                "job is created, or change it from the CLI, the Web UI, or the cron RPC"
-            )
+        # Repointing a live job used to be refused here, which left the model no
+        # way to move an announcement except remove + re-create — losing the job
+        # id the user named and its whole run history. The CLI, the Web UI and
+        # the cron RPC have always been able to do it; the checks below are the
+        # same grants ``add`` applies, not a weaker path to the same write.
+        delivery_override = _parse_cron_delivery(delivery)
         target_job = await sched.get_job(job_id)
         if target_job is None:
             raise SafeToolError(f"Job not found: {job_id}")
@@ -1367,6 +1445,49 @@ async def cron(
                     "so its content can only be edited by an interactive CLI or Web caller"
                 )
 
+        # Moving where a job announces is the same grant as rewriting what it
+        # says, and is checked before anything is written: `enabled` below
+        # pauses/resumes as a side effect, so a rejected destination must not
+        # leave a half-applied edit behind.
+        new_delivery: DeliveryConfig | None = None
+        if delivery_override is not None:
+            if delivery_override["mode"] == "channel":
+                caller_kind = getattr(ctx, "caller_kind", None) if ctx is not None else None
+                if caller_kind not in (CallerKind.CLI, CallerKind.WEB):
+                    raise SafeToolError(
+                        "delivery.mode='channel' requires an interactive CLI or Web caller; "
+                        "from a chat a job delivers back to the calling conversation"
+                    )
+                if new_target == "main":
+                    raise SafeToolError(
+                        "delivery.mode='channel' is unavailable for session_target=main; "
+                        "use session_target=isolated"
+                    )
+                _validate_cron_delivery_channel(delivery_override["channel_name"])
+                try:
+                    validate_channel_target(
+                        delivery_override["channel_name"],
+                        delivery_override["channel_id"],
+                    )
+                except ValueError as exc:
+                    # Caught at save time on purpose: an unusable recipient is
+                    # otherwise only discovered when the job fires.
+                    raise SafeToolError(str(exc)) from exc
+            if channel_caller and not _delivery_targets_caller(
+                getattr(target_job, "delivery", None), ctx
+            ):
+                raise SafeToolError(
+                    "that job reports to a destination this chat cannot address, "
+                    "so its delivery can only be changed by an interactive CLI or Web caller"
+                )
+            new_delivery = await _cron_update_delivery(
+                delivery_override,
+                target_job,
+                ctx,
+                caller_session_key,
+                new_target,
+            )
+
         if task is not None:
             blocked, reason = _scan_cron_prompt(task)
             if blocked:
@@ -1377,6 +1498,8 @@ async def cron(
                 raise SafeToolError(script_error)
 
         patch: dict[str, Any] = {}
+        if new_delivery is not None:
+            patch["delivery"] = new_delivery
         if name is not None and name.strip():
             patch["name"] = name.strip()
         if enabled is not None:
@@ -1489,7 +1612,8 @@ async def cron(
         if not patch:
             raise SafeToolError(
                 "update needs at least one field to change (schedule, task, name, "
-                "job_kind, session_target, tool_policy, wake_mode, tz, or enabled)"
+                "job_kind, session_target, tool_policy, wake_mode, tz, delivery, "
+                "or enabled)"
             )
         try:
             updated = await sched.update_job(job_id, **patch)

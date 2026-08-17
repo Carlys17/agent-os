@@ -272,8 +272,9 @@ in conversation can announce somewhere other than the chat it was asked for:
 }
 ```
 
-`mode` is `origin` (the calling conversation — identical to omitting
-`delivery`), `channel`, or `none`. `channel_id` follows the same recipient
+`delivery` is accepted on `add` and on `update`, so an existing job can be moved
+without being re-created. `mode` is `origin` (the calling conversation —
+identical to omitting `delivery` on `add`), `channel`, or `none`. `channel_id` follows the same recipient
 rules as above and is validated when the job is saved, so a session key or a
 non-numeric Telegram target fails immediately rather than at the next fire; an
 empty `channel_id` uses the channel's configured default chat. `channel_name`
@@ -378,11 +379,20 @@ alongside; the source keeps running:
 
 Delivery is one of the settings a clone inherits, so a clone announces wherever
 its source did unless it is given a `delivery` of its own — passing one
-redirects the clone and leaves the source alone. `update` does not take
-`delivery`: it is refused rather than accepted and ignored, since a job that
-kept reporting to its old destination while the caller was told the edit
-succeeded is the failure this argument exists to prevent. Repoint a live job
-from the CLI, the Web UI, or the `cron.update` RPC.
+redirects the clone and leaves the source alone. To move the existing job rather
+than derive a second one, pass `delivery` to `update`:
+
+```json
+{"action": "update", "job_id": "<job-id>",
+ "delivery": {"mode": "channel", "channel_name": "telegram", "channel_id": "-1001234567890"}}
+```
+
+A repoint keeps the job's id, its run history, and its websocket topic, so
+subscribers watching the job stay attached. The gates are the same ones `add`
+applies: `mode='channel'` needs an interactive CLI or Web caller and a session
+target other than `main`, the recipient is validated at save time, and a chat
+caller cannot repoint a job that already answers somewhere that chat cannot
+address. Webhook destinations and failure destinations remain CLI/Web/RPC-only.
 
 Both paths keep the operator gates. A job carrying a script or
 `tool_policy.elevated` can only be cloned or updated by an interactive CLI or

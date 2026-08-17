@@ -24,6 +24,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Choosing a channel requires an interactive CLI or Web caller and a
   `session_target` other than `main`; webhook delivery and failure destinations
   remain CLI-, Web-, and RPC-only. (#310)
+- `cron(action="update")` accepts `delivery` too, so moving an existing job's
+  announcement is an edit rather than a rebuild. Refusing it left the model one
+  route to "post that job to Telegram instead" — remove the job and add a
+  replacement — which threw away the job id the user had just named along with
+  its whole run history, and in practice the refusal message pointed at the CLI,
+  the Web UI, and the RPC, none of which an agent in a chat can reach, so the
+  same failing call was retried until the turn was interrupted. A repoint keeps
+  the job's id, run history, `ws_topic` (so existing websocket subscribers stay
+  attached), and failure destination, and applies the same gates as `add`:
+  `mode='channel'` needs an interactive CLI or Web caller and a `session_target`
+  other than `main`, the recipient is validated at save time, and a chat caller
+  cannot repoint a job that already reports somewhere that chat cannot address.
+  (#310)
 - Sessions can be renamed. A new `sessions.rename` RPC sets (or clears) a
   session's `display_name`, and it is reachable from every surface:
   `agentos sessions rename <id> "<name>"` (`--clear` drops it), `/rename <name>`

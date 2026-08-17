@@ -132,11 +132,17 @@ instead of the channel it was reporting to.
 - Change in place: `cron(action="update", job_id="<job id>", task="<new prompt>")`
   patches only what you pass and keeps the job's id, schedule, timezone,
   delivery, kind, and policy. The same call accepts `schedule`, `tz`, `name`,
-  `job_kind`, `session_target`, `tool_policy`, `wake_mode`, and `enabled`.
+  `job_kind`, `session_target`, `tool_policy`, `wake_mode`, `delivery`, and
+  `enabled`.
+- Move where it announces: pass `delivery` to `update`. The job keeps its id and
+  its run history, which remove-and-re-create throws away.
 
 ```
 cron(action="update", job_id="<job id>", schedule={"kind": "cron", "expr": "30 7 * * 1-5"})
 cron(action="update", job_id="<job id>", enabled=False)
+cron(action="update", job_id="<job id>",
+     delivery={"mode": "channel", "channel_name": "telegram",
+               "channel_id": "-1001234567890"})
 ```
 
 ## Cloning a job
@@ -164,9 +170,10 @@ cloning it would be authoring content for somebody else's destination.
 short readable name while its prompt is long.
 
 Passing `delivery` alongside `clone_from` redirects the clone: the explicit
-destination wins over the one the source carried. `delivery` is not accepted by
-`action="update"` — an existing job's destination is changed from the CLI, the
-Web UI, or the cron RPC.
+destination wins over the one the source carried. To move the *existing* job
+instead of making a second one, pass `delivery` to `action="update"` — the same
+operator rules apply, and `mode="channel"` still needs an interactive CLI or Web
+caller.
 
 Other actions:
 
