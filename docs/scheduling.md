@@ -244,7 +244,8 @@ secrets do not land in shell history.
 
 ### Naming a channel recipient
 
-Channel delivery is configured from the Web UI or the RPC API, and its
+Channel delivery is configured from the Web UI, the RPC API, or the in-agent
+`cron` tool (below), and its
 **Recipient** is the id the *provider* uses — a Telegram chat id
 (`1245463966`, negative for a group) or `@username`, a Slack channel id. It is
 not an AgentOS session key: `agent:main:telegram:direct:1245463966` names a
@@ -256,6 +257,33 @@ whether the chat exists before storing it. Where the recipients are known —
 Telegram, whose pairing store lists every chat the bot may talk to — the Web UI
 offers them as a dropdown, with an `Enter manually…` escape hatch for a group
 chat that is not in `group_chat_ids`.
+
+### Asking the agent for a specific destination
+
+The in-agent `cron` tool takes an optional `delivery` object, so a job created
+in conversation can announce somewhere other than the chat it was asked for:
+
+```json
+{
+  "mode": "channel",
+  "channel_name": "telegram",
+  "channel_id": "-1001234567890",
+  "best_effort": false
+}
+```
+
+`mode` is `origin` (the calling conversation — the default when `delivery` is
+omitted), `channel`, or `none`. `channel_id` follows the same recipient rules
+as above and is validated when the job is saved, so a session key or a
+non-numeric Telegram target fails immediately rather than at the next fire; an
+empty `channel_id` uses the channel's configured default chat. `account_id`,
+`thread_id`, and `best_effort` are optional.
+
+Choosing a channel is an operator action: it needs an interactive CLI or Web
+caller and a `sessionTarget` other than `main`. Asked from a chat channel, the
+tool refuses and the job keeps delivering to that same conversation — a
+participant in one room cannot aim scheduled output at another. Webhook
+delivery and failure destinations stay CLI/Web/RPC-only.
 
 ## Inspect and Run Jobs
 

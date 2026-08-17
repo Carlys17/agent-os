@@ -649,6 +649,15 @@ executes either. It runs on this host as you, unattended, so treat
 or Web caller can create one; the in-agent `cron` tool refuses `job_kind='script'`
 from a channel.
 
+### Announcing to a specific channel
+
+`--announce --channel telegram --to <chat-id>` pins where a job reports, and
+`--account`, `--no-deliver`, `--best-effort`, and `--webhook-url` cover the rest.
+The in-agent `cron` tool now accepts the channel case too, through a `delivery`
+object — also restricted to an interactive CLI or Web caller, so a chat
+participant cannot redirect a job into a room they were never in. See
+[`scheduling.md`](scheduling.md#naming-a-channel-recipient).
+
 ### Letting a cron job run shell-based skills
 
 A cron turn runs under a read-only tool allowlist, so a job that is shown a

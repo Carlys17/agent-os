@@ -75,6 +75,37 @@ Either way, scheduling a script needs an interactive CLI or Web caller — it is
 refused from a chat channel. The bundled `cron-watchers` skill ships scripts for
 RSS feeds, JSON endpoints, and GitHub repos that already follow this contract.
 
+## Where the job announces
+
+By default a job reports back to the conversation it was created in, which is
+what "remind me" means. Pass `delivery` only when the user names a different
+destination:
+
+```
+cron(action="add", schedule={"kind": "cron", "expr": "0 9 * * 1-5"},
+     job_kind="agent_turn", task="Summarize yesterday's incidents.",
+     delivery={"mode": "channel", "channel_name": "telegram",
+               "channel_id": "-1001234567890"})
+```
+
+- `mode="channel"` needs `channel_name` (the adapter key: `telegram`, `slack`,
+  `discord`). `channel_id` is the id the *provider* uses — a Telegram numeric
+  chat id, negative for a group, or `@username`. It is never an AgentOS session
+  key like `agent:main:telegram:direct:1245463966`; the tool rejects those with
+  the id you probably meant. Leave `channel_id` empty to use the channel's
+  configured default chat. `account_id` and `thread_id` are optional, and
+  `best_effort: true` keeps a failed delivery from failing the run.
+- `mode="none"` schedules a job that announces nowhere.
+- `mode="origin"` (or omitting `delivery`) keeps the calling conversation.
+
+Choosing a channel requires an interactive CLI or Web caller and a
+`session_target` other than `main` — from a chat channel the job always
+delivers back to that same conversation. Do not invent a chat id: if the user
+has not given one, ask, or leave it empty for the channel default.
+
+The `add` response echoes the resolved `delivery`, so confirm the destination
+from that rather than assuming it.
+
 Other actions:
 
 - List: `cron(action="list")`.
