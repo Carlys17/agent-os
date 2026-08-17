@@ -708,15 +708,26 @@ async def _resolve_session_node(storage: Any, key: str) -> Any:
 
     sessions = await storage.list_sessions(limit=500)
     matches: list[Any] = []
+    exact: list[Any] = []
     for candidate in sessions:
         values = [
-            getattr(candidate, "session_key", ""),
-            getattr(candidate, "session_id", ""),
-            getattr(candidate, "display_name", "") or "",
-            getattr(candidate, "derived_title", "") or "",
+            str(getattr(candidate, "session_key", "") or ""),
+            str(getattr(candidate, "session_id", "") or ""),
+            str(getattr(candidate, "display_name", "") or ""),
+            str(getattr(candidate, "derived_title", "") or ""),
         ]
-        if any(str(value) == key or str(value).startswith(key) for value in values if value):
+        present = [value for value in values if value]
+        if any(value == key for value in present):
+            exact.append(candidate)
             matches.append(candidate)
+        elif any(value.startswith(key) for value in present):
+            matches.append(candidate)
+
+    # An exact hit wins over prefix hits. Display names are user-chosen now
+    # (``sessions.rename``), so a session named e.g. "agent" would otherwise
+    # collide by prefix with every session key and make the lookup ambiguous.
+    if len(exact) == 1:
+        return exact[0]
 
     if len(matches) == 1:
         return matches[0]
@@ -1494,7 +1505,7 @@ async def _handle_sessions_patch(params: dict | None, ctx: RpcContext) -> dict:
     return {"key": key, "updated": updated_fields}
 
 
-@_d.method("sessions.rename")
+@_d.method("sessions.rename", CONTROL_AND_CHANNEL)
 async def _handle_sessions_rename(params: dict | None, ctx: RpcContext) -> dict:
     """Set (or clear) a session's human-readable name.
 

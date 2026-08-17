@@ -387,14 +387,13 @@ export function SessionsPage() {
   // ── Rename mutation (inline click-to-edit on a row) ───────────────────────
   const renameMutation = useMutation({
     mutationFn: (vars: { key: string; name: string }) =>
-      rpc.call('sessions.rename', { key: vars.key, name: vars.name }),
-    onSuccess: (_data, vars) => {
-      toast.success(
-        vars.name.trim() ? t('sessions.toastRenamed') : t('sessions.toastRenameCleared'),
-        {
-          id: 'sessions-rename',
-        },
-      )
+      rpc.call<{ name?: string | null }>('sessions.rename', { key: vars.key, name: vars.name }),
+    onSuccess: (data) => {
+      // The gateway normalizes (and may clear) the name, so report what it
+      // actually stored rather than what was typed.
+      toast.success(data?.name ? t('sessions.toastRenamed') : t('sessions.toastRenameCleared'), {
+        id: 'sessions-rename',
+      })
       setEditingKey(null)
       invalidate()
     },
@@ -776,7 +775,7 @@ export function SessionsPage() {
                               {key}
                             </button>
                           </div>
-                          {editingKey === key ? (
+                          {key && editingKey === key ? (
                             <form
                               className="sess-rename"
                               onSubmit={(e) => {
@@ -791,7 +790,6 @@ export function SessionsPage() {
                                 maxLength={SESSION_NAME_MAX}
                                 placeholder={t('sessions.renamePlaceholder')}
                                 aria-label={t('sessions.renameInput', { key })}
-                                disabled={renameMutation.isPending}
                                 onChange={(e) => setNameDraft(e.target.value)}
                                 onKeyDown={(e) => {
                                   if (e.key === 'Escape') setEditingKey(null)
@@ -800,7 +798,7 @@ export function SessionsPage() {
                               />
                               <span className="sess-rename__hint">{t('sessions.renameHint')}</span>
                             </form>
-                          ) : (
+                          ) : key ? (
                             <button
                               type="button"
                               className={`sess-name${name ? '' : ' sess-name--empty'}`}
@@ -811,7 +809,7 @@ export function SessionsPage() {
                               <PencilIcon aria-hidden="true" />
                               <span>{name || t('sessions.renamePlaceholder')}</span>
                             </button>
-                          )}
+                          ) : null}
                           <div className="sess-key-content">
                             {sub ? (
                               <span

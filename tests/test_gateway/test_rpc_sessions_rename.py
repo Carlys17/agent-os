@@ -10,6 +10,10 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
+from agentos.channels.command_replies import format_channel_success_reply
+from agentos.engine.commands import DEFAULT_REGISTRY, Surface
+from agentos.gateway.access import CHANNEL_RPC_METHODS, ConnectionSurface
+from agentos.gateway.auth import AccessContext
 from agentos.gateway.config import GatewayConfig
 from agentos.gateway.rpc import RpcContext, get_dispatcher
 from agentos.session.manager import SessionManager
@@ -160,3 +164,76 @@ async def test_list_exposes_the_derived_title(dispatcher, manager):
     assert row["display_name"] == "api-refactor"
     assert row["derived_title"] == "api-refactor"
     assert row["derivedTitle"] == "api-refactor"
+
+
+# ── Channel surface ──────────────────────────────────────────────────────────
+
+
+def test_every_channel_command_method_is_allowlisted() -> None:
+    """A CHANNEL `CommandDef` whose RPC is not allowlisted is dead on arrival.
+
+    `validate_classification` only compares handler audiences to the
+    allowlist; nothing checked the third leg — the command registry — which is
+    how `/rename` shipped as a channel command the gateway then refused.
+    """
+    methods = {
+        command.rpc_method
+        for command in DEFAULT_REGISTRY.for_surface(Surface.CHANNEL)
+        if command.rpc_method
+    }
+
+    assert methods <= CHANNEL_RPC_METHODS, sorted(methods - CHANNEL_RPC_METHODS)
+    assert "sessions.rename" in methods
+
+
+@pytest.mark.asyncio
+async def test_rename_is_reachable_from_the_channel_surface(dispatcher, manager):
+    await manager.create(KEY)
+    ctx = RpcContext(
+        conn_id="test-conn",
+        config=GatewayConfig(),
+        access=AccessContext(
+            surface=ConnectionSurface.CHANNEL,
+            admitted=True,
+            credential_verified=True,
+        ),
+    )
+    ctx.session_manager = manager
+
+    res = await dispatcher.dispatch("r1", "sessions.rename", {"key": KEY, "name": "bug-46"}, ctx)
+
+    assert res.ok is True, res.error
+    stored = await manager.get_session(KEY)
+    assert stored is not None
+    assert stored.display_name == "bug-46"
+
+
+def test_channel_reply_reports_the_stored_name() -> None:
+    reply = format_channel_success_reply(
+        name="rename", method="sessions.rename", payload={"key": KEY, "name": "bug 46"}
+    )
+    assert reply == "Session renamed to bug 46."
+
+    cleared = format_channel_success_reply(
+        name="rename", method="sessions.rename", payload={"key": KEY, "name": None}
+    )
+    assert cleared == "Cleared the session name."
+
+
+# ── Resolution ───────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_an_exact_name_wins_over_session_key_prefix_matches(dispatcher, manager):
+    """A user is free to name a session "agent", which prefix-matches every key."""
+    await manager.create(KEY)
+    await manager.create("agent:main:cli:other")
+    ctx = make_ctx(manager)
+    await _rename(dispatcher, ctx, KEY, "agent")
+
+    result = await _rename(dispatcher, ctx, "agent", "agent-renamed")
+
+    assert result["key"] == KEY
+    other = await manager.get_session("agent:main:cli:other")
+    assert other is not None
+    assert other.display_name is None

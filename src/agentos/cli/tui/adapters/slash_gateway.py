@@ -21,7 +21,7 @@ from agentos.cli.chat.turn import TurnResult
 from agentos.cli.tui.adapters.commands import render_help_table
 from agentos.cli.tui.backend.contracts import TuiOutputHandle
 from agentos.cli.tui.terminal.prompt import sync_session_chrome_from_state
-from agentos.cli.ui import ACCENT, ACCENT_HEADER, console, error_panel
+from agentos.cli.ui import ACCENT, ACCENT_HEADER, console, error_panel, markup_escape
 from agentos.engine.commands import Surface
 
 _CLI_ALLOWED_FILE_MIMES = _input_bridge.CLI_ALLOWED_FILE_MIMES
@@ -240,14 +240,14 @@ async def handle_gateway_slash_command(
         state.display_name = resolved or None
         sync_session_chrome_from_state(state)
         if state.display_name:
-            console.print(f"[green]Renamed session to:[/green] {state.display_name}")
+            console.print(f"[green]Renamed session to:[/green] {markup_escape(state.display_name)}")
         else:
             console.print("[green]Cleared the session name.[/green]")
         return True
 
     if cmd in {"/status", "/session"}:
         title_line = (
-            f"[{ACCENT}]title[/] [dim]{state.display_name}[/dim]\n"
+            f"[{ACCENT}]title[/] [dim]{markup_escape(state.display_name)}[/dim]\n"
             if state.display_name
             else ""
         )

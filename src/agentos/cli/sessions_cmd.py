@@ -15,13 +15,16 @@ from rich.table import Table
 from agentos.cli.chat.session_state import messages_to_markdown
 from agentos.cli.gateway_rpc import run_gateway_sync
 from agentos.cli.output import print_json
-from agentos.cli.ui import ACCENT, ACCENT_HEADER, console, error_panel
+from agentos.cli.ui import ACCENT, ACCENT_HEADER, console, error_panel, markup_escape
 from agentos.cli.url_utils import normalize_gateway_url
 
 app = typer.Typer(help="Manage chat sessions.")
 
 _CLIENT_UNAVAILABLE = object()
 _ACTION_FAILED = object()
+
+# Rows pulled before a client-side --search filter runs.
+_SEARCH_FETCH_LIMIT = 500
 
 
 def _resolved_key(payload: dict[str, Any], fallback: str) -> str:
@@ -160,9 +163,14 @@ def sessions_list(
 ) -> None:
     """List recent sessions."""
     since_dt = _parse_since(since)
+    # Filtering happens client-side, so a search over the default 50 most
+    # recent rows would miss the older session the user named months ago —
+    # the exact case renaming exists for. Widen the fetch when searching
+    # unless the caller pinned a larger --limit themselves.
+    fetch_limit = max(limit, _SEARCH_FETCH_LIMIT) if (search or "").strip() else limit
 
     async def _run(client):
-        return await client.list_sessions(limit=limit)
+        return await client.list_sessions(limit=fetch_limit)
 
     result = run_gateway_sync(_run, json_output=json_output)
     raw_rows = result.get("sessions", []) if isinstance(result, dict) else []
@@ -174,6 +182,10 @@ def sessions_list(
         since=since_dt,
         search=search,
     )
+    # --limit still bounds what the user sees; the widened fetch above only
+    # widens what search looks at.
+    if fetch_limit != limit:
+        rows = rows[:limit]
     if json_output:
         payload = dict(result) if isinstance(result, dict) else {}
         payload["sessions"] = rows
@@ -191,7 +203,9 @@ def sessions_list(
     for row in rows:
         table.add_row(
             str(row.get("key") or ""),
-            _row_name(row),
+            # Table cells are markup-parsed too: one session named "[/]" would
+            # otherwise take down the whole listing.
+            markup_escape(_row_name(row)),
             str(row.get("agent_id") or row.get("agentId") or ""),
             str(row.get("status") or ""),
             str(row.get("model") or ""),
@@ -303,7 +317,10 @@ def sessions_rename(
     key = payload.get("key") or session_id
     new_name = payload.get("name") or payload.get("displayName")
     if new_name:
-        console.print(f"Renamed session {key!r} to [{ACCENT}]{new_name}[/]")
+        # Names are user-typed and Rich parses markup in everything it prints,
+        # so escape before interpolating — an unbalanced "[/]" in a name would
+        # otherwise raise MarkupError instead of printing.
+        console.print(f"Renamed session {key!r} to [{ACCENT}]{markup_escape(new_name)}[/]")
     else:
         console.print(f"Cleared the custom name for session {key!r}")
 

@@ -131,3 +131,30 @@ async def test_standalone_rename_without_a_session_manager_is_a_no_op() -> None:
 
     assert handled is True
     assert context.state.display_name == "kept"
+
+
+@pytest.mark.asyncio
+async def test_a_name_with_rich_markup_does_not_break_the_confirmation() -> None:
+    """`console.print` parses markup, so an unbalanced "[/]" used to raise."""
+    client = _RenameClient(stored="oops [/] [red]name")
+    context = _gateway_context(client)
+
+    handled = await handle_gateway_slash_command("/rename oops [/] [red]name", context)
+
+    assert handled is True
+    assert context.state.display_name == "oops [/] [red]name"
+
+    # /status renders the same name through a second markup path.
+    assert await handle_gateway_slash_command("/status", context) is True
+
+
+@pytest.mark.asyncio
+async def test_standalone_name_with_rich_markup_does_not_break_output() -> None:
+    manager = _StandaloneManager()
+    context = _standalone_context(manager)
+
+    handled = await handle_standalone_slash_command("/rename oops [/] name", context)
+
+    assert handled is True
+    assert context.state.display_name == "oops [/] name"
+    assert await handle_standalone_slash_command("/status", context) is True

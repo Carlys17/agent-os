@@ -21,12 +21,14 @@ runner = CliRunner()
 class _FakeClient:
     def __init__(self) -> None:
         self.rename_calls: list[tuple[str, str | None]] = []
+        self.list_limits: list[int] = []
 
     async def rename_session(self, key: str, name: str | None) -> dict[str, Any]:
         self.rename_calls.append((key, name))
         return {"key": key, "name": name, "displayName": name, "previousName": None}
 
     async def list_sessions(self, limit: int = 50) -> dict[str, Any]:
+        self.list_limits.append(limit)
         return {"sessions": _ROWS, "count": len(_ROWS)}
 
 
@@ -95,6 +97,45 @@ def test_list_search_matches_the_custom_name(client: _FakeClient) -> None:
     assert result.exit_code == 0
     assert "agent:main:cli:aaa" in result.stdout
     assert "agent:main:cli:bbb" not in result.stdout
+
+
+def test_a_name_containing_rich_markup_does_not_break_rendering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Names are user-typed and Rich parses markup in everything it prints.
+
+    An unbalanced "[/]" used to raise MarkupError, so one poisoned session
+    took down the whole listing — including the rename command needed to undo
+    it.
+    """
+    poisoned = [{"key": "agent:main:cli:aaa", "display_name": "oops [/] [red]name"}]
+
+    class _Poisoned(_FakeClient):
+        async def list_sessions(self, limit: int = 50) -> dict[str, Any]:
+            return {"sessions": poisoned, "count": 1}
+
+    fake = _Poisoned()
+    monkeypatch.setattr(
+        sessions_cmd, "run_gateway_sync", lambda action, **_kw: asyncio.run(action(fake))
+    )
+
+    listed = runner.invoke(sessions_cmd.app, ["list"])
+    assert listed.exit_code == 0, listed.output
+
+    renamed = runner.invoke(sessions_cmd.app, ["rename", "agent:main:cli:aaa", "oops [/] name"])
+    assert renamed.exit_code == 0, renamed.output
+
+
+def test_search_widens_the_fetch_beyond_the_display_limit(client: _FakeClient) -> None:
+    """Filtering is client-side, so a narrow fetch would hide older matches."""
+    result = runner.invoke(sessions_cmd.app, ["list", "-n", "5", "--search", "refactor", "--json"])
+
+    assert result.exit_code == 0
+    assert client.list_limits == [sessions_cmd._SEARCH_FETCH_LIMIT]
+
+    # Without --search the caller's limit is honoured verbatim.
+    runner.invoke(sessions_cmd.app, ["list", "-n", "5"])
+    assert client.list_limits[-1] == 5
 
 
 def test_row_name_prefers_display_name_then_derived_title() -> None:

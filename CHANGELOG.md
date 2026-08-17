@@ -20,8 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   control characters are dropped, the value is capped at 120 characters, and an
   empty name clears the label so the derived title takes over. Because renames
   resolve a target the same way `/resume` does, a session can be renamed by its
-  current name instead of its full key. No migration is required — the
-  `display_name` column already existed. (#248)
+  current name instead of its full key — an exact name now beats a prefix
+  match, so naming a session `agent` no longer collides with every session
+  key. `--search` widens its fetch beyond `--limit` so it can reach older
+  sessions, and names are Rich-escaped everywhere the CLI prints them, so a
+  name containing `[/]` can no longer break `sessions list`. No migration is
+  required — the `display_name` column already existed. (#248)
 
 ## [2026.8.15] - 2026-08-15
 

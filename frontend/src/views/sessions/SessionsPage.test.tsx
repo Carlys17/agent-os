@@ -346,6 +346,23 @@ describe('SessionsPage', () => {
     expect(mockRpc.call).not.toHaveBeenCalledWith('sessions.rename', expect.anything())
   })
 
+  it('a failed rename closes the editor and surfaces the error', async () => {
+    wireRpc({ renameReject: true })
+    renderPage()
+    await screen.findByRole('button', { name: 'agent:main:chat:aaa' })
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session agent:main:chat:aaa' }))
+    const input = await screen.findByRole('textbox', {
+      name: 'Session name for agent:main:chat:aaa',
+    })
+    fireEvent.change(input, { target: { value: 'api-refactor' } })
+    fireEvent.submit(input)
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Rename session agent:main:chat:aaa' }),
+      ).toBeInTheDocument(),
+    )
+  })
+
   it('cancelling the delete confirmation does not call sessions.delete', async () => {
     wireRpc()
     renderPage()
