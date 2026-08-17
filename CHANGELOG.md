@@ -8,6 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- The in-agent `cron` tool can name where a job announces. `add` takes an
+  optional `delivery` object — `mode` (`origin`, `channel`, or `none`),
+  `channel_name`, `channel_id`, `account_id`, `thread_id`, and `best_effort` —
+  so "every weekday at 9, post the digest to the ops group" no longer has to be
+  created in the chat that will receive it. Omitting `delivery` keeps the
+  existing behaviour exactly: the job reports back to the calling conversation.
+  The destination is validated when the job is saved rather than when it fires,
+  so an unconfigured channel name, an AgentOS session key passed where the
+  provider's chat id belongs, or a destination paired with a mode that cannot
+  route to it are all refused with an error naming the problem — silently
+  falling back to the calling chat is what made a misdirected job look like a
+  working one. The `add` response echoes the resolved destination, and a clone
+  given a `delivery` is redirected rather than inheriting the source's.
+  Choosing a channel requires an interactive CLI or Web caller and a
+  `session_target` other than `main`; webhook delivery and failure destinations
+  remain CLI-, Web-, and RPC-only. (#310)
 - Sessions can be renamed. A new `sessions.rename` RPC sets (or clears) a
   session's `display_name`, and it is reachable from every surface:
   `agentos sessions rename <id> "<name>"` (`--clear` drops it), `/rename <name>`

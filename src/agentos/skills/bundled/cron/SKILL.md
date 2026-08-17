@@ -75,6 +75,48 @@ Either way, scheduling a script needs an interactive CLI or Web caller — it is
 refused from a chat channel. The bundled `cron-watchers` skill ships scripts for
 RSS feeds, JSON endpoints, and GitHub repos that already follow this contract.
 
+## Where the job announces
+
+By default a job reports back to the conversation it was created in, which is
+what "remind me" means. Pass `delivery` only when the user names a different
+destination:
+
+```
+cron(action="add", schedule={"kind": "cron", "expr": "0 9 * * 1-5"},
+     job_kind="agent_turn", task="Summarize yesterday's incidents.",
+     delivery={"mode": "channel", "channel_name": "telegram",
+               "channel_id": "-1001234567890"})
+```
+
+- `mode="channel"` needs `channel_name`: the name of a channel that is actually
+  configured. That is usually the adapter type (`telegram`, `slack`,
+  `discord`), but an operator may have named the entry something else — where a
+  channel manager is reachable, an unconfigured name is rejected and the error
+  lists the real ones. `channel_id` is the id the *provider* uses — a Telegram
+  numeric chat id, negative for a group, or `@username`. It is never an AgentOS
+  session key like `agent:main:telegram:direct:1245463966`; the tool rejects
+  those with the id you probably meant. Leave `channel_id` empty to use the
+  channel's configured default chat. `thread_id` is optional (Slack only
+  today), and `account_id` is stored but not yet honoured by channel delivery.
+- `mode="none"` schedules a job that announces nowhere.
+- `mode="origin"` (or omitting `delivery`) keeps the calling conversation.
+- `best_effort: true` keeps a failed delivery from failing the run. It applies
+  to any mode.
+
+The destination fields only mean something under `mode="channel"`, so pairing
+one with `mode="origin"` or `mode="none"` is an error rather than a silent
+fallback to the calling chat — if you name a channel, say `mode="channel"`.
+Webhook delivery and failure destinations are not available here; they are
+configured from the CLI, the Web UI, or the cron RPC.
+
+Choosing a channel requires an interactive CLI or Web caller and a
+`session_target` other than `main` — from a chat channel the job always
+delivers back to that same conversation. Do not invent a chat id: if the user
+has not given one, ask, or leave it empty for the channel default.
+
+The `add` response echoes the resolved `delivery`, so confirm the destination
+from that rather than assuming it.
+
 ## Editing an existing job
 
 Never re-create a job to change it. `cron(action="add", ...)` builds a fresh job
@@ -120,6 +162,11 @@ cloning it would be authoring content for somebody else's destination.
 
 `name` sets the display name on both `add` and `update`, so a job can keep a
 short readable name while its prompt is long.
+
+Passing `delivery` alongside `clone_from` redirects the clone: the explicit
+destination wins over the one the source carried. `delivery` is not accepted by
+`action="update"` — an existing job's destination is changed from the CLI, the
+Web UI, or the cron RPC.
 
 Other actions:
 

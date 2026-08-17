@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 import structlog
 
+from agentos.scheduler.delivery_targets import validate_channel_target
 from agentos.scheduler.payloads import (
     AGENT_TURN_KIND,
     REMINDER_KIND,
@@ -98,12 +99,22 @@ class _SchedulerProtocol(Protocol):
 # Setter-injected dependencies (gateway boot calls these)
 _scheduler: _SchedulerProtocol | None = None
 _gateway_config = None
+#: Lazy accessor for the ChannelManager. A callable rather than the manager
+#: itself because channels are constructed after the tools are wired, the same
+#: reason the cron delivery engine takes a ref.
+_channel_manager_ref: Any = None
 
 
 def set_scheduler(engine: _SchedulerProtocol) -> None:
     """Inject the SchedulerEngine (called from gateway boot)."""
     global _scheduler
     _scheduler = engine
+
+
+def set_channel_manager_ref(ref: Any) -> None:
+    """Inject a ``() -> ChannelManager | None`` accessor (from gateway boot)."""
+    global _channel_manager_ref
+    _channel_manager_ref = ref
 
 
 def set_gateway_config(config: object) -> None:
@@ -342,6 +353,165 @@ def _cron_run_item(run: Any) -> dict[str, Any]:
     return item
 
 
+#: Delivery fields the tool accepts, in the snake_case the schema advertises and
+#: the camelCase the RPC wire uses — a model that has seen `channelName` in a
+#: cron listing should not have its call silently ignored.
+_CRON_DELIVERY_ALIASES = {
+    "channel_name": ("channel_name", "channelName", "channel"),
+    "channel_id": ("channel_id", "channelId", "to"),
+    "account_id": ("account_id", "accountId"),
+    "thread_id": ("thread_id", "threadId"),
+}
+
+_CRON_DELIVERY_MODES = ("origin", "channel", "none")
+
+#: Delivery features the CLI, Web UI, and RPC support that this tool does not.
+#: Named explicitly so a model that copies a webhook block out of a cron listing
+#: is told the field is unavailable here, rather than having it silently
+#: dropped and its job announce somewhere else entirely.
+_CRON_DELIVERY_UNSUPPORTED = {
+    "webhook_url": "webhook delivery",
+    "webhookUrl": "webhook delivery",
+    "webhook_token": "webhook delivery",
+    "webhookToken": "webhook delivery",
+    "failure_destination": "a failure destination",
+    "failureDestination": "a failure destination",
+}
+
+
+def _parse_cron_delivery(raw: Any) -> dict[str, Any] | None:
+    """Normalize the tool's ``delivery`` argument, or ``None`` when omitted.
+
+    Returns ``{"mode": ..., "channel_name": ..., ..., "best_effort": bool}``.
+    Shape errors raise ``SafeToolError`` so the model is told what to fix rather
+    than having its stated destination quietly dropped — the whole point of the
+    parameter is that saying "post it to the ops group" has an effect.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SafeToolError("'delivery' must be an object")
+    if not raw:
+        return None
+
+    for key, feature in _CRON_DELIVERY_UNSUPPORTED.items():
+        if raw.get(key):
+            raise SafeToolError(
+                f"delivery.{key} is not available from the cron tool: {feature} "
+                "is configured from the CLI, the Web UI, or the cron RPC"
+            )
+
+    parsed: dict[str, Any] = {}
+    for field, aliases in _CRON_DELIVERY_ALIASES.items():
+        value = ""
+        for alias in aliases:
+            candidate = raw.get(alias)
+            if candidate:
+                value = str(candidate).strip()
+                break
+        parsed[field] = value
+
+    mode = str(raw.get("mode") or "").strip().lower()
+    if not mode:
+        # A model that fills in a recipient without naming a mode means
+        # "send it there"; an otherwise empty object means nothing at all.
+        mode = "channel" if parsed["channel_name"] else "origin"
+    if mode not in _CRON_DELIVERY_MODES:
+        raise SafeToolError(
+            f"delivery.mode must be {', '.join(_CRON_DELIVERY_MODES)} (got '{mode}')"
+        )
+    if mode != "channel":
+        # A destination that mode does not route to goes nowhere. Left to fall
+        # through it would read as "deliver to the caller", quietly discarding
+        # the recipient the user actually named — issue #310's own symptom,
+        # reachable through the parameter meant to fix it. A bare channel_name
+        # was already promoted to mode='channel' above, so the only way to land
+        # here is an explicitly contradictory mode: nothing legitimate is lost
+        # by refusing it.
+        stray = [
+            f
+            for f in ("channel_name", "channel_id", "account_id", "thread_id")
+            if parsed[f]
+        ]
+        if stray:
+            raise SafeToolError(
+                f"delivery.{stray[0]} conflicts with delivery.mode='{mode}' — "
+                "use mode='channel' to deliver to a named channel, or drop the "
+                f"{stray[0]}"
+            )
+    elif not parsed["channel_name"]:
+        raise SafeToolError("delivery.mode='channel' requires delivery.channel_name")
+
+    parsed["mode"] = mode
+    parsed["best_effort"] = bool(raw.get("best_effort") or raw.get("bestEffort") or False)
+    return parsed
+
+
+def _validate_cron_delivery_channel(channel_name: str) -> None:
+    """Reject a channel that no adapter is registered for.
+
+    ``validate_channel_target`` checks the *recipient*'s shape; nothing checked
+    the channel itself, so a plausible-looking typo (``slak``) saved cleanly and
+    then failed every single fire with "no adapter is registered". The model is
+    the most likely source of that name, so the list of real ones is worth
+    spending a few tokens on.
+
+    The name checked is the *configured channel name*, which is usually the
+    adapter type (``telegram``) but is whatever the operator called the entry.
+    Silent when no manager is reachable — in a CLI process without channels
+    this is unknowable, not invalid.
+    """
+    if _channel_manager_ref is None:
+        return
+    try:
+        manager = _channel_manager_ref()
+        if manager is None:
+            return
+        known = [str(name) for name, _ in manager.items()]
+    except Exception:  # noqa: BLE001 - channel manager absent or mid-boot
+        return
+    if channel_name in known:
+        return
+    if not known:
+        # A live manager with nothing in it is a real answer, not a missing one:
+        # no channel delivery can succeed at all.
+        raise SafeToolError(
+            "no channels are configured, so a cron job cannot deliver to one"
+        )
+    raise SafeToolError(
+        f"no channel named '{channel_name}' is configured; "
+        f"available: {', '.join(sorted(known))}"
+    )
+
+
+def _cron_delivery_summary(config: Any) -> dict[str, Any]:
+    """The destination of a saved job, in the same words the tool accepts."""
+    if config is None:
+        return {"mode": "none"}
+    mode = getattr(config, "mode", None)
+    summary: dict[str, Any] = {
+        "mode": getattr(mode, "value", None) or str(mode or "none"),
+    }
+    for field in ("channel_name", "channel_id", "account_id", "thread_id"):
+        value = str(getattr(config, field, "") or "")
+        if value:
+            summary[field] = value
+    if getattr(config, "best_effort", False):
+        summary["best_effort"] = True
+    return summary
+
+
+def _session_storage_or_none() -> Any:
+    """The session store ``infer_delivery`` reads, or ``None`` when unavailable."""
+    try:
+        from agentos.tools.builtin.sessions import _get_session_manager
+
+        mgr = _get_session_manager()
+    except Exception:  # noqa: BLE001 - no session manager wired: inference is optional
+        return None
+    return getattr(mgr, "_storage", mgr)
+
+
 @tool(
     name="cron",
     description=(
@@ -550,6 +720,70 @@ def _cron_run_item(run: Any) -> dict[str, Any]:
                 "tz='UTC' to move a job back to UTC."
             ),
         },
+        "delivery": {
+            "type": "object",
+            "description": (
+                "Where the job announces its result. Omit it and delivery is "
+                "inferred from the calling conversation, which is what a plain "
+                "'remind me' wants. Pass it only when the user names a different "
+                "destination: mode='channel' with channel_name and channel_id "
+                "posts to that chat instead, mode='none' keeps the run silent. "
+                "channel_id is the id the provider uses (a Telegram numeric chat "
+                "id, negative for groups, or @username), never an AgentOS session "
+                "key; leave it empty to use the channel's configured default chat. "
+                "A recipient field without channel_name is an error, not a "
+                "fallback, and webhook delivery and failure destinations are not "
+                "available here. Choosing a channel requires an interactive CLI "
+                "or Web caller and a session_target other than main."
+            ),
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["origin", "channel", "none"],
+                    "description": (
+                        "origin keeps the calling conversation (the default), "
+                        "channel posts to channel_name/channel_id, none disables "
+                        "delivery."
+                    ),
+                },
+                "channel_name": {
+                    "type": "string",
+                    "description": (
+                        "The configured channel's name when mode=channel — usually "
+                        "the adapter type (telegram, slack, discord), but whatever "
+                        "the operator named the entry. An unconfigured name is "
+                        "rejected and the error lists the real ones."
+                    ),
+                },
+                "channel_id": {
+                    "type": "string",
+                    "description": (
+                        "Provider-side recipient when mode=channel. Empty means the "
+                        "channel's configured default chat."
+                    ),
+                },
+                "account_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional account binding for multi-account channels. "
+                        "Stored on the job but not yet honoured by channel delivery."
+                    ),
+                },
+                "thread_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional thread id inside the recipient chat (Slack only today)."
+                    ),
+                },
+                "best_effort": {
+                    "type": "boolean",
+                    "description": (
+                        "When true a delivery failure does not fail the run "
+                        "(default false). Applies to any mode."
+                    ),
+                },
+            },
+        },
     },
     required=["action"],
 )
@@ -571,6 +805,7 @@ async def cron(
     script_args: list[str] | None = None,
     workdir: str = "",
     tz: str = "",
+    delivery: dict[str, Any] | None = None,
     limit: int = _CRON_RUNS_DEFAULT_LIMIT,
 ) -> str:
     if action not in _VALID_CRON_ACTIONS:
@@ -839,20 +1074,69 @@ async def cron(
         if wake_mode not in ("now", "next-heartbeat"):
             raise SafeToolError("wake_mode must be now or next-heartbeat")
 
+        # An explicit destination the user named, as opposed to the calling
+        # conversation the tool otherwise infers.
+        override = _parse_cron_delivery(delivery)
+        # mode='origin' is the inferred destination spelled out, so it must take
+        # the same path as omitting the argument — including the snapshot
+        # fallback below. Only these two modes redirect a job.
+        redirected = override is not None and override["mode"] in ("channel", "none")
+        if override is not None and override["mode"] == "channel":
+            # Redirecting a job away from the conversation it was requested in
+            # is an operator decision for the same reason tool_policy is: a chat
+            # participant must not be able to aim scheduled output at a room
+            # they were never in.
+            caller_kind = getattr(ctx, "caller_kind", None) if ctx is not None else None
+            if caller_kind not in (CallerKind.CLI, CallerKind.WEB):
+                raise SafeToolError(
+                    "delivery.mode='channel' requires an interactive CLI or Web caller; "
+                    "from a chat the job delivers back to the calling conversation"
+                )
+            if session_target == "main":
+                raise SafeToolError(
+                    "delivery.mode='channel' is unavailable for session_target=main; "
+                    "use session_target=isolated"
+                )
+            _validate_cron_delivery_channel(override["channel_name"])
+            try:
+                validate_channel_target(override["channel_name"], override["channel_id"])
+            except ValueError as exc:
+                # Caught at save time on purpose: an unusable recipient is
+                # otherwise only discovered when the job fires.
+                raise SafeToolError(str(exc)) from exc
+
         # A clone keeps the source's destination. Re-inferring it from the
         # calling session is what made a cloned announcement land in the current
         # chat instead of the channel the original reported to. `ws_topic` is
-        # per-job and is re-derived below.
+        # per-job and is re-derived below. An explicit override still wins: the
+        # caller naming a destination outranks the one the source happened to
+        # carry.
         clone_delivery: DeliveryConfig | None = None
         if source_job is not None and getattr(source_job, "delivery", None) is not None:
             clone_delivery = deepcopy(source_job.delivery)
             clone_delivery.ws_topic = ""
 
-        # Auto-detect delivery target from session storage.
-        delivery = None
-        if source_job is not None:
-            delivery = clone_delivery
+        delivery_config: DeliveryConfig | None = None
+
+        if override is not None and override["mode"] == "none":
+            delivery_config = DeliveryConfig(mode=DeliveryMode.NONE)
+        elif override is not None and override["mode"] == "channel":
+            from agentos.scheduler.delivery import infer_delivery
+
+            delivery_config = await infer_delivery(
+                session_storage=_session_storage_or_none(),
+                session_key=caller_session_key,
+                user_overrides={
+                    "channel_name": override["channel_name"],
+                    "channel_id": override["channel_id"],
+                    "account_id": override["account_id"],
+                    "thread_id": override["thread_id"],
+                },
+            )
+        elif source_job is not None:
+            delivery_config = clone_delivery
         elif caller_session_key:
+            # Auto-detect delivery target from session storage.
             try:
                 from agentos.scheduler.delivery import infer_delivery
                 from agentos.tools.builtin.sessions import _get_session_manager
@@ -880,30 +1164,34 @@ async def cron(
                     # Main heartbeat ignores the channel mode (persistence forces
                     # NONE for main) but uses the snapshot to pin the reply target.
                     if inferred.originating_reply_target is not None:
-                        delivery = DeliveryConfig(
+                        delivery_config = DeliveryConfig(
                             mode=DeliveryMode.NONE,
                             originating_reply_target=inferred.originating_reply_target,
                         )
                 else:
-                    delivery = inferred
+                    delivery_config = inferred
             except Exception:
                 pass
 
         # Snapshot fallback: when session storage did not yield a channel-
         # routable target (fresh session before last_channel was written), build
         # one from the live ToolContext so the first cron call still binds.
+        # Skipped when the caller redirected the job — the point of a channel
+        # or none override is that the calling chat is not where this lands.
+        # Skipped for a clone too: it already carries the source's destination.
         if (
-            source_job is None
+            not redirected
+            and source_job is None
             and ctx is not None
             and getattr(ctx, "channel_kind", None)
-            and getattr(delivery, "originating_reply_target", None) is None
+            and getattr(delivery_config, "originating_reply_target", None) is None
         ):
             snapshot = ReplyTargetSnapshot(
                 channel_name=ctx.channel_kind or "",
                 channel_type=ctx.channel_kind or "",
                 to=ctx.channel_id or "",
             )
-            if delivery is None:
+            if delivery_config is None:
                 if session_target == "main":
                     delivery_mode = DeliveryMode.NONE
                     channel_name = ""
@@ -912,18 +1200,24 @@ async def cron(
                     delivery_mode = DeliveryMode.ORIGIN
                     channel_name = ctx.channel_kind or ""
                     channel_id = ctx.channel_id or ""
-                delivery = DeliveryConfig(
+                delivery_config = DeliveryConfig(
                     mode=delivery_mode,
                     channel_name=channel_name,
                     channel_id=channel_id,
                     originating_reply_target=snapshot,
                 )
             else:
-                delivery.originating_reply_target = snapshot
-                if session_target != "main" and delivery.mode == DeliveryMode.NONE:
-                    delivery.mode = DeliveryMode.ORIGIN
-                    delivery.channel_name = ctx.channel_kind or ""
-                    delivery.channel_id = ctx.channel_id or ""
+                delivery_config.originating_reply_target = snapshot
+                if session_target != "main" and delivery_config.mode == DeliveryMode.NONE:
+                    delivery_config.mode = DeliveryMode.ORIGIN
+                    delivery_config.channel_name = ctx.channel_kind or ""
+                    delivery_config.channel_id = ctx.channel_id or ""
+
+        # best_effort is a property of the delivery attempt, not of the
+        # destination, so it applies to whichever config the branches above
+        # settled on — including the inferred one.
+        if override is not None and override["best_effort"] and delivery_config is not None:
+            delivery_config.best_effort = True
 
         normalized_script = normalize_script_value(script)
         normalized_workdir = (workdir or "").strip()
@@ -979,7 +1273,7 @@ async def cron(
                     else (target_session_key or "")
                 ),
                 wake_mode=wake_mode,
-                delivery=delivery,
+                delivery=delivery_config,
                 origin_session_key=caller_session_key,
                 tool_policy=tool_policy,
                 tz=effective_tz,
@@ -1015,6 +1309,10 @@ async def cron(
             "session_target": session_target,
             "wake_mode": wake_mode,
             "tz": effective_tz,
+            # Where this will actually announce. Reported for every add, not
+            # just overridden ones, so "post it to the ops group" can be
+            # confirmed rather than assumed.
+            "delivery": _cron_delivery_summary(job.delivery),
             "status": "scheduled",
         }
         if source_job is not None:
@@ -1023,6 +1321,15 @@ async def cron(
 
     if action == "update":
         assert job_id is not None
+        if delivery:
+            # Repointing a live job is not implemented here, and silently
+            # dropping the argument would leave the job announcing where it
+            # always did while the caller believes it was moved — the discard
+            # this parameter exists to stop.
+            raise SafeToolError(
+                "delivery cannot be changed with action='update'; set it when the "
+                "job is created, or change it from the CLI, the Web UI, or the cron RPC"
+            )
         target_job = await sched.get_job(job_id)
         if target_job is None:
             raise SafeToolError(f"Job not found: {job_id}")

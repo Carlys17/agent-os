@@ -823,3 +823,121 @@ async def test_enabling_a_paused_job_actually_resumes_it(tmp_path: Path) -> None
     assert stored.enabled is True
     assert stored.status.value == "pending"
     assert payload["job"]["status"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# clone x explicit delivery
+#
+# Two features that both decide where a job announces landed independently:
+# clone inherits the source's destination, and `delivery` names one outright.
+# These pin which wins, because the failure mode is silent — a job that reports
+# to the wrong room looks identical to one that reports to the right one until
+# it fires.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_clone_without_a_delivery_argument_keeps_the_source_destination(
+    tmp_path: Path,
+) -> None:
+    store, sched = await _open(tmp_path)
+    try:
+        job = await _seed_agent_turn(sched)
+        payload = await _call(
+            sched,
+            _cli_ctx(),
+            action="add",
+            clone_from=job.id,
+            task="Summarize yesterday's incidents",
+        )
+        clone = await sched.get_job(payload["job_id"])
+    finally:
+        await store.close()
+
+    assert clone is not None and clone.delivery is not None
+    assert clone.delivery.mode == DeliveryMode.CHANNEL
+    assert clone.delivery.channel_id == "-100999"
+    assert payload["delivery"]["channel_id"] == "-100999"
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_delivery_redirects_the_clone_away_from_the_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        control_mod,
+        "_channel_manager_ref",
+        lambda: type("_M", (), {"channels": {"telegram": object()}})(),
+    )
+    store, sched = await _open(tmp_path)
+    try:
+        job = await _seed_agent_turn(sched)
+        payload = await _call(
+            sched,
+            _cli_ctx(),
+            action="add",
+            clone_from=job.id,
+            delivery={
+                "mode": "channel",
+                "channel_name": "telegram",
+                "channel_id": "-100777",
+            },
+        )
+        clone = await sched.get_job(payload["job_id"])
+        source = await sched.get_job(job.id)
+    finally:
+        await store.close()
+
+    assert clone is not None and clone.delivery is not None
+    assert clone.delivery.channel_id == "-100777"
+    assert payload["delivery"]["channel_id"] == "-100777"
+    # The source is untouched by a clone that was redirected.
+    assert source is not None and source.delivery is not None
+    assert source.delivery.channel_id == "-100999"
+
+
+@pytest.mark.asyncio
+async def test_delivery_none_silences_a_clone_that_inherited_a_channel(
+    tmp_path: Path,
+) -> None:
+    store, sched = await _open(tmp_path)
+    try:
+        job = await _seed_agent_turn(sched)
+        payload = await _call(
+            sched,
+            _cli_ctx(),
+            action="add",
+            clone_from=job.id,
+            delivery={"mode": "none"},
+        )
+        clone = await sched.get_job(payload["job_id"])
+    finally:
+        await store.close()
+
+    assert clone is not None and clone.delivery is not None
+    assert clone.delivery.mode == DeliveryMode.NONE
+    assert clone.delivery.channel_id == ""
+
+
+@pytest.mark.asyncio
+async def test_update_refuses_delivery_rather_than_dropping_it(tmp_path: Path) -> None:
+    """Accepting and ignoring it would report success while the job stayed put."""
+    store, sched = await _open(tmp_path)
+    try:
+        job = await _seed_agent_turn(sched)
+        with pytest.raises(ToolError) as excinfo:
+            await _call(
+                sched,
+                _cli_ctx(),
+                action="update",
+                job_id=job.id,
+                delivery={"mode": "none"},
+            )
+        stored = await sched.get_job(job.id)
+    finally:
+        await store.close()
+
+    assert "delivery cannot be changed" in str(excinfo.value)
+    assert stored is not None and stored.delivery is not None
+    assert stored.delivery.channel_id == "-100999"

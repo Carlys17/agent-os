@@ -2017,6 +2017,13 @@ async def start_gateway_server(
     # Lazy ref for channel_manager — cron handler captures it via closure,
     # populated after channel_manager is constructed below.
     _cm_holder: list = [None]
+
+    # The cron tool checks a requested delivery channel against the configured
+    # ones, so a model cannot save a job aimed at a channel that does not exist.
+    from agentos.tools.builtin.control import set_channel_manager_ref
+
+    set_channel_manager_ref(lambda: _cm_holder[0])
+
     from agentos.scheduler.heartbeat import (
         HeartbeatConfigWatcher,
         HeartbeatRunner,

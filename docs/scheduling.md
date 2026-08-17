@@ -244,7 +244,8 @@ secrets do not land in shell history.
 
 ### Naming a channel recipient
 
-Channel delivery is configured from the Web UI or the RPC API, and its
+Channel delivery is configured from the Web UI, the RPC API, or the in-agent
+`cron` tool (below), and its
 **Recipient** is the id the *provider* uses — a Telegram chat id
 (`1245463966`, negative for a group) or `@username`, a Slack channel id. It is
 not an AgentOS session key: `agent:main:telegram:direct:1245463966` names a
@@ -256,6 +257,47 @@ whether the chat exists before storing it. Where the recipients are known —
 Telegram, whose pairing store lists every chat the bot may talk to — the Web UI
 offers them as a dropdown, with an `Enter manually…` escape hatch for a group
 chat that is not in `group_chat_ids`.
+
+### Asking the agent for a specific destination
+
+The in-agent `cron` tool takes an optional `delivery` object, so a job created
+in conversation can announce somewhere other than the chat it was asked for:
+
+```json
+{
+  "mode": "channel",
+  "channel_name": "telegram",
+  "channel_id": "-1001234567890",
+  "best_effort": false
+}
+```
+
+`mode` is `origin` (the calling conversation — identical to omitting
+`delivery`), `channel`, or `none`. `channel_id` follows the same recipient
+rules as above and is validated when the job is saved, so a session key or a
+non-numeric Telegram target fails immediately rather than at the next fire; an
+empty `channel_id` uses the channel's configured default chat. `channel_name`
+is checked against the configured channels, so a typo cannot be saved — note
+that it is the entry's *name*, which is the adapter type unless the operator
+renamed it. A destination field paired with `mode='origin'` or `mode='none'` is
+rejected rather than quietly falling back to the caller. `best_effort` applies
+to any mode.
+
+Unlike the Web UI, the tool does not probe the adapter to confirm the chat
+exists, and `account_id` is accepted but has no effect on channel delivery
+today. Webhook delivery and failure destinations are refused outright here —
+they stay CLI/Web/RPC-only, so an agent cannot be talked into POSTing job
+output at an arbitrary URL.
+
+`mode='channel'` needs an interactive CLI or Web caller and a `sessionTarget`
+other than `main`. Asked from a chat channel it is refused and the job keeps
+delivering to that same conversation, so a participant in one room cannot aim
+scheduled output at another. Note that this gate is the same strength as the
+one on `--elevated` and script jobs: `callerKind` says the request entered
+through the gateway, not that a human approved it. Inside a Web or CLI session
+the agent can set it without a confirmation step, so untrusted content the
+agent reads can in principle steer the destination — the `delivery` block
+echoed in the `add` response is there to be checked.
 
 ## Inspect and Run Jobs
 
@@ -333,6 +375,14 @@ alongside; the source keeps running:
 ```json
 {"action": "add", "clone_from": "<job-id>", "task": "Summarize yesterday's incidents"}
 ```
+
+Delivery is one of the settings a clone inherits, so a clone announces wherever
+its source did unless it is given a `delivery` of its own — passing one
+redirects the clone and leaves the source alone. `update` does not take
+`delivery`: it is refused rather than accepted and ignored, since a job that
+kept reporting to its old destination while the caller was told the edit
+succeeded is the failure this argument exists to prevent. Repoint a live job
+from the CLI, the Web UI, or the `cron.update` RPC.
 
 Both paths keep the operator gates. A job carrying a script or
 `tool_policy.elevated` can only be cloned or updated by an interactive CLI or
