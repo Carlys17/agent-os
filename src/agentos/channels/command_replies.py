@@ -82,6 +82,11 @@ def format_channel_success_reply(*, name: str, method: str, payload: Any) -> str
         return _format_memory(payload)
     if method == "models.list":
         return _format_models(payload)
+    if method == "sessions.rename" and isinstance(payload, dict):
+        renamed = payload.get("name")
+        if renamed:
+            return f"Session renamed to {renamed}."
+        return "Cleared the session name."
     if method == "sessions.reset" and isinstance(payload, dict) and payload.get("reset"):
         return "Started a new chat session." if name == "new" else "Conversation context reset."
     if method == "skills.list":

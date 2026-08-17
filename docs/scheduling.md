@@ -350,6 +350,49 @@ agentos cron remove <job-id> --yes
 Primary delivery destinations are not patched in place from the CLI. Remove and
 re-add a job when the primary channel or webhook destination needs to change.
 
+### Editing and cloning a job from chat
+
+The in-agent `cron` tool edits jobs the same way, so "change that reminder to
+7:30" does not have to become a delete-and-recreate — which would reset the
+job's kind, timezone, tool policy, and delivery target to defaults:
+
+```json
+{"action": "get",    "job_id": "<job-id>"}
+{"action": "update", "job_id": "<job-id>", "task": "Summarize yesterday's PRs"}
+{"action": "update", "job_id": "<job-id>", "schedule": {"kind": "cron", "expr": "30 7 * * 1-5"}}
+{"action": "update", "job_id": "<job-id>", "enabled": false}
+```
+
+`action="get"` returns the full record — kind, timezone, schedule, session
+target, delivery, tool policy, wake mode, timeout, script fields — which
+`action="list"` does not. `action="update"` patches only the keys it is given
+and keeps the job's id and everything else.
+
+Deriving a second job from an existing one is `clone_from` on `add`. The clone
+inherits every setting of the source and overrides only what is passed
+alongside; the source keeps running:
+
+```json
+{"action": "add", "clone_from": "<job-id>", "task": "Summarize yesterday's incidents"}
+```
+
+Delivery is one of the settings a clone inherits, so a clone announces wherever
+its source did unless it is given a `delivery` of its own — passing one
+redirects the clone and leaves the source alone. `update` does not take
+`delivery`: it is refused rather than accepted and ignored, since a job that
+kept reporting to its old destination while the caller was told the edit
+succeeded is the failure this argument exists to prevent. Repoint a live job
+from the CLI, the Web UI, or the `cron.update` RPC.
+
+Both paths keep the operator gates. A job carrying a script or
+`tool_policy.elevated` can only be cloned or updated by an interactive CLI or
+Web caller. So can a job whose delivery points somewhere the calling session
+cannot post — another channel, or a webhook — because rewriting its text or
+cloning it would put the caller's words on somebody else's destination. A
+webhook's URL and token are never disclosed by `action="get"`: it reports the
+host plus `webhook_url_set` / `webhook_token_set`. Cloning a one-shot `at` job
+requires an explicit new schedule, and a clone always starts enabled.
+
 ## Troubleshooting
 
 Check the gateway and job state:

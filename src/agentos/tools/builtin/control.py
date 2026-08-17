@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import Any, Protocol
 
 import structlog
 
 from agentos.scheduler.delivery_targets import validate_channel_target
 from agentos.scheduler.payloads import (
+    AGENT_TURN_KIND,
     REMINDER_KIND,
     SCRIPT_KIND,
     SYSTEM_EVENT_KIND,
@@ -17,6 +19,11 @@ from agentos.scheduler.payloads import (
     make_script_payload,
     make_system_event_payload,
     payload_agent_id,
+    payload_args,
+    payload_kind,
+    payload_script,
+    payload_text,
+    payload_workdir,
 )
 from agentos.scheduler.prompt_safety import scan_cron_prompt as _scan_cron_prompt
 from agentos.scheduler.schedule_normalizer import coerce_schedule_from_params
@@ -33,7 +40,9 @@ from agentos.tools.types import SafeToolError, ToolError
 
 log = structlog.get_logger(__name__)
 
-_VALID_CRON_ACTIONS = ("list", "add", "remove", "run", "runs")
+_VALID_CRON_ACTIONS = ("list", "add", "get", "update", "remove", "run", "runs")
+_VALID_JOB_KINDS = (REMINDER_KIND, SYSTEM_EVENT_KIND, AGENT_TURN_KIND, SCRIPT_KIND)
+_VALID_SESSION_TARGETS = ("main", "isolated", "current", "session")
 
 # Run history is the only record of what a script job printed, and a watcher's
 # stdout can be arbitrarily long. These bounds keep "what did it do last night?"
@@ -75,6 +84,10 @@ class _SchedulerProtocol(Protocol):
     async def update_job(self, job_id: str, **patch: Any) -> Any: ...
 
     async def get_job(self, job_id: str) -> Any | None: ...
+
+    async def pause_job(self, job_id: str) -> Any | None: ...
+
+    async def resume_job(self, job_id: str) -> Any | None: ...
 
     async def remove_job(self, job_id: str) -> bool: ...
 
@@ -154,6 +167,162 @@ def _cron_job_agent_id(job: Any) -> str:
     """Return the profile that owns a scheduled job."""
     payload = getattr(job, "payload", None)
     return payload_agent_id(payload if isinstance(payload, dict) else None, "main")
+
+
+def _operator_caller(ctx: Any) -> bool:
+    """True when the call comes from an interactive CLI or Web session.
+
+    Scripts and elevated tool policies hand an unattended job a real shell, so
+    every path that creates, inherits, or edits one is gated on the same answer.
+    """
+    from agentos.tools.types import CallerKind
+
+    caller_kind = getattr(ctx, "caller_kind", None) if ctx is not None else None
+    return caller_kind in (CallerKind.CLI, CallerKind.WEB)
+
+
+def _enum_value(value: Any, default: str = "") -> str:
+    return str(getattr(value, "value", value) or default)
+
+
+def _webhook_origin(url: str) -> str:
+    """Scheme + host of a webhook URL, without the secret-bearing path.
+
+    A Slack/Discord/Teams webhook URL *is* the credential — the path is the
+    secret. The model only needs to know where a job reports, so it gets the
+    host and nothing that would let it re-post there.
+    """
+    if "://" not in url:
+        return url.split("/", 1)[0]
+    scheme, rest = url.split("://", 1)
+    return f"{scheme}://{rest.split('/', 1)[0]}"
+
+
+def _cron_delivery_view(delivery: Any) -> dict[str, Any]:
+    """Shape a job's delivery routing for the model.
+
+    A webhook's URL and token are credentials: their presence is reported and
+    the host is named so a destination is recognisable, but nothing that could
+    be replayed is disclosed.
+    """
+    if delivery is None:
+        return {"mode": "none"}
+    view: dict[str, Any] = {"mode": _enum_value(getattr(delivery, "mode", ""), "none")}
+    for field in ("channel_name", "channel_id", "account_id", "thread_id"):
+        value = str(getattr(delivery, field, "") or "")
+        if value:
+            view[field] = value
+    webhook_url = str(getattr(delivery, "webhook_url", "") or "")
+    if webhook_url:
+        view["webhook_host"] = _webhook_origin(webhook_url)
+        view["webhook_url_set"] = True
+    if getattr(delivery, "webhook_token", ""):
+        view["webhook_token_set"] = True
+    if getattr(delivery, "best_effort", False):
+        view["best_effort"] = True
+    failure = getattr(delivery, "failure_destination", None)
+    if failure is not None:
+        view["failure_destination"] = _cron_delivery_view(failure)
+    return view
+
+
+def _delivery_targets_caller(delivery: Any, ctx: Any) -> bool:
+    """True when a job's destination is one the caller can already write to.
+
+    Inheriting or keeping a destination is a routing grant, not just a setting:
+    without this, a channel user could clone an announcement job and have their
+    own text delivered to the channel — or through the webhook credential — the
+    original reported to. Operators are exempt; everyone else may only author
+    content for the chat they are speaking in.
+    """
+    if delivery is None:
+        return True
+    if _enum_value(getattr(delivery, "mode", ""), "none") == DeliveryMode.WEBHOOK.value:
+        return False
+    if getattr(delivery, "webhook_url", "") or getattr(delivery, "webhook_token", ""):
+        return False
+    failure = getattr(delivery, "failure_destination", None)
+    if failure is not None and not _delivery_targets_caller(failure, ctx):
+        return False
+
+    caller_channel = str(getattr(ctx, "channel_kind", "") or "") if ctx is not None else ""
+    caller_id = str(getattr(ctx, "channel_id", "") or "") if ctx is not None else ""
+    targets = [
+        (
+            str(getattr(delivery, "channel_name", "") or ""),
+            str(getattr(delivery, "channel_id", "") or ""),
+        )
+    ]
+    snapshot = getattr(delivery, "originating_reply_target", None)
+    if snapshot is not None:
+        targets.append(
+            (
+                str(getattr(snapshot, "channel_name", "") or ""),
+                str(getattr(snapshot, "to", "") or ""),
+            )
+        )
+    for channel_name, channel_id in targets:
+        if not channel_name and not channel_id:
+            continue
+        if channel_name != caller_channel or channel_id != caller_id:
+            return False
+    return True
+
+
+def _cron_job_view(job: Any) -> dict[str, Any]:
+    """Every setting the model needs to describe a job or derive one from it.
+
+    ``action=list`` deliberately stays thin; this is the full record, so a
+    "clone it but change the prompt" request can be answered by reading the
+    source rather than guessing at defaults.
+    """
+    payload = job.payload if isinstance(getattr(job, "payload", None), dict) else {}
+    session_target = getattr(job, "session_target", "")
+    kind = payload_kind(payload, session_target)
+    next_run_at = getattr(job, "next_run_at", None)
+    last_run_at = getattr(job, "last_run_at", None)
+    return {
+        "job_id": job.id,
+        "name": job.name,
+        "status": _enum_value(getattr(job, "status", "")),
+        "enabled": bool(getattr(job, "enabled", True)),
+        "schedule": {
+            "kind": _enum_value(getattr(job, "schedule_kind", "")),
+            "value": str(getattr(job, "cron_expr", "") or ""),
+        },
+        "tz": str(getattr(job, "tz", "") or ""),
+        "job_kind": kind,
+        "task": "" if kind == SCRIPT_KIND else payload_text(payload, session_target),
+        "script": payload_script(payload),
+        "script_args": payload_args(payload),
+        "workdir": payload_workdir(payload),
+        "agent_id": _cron_job_agent_id(job),
+        "session_target": _enum_value(session_target),
+        "session_key": str(getattr(job, "session_key", "") or ""),
+        "delivery": _cron_delivery_view(getattr(job, "delivery", None)),
+        "tool_policy": dict(getattr(job, "tool_policy", None) or {}),
+        "wake_mode": _enum_value(getattr(job, "wake_mode", ""), "now"),
+        "timeout_seconds": float(getattr(job, "timeout_seconds", 600.0) or 600.0),
+        "created_from": str(getattr(job, "creator_session_key", "") or ""),
+        "next_run_at": next_run_at.isoformat() if next_run_at is not None else "",
+        "last_run_at": last_run_at.isoformat() if last_run_at is not None else "",
+    }
+
+
+def _validate_kind_and_target(job_kind: str, session_target: str) -> None:
+    """Reject the job_kind / session_target combinations the scheduler forbids."""
+    if job_kind not in _VALID_JOB_KINDS:
+        raise SafeToolError("job_kind must be reminder, system_event, agent_turn, or script")
+    if session_target not in _VALID_SESSION_TARGETS:
+        raise SafeToolError("session_target must be main, isolated, current, or session")
+    if job_kind == SCRIPT_KIND and session_target == "main":
+        raise SafeToolError("script jobs cannot use session_target=main")
+    if job_kind == SYSTEM_EVENT_KIND and session_target != "main":
+        raise SafeToolError("system_event jobs must use session_target=main")
+    if job_kind == REMINDER_KIND and session_target == "main":
+        raise SafeToolError("reminder jobs cannot use session_target=main")
+    if job_kind == AGENT_TURN_KIND and session_target == "main":
+        raise SafeToolError("agent_turn jobs cannot use session_target=main")
 
 
 def _cron_run_item(run: Any) -> dict[str, Any]:
@@ -346,7 +515,14 @@ def _session_storage_or_none() -> Any:
 @tool(
     name="cron",
     description=(
-        "Create, list, inspect, remove, or trigger scheduled cron jobs. "
+        "Create, list, inspect, edit, remove, or trigger scheduled cron jobs. "
+        "To change an existing job, use action=update with its job_id — never "
+        "remove it and add a replacement, which loses its kind, timezone, tool "
+        "policy, and delivery target. To make a second job like an existing one, "
+        "use action=add with clone_from=<job_id>: the clone inherits every "
+        "setting of the source and overrides only the fields you pass, and the "
+        "source keeps running. Read a job's full settings first with action=get; "
+        "action=list is a summary only. "
         "Use action=runs to answer any question about what a job actually did — "
         "its recent runs with the output each one produced, whether it succeeded, "
         "and where that output was delivered. For a script job the run output is "
@@ -370,7 +546,7 @@ def _session_storage_or_none() -> Any:
     params={
         "action": {
             "type": "string",
-            "description": "Action: list, add, remove, run, runs",
+            "description": "Action: list, add, get, update, remove, run, runs",
         },
         "schedule": {
             "type": "object",
@@ -413,7 +589,34 @@ def _session_storage_or_none() -> Any:
         },
         "task": {
             "type": "string",
-            "description": "Message to execute on trigger (required for add)",
+            "description": (
+                "Message to execute on trigger (required for add; on update it "
+                "replaces the job's prompt and leaves every other setting alone)"
+            ),
+        },
+        "name": {
+            "type": "string",
+            "description": (
+                "Display name for the job. Defaults to the task text on add; pass "
+                "it to keep a readable name independent of the prompt, or on "
+                "update to rename a job without touching what it does."
+            ),
+        },
+        "clone_from": {
+            "type": "string",
+            "description": (
+                "Job ID to copy on add. The new job inherits the source's tz, "
+                "job_kind, session_target, delivery target, tool_policy, "
+                "wake_mode, script, and schedule; anything you pass alongside "
+                "overrides that field. The source job is left untouched."
+            ),
+        },
+        "enabled": {
+            "type": "boolean",
+            "description": (
+                "Enable or disable a job. update only — a new job always starts "
+                "enabled, including a clone of a disabled one."
+            ),
         },
         "job_kind": {
             "type": "string",
@@ -444,21 +647,19 @@ def _session_storage_or_none() -> Any:
         "script_args": {
             "type": "array",
             "items": {"type": "string"},
-            "description": (
-                "Arguments passed to 'script' as argv. Never shell-interpreted."
-            ),
+            "description": ("Arguments passed to 'script' as argv. Never shell-interpreted."),
         },
         "workdir": {
             "type": "string",
             "description": (
-                "Optional working directory for 'script' (defaults to the "
-                "script's own directory)."
+                "Optional working directory for 'script' (defaults to the script's own directory)."
             ),
         },
         "session_target": {
             "type": "string",
             "description": (
-                "Target session mode for add. Use main for internal system events, "
+                "Target session mode for add and update. Use main for internal system "
+                "events, "
                 "isolated for proactive reminders that should deliver back to the "
                 "caller, current only when the user explicitly wants the scheduled "
                 "run to continue the current transcript as a conversation, or session "
@@ -472,7 +673,7 @@ def _session_storage_or_none() -> Any:
         },
         "job_id": {
             "type": "string",
-            "description": "Job ID (required for remove, run, and runs)",
+            "description": "Job ID (required for get, update, remove, run, and runs)",
         },
         "limit": {
             "type": "integer",
@@ -493,10 +694,11 @@ def _session_storage_or_none() -> Any:
             "type": "string",
             "description": (
                 "Main-session heartbeat mode: now runs one "
-                "heartbeat immediately; next-heartbeat only queues a wake."
+                "heartbeat immediately; next-heartbeat only queues a wake. "
+                "Defaults to now on add; omit it on update to leave the job's "
+                "mode alone."
             ),
             "enum": ["now", "next-heartbeat"],
-            "default": "now",
         },
         "tool_policy": {
             "type": "object",
@@ -513,7 +715,9 @@ def _session_storage_or_none() -> Any:
             "description": (
                 "Optional IANA timezone (e.g. 'America/Los_Angeles', 'Asia/Shanghai'). "
                 "Applies to cron expressions; '0 9 * * *' with tz='America/Los_Angeles' "
-                "fires at 09:00 LA wall time. Empty string keeps the legacy UTC behaviour."
+                "fires at 09:00 LA wall time. Omitted on add it means UTC; omitted on "
+                "update or with clone_from it leaves the existing zone in place, so pass "
+                "tz='UTC' to move a job back to UTC."
             ),
         },
         "delivery": {
@@ -587,12 +791,15 @@ async def cron(
     action: str,
     schedule: dict[str, Any] | None = None,
     task: str | None = None,
-    job_kind: str = "reminder",
-    session_target: str = "isolated",
+    job_kind: str | None = None,
+    session_target: str | None = None,
     target_session_key: str | None = None,
     job_id: str | None = None,
+    clone_from: str | None = None,
+    name: str | None = None,
+    enabled: bool | None = None,
     agent_id: str = "main",
-    wake_mode: str = "now",
+    wake_mode: str | None = None,
     tool_policy: dict[str, Any] | None = None,
     script: str | None = None,
     script_args: list[str] | None = None,
@@ -602,14 +809,28 @@ async def cron(
     limit: int = _CRON_RUNS_DEFAULT_LIMIT,
 ) -> str:
     if action not in _VALID_CRON_ACTIONS:
-        raise SafeToolError(f"Invalid action: {action}. Must be list|add|remove|run|runs")
+        raise SafeToolError(
+            f"Invalid action: {action}. Must be list|add|get|update|remove|run|runs"
+        )
 
-    if action == "add" and schedule is None:
+    # `job_kind` / `session_target` / `wake_mode` arrive as None when the caller
+    # did not name them, so `add` can tell "inherit from clone_from" from "the
+    # caller asked for a reminder" and `update` can leave them untouched.
+    if action == "add" and schedule is None and not clone_from:
         raise SafeToolError("'schedule' required for add")
-    if action == "add" and job_kind != SCRIPT_KIND and not task:
+    if (
+        action == "add"
+        and not clone_from
+        and (job_kind or REMINDER_KIND) != SCRIPT_KIND
+        and not task
+    ):
         raise SafeToolError("'task' required for add")
-    if action in ("remove", "run", "runs") and not job_id:
+    if action in ("get", "update", "remove", "run", "runs") and not job_id:
         raise SafeToolError(f"'job_id' required for {action}")
+    if action != "update" and enabled is not None:
+        raise SafeToolError(
+            "'enabled' is only accepted by update; a new job always starts enabled"
+        )
 
     # Dispatch to injected scheduler
     if _scheduler is None:
@@ -628,17 +849,13 @@ async def cron(
         if ctx is not None and getattr(ctx, "agent_id", None)
         else str(agent_id or "main").strip() or "main"
     )
-    caller_session_key = (
-        ctx.session_key if ctx is not None and ctx.session_key else ""
-    )
+    caller_session_key = ctx.session_key if ctx is not None and ctx.session_key else ""
     caller_sender_id = str(getattr(ctx, "sender_id", "") or "") if ctx is not None else ""
 
     if channel_caller:
         if not caller_session_key:
-            raise SafeToolError(
-                "cron requires a session context for channel callers"
-            )
-        if action == "add":
+            raise SafeToolError("cron requires a session context for channel callers")
+        if action in ("add", "update"):
             if target_session_key:
                 raise SafeToolError(
                     "target_session_key is unavailable from a channel; "
@@ -651,22 +868,16 @@ async def cron(
     # decision. Subagents and agent-kind callers already cannot reach `cron` at
     # all — this makes the rule explicit rather than emergent from two denylists.
     if tool_policy and isinstance(tool_policy, dict) and tool_policy.get("elevated"):
-        caller_kind = getattr(ctx, "caller_kind", None) if ctx is not None else None
-        if caller_kind not in (CallerKind.CLI, CallerKind.WEB):
-            raise SafeToolError(
-                "tool_policy.elevated requires an interactive CLI or Web caller"
-            )
+        if not _operator_caller(ctx):
+            raise SafeToolError("tool_policy.elevated requires an interactive CLI or Web caller")
 
     # Any job that runs a script executes a file on this host every tick with
     # nothing in the loop to review it — the same unattended shell that
     # elevation grants, minus the model. Both the script job and the pre-run
-    # collector get the same operator gate.
-    if action == "add" and (job_kind == SCRIPT_KIND or script):
-        caller_kind = getattr(ctx, "caller_kind", None) if ctx is not None else None
-        if caller_kind not in (CallerKind.CLI, CallerKind.WEB):
-            raise SafeToolError(
-                "scheduling a script requires an interactive CLI or Web caller"
-            )
+    # collector get the same operator gate. `add` re-checks it after clone_from
+    # is resolved, because an inherited script is still a script.
+    if action == "add" and (job_kind == SCRIPT_KIND or script) and not _operator_caller(ctx):
+        raise SafeToolError("scheduling a script requires an interactive CLI or Web caller")
 
     if action == "list":
         jobs = [
@@ -677,6 +888,11 @@ async def cron(
                 "job_id": j.id,
                 "name": j.name,
                 "cron_expr": j.cron_expr,
+                "tz": str(getattr(j, "tz", "") or ""),
+                "job_kind": payload_kind(
+                    j.payload if isinstance(getattr(j, "payload", None), dict) else {},
+                    getattr(j, "session_target", ""),
+                ),
                 "status": j.status.value if hasattr(j.status, "value") else str(j.status),
                 "agent_id": _cron_job_agent_id(j),
                 "created_from": getattr(j, "creator_session_key", "") or "",
@@ -684,6 +900,15 @@ async def cron(
             for j in jobs
         ]
         return json.dumps({"action": "list", "jobs": items})
+
+    if action == "get":
+        assert job_id is not None
+        target_job = await sched.get_job(job_id)
+        if target_job is None:
+            raise SafeToolError(f"Job not found: {job_id}")
+        if _cron_job_agent_id(target_job) != current_agent_id:
+            raise SafeToolError("cron job belongs to a different profile")
+        return json.dumps({"action": "get", "job": _cron_job_view(target_job)})
 
     if action == "runs":
         assert job_id is not None
@@ -708,12 +933,98 @@ async def cron(
         )
 
     if action == "add":
-        assert schedule is not None
-        wake_mode = str(wake_mode or "now").strip().lower()
-        schedule_kind, schedule_value, schedule_tz = _coerce_tool_schedule(
-            schedule,
-            tz=tz,
+        source_job: Any | None = None
+        task_provided = task is not None
+        if clone_from:
+            source_job = await sched.get_job(clone_from)
+            if source_job is None:
+                raise SafeToolError(f"Job not found: {clone_from}")
+            if _cron_job_agent_id(source_job) != current_agent_id:
+                raise SafeToolError("cron job belongs to a different profile")
+
+        # Every field the source defines becomes this job's default; anything the
+        # caller passed wins. This is the whole point of clone_from — a job
+        # derived from another must not silently fall back to reminder/UTC/no
+        # policy/current-chat delivery the way a bare re-create does.
+        source_payload: dict[str, Any] = {}
+        source_kind = ""
+        if source_job is not None:
+            if isinstance(getattr(source_job, "payload", None), dict):
+                source_payload = source_job.payload
+            source_kind = payload_kind(source_payload, source_job.session_target)
+            if task is None and source_kind != SCRIPT_KIND:
+                task = payload_text(source_payload, source_job.session_target)
+            if script is None:
+                script = payload_script(source_payload) or None
+            if not workdir:
+                workdir = payload_workdir(source_payload)
+            if script_args is None:
+                inherited_args = payload_args(source_payload)
+                script_args = inherited_args or None
+            if tool_policy is None:
+                tool_policy = dict(getattr(source_job, "tool_policy", None) or {}) or None
+            if not tz:
+                tz = str(getattr(source_job, "tz", "") or "")
+
+        job_kind = str(job_kind or source_kind or REMINDER_KIND)
+        session_target = str(
+            session_target
+            or (_enum_value(source_job.session_target) if source_job is not None else "")
+            or "isolated"
         )
+        wake_mode = (
+            str(
+                wake_mode
+                or (_enum_value(getattr(source_job, "wake_mode", ""), "now") if source_job else "")
+                or "now"
+            )
+            .strip()
+            .lower()
+        )
+
+        # A clone inherits privilege as well as settings, so the operator gates
+        # are re-checked against what the new job will actually carry.
+        if source_job is not None:
+            if session_target == "session" and not target_session_key and not channel_caller:
+                target_session_key = str(getattr(source_job, "session_key", "") or "") or None
+            if channel_caller and (tool_policy or script):
+                raise SafeToolError(
+                    "clone_from is unavailable from a channel for jobs that carry "
+                    "a tool policy or a script"
+                )
+            if channel_caller and not _delivery_targets_caller(
+                getattr(source_job, "delivery", None), ctx
+            ):
+                raise SafeToolError(
+                    "that job reports to a destination this chat cannot address, "
+                    "so it can only be cloned by an interactive CLI or Web caller"
+                )
+            if isinstance(tool_policy, dict) and tool_policy.get("elevated"):
+                if not _operator_caller(ctx):
+                    raise SafeToolError(
+                        "tool_policy.elevated requires an interactive CLI or Web caller"
+                    )
+            if (job_kind == SCRIPT_KIND or script) and not _operator_caller(ctx):
+                raise SafeToolError("scheduling a script requires an interactive CLI or Web caller")
+
+        if job_kind != SCRIPT_KIND and not (task or "").strip():
+            raise SafeToolError("'task' required for add")
+
+        if schedule is not None:
+            schedule_kind, schedule_value, schedule_tz = _coerce_tool_schedule(
+                schedule,
+                tz=tz,
+            )
+        else:
+            assert source_job is not None
+            if source_job.schedule_kind == ScheduleKind.AT:
+                raise SafeToolError(
+                    "clone_from of a one-shot 'at' job needs an explicit schedule: "
+                    "the source's fire time is already spent"
+                )
+            schedule_kind = source_job.schedule_kind
+            schedule_value = str(source_job.cron_expr or "")
+            schedule_tz = tz
 
         # Scan prompt for injection/exfiltration before scheduling
         if task:
@@ -721,10 +1032,8 @@ async def cron(
             if blocked:
                 raise SafeToolError(reason)
 
-        if job_kind not in ("reminder", "system_event", "agent_turn", SCRIPT_KIND):
-            raise SafeToolError(
-                "job_kind must be reminder, system_event, agent_turn, or script"
-            )
+        if job_kind not in _VALID_JOB_KINDS:
+            raise SafeToolError("job_kind must be reminder, system_event, agent_turn, or script")
         if job_kind == SCRIPT_KIND:
             if session_target == "main":
                 raise SafeToolError("script jobs cannot use session_target=main")
@@ -741,29 +1050,25 @@ async def cron(
                     "tool policy to apply to. Drop tool_policy, or use "
                     "job_kind='agent_turn' if the schedule needs a model in the loop."
                 )
-        elif script and job_kind != "agent_turn":
-            raise SafeToolError(
-                "'script' is only used by job_kind='script' or 'agent_turn'"
-            )
+        elif script and job_kind != AGENT_TURN_KIND:
+            raise SafeToolError("'script' is only used by job_kind='script' or 'agent_turn'")
         if script:
             script_error = validate_script_path(script)
             if script_error:
                 raise SafeToolError(script_error)
-        if session_target not in ("main", "isolated", "current", "session"):
+        if session_target not in _VALID_SESSION_TARGETS:
             raise SafeToolError("session_target must be main, isolated, current, or session")
-        if job_kind == "system_event" and session_target == "current":
+        if job_kind == SYSTEM_EVENT_KIND and session_target == "current":
             job_kind = REMINDER_KIND
             session_target = "isolated"
-        if job_kind == "system_event" and session_target != "main":
+        if job_kind == SYSTEM_EVENT_KIND and session_target != "main":
             raise SafeToolError("system_event jobs must use session_target=main")
         if job_kind == REMINDER_KIND and session_target == "main":
             raise SafeToolError("reminder jobs cannot use session_target=main")
-        if job_kind == "agent_turn" and session_target == "main":
+        if job_kind == AGENT_TURN_KIND and session_target == "main":
             raise SafeToolError("agent_turn jobs cannot use session_target=main")
         if session_target == "current" and not caller_session_key:
-            raise SafeToolError(
-                "session_target=current requires a caller session context"
-            )
+            raise SafeToolError("session_target=current requires a caller session context")
         if session_target == "session" and not target_session_key:
             raise SafeToolError("target_session_key is required when session_target=session")
         if wake_mode not in ("now", "next-heartbeat"):
@@ -800,6 +1105,17 @@ async def cron(
                 # otherwise only discovered when the job fires.
                 raise SafeToolError(str(exc)) from exc
 
+        # A clone keeps the source's destination. Re-inferring it from the
+        # calling session is what made a cloned announcement land in the current
+        # chat instead of the channel the original reported to. `ws_topic` is
+        # per-job and is re-derived below. An explicit override still wins: the
+        # caller naming a destination outranks the one the source happened to
+        # carry.
+        clone_delivery: DeliveryConfig | None = None
+        if source_job is not None and getattr(source_job, "delivery", None) is not None:
+            clone_delivery = deepcopy(source_job.delivery)
+            clone_delivery.ws_topic = ""
+
         delivery_config: DeliveryConfig | None = None
 
         if override is not None and override["mode"] == "none":
@@ -817,6 +1133,8 @@ async def cron(
                     "thread_id": override["thread_id"],
                 },
             )
+        elif source_job is not None:
+            delivery_config = clone_delivery
         elif caller_session_key:
             # Auto-detect delivery target from session storage.
             try:
@@ -860,8 +1178,10 @@ async def cron(
         # one from the live ToolContext so the first cron call still binds.
         # Skipped when the caller redirected the job — the point of a channel
         # or none override is that the calling chat is not where this lands.
+        # Skipped for a clone too: it already carries the source's destination.
         if (
             not redirected
+            and source_job is None
             and ctx is not None
             and getattr(ctx, "channel_kind", None)
             and getattr(delivery_config, "originating_reply_target", None) is None
@@ -929,9 +1249,21 @@ async def cron(
             )
             handler_key = "agent_run"
         effective_tz = (schedule_tz or tz or "").strip()
+        # A clone that was given a new prompt is a different job and gets a name
+        # from it; one that was not keeps the source's name so the pair reads as
+        # what it is. An explicit `name` always wins.
+        job_name = (name or "").strip()
+        if not job_name and source_job is not None and not task_provided:
+            job_name = str(source_job.name or "")
+        if not job_name:
+            job_name = task or script or "cron-tool-job"
+        extra: dict[str, Any] = {}
+        if source_job is not None:
+            extra["timeout_seconds"] = float(getattr(source_job, "timeout_seconds", 600.0))
+            extra["max_retries"] = int(getattr(source_job, "max_retries", 3))
         try:
             job = await sched.add_job(
-                name=task or script or "cron-tool-job",
+                name=job_name,
                 handler_key=handler_key,
                 payload=payload,
                 session_target=SessionTarget(session_target),
@@ -950,6 +1282,7 @@ async def cron(
                 schedule_kind=schedule_kind,
                 schedule_value=schedule_value,
                 schedule_tz=effective_tz,
+                **extra,
             )
         except ValueError as exc:
             # The scheduler's own validation rejects combinations this tool does
@@ -964,25 +1297,207 @@ async def cron(
                 await sched.update_job(job.id, delivery=job.delivery)
             except Exception:
                 pass  # best-effort
-        return json.dumps(
-            {
-                "action": "add",
-                "job_id": job.id,
-                "schedule_kind": schedule_kind.value,
-                "schedule_value": schedule_value,
-                "task": task,
-                "script": script or "",
-                "payload_kind": job_kind,
-                "session_target": session_target,
-                "wake_mode": wake_mode,
-                "tz": effective_tz,
-                # Where this will actually announce. Reported for every add, not
-                # just overridden ones, so "post it to the ops group" can be
-                # confirmed rather than assumed.
-                "delivery": _cron_delivery_summary(job.delivery),
-                "status": "scheduled",
-            }
+        added: dict[str, Any] = {
+            "action": "add",
+            "job_id": job.id,
+            "name": job_name,
+            "schedule_kind": _enum_value(schedule_kind),
+            "schedule_value": schedule_value,
+            "task": task,
+            "script": script or "",
+            "payload_kind": job_kind,
+            "session_target": session_target,
+            "wake_mode": wake_mode,
+            "tz": effective_tz,
+            # Where this will actually announce. Reported for every add, not
+            # just overridden ones, so "post it to the ops group" can be
+            # confirmed rather than assumed.
+            "delivery": _cron_delivery_summary(job.delivery),
+            "status": "scheduled",
+        }
+        if source_job is not None:
+            added["cloned_from"] = clone_from
+        return json.dumps(added)
+
+    if action == "update":
+        assert job_id is not None
+        if delivery:
+            # Repointing a live job is not implemented here, and silently
+            # dropping the argument would leave the job announcing where it
+            # always did while the caller believes it was moved — the discard
+            # this parameter exists to stop.
+            raise SafeToolError(
+                "delivery cannot be changed with action='update'; set it when the "
+                "job is created, or change it from the CLI, the Web UI, or the cron RPC"
+            )
+        target_job = await sched.get_job(job_id)
+        if target_job is None:
+            raise SafeToolError(f"Job not found: {job_id}")
+        if _cron_job_agent_id(target_job) != current_agent_id:
+            raise SafeToolError("cron job belongs to a different profile")
+
+        current_payload: dict[str, Any] = (
+            target_job.payload if isinstance(getattr(target_job, "payload", None), dict) else {}
         )
+        current_kind = payload_kind(current_payload, target_job.session_target)
+        new_kind = str(job_kind or current_kind)
+        new_target = str(session_target or _enum_value(target_job.session_target, "isolated"))
+        _validate_kind_and_target(new_kind, new_target)
+
+        # A stored script or elevated policy survives the edit, so editing the
+        # job that carries one is the same operator decision as creating it —
+        # otherwise a chat message could repoint an unattended shell.
+        carries_script = bool(payload_script(current_payload)) or current_kind == SCRIPT_KIND
+        if (carries_script or script or new_kind == SCRIPT_KIND) and not _operator_caller(ctx):
+            raise SafeToolError(
+                "updating a scheduled script requires an interactive CLI or Web caller"
+            )
+        if dict(getattr(target_job, "tool_policy", None) or {}).get("elevated"):
+            if not _operator_caller(ctx):
+                raise SafeToolError(
+                    "updating an elevated cron job requires an interactive CLI or Web caller"
+                )
+        # Rewriting what a job says is a routing grant when the job announces
+        # somewhere the caller cannot post: the edit is refused rather than
+        # quietly authoring content for another channel or a webhook.
+        if (task is not None or job_kind is not None) and channel_caller:
+            if not _delivery_targets_caller(getattr(target_job, "delivery", None), ctx):
+                raise SafeToolError(
+                    "that job reports to a destination this chat cannot address, "
+                    "so its content can only be edited by an interactive CLI or Web caller"
+                )
+
+        if task is not None:
+            blocked, reason = _scan_cron_prompt(task)
+            if blocked:
+                raise SafeToolError(reason)
+        if script:
+            script_error = validate_script_path(script)
+            if script_error:
+                raise SafeToolError(script_error)
+
+        patch: dict[str, Any] = {}
+        if name is not None and name.strip():
+            patch["name"] = name.strip()
+        if enabled is not None:
+            # `enabled` and `status` are two different gates on firing, so the
+            # flag alone would report a paused job as back on while it stayed
+            # parked. Pause/resume are separate ops because resuming recomputes
+            # next_run_at; the RPC layer pairs them the same way.
+            patch["enabled"] = bool(enabled)
+            if enabled:
+                if _enum_value(getattr(target_job, "status", "")) == "paused":
+                    resumed = await sched.resume_job(job_id)
+                    if resumed is not None:
+                        target_job = resumed
+            else:
+                paused = await sched.pause_job(job_id)
+                if paused is not None:
+                    target_job = paused
+        if wake_mode is not None:
+            normalized_wake = str(wake_mode).strip().lower()
+            if normalized_wake not in ("now", "next-heartbeat"):
+                raise SafeToolError("wake_mode must be now or next-heartbeat")
+            patch["wake_mode"] = normalized_wake
+        if tool_policy is not None:
+            patch["tool_policy"] = tool_policy
+
+        if schedule is not None:
+            patch_kind, patch_value, patch_tz = _coerce_tool_schedule(schedule, tz=tz)
+            patch["schedule_kind"] = patch_kind
+            patch["schedule_value"] = patch_value
+            # Only touch the timezone when one was actually supplied: an empty
+            # schedule_tz would clear the job's tz, which is the silent
+            # UTC-rewrite this action exists to avoid.
+            if patch_tz or tz:
+                patch["schedule_tz"] = patch_tz or tz
+        elif tz:
+            patch["tz"] = tz
+            if target_job.schedule_kind == ScheduleKind.CRON:
+                # next_run_at is computed in the job's timezone, so a bare tz
+                # change has to re-run the schedule to take effect.
+                patch["schedule_kind"] = ScheduleKind.CRON
+                patch["schedule_value"] = str(target_job.cron_expr or "")
+                patch["schedule_tz"] = tz
+
+        payload_touched = (
+            task is not None
+            or job_kind is not None
+            or script is not None
+            or script_args is not None
+            or bool(workdir)
+            or session_target is not None
+            or target_session_key is not None
+        )
+        if payload_touched:
+            payload_agent = payload_agent_id(current_payload, current_agent_id)
+            # A script payload's "text" is its path, not a prompt — it must not
+            # become the prompt when a job is converted away from script.
+            inherited_text = (
+                ""
+                if current_kind == SCRIPT_KIND
+                else payload_text(current_payload, target_job.session_target)
+            )
+            new_text = task if task is not None else inherited_text
+            new_script = normalize_script_value(
+                script if script is not None else payload_script(current_payload)
+            )
+            new_workdir = (workdir or payload_workdir(current_payload)).strip()
+            new_args = [
+                str(arg)
+                for arg in (
+                    script_args if script_args is not None else payload_args(current_payload)
+                )
+            ]
+            if new_kind == SCRIPT_KIND:
+                if not new_script:
+                    raise SafeToolError("job_kind='script' requires 'script'")
+                patch["payload"] = make_script_payload(
+                    new_script, payload_agent, new_workdir, new_args
+                )
+            else:
+                if not new_text.strip():
+                    raise SafeToolError("'task' is required for a non-script job")
+                if new_script and new_kind != AGENT_TURN_KIND:
+                    raise SafeToolError(
+                        "'script' is only used by job_kind='script' or 'agent_turn'"
+                    )
+                if new_kind == SYSTEM_EVENT_KIND:
+                    patch["payload"] = make_system_event_payload(new_text, payload_agent)
+                elif new_kind == REMINDER_KIND:
+                    patch["payload"] = make_reminder_payload(new_text, payload_agent)
+                else:
+                    patch["payload"] = make_agent_turn_payload(
+                        new_text, payload_agent, new_script, new_workdir, new_args
+                    )
+            patch["session_target"] = SessionTarget(new_target)
+            if new_target == "current":
+                bound_key = str(getattr(target_job, "session_key", "") or "") or caller_session_key
+                if not bound_key:
+                    raise SafeToolError("session_target=current requires a caller session context")
+                patch["session_key"] = bound_key
+            elif new_target == "session":
+                bound_key = target_session_key or str(getattr(target_job, "session_key", "") or "")
+                if not bound_key:
+                    raise SafeToolError(
+                        "target_session_key is required when session_target=session"
+                    )
+                patch["session_key"] = bound_key
+            else:
+                patch["session_key"] = ""
+
+        if not patch:
+            raise SafeToolError(
+                "update needs at least one field to change (schedule, task, name, "
+                "job_kind, session_target, tool_policy, wake_mode, tz, or enabled)"
+            )
+        try:
+            updated = await sched.update_job(job_id, **patch)
+        except ValueError as exc:
+            raise SafeToolError(str(exc)) from exc
+        if updated is None:
+            raise SafeToolError(f"Job not found: {job_id}")
+        return json.dumps({"action": "update", "job": _cron_job_view(updated)})
 
     if action == "remove":
         assert job_id is not None
@@ -1026,9 +1541,7 @@ async def cron(
         backoff_until = getattr(result, "backoff_until", None)
         if backoff_until is not None:
             run_payload["backoff_until"] = backoff_until.isoformat()
-    return json.dumps(
-        run_payload
-    )
+    return json.dumps(run_payload)
 
 
 # ---------------------------------------------------------------------------

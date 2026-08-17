@@ -11,6 +11,7 @@ import {
   normalizeRunStatus,
   runStatusBadge,
   sessionRunStatus,
+  sessionName,
   sessionStats,
   sessionStatusChip,
   sessionVisualStatus,
@@ -201,6 +202,21 @@ describe('filterSessions', () => {
   it('matches derived_title / derivedTitle', () => {
     const rows: RawSession[] = [{ key: 'k1', derived_title: 'Weekly report' }]
     expect(filterSessions(rows, 'weekly')).toHaveLength(1)
+  })
+})
+
+// ── sessionName (issue #248) ─────────────────────────────────────────────────
+describe('sessionName', () => {
+  it('reads display_name in either casing', () => {
+    expect(sessionName({ key: 'k', display_name: 'api-refactor' })).toBe('api-refactor')
+    expect(sessionName({ key: 'k', displayName: 'api-refactor' })).toBe('api-refactor')
+  })
+  it('returns "" when the session has never been renamed', () => {
+    // Deliberately NOT derived_title: that falls back to the short session id,
+    // and prefilling the rename input with an id would make clearing the name
+    // impossible to express.
+    expect(sessionName({ key: 'k', derived_title: 'abcd1234' })).toBe('')
+    expect(sessionName({ key: 'k' })).toBe('')
   })
 })
 

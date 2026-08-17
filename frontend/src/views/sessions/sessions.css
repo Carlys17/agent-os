@@ -513,6 +513,85 @@
   outline-offset: 3px;
 }
 
+.sess-name {
+  display: inline-flex;
+  max-width: 24rem;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.15rem 0;
+  border: 0;
+  border-radius: var(--radius-sm, 0.25rem);
+  background: none;
+  padding: 0.05rem 0.2rem;
+  color: var(--foreground);
+  font-size: 0.75rem;
+  text-align: left;
+  cursor: text;
+}
+
+.sess-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sess-name svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  opacity: 0;
+  flex: none;
+}
+
+.sess-name:hover {
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+
+.sess-name:hover svg,
+.sess-name:focus-visible svg {
+  opacity: 0.6;
+}
+
+.sess-name:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.sess-name--empty {
+  color: var(--dim);
+  font-style: italic;
+}
+
+.sess-rename {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.15rem 0;
+}
+
+.sess-rename__input {
+  min-width: 0;
+  max-width: 24rem;
+  flex: 1 1 auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm, 0.25rem);
+  background: var(--background);
+  padding: 0.1rem 0.35rem;
+  color: var(--foreground);
+  font-size: 0.75rem;
+}
+
+.sess-rename__input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.sess-rename__hint {
+  flex: none;
+  color: var(--dim);
+  font-size: 0.625rem;
+}
+
 .sess-key__agent {
   display: inline-flex;
   min-width: 0;

@@ -41,6 +41,7 @@ CHANNEL_RPC_METHODS: frozenset[str] = frozenset(
         "router.hold.set",
         "sessions.abort",
         "sessions.contextCompact",
+        "sessions.rename",
         "sessions.reset",
         "skills.list",
         "status",
