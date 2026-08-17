@@ -464,7 +464,12 @@ async def run_channel_dispatch(
                 route_envelope=route_envelope,
             )
 
-        ingested = await _ingest_channel_message_attachments(channel=channel, msg=msg)
+        ingested = await _ingest_channel_message_attachments(
+            channel=channel,
+            msg=msg,
+            config=config,
+            route_envelope=route_envelope,
+        )
 
         async with _maybe_lock(session_lock):
             await _record_delivery_context(
@@ -749,11 +754,7 @@ async def _dispatch_channel_new_command(
 
     ctx = context_factory(route_envelope)
     access = getattr(ctx, "access", None)
-    if (
-        access is None
-        or not access.admitted
-        or access.surface is not ConnectionSurface.CHANNEL
-    ):
+    if access is None or not access.admitted or access.surface is not ConnectionSurface.CHANNEL:
         return _route_envelope_reply_message(
             "/new denied: paired channel connection required",
             route_envelope,
@@ -822,7 +823,12 @@ async def _dispatch_combined_message_after_debounce(channel: Any, combined: Any,
         if _should_skip_unmentioned(channel, msg, session_key, route_envelope):
             return
 
-    ingested = await _ingest_channel_message_attachments(channel=channel, msg=msg)
+    ingested = await _ingest_channel_message_attachments(
+        channel=channel,
+        msg=msg,
+        config=config,
+        route_envelope=route_envelope,
+    )
 
     async with _maybe_lock(session_lock):
         await _record_delivery_context(session_manager, session_key, msg, session_prefix, route_envelope=route_envelope)  # noqa: E501
@@ -1832,11 +1838,178 @@ async def _ingest_channel_message_attachments(
     *,
     channel: Any,
     msg: IncomingMessage,
+    config: Any = None,
+    route_envelope: Any = None,
 ) -> AttachmentIngestResult:
     materialized = await _materialize_channel_attachments(
         channel,
         list(getattr(msg, "attachments", []) or []),
     )
+
+    # Check if voice transcription is enabled on this channel & globally
+    transcribe_voice = False
+    if hasattr(channel, "config"):
+        transcribe_voice = getattr(channel.config, "transcribe_voice", False)
+
+    audio_enabled = False
+    if config is not None and getattr(config, "audio", None) is not None:
+        audio_enabled = getattr(config.audio, "enabled", False)
+
+    if audio_enabled and transcribe_voice:
+        non_audio_materialized = []
+        has_changes = False
+        for att in materialized:
+            is_audio = False
+            # Resolve fields check if att is dict (from failure) or Attachment object
+            metadata = getattr(att, "metadata", None) or (
+                att.get("metadata", {}) if isinstance(att, dict) else {}
+            )
+            media_kind = metadata.get("telegram_media_kind")
+            mime_type = getattr(att, "mime_type", None) or (
+                att.get("mime_type") if isinstance(att, dict) else None
+            )
+
+            if media_kind in ("voice", "audio", "video_note") or (
+                mime_type and (mime_type.startswith("audio/") or mime_type.startswith("video/"))
+            ):
+                is_audio = True
+
+            if is_audio:
+                name = getattr(att, "name", None) or (
+                    att.get("name") if isinstance(att, dict) else "audio"
+                )
+                data = getattr(att, "data", None) or (
+                    att.get("data") if isinstance(att, dict) else None
+                )
+                size = getattr(att, "size", None) or (
+                    att.get("size") if isinstance(att, dict) else None
+                )
+                if size is None and data is not None:
+                    size = len(data)
+
+                # Check if there was an ingest/materialization error
+                ingest_error = att.get("_ingest_error") if isinstance(att, dict) else None
+                if ingest_error:
+                    error_msg = (
+                        "Voice message could not be transcribed "
+                        f"(download failed: {ingest_error})."
+                    )
+                    if route_envelope is not None:
+                        try:
+                            await channel.send(
+                                _route_envelope_reply_message(error_msg, route_envelope)
+                            )
+                        except Exception:
+                            log.exception("channel.transcribe_reply_failed")
+                    non_audio_materialized.append(att)
+                    continue
+
+                if not data:
+                    non_audio_materialized.append(att)
+                    continue
+
+                # Check duration limit
+                duration = metadata.get("duration")
+                max_duration = getattr(channel.config, "max_voice_duration_s", 120)
+                if duration is not None and duration > max_duration:
+                    error_msg = (
+                        f"Audio clip exceeds the maximum duration of {max_duration} "
+                        "seconds and could not be transcribed."
+                    )
+                    if route_envelope is not None:
+                        try:
+                            await channel.send(
+                                _route_envelope_reply_message(error_msg, route_envelope)
+                            )
+                        except Exception:
+                            log.exception("channel.transcribe_reply_failed")
+                    non_audio_materialized.append(att)
+                    continue
+
+                # Check size limit
+                max_size_bytes = 30 * 1024 * 1024
+                if len(data) > max_size_bytes:
+                    error_msg = (
+                        "Audio clip exceeds the maximum size of 30 MB "
+                        "and could not be transcribed."
+                    )
+                    if route_envelope is not None:
+                        try:
+                            await channel.send(
+                                _route_envelope_reply_message(error_msg, route_envelope)
+                            )
+                        except Exception:
+                            log.exception("channel.transcribe_reply_failed")
+                    non_audio_materialized.append(att)
+                    continue
+
+                # Call STT
+                from agentos.gateway.audio_transcription import transcribe_audio_bytes
+
+                try:
+                    stt_result = await transcribe_audio_bytes(
+                        config=config,
+                        payload=data,
+                        filename=str(name),
+                        mime_type=mime_type or "audio/ogg",
+                    )
+                    transcript = stt_result.text
+
+                    # Update msg.content
+                    media_placeholder = f"[{media_kind or 'voice'}]"
+                    if media_placeholder in msg.content:
+                        msg.content = msg.content.replace(media_placeholder, transcript)
+                    else:
+                        if msg.content:
+                            msg.content = f"{msg.content}\n\n{transcript}"
+                        else:
+                            msg.content = transcript
+
+                    # Set metadata
+                    msg.metadata["transcribed_from"] = media_kind or "voice"
+                    if duration is not None:
+                        msg.metadata["duration"] = duration
+                    file_id = metadata.get("telegram_file_id")
+                    if file_id:
+                        msg.metadata["telegram_file_id"] = file_id
+                    if stt_result.language_code:
+                        msg.metadata["language_code"] = stt_result.language_code
+
+                    has_changes = True
+                except Exception as exc:
+                    log.warning("channel.transcribe_audio_failed", error=str(exc))
+                    error_msg = (
+                        "Voice message could not be transcribed "
+                        "(provider error)."
+                    )
+                    if route_envelope is not None:
+                        try:
+                            await channel.send(
+                                _route_envelope_reply_message(error_msg, route_envelope)
+                            )
+                        except Exception:
+                            log.exception("channel.transcribe_reply_failed")
+                    non_audio_materialized.append(att)
+            else:
+                non_audio_materialized.append(att)
+
+        if has_changes:
+            materialized = non_audio_materialized
+            # Clean up matching attachments from msg.attachments
+            transcribed_file_ids = set()
+            for att in msg.attachments:
+                metadata = getattr(att, "metadata", {})
+                media_kind = metadata.get("telegram_media_kind")
+                if media_kind in ("voice", "audio", "video_note"):
+                    file_id = metadata.get("telegram_file_id")
+                    if file_id:
+                        transcribed_file_ids.add(file_id)
+            msg.attachments = [
+                att
+                for att in msg.attachments
+                if getattr(att, "metadata", {}).get("telegram_file_id") not in transcribed_file_ids
+            ]
+
     result = await ingest_attachments(
         msg.content,
         materialized,

@@ -1593,6 +1593,8 @@ class TelegramChannelEntry(ConfiguredChannelEntry):
     groups_enabled: bool = False
     group_chat_ids: list[str] = Field(default_factory=list)
     group_mention_required: bool = True
+    transcribe_voice: bool = False
+    max_voice_duration_s: int = 120
 
     @field_validator("group_chat_ids", mode="before")
     @classmethod

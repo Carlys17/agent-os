@@ -546,3 +546,5 @@ default_mode = "bypass"                 # off | on | bypass | full
 # groups_enabled = false
 # group_chat_ids = ["-1001234567890"]
 # group_mention_required = true
+# transcribe_voice = false
+# max_voice_duration_s = 120
