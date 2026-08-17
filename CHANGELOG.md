@@ -21,8 +21,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `clone_from` parameter on `add` that inherits every setting of the source and
   overrides only what is passed, and a `name` parameter so a job's display name
   no longer has to be its prompt. Jobs carrying a script or
-  `tool_policy.elevated` stay operator-only to clone or update, and a webhook
-  token is reported as present without being disclosed. (#309)
+  `tool_policy.elevated` stay operator-only to clone or update, a channel
+  caller cannot clone or rewrite a job that reports to a destination its own
+  chat cannot address, and `action="get"` names a webhook's host without
+  disclosing the URL path or token. (#309)
+- Rescheduling a one-shot cron job onto a recurring expression no longer leaves
+  `delete_after_run` set, which made the edited job delete itself after its
+  first fire. Converting a job away from `agent_turn` now drops a stranded
+  `tool_policy.elevated` instead of persisting a combination `cron add` refuses
+  to create, and a `tool_policy` sent alongside a kind change is validated
+  against the new kind rather than the outgoing one. All three are in
+  `SchedulerOps.update`, so the `cron.update` RPC and the Web UI edit flow get
+  them too.
 
 ## [2026.8.15] - 2026-08-15
 

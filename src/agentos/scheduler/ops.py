@@ -311,6 +311,10 @@ class SchedulerOps:
             job.schedule_raw = cron_expr
             job.schedule_kind = kind
             job.cron_expr = cron_expr
+            # `add` sets delete_after_run for one-shot jobs only. Rescheduling a
+            # one-shot onto a recurring expression has to clear it too, or the
+            # edited job deletes itself after its first fire.
+            job.delete_after_run = kind == ScheduleKind.AT
             if kind == ScheduleKind.AT:
                 job.anchor_at = None
                 job.next_run_at = datetime.fromisoformat(cron_expr)
@@ -329,11 +333,12 @@ class SchedulerOps:
         for field in ("name", "timeout_seconds", "enabled", "origin_session_key"):
             if field in patch:
                 setattr(job, field, patch.pop(field))
-        if "tool_policy" in patch:
-            job.tool_policy = _normalized_tool_policy(
-                patch.pop("tool_policy"),
-                handler_key=job.handler_key,
-            )
+        # Validated after normalize_contract below: a patch that converts the
+        # job's kind also moves its handler_key, and the elevation rule is
+        # handler-specific. Checking it here would judge the new policy against
+        # the outgoing handler.
+        tool_policy_patched = "tool_policy" in patch
+        tool_policy_value = patch.pop("tool_policy", None)
         if "wake_mode" in patch:
             raw_wake_mode = patch.pop("wake_mode")
             job.wake_mode = _coerce_wake_mode(raw_wake_mode)
@@ -373,6 +378,17 @@ class SchedulerOps:
             strict=True,
         )
         _validate_main_agent(job.payload, job.session_target)
+        if tool_policy_patched:
+            job.tool_policy = _normalized_tool_policy(
+                tool_policy_value,
+                handler_key=job.handler_key,
+            )
+        elif job.tool_policy.get("elevated") and job.handler_key != "agent_run":
+            # A kind conversion can strand elevation on a handler that never
+            # runs an agent turn — a shape `add` refuses to create. Dropping it
+            # is a privilege reduction, so it needs no ceremony; keeping it
+            # would leave a job elevated on paper and read-only in practice.
+            job.tool_policy = {k: v for k, v in job.tool_policy.items() if k != "elevated"}
         job.delivery = _normalize_delivery_for_target(
             session_target=job.session_target,
             delivery=job.delivery,

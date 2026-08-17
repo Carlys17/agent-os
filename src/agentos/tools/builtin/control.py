@@ -84,6 +84,10 @@ class _SchedulerProtocol(Protocol):
 
     async def get_job(self, job_id: str) -> Any | None: ...
 
+    async def pause_job(self, job_id: str) -> Any | None: ...
+
+    async def resume_job(self, job_id: str) -> Any | None: ...
+
     async def remove_job(self, job_id: str) -> bool: ...
 
     async def run_job_now(self, job_id: str) -> Any: ...
@@ -170,19 +174,37 @@ def _enum_value(value: Any, default: str = "") -> str:
     return str(getattr(value, "value", value) or default)
 
 
+def _webhook_origin(url: str) -> str:
+    """Scheme + host of a webhook URL, without the secret-bearing path.
+
+    A Slack/Discord/Teams webhook URL *is* the credential — the path is the
+    secret. The model only needs to know where a job reports, so it gets the
+    host and nothing that would let it re-post there.
+    """
+    if "://" not in url:
+        return url.split("/", 1)[0]
+    scheme, rest = url.split("://", 1)
+    return f"{scheme}://{rest.split('/', 1)[0]}"
+
+
 def _cron_delivery_view(delivery: Any) -> dict[str, Any]:
     """Shape a job's delivery routing for the model.
 
-    The webhook token is a credential: its presence is reported, its value never
-    is — the model only needs to know a clone would carry one.
+    A webhook's URL and token are credentials: their presence is reported and
+    the host is named so a destination is recognisable, but nothing that could
+    be replayed is disclosed.
     """
     if delivery is None:
         return {"mode": "none"}
     view: dict[str, Any] = {"mode": _enum_value(getattr(delivery, "mode", ""), "none")}
-    for field in ("channel_name", "channel_id", "account_id", "thread_id", "webhook_url"):
+    for field in ("channel_name", "channel_id", "account_id", "thread_id"):
         value = str(getattr(delivery, field, "") or "")
         if value:
             view[field] = value
+    webhook_url = str(getattr(delivery, "webhook_url", "") or "")
+    if webhook_url:
+        view["webhook_host"] = _webhook_origin(webhook_url)
+        view["webhook_url_set"] = True
     if getattr(delivery, "webhook_token", ""):
         view["webhook_token_set"] = True
     if getattr(delivery, "best_effort", False):
@@ -191,6 +213,49 @@ def _cron_delivery_view(delivery: Any) -> dict[str, Any]:
     if failure is not None:
         view["failure_destination"] = _cron_delivery_view(failure)
     return view
+
+
+def _delivery_targets_caller(delivery: Any, ctx: Any) -> bool:
+    """True when a job's destination is one the caller can already write to.
+
+    Inheriting or keeping a destination is a routing grant, not just a setting:
+    without this, a channel user could clone an announcement job and have their
+    own text delivered to the channel — or through the webhook credential — the
+    original reported to. Operators are exempt; everyone else may only author
+    content for the chat they are speaking in.
+    """
+    if delivery is None:
+        return True
+    if _enum_value(getattr(delivery, "mode", ""), "none") == DeliveryMode.WEBHOOK.value:
+        return False
+    if getattr(delivery, "webhook_url", "") or getattr(delivery, "webhook_token", ""):
+        return False
+    failure = getattr(delivery, "failure_destination", None)
+    if failure is not None and not _delivery_targets_caller(failure, ctx):
+        return False
+
+    caller_channel = str(getattr(ctx, "channel_kind", "") or "") if ctx is not None else ""
+    caller_id = str(getattr(ctx, "channel_id", "") or "") if ctx is not None else ""
+    targets = [
+        (
+            str(getattr(delivery, "channel_name", "") or ""),
+            str(getattr(delivery, "channel_id", "") or ""),
+        )
+    ]
+    snapshot = getattr(delivery, "originating_reply_target", None)
+    if snapshot is not None:
+        targets.append(
+            (
+                str(getattr(snapshot, "channel_name", "") or ""),
+                str(getattr(snapshot, "to", "") or ""),
+            )
+        )
+    for channel_name, channel_id in targets:
+        if not channel_name and not channel_id:
+            continue
+        if channel_name != caller_channel or channel_id != caller_id:
+            return False
+    return True
 
 
 def _cron_job_view(job: Any) -> dict[str, Any]:
@@ -378,7 +443,10 @@ def _cron_run_item(run: Any) -> dict[str, Any]:
         },
         "enabled": {
             "type": "boolean",
-            "description": "Enable or disable a job (update only).",
+            "description": (
+                "Enable or disable a job. update only — a new job always starts "
+                "enabled, including a clone of a disabled one."
+            ),
         },
         "job_kind": {
             "type": "string",
@@ -420,7 +488,8 @@ def _cron_run_item(run: Any) -> dict[str, Any]:
         "session_target": {
             "type": "string",
             "description": (
-                "Target session mode for add. Use main for internal system events, "
+                "Target session mode for add and update. Use main for internal system "
+                "events, "
                 "isolated for proactive reminders that should deliver back to the "
                 "caller, current only when the user explicitly wants the scheduled "
                 "run to continue the current transcript as a conversation, or session "
@@ -455,10 +524,11 @@ def _cron_run_item(run: Any) -> dict[str, Any]:
             "type": "string",
             "description": (
                 "Main-session heartbeat mode: now runs one "
-                "heartbeat immediately; next-heartbeat only queues a wake."
+                "heartbeat immediately; next-heartbeat only queues a wake. "
+                "Defaults to now on add; omit it on update to leave the job's "
+                "mode alone."
             ),
             "enum": ["now", "next-heartbeat"],
-            "default": "now",
         },
         "tool_policy": {
             "type": "object",
@@ -475,7 +545,9 @@ def _cron_run_item(run: Any) -> dict[str, Any]:
             "description": (
                 "Optional IANA timezone (e.g. 'America/Los_Angeles', 'Asia/Shanghai'). "
                 "Applies to cron expressions; '0 9 * * *' with tz='America/Los_Angeles' "
-                "fires at 09:00 LA wall time. Empty string keeps the legacy UTC behaviour."
+                "fires at 09:00 LA wall time. Omitted on add it means UTC; omitted on "
+                "update or with clone_from it leaves the existing zone in place, so pass "
+                "tz='UTC' to move a job back to UTC."
             ),
         },
     },
@@ -520,6 +592,10 @@ async def cron(
         raise SafeToolError("'task' required for add")
     if action in ("get", "update", "remove", "run", "runs") and not job_id:
         raise SafeToolError(f"'job_id' required for {action}")
+    if action != "update" and enabled is not None:
+        raise SafeToolError(
+            "'enabled' is only accepted by update; a new job always starts enabled"
+        )
 
     # Dispatch to injected scheduler
     if _scheduler is None:
@@ -680,6 +756,13 @@ async def cron(
                 raise SafeToolError(
                     "clone_from is unavailable from a channel for jobs that carry "
                     "a tool policy or a script"
+                )
+            if channel_caller and not _delivery_targets_caller(
+                getattr(source_job, "delivery", None), ctx
+            ):
+                raise SafeToolError(
+                    "that job reports to a destination this chat cannot address, "
+                    "so it can only be cloned by an interactive CLI or Web caller"
                 )
             if isinstance(tool_policy, dict) and tool_policy.get("elevated"):
                 if not _operator_caller(ctx):
@@ -967,6 +1050,15 @@ async def cron(
                 raise SafeToolError(
                     "updating an elevated cron job requires an interactive CLI or Web caller"
                 )
+        # Rewriting what a job says is a routing grant when the job announces
+        # somewhere the caller cannot post: the edit is refused rather than
+        # quietly authoring content for another channel or a webhook.
+        if (task is not None or job_kind is not None) and channel_caller:
+            if not _delivery_targets_caller(getattr(target_job, "delivery", None), ctx):
+                raise SafeToolError(
+                    "that job reports to a destination this chat cannot address, "
+                    "so its content can only be edited by an interactive CLI or Web caller"
+                )
 
         if task is not None:
             blocked, reason = _scan_cron_prompt(task)
@@ -981,7 +1073,20 @@ async def cron(
         if name is not None and name.strip():
             patch["name"] = name.strip()
         if enabled is not None:
+            # `enabled` and `status` are two different gates on firing, so the
+            # flag alone would report a paused job as back on while it stayed
+            # parked. Pause/resume are separate ops because resuming recomputes
+            # next_run_at; the RPC layer pairs them the same way.
             patch["enabled"] = bool(enabled)
+            if enabled:
+                if _enum_value(getattr(target_job, "status", "")) == "paused":
+                    resumed = await sched.resume_job(job_id)
+                    if resumed is not None:
+                        target_job = resumed
+            else:
+                paused = await sched.pause_job(job_id)
+                if paused is not None:
+                    target_job = paused
         if wake_mode is not None:
             normalized_wake = str(wake_mode).strip().lower()
             if normalized_wake not in ("now", "next-heartbeat"):

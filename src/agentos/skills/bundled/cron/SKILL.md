@@ -110,8 +110,13 @@ cron(action="add", clone_from="<job id>", schedule={"kind": "cron", "expr": "0 1
 ```
 
 Cloning a one-shot `{"kind": "at"}` job needs an explicit `schedule` — the
-source's fire time is already spent. A job that carries a script or an elevated
-tool policy can only be cloned or updated by an interactive CLI or Web caller.
+source's fire time is already spent. A clone always starts enabled, even when
+the source is paused.
+
+A job that carries a script or an elevated tool policy can only be cloned or
+updated by an interactive CLI or Web caller, and so can a job that reports to a
+channel or webhook the current session cannot post to — editing its text or
+cloning it would be authoring content for somebody else's destination.
 
 `name` sets the display name on both `add` and `update`, so a job can keep a
 short readable name while its prompt is long.

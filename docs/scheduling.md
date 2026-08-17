@@ -334,10 +334,14 @@ alongside; the source keeps running:
 {"action": "add", "clone_from": "<job-id>", "task": "Summarize yesterday's incidents"}
 ```
 
-Both paths keep the operator gates: a job carrying a script or
+Both paths keep the operator gates. A job carrying a script or
 `tool_policy.elevated` can only be cloned or updated by an interactive CLI or
-Web caller, and a webhook token is reported as present without being disclosed.
-Cloning a one-shot `at` job requires an explicit new schedule.
+Web caller. So can a job whose delivery points somewhere the calling session
+cannot post — another channel, or a webhook — because rewriting its text or
+cloning it would put the caller's words on somebody else's destination. A
+webhook's URL and token are never disclosed by `action="get"`: it reports the
+host plus `webhook_url_set` / `webhook_token_set`. Cloning a one-shot `at` job
+requires an explicit new schedule, and a clone always starts enabled.
 
 ## Troubleshooting
 
