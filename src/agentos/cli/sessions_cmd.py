@@ -1,4 +1,4 @@
-"""Sessions command — list/show/resume/delete/export sessions."""
+"""Sessions command — list/show/rename/resume/delete/export sessions."""
 
 from __future__ import annotations
 
@@ -15,13 +15,16 @@ from rich.table import Table
 from agentos.cli.chat.session_state import messages_to_markdown
 from agentos.cli.gateway_rpc import run_gateway_sync
 from agentos.cli.output import print_json
-from agentos.cli.ui import ACCENT, ACCENT_HEADER, console, error_panel
+from agentos.cli.ui import ACCENT, ACCENT_HEADER, console, error_panel, markup_escape
 from agentos.cli.url_utils import normalize_gateway_url
 
 app = typer.Typer(help="Manage chat sessions.")
 
 _CLIENT_UNAVAILABLE = object()
 _ACTION_FAILED = object()
+
+# Rows pulled before a client-side --search filter runs.
+_SEARCH_FETCH_LIMIT = 500
 
 
 def _resolved_key(payload: dict[str, Any], fallback: str) -> str:
@@ -71,6 +74,26 @@ def _row_datetime(row: dict[str, Any]) -> datetime | None:
     return None
 
 
+def _row_name(row: dict[str, Any]) -> str:
+    """Best display name for a session row, falling back to the derived title."""
+    for field in ("display_name", "displayName", "derived_title", "derivedTitle", "subject"):
+        value = row.get(field)
+        if value:
+            return str(value)
+    return ""
+
+
+def _matches_search(row: dict[str, Any], needle: str) -> bool:
+    """Case-insensitive substring match over a row's name and identity fields."""
+    haystack = [
+        _row_name(row),
+        str(row.get("key") or ""),
+        str(row.get("subject") or ""),
+        str(row.get("model") or ""),
+    ]
+    return any(needle in value.lower() for value in haystack if value)
+
+
 def _filter_sessions(
     rows: list[dict[str, Any]],
     *,
@@ -78,9 +101,13 @@ def _filter_sessions(
     status: str | None,
     channel: str | None,
     since: datetime | None,
+    search: str | None = None,
 ) -> list[dict[str, Any]]:
+    needle = (search or "").strip().lower()
     filtered: list[dict[str, Any]] = []
     for row in rows:
+        if needle and not _matches_search(row, needle):
+            continue
         if agent and str(row.get("agent_id") or row.get("agentId") or "") != agent:
             continue
         if status and str(row.get("status") or "").lower() != status.lower():
@@ -129,13 +156,21 @@ def sessions_list(
     status: str | None = typer.Option(None, "--status", help="Filter by session status"),
     channel: str | None = typer.Option(None, "--channel", help="Filter by channel/source"),
     since: str | None = typer.Option(None, "--since", help="ISO date/datetime or epoch timestamp"),
+    search: str | None = typer.Option(
+        None, "--search", "-q", help="Filter by session name, key, subject or model"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
 ) -> None:
     """List recent sessions."""
     since_dt = _parse_since(since)
+    # Filtering happens client-side, so a search over the default 50 most
+    # recent rows would miss the older session the user named months ago —
+    # the exact case renaming exists for. Widen the fetch when searching
+    # unless the caller pinned a larger --limit themselves.
+    fetch_limit = max(limit, _SEARCH_FETCH_LIMIT) if (search or "").strip() else limit
 
     async def _run(client):
-        return await client.list_sessions(limit=limit)
+        return await client.list_sessions(limit=fetch_limit)
 
     result = run_gateway_sync(_run, json_output=json_output)
     raw_rows = result.get("sessions", []) if isinstance(result, dict) else []
@@ -145,7 +180,12 @@ def sessions_list(
         status=status,
         channel=channel,
         since=since_dt,
+        search=search,
     )
+    # --limit still bounds what the user sees; the widened fetch above only
+    # widens what search looks at.
+    if fetch_limit != limit:
+        rows = rows[:limit]
     if json_output:
         payload = dict(result) if isinstance(result, dict) else {}
         payload["sessions"] = rows
@@ -155,6 +195,7 @@ def sessions_list(
 
     table = Table(title="Sessions", show_header=True, header_style=ACCENT_HEADER)
     table.add_column("Key")
+    table.add_column("Name")
     table.add_column("Agent")
     table.add_column("Status")
     table.add_column("Model")
@@ -162,6 +203,9 @@ def sessions_list(
     for row in rows:
         table.add_row(
             str(row.get("key") or ""),
+            # Table cells are markup-parsed too: one session named "[/]" would
+            # otherwise take down the whole listing.
+            markup_escape(_row_name(row)),
             str(row.get("agent_id") or row.get("agentId") or ""),
             str(row.get("status") or ""),
             str(row.get("model") or ""),
@@ -250,6 +294,35 @@ def sessions_abort(
     key = payload.get("key") or session_id
     aborted = bool(payload.get("aborted", False))
     console.print(f"{'Aborted' if aborted else 'No running task for'} session {key!r}")
+
+
+@app.command("rename")
+def sessions_rename(
+    session_id: str = typer.Argument(..., help="Session ID (or current name) to rename"),
+    name: str = typer.Argument(
+        "", help="New session name; pass an empty string or --clear to remove it"
+    ),
+    clear: bool = typer.Option(False, "--clear", help="Clear the custom name"),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
+) -> None:
+    """Give a session a human-readable name so it is easy to find later."""
+
+    async def _run(client):
+        return await client.rename_session(session_id, None if clear else name)
+
+    payload = run_gateway_sync(_run, json_output=json_output)
+    if json_output:
+        print_json(payload)
+        return
+    key = payload.get("key") or session_id
+    new_name = payload.get("name") or payload.get("displayName")
+    if new_name:
+        # Names are user-typed and Rich parses markup in everything it prints,
+        # so escape before interpolating — an unbalanced "[/]" in a name would
+        # otherwise raise MarkupError instead of printing.
+        console.print(f"Renamed session {key!r} to [{ACCENT}]{markup_escape(new_name)}[/]")
+    else:
+        console.print(f"Cleared the custom name for session {key!r}")
 
 
 @app.command("delete")

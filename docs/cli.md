@@ -23,7 +23,7 @@ agentos <command> --help
 | `agentos gateway` | Run and manage the gateway server. |
 | `agentos chat` | Start interactive terminal chat. |
 | `agentos agent` | Run a single automation-friendly agent turn. |
-| `agentos sessions` | List, inspect, resume, abort, delete, or export sessions. |
+| `agentos sessions` | List, inspect, rename, resume, abort, delete, or export sessions. |
 | `agentos skills` | List, search, view, install, update, publish, and inspect skills. |
 | `agentos memory` | Inspect and maintain memory. |
 | `agentos channels` | Configure and inspect messaging channels. |
@@ -555,12 +555,22 @@ Read:
 
 ```sh
 agentos sessions list
+agentos sessions list --search api-refactor    # match name, key, subject or model
 agentos sessions show <session-key>
+agentos sessions rename <session-key> "api-refactor"
+agentos sessions rename <session-key> --clear  # drop the custom name
 agentos sessions resume <session-key>
 agentos sessions abort <session-key>
 agentos sessions export <session-key>
 agentos sessions delete <session-key>
 ```
+
+Sessions are auto-named. `rename` gives one a human-readable label that shows
+up in `sessions list`, in the chat toolbar, and in the Web UI session list, and
+that `--search`, `resume`, and `show` all accept in place of the key. Inside a
+chat, `/rename <name>` does the same for the session you are in (no name
+clears it). Names are trimmed, collapsed to one line, and capped at 120
+characters.
 
 Read: [`sessions.md`](sessions.md)
 

@@ -222,6 +222,18 @@ export function runStatusBadge(row: RawSession): RunBadge | null {
   return { label, tone: RUN_STATUS_CHIP[runStatus] || 'dim' }
 }
 
+// ── Naming ───────────────────────────────────────────────────────────────────
+
+/** The user-set session name, or '' when the session has never been renamed.
+ *
+ *  Deliberately does NOT fall back to `derived_title`: the gateway derives that
+ *  from the short session id when no name is set, and prefilling the rename
+ *  input with an id would make "clear the name" impossible to express. Search
+ *  still scores `derived_title` — see `filterSessions`. */
+export function sessionName(s: RawSession): string {
+  return String(s.display_name || s.displayName || '')
+}
+
 // ── Filtering (sessions.js:162-176) ──────────────────────────────────────────
 
 /** sessions.js:162-176 — filter sessions by a lowercased query across

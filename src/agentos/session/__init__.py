@@ -40,6 +40,7 @@ from agentos.session.models import (
     SessionSummary,
     TranscriptEntry,
 )
+from agentos.session.naming import MAX_SESSION_NAME_LENGTH, normalize_session_name
 from agentos.session.storage import SessionStorage
 
 __all__ = [
@@ -75,6 +76,9 @@ __all__ = [
     "derive_chat_type",
     "normalize_agent_id",
     "normalize_account_id",
+    # Naming
+    "MAX_SESSION_NAME_LENGTH",
+    "normalize_session_name",
     # Compaction
     "CompactionConfig",
     "CompactionRequest",

@@ -21,7 +21,7 @@ from agentos.cli.chat.turn import TurnResult
 from agentos.cli.tui.adapters.commands import render_help_table
 from agentos.cli.tui.backend.contracts import TuiOutputHandle
 from agentos.cli.tui.terminal.prompt import sync_session_chrome_from_state
-from agentos.cli.ui import ACCENT, ACCENT_HEADER, console, error_panel
+from agentos.cli.ui import ACCENT, ACCENT_HEADER, console, error_panel, markup_escape
 from agentos.engine.commands import Surface
 
 _CLI_ALLOWED_FILE_MIMES = _input_bridge.CLI_ALLOWED_FILE_MIMES
@@ -52,6 +52,7 @@ GATEWAY_SLASH_HANDLER_WORDS = frozenset(
         "/path",
         "/permissions",
         "/quit",
+        "/rename",
         "/reset",
         "/resume",
         "/session",
@@ -89,6 +90,8 @@ class GatewayClientLike(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     async def patch_session(self, key: str, **fields: Any) -> dict[str, Any]: ...
+
+    async def rename_session(self, key: str, name: str | None) -> dict[str, Any]: ...
 
     async def usage_status(self) -> dict[str, Any]: ...
 
@@ -225,9 +228,26 @@ async def handle_gateway_slash_command(
         console.print(f"[green]Resumed session:[/green] {state.session_key}")
         return True
 
+    if parts := _slash_parts(cmd, "/rename"):
+        name = parts[1].strip() if len(parts) > 1 else ""
+        if not state.session_key:
+            console.print("[red]No active session to rename.[/red]")
+            return True
+        payload = await client.rename_session(state.session_key, name)
+        # The gateway is authoritative for the stored name (it normalizes and
+        # may clear it), so mirror what it returns rather than the raw arg.
+        resolved = payload.get("name") or payload.get("displayName")
+        state.display_name = resolved or None
+        sync_session_chrome_from_state(state)
+        if state.display_name:
+            console.print(f"[green]Renamed session to:[/green] {markup_escape(state.display_name)}")
+        else:
+            console.print("[green]Cleared the session name.[/green]")
+        return True
+
     if cmd in {"/status", "/session"}:
         title_line = (
-            f"[{ACCENT}]title[/] [dim]{state.display_name}[/dim]\n"
+            f"[{ACCENT}]title[/] [dim]{markup_escape(state.display_name)}[/dim]\n"
             if state.display_name
             else ""
         )
