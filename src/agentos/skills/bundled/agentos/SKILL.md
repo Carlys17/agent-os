@@ -464,7 +464,10 @@ agentos cron add --every 5m --script watch-memory.sh --session-key "$KEY"
 # 'output' prints one run in full — latest by default, or --run <run-id>.
 # Delivery 'fwd:no_session_target' == printed something, reached no chat.
 # In chat, the cron tool reads the same history via action="runs" — use it to
-# answer "what did that job do?" instead of guessing from the schedule.
+# answer "what did that job do?" instead of guessing from the schedule. Editing
+# a job in chat is action="update" (action="get" reads its settings, clone_from
+# on add derives a second one) — never add-a-replacement + remove, which resets
+# kind, tz, tool policy, and delivery to defaults.
 agentos cron runs <id> [--json]
 agentos cron output <id> [--run <run-id>] [--json]
 # --script on an agent_turn is a pre-run collector instead: its stdout becomes
