@@ -125,7 +125,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `env` | `list [--missing] [--category]`, `get <NAME> [--reveal]`, `set <NAME> --stdin`, `import <NAME>`, `unset <NAME>` |
 | `providers` | `list`, `status`, `configure <id> [-m MODEL] [-k API_KEY] [--base-url] [--proxy]` |
 | `models` | `list` |
-| `skills` | `list`, `search`, `view`, `install`, `uninstall`, `update`, `publish`, `tap add/list/remove` |
+| `skills` | `init`, `list`, `search`, `view`, `install`, `uninstall`, `update`, `publish`, `tap add/list/remove` |
 | `sessions` | `list`, `show`, `resume`, `abort`, `delete`, `export` |
 | `cron` | `list`, `status`, `add` (also takes `--session-key`, the chat a job reports into), `update` (both take `--job-kind`, `--script`, `--script-arg`, `--workdir`, `--elevated`, `--elevated-mode`, `--tool-policy`; the policy's `profile` must be one of `coding`/`full`/`memory_only`/`messaging`/`minimal`, or be omitted), `remove`, `run`, `runs` |
 | `channels` | `list`, `status`, `types`, `describe`, `native-commands`, `add`, `remove`, `enable`, `disable`, `edit`, `restart`, `logout`, `pairing …` |
