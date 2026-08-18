@@ -117,6 +117,10 @@ has not given one, ask, or leave it empty for the channel default.
 The `add` response echoes the resolved `delivery`, so confirm the destination
 from that rather than assuming it.
 
+## Elevation and Security
+
+By default, scheduled `agent_turn` jobs run elevated under the `bypass` mode (controlled globally by `permissions.cron_default_mode`), allowing them to execute shell commands. Other job kinds (like reminders and script runs) are never elevated. You can explicitly override this default for any individual job by passing `"elevated": "off"` (or another elevated mode like `"full"`) inside `tool_policy`.
+
 ## Editing an existing job
 
 Never re-create a job to change it. `cron(action="add", ...)` builds a fresh job

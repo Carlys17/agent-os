@@ -276,6 +276,8 @@ def _cron_job_view(job: Any) -> dict[str, Any]:
     "clone it but change the prompt" request can be answered by reading the
     source rather than guessing at defaults.
     """
+    from agentos.permissions import configured_cron_default_elevated, cron_tool_policy_elevated
+
     payload = job.payload if isinstance(getattr(job, "payload", None), dict) else {}
     session_target = getattr(job, "session_target", "")
     kind = payload_kind(payload, session_target)
@@ -306,6 +308,20 @@ def _cron_job_view(job: Any) -> dict[str, Any]:
         "created_from": str(getattr(job, "creator_session_key", "") or ""),
         "next_run_at": next_run_at.isoformat() if next_run_at is not None else "",
         "last_run_at": last_run_at.isoformat() if last_run_at is not None else "",
+        "elevated": (
+            (
+                cron_tool_policy_elevated(job.tool_policy)
+                if cron_tool_policy_elevated(job.tool_policy)
+                else ""
+            )
+            if isinstance(getattr(job, "tool_policy", None), dict) and "elevated" in job.tool_policy
+            else (
+                configured_cron_default_elevated(_gateway_config)
+                if getattr(job, "handler_key", None) == "agent_run" and _gateway_config is not None
+                else ("bypass" if getattr(job, "handler_key", None) == "agent_run" else "")
+            )
+        )
+        or "",
     }
 
 
@@ -428,11 +444,7 @@ def _parse_cron_delivery(raw: Any) -> dict[str, Any] | None:
         # was already promoted to mode='channel' above, so the only way to land
         # here is an explicitly contradictory mode: nothing legitimate is lost
         # by refusing it.
-        stray = [
-            f
-            for f in ("channel_name", "channel_id", "account_id", "thread_id")
-            if parsed[f]
-        ]
+        stray = [f for f in ("channel_name", "channel_id", "account_id", "thread_id") if parsed[f]]
         if stray:
             raise SafeToolError(
                 f"delivery.{stray[0]} conflicts with delivery.mode='{mode}' — "
@@ -475,12 +487,9 @@ def _validate_cron_delivery_channel(channel_name: str) -> None:
     if not known:
         # A live manager with nothing in it is a real answer, not a missing one:
         # no channel delivery can succeed at all.
-        raise SafeToolError(
-            "no channels are configured, so a cron job cannot deliver to one"
-        )
+        raise SafeToolError("no channels are configured, so a cron job cannot deliver to one")
     raise SafeToolError(
-        f"no channel named '{channel_name}' is configured; "
-        f"available: {', '.join(sorted(known))}"
+        f"no channel named '{channel_name}' is configured; available: {', '.join(sorted(known))}"
     )
 
 
@@ -909,9 +918,7 @@ async def cron(
     if action in ("get", "update", "remove", "run", "runs") and not job_id:
         raise SafeToolError(f"'job_id' required for {action}")
     if action != "update" and enabled is not None:
-        raise SafeToolError(
-            "'enabled' is only accepted by update; a new job always starts enabled"
-        )
+        raise SafeToolError("'enabled' is only accepted by update; a new job always starts enabled")
 
     # Dispatch to injected scheduler
     if _scheduler is None:
@@ -948,6 +955,8 @@ async def cron(
     # Elevation hands an unattended job a real shell, so it stays an operator
     # decision. Subagents and agent-kind callers already cannot reach `cron` at
     # all — this makes the rule explicit rather than emergent from two denylists.
+    # Note: This gate only blocks explicit per-job tool_policy.elevated requests.
+    # Unattended default elevation from cron_default_mode is handled at routing time.
     if tool_policy and isinstance(tool_policy, dict) and tool_policy.get("elevated"):
         if not _operator_caller(ctx):
             raise SafeToolError("tool_policy.elevated requires an interactive CLI or Web caller")
@@ -961,6 +970,8 @@ async def cron(
         raise SafeToolError("scheduling a script requires an interactive CLI or Web caller")
 
     if action == "list":
+        from agentos.permissions import configured_cron_default_elevated, cron_tool_policy_elevated
+
         jobs = [
             job for job in await sched.list_jobs() if _cron_job_agent_id(job) == current_agent_id
         ]
@@ -977,6 +988,22 @@ async def cron(
                 "status": j.status.value if hasattr(j.status, "value") else str(j.status),
                 "agent_id": _cron_job_agent_id(j),
                 "created_from": getattr(j, "creator_session_key", "") or "",
+                "elevated": (
+                    (
+                        cron_tool_policy_elevated(j.tool_policy)
+                        if cron_tool_policy_elevated(j.tool_policy)
+                        else ""
+                    )
+                    if isinstance(getattr(j, "tool_policy", None), dict)
+                    and "elevated" in j.tool_policy
+                    else (
+                        configured_cron_default_elevated(_gateway_config)
+                        if getattr(j, "handler_key", None) == "agent_run"
+                        and _gateway_config is not None
+                        else ("bypass" if getattr(j, "handler_key", None) == "agent_run" else "")
+                    )
+                )
+                or "",
             }
             for j in jobs
         ]
@@ -1430,6 +1457,7 @@ async def cron(
             raise SafeToolError(
                 "updating a scheduled script requires an interactive CLI or Web caller"
             )
+        # Note: This gate only blocks updates to jobs with explicit per-job elevation requests.
         if dict(getattr(target_job, "tool_policy", None) or {}).get("elevated"):
             if not _operator_caller(ctx):
                 raise SafeToolError(

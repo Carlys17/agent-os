@@ -53,7 +53,7 @@ from agentos.gateway.session_services import get_session_storage
 from agentos.gateway.session_streams import get_session_streams
 from agentos.gateway.websocket import get_registry
 from agentos.paths import default_agentos_home
-from agentos.permissions import configured_default_elevated
+from agentos.permissions import configured_cron_default_elevated, configured_default_elevated
 from agentos.router_tiers import DEFAULT_ROUTER_STRATEGY
 from agentos.session.terminal_reply import build_terminal_reply, sanitize_agent_error
 
@@ -2295,6 +2295,7 @@ async def start_gateway_server(
             task_runtime_ref=lambda: task_runtime,
             workspace_resolver=_cron_workspace_resolver,
             default_elevated=lambda: configured_default_elevated(config),
+            cron_default_elevated=lambda: configured_cron_default_elevated(config),
         )
         system_handler = make_system_event_handler(
             delivery_chain=delivery_chain,
@@ -2305,6 +2306,7 @@ async def start_gateway_server(
             heartbeat_loop_ref=lambda: heartbeat_loop,
             workspace_resolver=_cron_workspace_resolver,
             default_elevated=lambda: configured_default_elevated(config),
+            cron_default_elevated=lambda: configured_cron_default_elevated(config),
         )
         static_handler = make_static_message_handler(delivery_chain=delivery_chain)
         script_handler = make_script_run_handler(delivery_chain=delivery_chain)

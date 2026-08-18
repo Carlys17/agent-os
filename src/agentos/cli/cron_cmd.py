@@ -431,7 +431,7 @@ def _render_jobs(rows: list[dict[str, Any]], *, title: str = "Cron jobs") -> Non
             str(row.get("expression") or row.get("schedule_raw") or ""),
             str(row.get("payloadKind") or row.get("payload_kind") or ""),
             str(row.get("agentId") or row.get("agent_id") or ""),
-            str(row.get("elevated") or ""),
+            str(row.get("effectiveElevated") or row.get("effective_elevated") or row.get("elevated") or ""),
             str(row.get("next_run") or ""),
             str(row.get("last_run") or ""),
             str(row.get("error_count") or row.get("consecutive_errors") or 0),

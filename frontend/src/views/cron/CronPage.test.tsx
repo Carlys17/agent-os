@@ -260,8 +260,8 @@ describe('CronPage', () => {
   it('shows no elevated badge on a default read-only job', async () => {
     wireRpc()
     renderPage()
-    await waitFor(() => expect(screen.getByText('Health check')).toBeInTheDocument())
-    const card = screen.getByLabelText('Cron job Health check')
+    await waitFor(() => expect(screen.getByText('Daily standup')).toBeInTheDocument())
+    const card = screen.getByLabelText('Cron job Daily standup')
     expect(within(card).queryByText(/elevated/i)).toBeNull()
   })
 

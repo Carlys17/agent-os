@@ -255,6 +255,9 @@ def build_cron_route_envelope(
     job_name = str(getattr(job, "name", ""))
     sender_id = f"cron-job-{job_id}"
     metadata: dict[str, Any] = {"job_id": job_id, "job_name": job_name}
+    handler_key = getattr(job, "handler_key", None)
+    if handler_key:
+        metadata["handler_key"] = str(handler_key)
     tool_policy = getattr(job, "tool_policy", None)
     if isinstance(tool_policy, dict) and tool_policy:
         metadata["tool_policy"] = dict(tool_policy)
@@ -357,6 +360,7 @@ def tool_context_from_envelope(
     workspace_dir: str | None = None,
     workspace_strict: bool = False,
     default_elevated: str | None = None,
+    cron_default_elevated: str | None = None,
 ) -> ToolContext:
     """Build the runtime ToolContext from the canonical route envelope."""
     caller_kind = _caller_kind(envelope.source_kind)
@@ -367,7 +371,19 @@ def tool_context_from_envelope(
     cron_baseline_allow = CRON_AGENT_ALLOW
     cron_baseline_deny = CRON_AGENT_DENY
     if caller_kind is CallerKind.CRON:
-        cron_elevated = cron_tool_policy_elevated(envelope.metadata.get("tool_policy"))
+        tool_policy = envelope.metadata.get("tool_policy")
+        handler_key = envelope.metadata.get("handler_key")
+        has_explicit = isinstance(tool_policy, dict) and "elevated" in tool_policy
+        if has_explicit:
+            cron_elevated = cron_tool_policy_elevated(tool_policy)
+            cron_source = "job"
+        elif handler_key == "agent_run":
+            cron_elevated = cron_default_elevated
+            cron_source = "config"
+        else:
+            cron_elevated = None
+            cron_source = None
+
         if cron_elevated is not None:
             cron_baseline_allow = CRON_ELEVATED_ALLOW
             cron_baseline_deny = CRON_ELEVATED_DENY
@@ -380,6 +396,7 @@ def tool_context_from_envelope(
                 job_name=envelope.metadata.get("job_name"),
                 agent_id=envelope.agent_id,
                 mode=cron_elevated,
+                source=cron_source,
             )
         allowed_tools = set(cron_baseline_allow)
         denied_tools = set(cron_baseline_deny)
@@ -395,10 +412,7 @@ def tool_context_from_envelope(
     if not callable(channel_admission_validator):
         channel_admission_validator = None
     elevated = envelope.metadata.get("elevated") or default_elevated
-    if cron_elevated is not None:
-        # A per-job opt-in is the only way a cron turn is ever elevated. The
-        # clamp below stays intact so the global permissions.default_mode still
-        # cannot reach cron on its own.
+    if caller_kind is CallerKind.CRON:
         elevated = cron_elevated
     elif (
         elevated not in ("on", "bypass", "full")

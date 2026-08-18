@@ -53,6 +53,8 @@ export interface RawJob {
   created_from?: string
   /** 'bypass' | 'full' when the job may run shell-based skills unattended. */
   elevated?: string | null
+  effectiveElevated?: string | null
+  effective_elevated?: string | null
   [key: string]: unknown
 }
 
@@ -139,7 +141,7 @@ export function jobKindClass(job: RawJob): 'is-reminder' | 'is-agent' {
  */
 export function jobElevated(job: RawJob | null | undefined): string {
   if (!job) return ''
-  const direct = job.elevated
+  const direct = job.effectiveElevated || job.effective_elevated || job.elevated
   if (typeof direct === 'string' && direct) return direct
   const policy = job.toolPolicy as { elevated?: unknown } | undefined
   const nested = policy?.elevated

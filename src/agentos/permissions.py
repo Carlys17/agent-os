@@ -74,3 +74,12 @@ def configured_default_elevated(config: Any) -> str | None:
         default="off",
     )
     return mode if mode in ELEVATED_PERMISSION_MODES else None
+
+
+def configured_cron_default_elevated(config: Any) -> str | None:
+    permissions = getattr(config, "permissions", None)
+    if permissions is None:
+        return "bypass"
+    cron_default_mode = getattr(permissions, "cron_default_mode", "bypass")
+    mode = normalize_permission_mode(cron_default_mode, default="bypass")
+    return mode if mode in CRON_ELEVATED_MODES else None
