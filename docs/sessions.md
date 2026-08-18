@@ -37,7 +37,11 @@ agentos sessions list --status idle
 agentos sessions list --agent main
 agentos sessions list --channel telegram
 agentos sessions list --since 2026-05-01
+agentos sessions list --search api-refactor
 ```
+
+`--search` (`-q`) matches the session name, key, subject, and model, so a
+renamed session is findable by the label you gave it.
 
 Use `--json` for scripts:
 
@@ -54,6 +58,26 @@ agentos sessions show <session-key> --json
 
 The output includes the resolved session key, agent id, status, model, update
 time, title, and the latest preview when available.
+
+## Rename a Session
+
+Sessions are auto-named. Give one a label you will recognize later:
+
+```sh
+agentos sessions rename <session-key> "api-refactor"
+agentos sessions rename api-refactor "bug-46"   # target by the current name
+agentos sessions rename <session-key> --clear   # back to the auto name
+```
+
+Inside a chat, `/rename <name>` renames the session you are in; `/rename` with
+no argument clears the name. Names are trimmed, collapsed to a single line, and
+capped at 120 characters. Once set, the name shows in `sessions list`, the chat
+toolbar, and the Web UI session list, and `resume`/`show`/`--search` all accept
+it in place of the key.
+
+You can also just ask the agent — "call this session api-refactor". The
+`session_rename` tool renames the session the agent is running in, and only
+that one; asking it to clear the name drops back to the auto name.
 
 ## Resume a Session
 
@@ -106,6 +130,11 @@ later.
 
 The Web UI uses the same session system. In the control console, use the chat
 session selector to switch sessions, inspect status, and continue recent work.
+On the Sessions page, click a row's name to rename it inline — Enter saves,
+Escape cancels, and an empty value clears the custom name. In Chat, the header
+`⋯` menu has **Rename session** with the same keys, the chip shows the name once
+set (the key stays in its tooltip and in **Copy session key**), and the session
+switcher lists and searches by name as well as by key.
 
 Open:
 

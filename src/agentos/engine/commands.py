@@ -216,6 +216,17 @@ def _model_hold(envelope: Any, args: str = "") -> dict[str, str]:
     return {"key": envelope.session_key, "model": args.strip()}
 
 
+def _session_name(envelope: Any, args: str = "") -> dict[str, str]:
+    """`/rename <name>` — label the current session so it is easy to find.
+
+    The name is forwarded verbatim; ``sessions.rename`` normalizes it
+    (whitespace collapse, length cap) and reads an empty string as "clear the
+    custom name".
+    """
+
+    return {"key": envelope.session_key, "name": args.strip()}
+
+
 _W = Surface.WEB_CHAT
 _T = Surface.CLI_GATEWAY
 _S = Surface.CLI_STANDALONE
@@ -450,6 +461,16 @@ _COMMANDS: tuple[CommandDef, ...] = (
         usage="/delete <id>",
         description="Delete a session.",
         execution={_T: _local("sessions.delete")},
+    ),
+    CommandDef(
+        name="/rename",
+        usage="/rename [name]",
+        description="Rename the current session; no name clears it.",
+        execution={
+            _T: _local("session.rename"),
+            _S: _local("session.rename"),
+            _C: _rpc("sessions.rename", _session_name),
+        },
     ),
     CommandDef(
         name="/exit",

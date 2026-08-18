@@ -35,6 +35,8 @@ import {
   resolveAttachmentMime,
   sendButtonState,
   sessionItemKey,
+  sessionItemName,
+  sessionItemSearchText,
   sessionChangeIsTerminal,
   sessionRunStatus,
   shouldAutofocusComposer,
@@ -726,6 +728,41 @@ describe('sessionItemKey', () => {
     expect(sessionItemKey({ session: 's1' })).toBe('s1')
     expect(sessionItemKey({ sessionKey: 'sk1' })).toBe('sk1')
     expect(sessionItemKey({})).toBe('')
+  })
+})
+
+describe('sessionItemName', () => {
+  it('reads the user-set name off either casing', () => {
+    expect(sessionItemName({ key: 'k1', display_name: 'Speeding report' })).toBe('Speeding report')
+    expect(sessionItemName({ key: 'k1', displayName: 'Speeding report' })).toBe('Speeding report')
+  })
+  it('is empty for a session that was never renamed', () => {
+    expect(sessionItemName({ key: 'k1' })).toBe('')
+    expect(sessionItemName('agent:main:webchat:default')).toBe('')
+  })
+  it('never falls back to the derived title (that is just the short id)', () => {
+    expect(sessionItemName({ key: 'k1', derived_title: '3z80ez0l' })).toBe('')
+  })
+})
+
+describe('sessionItemSearchText', () => {
+  it('matches on the key, the name, and the derived title', () => {
+    const text = sessionItemSearchText({
+      key: 'agent:main:webchat:3z80ez0l',
+      display_name: 'Speeding Ticket',
+      derived_title: 'Fallback Title',
+    })
+    expect(text).toContain('agent:main:webchat:3z80ez0l')
+    expect(text).toContain('speeding ticket')
+    expect(text).toContain('fallback title')
+  })
+  it('lowercases so the filter can compare directly', () => {
+    expect(sessionItemSearchText({ key: 'AGENT:X', display_name: 'Mixed Case' })).toBe(
+      'agent:x mixed case',
+    )
+  })
+  it('handles a bare string item', () => {
+    expect(sessionItemSearchText('AGENT:MAIN')).toBe('agent:main')
   })
 })
 

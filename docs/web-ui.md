@@ -92,6 +92,38 @@ non-root mounts such as `/console/` work without rebuilding. Root, `/api`, and
 | Logs | Inspect runtime logs and diagnostics. |
 | Approvals | Respond to sensitive tool-call approval requests. |
 
+## Keyboard Shortcuts
+
+The Web UI features a comprehensive set of keyboard shortcuts to facilitate mouse-free navigation and control. Press `?` (Shift + `/` on US keyboards) from any page to open the keyboard shortcuts cheat sheet.
+
+### Global & Chat Shortcuts
+
+- `?` - Show/hide the keyboard shortcuts cheat sheet.
+- `Cmd+Shift+O` (macOS) / `Ctrl+Shift+O` (Windows/Linux) - Start a new chat session.
+- `Escape` - Abort the active streaming turn, else recover the queue into the composer.
+
+### Sidebar Navigation Chords
+
+The Web UI supports two-step chords (Gmail/GitHub style) to switch between sidebar views. Press `g` followed by a destination letter/key within **1.5 seconds** to navigate:
+
+- `g` then `c` - Go to Chat
+- `g` then `o` - Go to Overview
+- `g` then `h` - Go to Health
+- `g` then `n` - Go to Channels
+- `g` then `m` - Go to MCP Servers
+- `g` then `k` - Go to Skills
+- `g` then `s` - Go to Sessions
+- `g` then `a` - Go to Agents
+- `g` then `u` - Go to Usage
+- `g` then `r` - Go to Cron
+- `g` then `,` - Go to Agent Setup
+- `g` then `e` - Go to Environment
+- `g` then `l` - Go to Logs
+- `g` then `p` - Go to Approvals
+
+> [!NOTE]
+> Keyboard shortcuts are automatically suppressed while focus is inside a text input field, textarea, or content-editable region, and while modal dialogs or overlays are open.
+
 ## Agent Setup
 
 Open **Settings > Agent Setup**, or go directly to:
@@ -371,6 +403,10 @@ agentos doctor
 
 Use the Web UI logs and health views to correlate provider readiness, channel
 state, session state, and user-visible errors.
+
+## Update Banner
+
+If a newer release of `use-agent-os` is available on PyPI, a dismissible banner is displayed at the top of the Web UI console. The banner matches the 24h throttling behavior of the CLI update checks, and dismissing the banner suppresses it for that release version (persisted in local storage). This banner honors both the global `updates.notify` setting and the `AGENTOS_NO_UPDATE_NOTICE` environment flag.
 
 ## Safety
 

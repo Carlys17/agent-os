@@ -89,6 +89,7 @@ function wireRpc(
     agentCreateReject?: { code?: string; message?: string }
     deleteResult?: unknown
     deleteReject?: boolean
+    renameReject?: boolean
     createKey?: string
   } = {},
 ) {
@@ -125,6 +126,9 @@ function wireRpc(
       case 'sessions.delete':
         if (opts.deleteReject) return Promise.reject(new Error('delete failed'))
         return Promise.resolve(opts.deleteResult ?? { deleted: [], errors: [] })
+      case 'sessions.rename':
+        if (opts.renameReject) return Promise.reject(new Error('rename failed'))
+        return Promise.resolve({})
       default:
         return Promise.resolve({})
     }
@@ -267,6 +271,96 @@ describe('SessionsPage', () => {
       }),
     )
     await waitFor(() => expect(callsFor('sessions.list')).toBeGreaterThanOrEqual(2))
+  })
+
+  it('renaming a row calls sessions.rename with the typed name and reloads', async () => {
+    wireRpc()
+    renderPage()
+    await screen.findByRole('button', { name: 'agent:main:chat:aaa' })
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session agent:main:chat:aaa' }))
+    const input = await screen.findByRole('textbox', {
+      name: 'Session name for agent:main:chat:aaa',
+    })
+    fireEvent.change(input, { target: { value: 'api-refactor' } })
+    fireEvent.submit(input)
+    await waitFor(() =>
+      expect(mockRpc.call).toHaveBeenCalledWith('sessions.rename', {
+        key: 'agent:main:chat:aaa',
+        name: 'api-refactor',
+      }),
+    )
+    await waitFor(() => expect(callsFor('sessions.list')).toBeGreaterThanOrEqual(2))
+  })
+
+  it('prefills the editor with the existing name and clearing it sends an empty name', async () => {
+    wireRpc()
+    renderPage()
+    await screen.findByRole('button', { name: 'agent:bot:chat:bbb' })
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session agent:bot:chat:bbb' }))
+    const input = await screen.findByRole('textbox', {
+      name: 'Session name for agent:bot:chat:bbb',
+    })
+    expect(input).toHaveValue('Bug triage')
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.submit(input)
+    await waitFor(() =>
+      expect(mockRpc.call).toHaveBeenCalledWith('sessions.rename', {
+        key: 'agent:bot:chat:bbb',
+        name: '',
+      }),
+    )
+  })
+
+  it('escape cancels the inline rename without calling sessions.rename', async () => {
+    wireRpc()
+    renderPage()
+    await screen.findByRole('button', { name: 'agent:main:chat:aaa' })
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session agent:main:chat:aaa' }))
+    const input = await screen.findByRole('textbox', {
+      name: 'Session name for agent:main:chat:aaa',
+    })
+    fireEvent.change(input, { target: { value: 'nope' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Rename session agent:main:chat:aaa' }),
+      ).toBeInTheDocument(),
+    )
+    expect(mockRpc.call).not.toHaveBeenCalledWith('sessions.rename', expect.anything())
+  })
+
+  it('submitting an unchanged name skips the round-trip', async () => {
+    wireRpc()
+    renderPage()
+    await screen.findByRole('button', { name: 'agent:bot:chat:bbb' })
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session agent:bot:chat:bbb' }))
+    const input = await screen.findByRole('textbox', {
+      name: 'Session name for agent:bot:chat:bbb',
+    })
+    fireEvent.submit(input)
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Rename session agent:bot:chat:bbb' }),
+      ).toBeInTheDocument(),
+    )
+    expect(mockRpc.call).not.toHaveBeenCalledWith('sessions.rename', expect.anything())
+  })
+
+  it('a failed rename closes the editor and surfaces the error', async () => {
+    wireRpc({ renameReject: true })
+    renderPage()
+    await screen.findByRole('button', { name: 'agent:main:chat:aaa' })
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session agent:main:chat:aaa' }))
+    const input = await screen.findByRole('textbox', {
+      name: 'Session name for agent:main:chat:aaa',
+    })
+    fireEvent.change(input, { target: { value: 'api-refactor' } })
+    fireEvent.submit(input)
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Rename session agent:main:chat:aaa' }),
+      ).toBeInTheDocument(),
+    )
   })
 
   it('cancelling the delete confirmation does not call sessions.delete', async () => {

@@ -28,7 +28,7 @@ def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     monkeypatch.setenv("AGENTOS_STATE_DIR", str(tmp_path))
     monkeypatch.delenv("AGENTOS_ALLOW_VERSION_SKEW", raising=False)
     # Never touch the network in this test module.
-    monkeypatch.setattr("agentos.cli.pypi_client.latest_version", lambda timeout=2.0: None)
+    monkeypatch.setattr("agentos.compat.pypi_client.latest_version", lambda timeout=2.0: None)
 
 
 def _install_fake_client(monkeypatch: pytest.MonkeyPatch, version: str | None) -> _FakeClient:

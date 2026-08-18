@@ -442,6 +442,27 @@ class TestFailureHandling:
         assert recorder.timeouts[0] <= 20.0
 
     @pytest.mark.asyncio
+    async def test_a_coarse_clock_cannot_stretch_the_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A same-tick clock must not hand an attempt more than the total budget.
+
+        Windows resolves ``monotonic()`` to ~15.6ms, so both reads routinely land
+        on the same tick and ``deadline - now`` collapses to ``(t + 20.0) - t`` —
+        which rounds *above* 20.0 for many values of ``t``. Pinning the clock
+        reproduces on any platform what CI hits intermittently on Windows.
+        """
+        stuck = 32754.452514458473  # (stuck + 20.0) - stuck == 20.000000000003638
+        assert (stuck + 20.0) - stuck > 20.0, "witness no longer rounds up"
+        monkeypatch.setattr(x_search_mod.time, "monotonic", lambda: stuck)
+        monkeypatch.setattr(x_search_mod, "_active_timeout_seconds", 180.0)
+        monkeypatch.setattr(x_search_mod, "_active_total_timeout_seconds", 20.0)
+        recorder = _Recorder([_response({"output_text": "ok"})])
+        recorder.install(monkeypatch)
+        await _call(query="grok")
+        assert recorder.timeouts[0] <= 20.0
+
+    @pytest.mark.asyncio
     async def test_an_error_body_is_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
         recorder = _Recorder([_response({"error": "x" * 5000}, 500)])
         recorder.install(monkeypatch)

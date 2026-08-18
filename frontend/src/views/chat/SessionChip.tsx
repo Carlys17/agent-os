@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { toast } from 'sonner'
-import { ChevronDown, Copy, FileDown, MoreHorizontal, RotateCcw } from 'lucide-react'
+import { ChevronDown, Copy, FileDown, MoreHorizontal, Pencil, RotateCcw } from 'lucide-react'
 import { authenticatedHeaders } from '@/lib/http-auth'
 import {
   classifySessionKey,
   runStatusChipClass,
   sessionItemKey,
+  sessionItemName,
+  sessionItemSearchText,
   sessionRunStatus,
   type RunStatusResult,
   type SessionGroup,
@@ -69,9 +71,25 @@ const COMPACT_RUN_LABEL: Record<RunStatusResult['status'], string> = {
   cancelled: 'Done',
 }
 
+// Mirrors MAX_SESSION_NAME_LENGTH in src/agentos/session/naming.py — the
+// gateway truncates past this, so stop the input there instead of silently
+// dropping the tail on save.
+const SESSION_NAME_MAX = 120
+
 export interface SessionChipProps {
   /** The current (canonical) session key (chat.js:1223). */
   sessionKey: string
+  /**
+   * The current session's user-set name (`display_name`), '' when it has never
+   * been renamed. Drives the chip label and prefills the rename input.
+   */
+  sessionName?: string
+  /**
+   * Persist a new name for the current session (`sessions.rename`). Omit and
+   * the rename action is hidden — same contract as `onExport`. An empty string
+   * clears the name.
+   */
+  onRename?: (name: string) => void
   /** Live current-session run state (chat.js:1767 `_applySessionRunState`). */
   runState?: RunStatusResult
   /** Switch to a different session (chat.js:1809 `_switchToSession`). */
@@ -132,10 +150,12 @@ async function defaultFetchSessions(): Promise<SessionListItem[]> {
 
 export function SessionChip({
   sessionKey,
+  sessionName = '',
   runState = sessionRunStatus(undefined),
   onSwitch,
   onReset,
   onExport,
+  onRename,
   onCopy = defaultCopy,
   fetchSessions = defaultFetchSessions,
 }: SessionChipProps) {
@@ -147,6 +167,11 @@ export function SessionChip({
   const [failed, setFailed] = useState(false)
   const [manualKey, setManualKey] = useState('')
   const [actionsOpen, setActionsOpen] = useState(false)
+  // The actions menu swaps its item list for an inline name editor rather than
+  // opening a modal — renaming is a one-field edit and the menu is already an
+  // Escape-owning layer, so a second layer would only add focus bookkeeping.
+  const [renaming, setRenaming] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
   const rootRef = useRef<HTMLDivElement>(null)
   const actionsTriggerRef = useRef<HTMLButtonElement>(null)
   const actionsMenuRef = useRef<HTMLDivElement>(null)
@@ -182,6 +207,7 @@ export function SessionChip({
   const dismiss = useCallback(() => {
     setOpen(false)
     setActionsOpen(false)
+    setRenaming(false)
     setFilter('')
     setSessions(null)
     setFailed(false)
@@ -207,8 +233,24 @@ export function SessionChip({
     setSessions(null)
     setFailed(false)
     setManualKey(sessionKey)
+    setRenaming(false)
     setActionsOpen((wasOpen) => !wasOpen)
   }, [sessionKey])
+
+  // Rename opens in place inside the menu, prefilled with the current name so
+  // the common edit ("fix a typo") does not start from an empty field.
+  const startRename = useCallback(() => {
+    setNameDraft(sessionName)
+    setRenaming(true)
+  }, [sessionName])
+
+  const submitRename = useCallback(() => {
+    const next = nameDraft.trim()
+    focusBeforeDismiss(getActionsTrigger)
+    // Skip the round-trip when nothing actually changed.
+    if (onRename && next !== sessionName.trim()) onRename(next)
+    dismiss()
+  }, [dismiss, focusBeforeDismiss, getActionsTrigger, nameDraft, onRename, sessionName])
 
   const runHeaderAction = useCallback(
     (action: () => void) => {
@@ -251,9 +293,11 @@ export function SessionChip({
   }, [open, fetchSessions, sessionKey])
 
   useEffect(() => {
-    if (!actionsOpen) return
+    // While the inline rename editor is up the input owns focus (autoFocus),
+    // so don't yank it back to the first menu item.
+    if (!actionsOpen || renaming) return
     actionsMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
-  }, [actionsOpen])
+  }, [actionsOpen, renaming])
 
   // chat.js:2004-2020 — dismiss on outside click / Escape while open.
   useEffect(() => {
@@ -284,6 +328,10 @@ export function SessionChip({
 
   const onActionsKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      // The rename editor is a text field: arrow keys move the caret, and Tab
+      // should leave the layer through the browser's own order. Escape still
+      // closes it via the document-level handler below.
+      if (renaming) return
       const items = Array.from(
         actionsMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
       )
@@ -315,7 +363,7 @@ export function SessionChip({
       event.preventDefault()
       items[next]?.focus()
     },
-    [dismiss, focusBeforeDismiss],
+    [dismiss, focusBeforeDismiss, renaming],
   )
 
   // chat.js:1901-1957 — group the fetched sessions, apply the filter.
@@ -336,7 +384,7 @@ export function SessionChip({
     const f = filter.trim().toLowerCase()
     for (const label of GROUP_ORDER) {
       const visible = f
-        ? bucket[label].filter((it) => sessionItemKey(it).toLowerCase().includes(f))
+        ? bucket[label].filter((it) => sessionItemSearchText(it).includes(f))
         : bucket[label]
       if (visible.length) groups.push({ label, items: visible })
     }
@@ -355,8 +403,10 @@ export function SessionChip({
         aria-expanded={open}
         onClick={toggle}
       >
+        {/* A renamed session shows its name; the key stays reachable through
+            the tooltip and "Copy session key". */}
         <span className="chat-session-chip-key" title={sessionKey}>
-          {sessionKey}
+          {sessionName || sessionKey}
         </span>
         <ChevronDown className="chat-session-chip-caret" aria-hidden="true" />
       </button>
@@ -401,6 +451,51 @@ export function SessionChip({
             aria-label={t('chat.sessionActions')}
             onKeyDown={onActionsKeyDown}
           >
+            {renaming ? (
+              <form
+                className="chat-session-rename"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  submitRename()
+                }}
+              >
+                <input
+                  className="chat-session-rename__input"
+                  autoFocus
+                  value={nameDraft}
+                  maxLength={SESSION_NAME_MAX}
+                  placeholder={t('chat.sessionRenamePlaceholder')}
+                  aria-label={t('chat.sessionRenameInput')}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => setNameDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      // Cancel the edit only — the menu stays up, so Escape
+                      // reads as "undo this field", not "close everything".
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setRenaming(false)
+                    }
+                  }}
+                />
+                <span className="chat-session-rename__hint">{t('chat.sessionRenameHint')}</span>
+              </form>
+            ) : null}
+            {!renaming && onRename ? (
+              <button
+                type="button"
+                className="chat-session-actions-menu__item"
+                role="menuitem"
+                tabIndex={-1}
+                aria-label={t('chat.sessionRenameAria')}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={startRename}
+              >
+                <Pencil aria-hidden="true" />
+                <span>{t('chat.sessionRename')}</span>
+              </button>
+            ) : null}
             <button
               type="button"
               className="chat-session-actions-menu__item"
@@ -510,6 +605,7 @@ export function SessionChip({
                       </div>
                       {group.items.map((item) => {
                         const k = sessionItemKey(item)
+                        const name = sessionItemName(item)
                         const run = sessionRunStatus(typeof item === 'object' ? item : {})
                         const isCurrent = k === sessionKey
                         return (
@@ -520,8 +616,21 @@ export function SessionChip({
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => switchTo(k)}
                           >
-                            <span className="chat-session-popover-item-key" title={k}>
-                              {k}
+                            {/* A renamed session leads with its name and keeps
+                                the key on a second line — the key is still how
+                                a session is identified everywhere else. */}
+                            <span className="chat-session-popover-item-labels">
+                              {name ? (
+                                <span className="chat-session-popover-item-name" title={name}>
+                                  {name}
+                                </span>
+                              ) : null}
+                              <span
+                                className={`chat-session-popover-item-key${name ? ' is-secondary' : ''}`}
+                                title={k}
+                              >
+                                {k}
+                              </span>
                             </span>
                             {run.status !== 'idle' && (
                               <span

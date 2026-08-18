@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import pytest
+
 from agentos.gateway.config import GatewayConfig
 from agentos.search.providers.brave import BraveSearchProvider
 from agentos.tools.builtin import web
+
+
+@pytest.fixture(autouse=True)
+def clean_search_runtime() -> None:
+    web.reset_search_runtime()
+    yield
+    web.reset_search_runtime()
 
 
 def test_gateway_config_accepts_search_api_key() -> None:

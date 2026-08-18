@@ -126,7 +126,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `providers` | `list`, `status`, `configure <id> [-m MODEL] [-k API_KEY] [--base-url] [--proxy]` |
 | `models` | `list` |
 | `skills` | `init`, `list`, `search`, `view`, `install`, `uninstall`, `update`, `publish`, `tap add/list/remove` |
-| `sessions` | `list`, `show`, `resume`, `abort`, `delete`, `export` |
+| `sessions` | `list`, `show`, `rename`, `resume`, `abort`, `delete`, `export` |
 | `cron` | `list`, `status`, `add` (also takes `--session-key`, the chat a job reports into), `update` (both take `--job-kind`, `--script`, `--script-arg`, `--workdir`, `--elevated`, `--elevated-mode`, `--tool-policy`; the policy's `profile` must be one of `coding`/`full`/`memory_only`/`messaging`/`minimal`, or be omitted), `remove`, `run`, `runs` |
 | `channels` | `list`, `status`, `types`, `describe`, `native-commands`, `add`, `remove`, `enable`, `disable`, `edit`, `restart`, `logout`, `pairing …` |
 | `memory` | `status`, `index`, `list`, `search`, `show`, `embedding-download`, `raw-fallbacks …` |
@@ -448,6 +448,11 @@ Bounding flags: `--timeout` (wall-clock seconds), `--max-iterations`,
 
 ```sh
 agentos sessions list / show <id> / export <id> <out>
+# Label a session so it is findable later; --search matches the name.
+agentos sessions rename <id> "api-refactor"   # --clear drops the name
+agentos sessions list --search api-refactor
+# In chat, /rename does the same. The `session_rename` tool names the session
+# the agent is running in — use it when the user just asks in prose.
 agentos cron list / add / run <id> / runs
 # --job-kind decides what fires. Default 'auto' = reminder: --text is delivered
 # verbatim and NO LLM runs, so a job that should think needs agent_turn.
@@ -464,7 +469,10 @@ agentos cron add --every 5m --script watch-memory.sh --session-key "$KEY"
 # 'output' prints one run in full — latest by default, or --run <run-id>.
 # Delivery 'fwd:no_session_target' == printed something, reached no chat.
 # In chat, the cron tool reads the same history via action="runs" — use it to
-# answer "what did that job do?" instead of guessing from the schedule.
+# answer "what did that job do?" instead of guessing from the schedule. Editing
+# a job in chat is action="update" (action="get" reads its settings, clone_from
+# on add derives a second one) — never add-a-replacement + remove, which resets
+# kind, tz, tool policy, and delivery to defaults.
 agentos cron runs <id> [--json]
 agentos cron output <id> [--run <run-id>] [--json]
 # --script on an agent_turn is a pre-run collector instead: its stdout becomes

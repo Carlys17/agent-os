@@ -365,7 +365,7 @@ def _search_provider_kwargs(provider_name: str) -> dict[str, object]:
         "proxy": _active_search_proxy,
         "use_env_proxy": _active_search_use_env_proxy,
     }
-    if provider_name == "brave" and _active_search_api_key:
+    if provider_name in {"brave", "tavily"} and _active_search_api_key:
         kwargs["api_key"] = _active_search_api_key
     if _active_search_diagnostics or provider_name == "duckduckgo":
         kwargs["diagnostics"] = _active_search_diagnostics
@@ -375,6 +375,7 @@ def _search_provider_kwargs(provider_name: str) -> dict[str, object]:
 def _ensure_builtin_search_providers() -> None:
     import agentos.search.providers.brave  # noqa: F401
     import agentos.search.providers.duckduckgo  # noqa: F401
+    import agentos.search.providers.tavily  # noqa: F401
 
 
 def _search_success_payload(payload: dict) -> dict:

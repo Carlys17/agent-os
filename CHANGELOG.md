@@ -6,6 +6,144 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.17] - 2026-08-17
+
+### Added
+
+- The in-agent `cron` tool can name where a job announces. `add` takes an
+  optional `delivery` object — `mode` (`origin`, `channel`, or `none`),
+  `channel_name`, `channel_id`, `account_id`, `thread_id`, and `best_effort` —
+  so "every weekday at 9, post the digest to the ops group" no longer has to be
+  created in the chat that will receive it. Omitting `delivery` keeps the
+  existing behaviour exactly: the job reports back to the calling conversation.
+  The destination is validated when the job is saved rather than when it fires,
+  so an unconfigured channel name, an AgentOS session key passed where the
+  provider's chat id belongs, or a destination paired with a mode that cannot
+  route to it are all refused with an error naming the problem — silently
+  falling back to the calling chat is what made a misdirected job look like a
+  working one. The `add` response echoes the resolved destination, and a clone
+  given a `delivery` is redirected rather than inheriting the source's.
+  Choosing a channel requires an interactive CLI or Web caller and a
+  `session_target` other than `main`; webhook delivery and failure destinations
+  remain CLI-, Web-, and RPC-only. (#310)
+- `cron(action="update")` accepts `delivery` too, so moving an existing job's
+  announcement is an edit rather than a rebuild. Refusing it left the model one
+  route to "post that job to Telegram instead" — remove the job and add a
+  replacement — which threw away the job id the user had just named along with
+  its whole run history, and in practice the refusal message pointed at the CLI,
+  the Web UI, and the RPC, none of which an agent in a chat can reach, so the
+  same failing call was retried until the turn was interrupted. A repoint keeps
+  the job's id, run history, `ws_topic` (so existing websocket subscribers stay
+  attached), and failure destination, and applies the same gates as `add`:
+  `mode='channel'` needs an interactive CLI or Web caller and a `session_target`
+  other than `main`, the recipient is validated at save time, and a chat caller
+  cannot repoint a job that already reports somewhere that chat cannot address.
+  (#310)
+- Sessions can be renamed. A new `sessions.rename` RPC sets (or clears) a
+  session's `display_name`, and it is reachable from every surface:
+  `agentos sessions rename <id> "<name>"` (`--clear` drops it), `/rename <name>`
+  in CLI chat — gateway and standalone — and in chat channels, and
+  click-to-edit on a row in the Web UI session list. `agentos sessions list`
+  grows a `Name` column and a `--search`/`-q` filter that matches the name,
+  key, subject, or model; `sessions.list` now ships `derived_title`, so the Web
+  UI's existing name-aware filter works on real data. Names are normalized in
+  one place (`agentos.session.naming`): whitespace collapses to a single line,
+  control characters are dropped, the value is capped at 120 characters, and an
+  empty name clears the label so the derived title takes over. Because renames
+  resolve a target the same way `/resume` does, a session can be renamed by its
+  current name instead of its full key — an exact name now beats a prefix
+  match, so naming a session `agent` no longer collides with every session
+  key. `--search` widens its fetch beyond `--limit` so it can reach older
+  sessions, and names are Rich-escaped everywhere the CLI prints them, so a
+  name containing `[/]` can no longer break `sessions list`. No migration is
+  required — the `display_name` column already existed. (#248)
+- Renaming reaches the Chat view itself. The header `⋯` menu gains **Rename
+  session**, which edits the name in place — Enter saves, Escape cancels the
+  edit without closing the menu, and an empty value clears the name. Once a
+  session has one, the header chip shows the name instead of the key (the key
+  stays in the chip's tooltip and in **Copy session key**), and the session
+  switcher lists each renamed session by name with its key underneath. The
+  switcher's search now matches the name and the derived title as well as the
+  key, so a session is findable there by the label it was given — the same
+  search behaviour the Sessions page already had. Agents can rename too: the
+  new `session_rename` tool sets or clears the name of the session it is
+  running in — and only that one — so "call this one X" works as a prompt. It
+  shares the `agentos.session.naming` normalizer with every other rename path,
+  and reports rather than silently succeeding when storage cannot persist the
+  change. (#248)
+
+### Fixed
+
+- The in-agent `cron` tool can now edit a job instead of replacing it. Asking
+  the agent in chat to change a scheduled job's prompt — or to "clone this one
+  but …" — used to leave it no strategy but `add` a new job and `remove` the
+  original, which deleted the job the user wanted to keep and reset every
+  setting the re-create did not name: an `agent_turn` fell back to `reminder`,
+  a job pinned to `Asia/Bangkok` moved to UTC, its tool policy was dropped,
+  and its output started landing in the current chat instead of the channel it
+  reported to. The tool gains `action="update"` (patch in place, keeping the
+  job id), `action="get"` (the full record — kind, tz, schedule, session
+  target, delivery, tool policy, wake mode, timeout, script fields), a
+  `clone_from` parameter on `add` that inherits every setting of the source and
+  overrides only what is passed, and a `name` parameter so a job's display name
+  no longer has to be its prompt. Jobs carrying a script or
+  `tool_policy.elevated` stay operator-only to clone or update, a channel
+  caller cannot clone or rewrite a job that reports to a destination its own
+  chat cannot address, and `action="get"` names a webhook's host without
+  disclosing the URL path or token. (#309)
+- Rescheduling a one-shot cron job onto a recurring expression no longer leaves
+  `delete_after_run` set, which made the edited job delete itself after its
+  first fire. Converting a job away from `agent_turn` now drops a stranded
+  `tool_policy.elevated` instead of persisting a combination `cron add` refuses
+  to create, and a `tool_policy` sent alongside a kind change is validated
+  against the new kind rather than the outgoing one. All three are in
+  `SchedulerOps.update`, so the `cron.update` RPC and the Web UI edit flow get
+  them too.
+
+## [2026.8.15] - 2026-08-15
+
+### Added
+
+- A built-in Tavily provider joins the `web_search` backends. It is a runtime
+  provider like `brave` and `duckduckgo` — not a skill-only engine — so
+  selecting `tavily` and setting `TAVILY_API_KEY` is all it takes; onboarding
+  offers it alongside the other keyed providers, and the key is redacted in
+  logs and transcripts like every other credential.
+- The Web UI now shows a "new release available" banner, closing the gap with
+  the CLI, which has warned about outdated installs for several releases. An
+  `updates.check` RPC method reports the running version, the latest version on
+  PyPI and a `up-to-date` / `outdated` / `offline` status; the console renders
+  the banner only on `outdated`. The check reuses the CLI's cached PyPI state
+  with its own `webui` slot, so the browser does not add PyPI traffic beyond
+  the existing interval, and it stays silent when `AGENTOS_NO_UPDATE_NOTICE=1`
+  is set or `updates.notify` is off. `pypi_client` and `version_utils` moved
+  from `agentos.cli` to `agentos.compat` so the gateway can use them without
+  importing the CLI.
+- Gmail/GitHub-style navigation chords land in the Web UI: press `g`, then a
+  destination key within 1.5s, and every sidebar view is reachable from the
+  keyboard. The prefix re-arms on a repeated `g` and is cancelled by Escape or
+  any held modifier; each chord closes the mobile drawer and moves focus to the
+  main content region. The `?` cheat sheet renders multi-step chords through
+  the `t()` seam, and `docs/web-ui.md` documents the full set.
+
+### Fixed
+
+- The per-message hover toolbar (copy / regenerate / edit) could not be
+  clicked. It sits in the outer gutter, outside the `.msg` box that carries the
+  `:hover` state, so crossing the 8px margin dropped the hover and faded the
+  buttons out — while the reveal animation slid them away from the incoming
+  pointer. A transparent bridge pseudo-element now makes the hit region
+  continuous and the `translateX` reveal is gone. The bridge is suppressed on
+  narrow viewports and under `hover: none`, where the toolbar is already in
+  normal flow.
+- `x_search` could hand a single attempt a timeout slightly larger than the
+  whole budget it was meant to fit inside. The per-attempt timeout came from
+  `deadline - time.monotonic()`, and on a coarse clock (Windows resolves
+  `monotonic()` to ~15.6ms) both reads land in the same tick, so the expression
+  collapses to a rounded `(t + total) - t` that can exceed `total`. The
+  per-attempt timeout is now capped on the total budget as well, so the
+  invariant holds at any clock granularity.
+
 ## [2026.8.13] - 2026-08-13
 
 ### Added

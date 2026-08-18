@@ -86,6 +86,11 @@ export const sessions = defineNamespace('sessions', {
   copyKeyFor: 'Copy session key {key}',
   deleteTitle: 'Delete',
   deleteFor: 'Delete session {key}',
+  renameTitle: 'Rename session',
+  renameFor: 'Rename session {key}',
+  renameInput: 'Session name for {key}',
+  renamePlaceholder: 'Add a name',
+  renameHint: 'Enter to save · Esc to cancel',
   orphanTitle: "Agent '{name}' is no longer registered",
   orphanChip: '⚠ Orphaned',
 
@@ -125,6 +130,9 @@ export const sessions = defineNamespace('sessions', {
   // Toasts.
   toastLoadFailed: 'Failed to load sessions: {message}',
   toastDeleted: 'Session deleted',
+  toastRenamed: 'Session renamed',
+  toastRenameCleared: 'Session name cleared',
+  toastRenameFailed: 'Rename failed: {message}',
   toastDeleteFailed: 'Delete failed: {message}',
   toastBulkPartial: 'Deleted {ok}, {failed} failed',
   toastBulkDeleted_one: 'Deleted {count} session',

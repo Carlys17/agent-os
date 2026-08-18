@@ -23,7 +23,7 @@ agentos <command> --help
 | `agentos gateway` | Run and manage the gateway server. |
 | `agentos chat` | Start interactive terminal chat. |
 | `agentos agent` | Run a single automation-friendly agent turn. |
-| `agentos sessions` | List, inspect, resume, abort, delete, or export sessions. |
+| `agentos sessions` | List, inspect, rename, resume, abort, delete, or export sessions. |
 | `agentos skills` | List, search, view, install, update, publish, and inspect skills. |
 | `agentos memory` | Inspect and maintain memory. |
 | `agentos channels` | Configure and inspect messaging channels. |
@@ -315,12 +315,13 @@ run:
 ### Update notifications
 
 On gateway-connected commands the CLI checks PyPI at most once every 24h and,
-if a newer release exists, prints a one-line notice on stderr. It is suppressed
-on non-interactive runs (no TTY) and in CI. Control it with:
+if a newer release exists, prints a one-line notice on stderr. Similarly, the Web UI
+queries the gateway on connection and displays a dismissible banner if an update is available.
+The check is suppressed on non-interactive CLI runs (no TTY) and in CI. Control it with:
 
 - `updates.notify = false` in `agentos.toml` (or the setup UI's Finish step) —
-  turns the notice off entirely.
-- `AGENTOS_NO_UPDATE_NOTICE=1` — silences it for a single run.
+  turns the notices off entirely (both CLI and Web UI).
+- `AGENTOS_NO_UPDATE_NOTICE=1` — silences it for a single run/session.
 
 See [`configuration.md`](configuration.md#update-notifications).
 
@@ -563,12 +564,22 @@ Read:
 
 ```sh
 agentos sessions list
+agentos sessions list --search api-refactor    # match name, key, subject or model
 agentos sessions show <session-key>
+agentos sessions rename <session-key> "api-refactor"
+agentos sessions rename <session-key> --clear  # drop the custom name
 agentos sessions resume <session-key>
 agentos sessions abort <session-key>
 agentos sessions export <session-key>
 agentos sessions delete <session-key>
 ```
+
+Sessions are auto-named. `rename` gives one a human-readable label that shows
+up in `sessions list`, in the chat toolbar, and in the Web UI session list, and
+that `--search`, `resume`, and `show` all accept in place of the key. Inside a
+chat, `/rename <name>` does the same for the session you are in (no name
+clears it). Names are trimmed, collapsed to one line, and capped at 120
+characters.
 
 Read: [`sessions.md`](sessions.md)
 
@@ -656,6 +667,16 @@ executes either. It runs on this host as you, unattended, so treat
 `~/.agentos/scripts/` as trusted as your shell profile. Only an interactive CLI
 or Web caller can create one; the in-agent `cron` tool refuses `job_kind='script'`
 from a channel.
+
+### Announcing to a specific channel
+
+`--announce --channel telegram --to <chat-id>` pins where a job reports, and
+`--account`, `--no-deliver`, `--best-effort`, and `--webhook-url` cover the rest.
+The in-agent `cron` tool accepts the channel case too, through a `delivery`
+object — also restricted to an interactive CLI or Web caller, so a chat
+participant cannot redirect a job into a room they were never in. Webhook
+delivery and failure destinations stay CLI/Web/RPC-only. See
+[`scheduling.md`](scheduling.md#naming-a-channel-recipient).
 
 ### Letting a cron job run shell-based skills
 
