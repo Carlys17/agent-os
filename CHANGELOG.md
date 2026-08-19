@@ -18,6 +18,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   shape costs no model call, takes no `tool_policy`, and with `--alert-only`
   stays quiet on a healthy ratchet. Instructions only; no behaviour changed.
   (#325)
+- `senior-unilp-manager` now has a file layout for the monitors it sets up.
+  Every file a ratchet monitor needs — `tick.sh`, any helper the agent writes
+  for it, any scratch the run keeps — lives under
+  `~/.agentos/scripts/senior-unilp-manager/<cron_id>/` and nowhere else, so the
+  mapping from job to files is one-to-one: delete the job, delete the
+  directory. Previously the skill said only "a script under
+  `~/.agentos/scripts/`", and each run invented its own names in a directory
+  shared with every other skill's jobs, which left nothing that could be
+  cleaned up when a mandate was disarmed. The skill now also says explicitly
+  that mandate state is not part of that directory — the mandate JSON, the
+  write-ahead log, and the lock stay under `$UNILP_STATE_DIR` /
+  `$AGENTOS_HOME/state/unilp` / `~/.agentos/state/unilp` — and spells out the
+  stage-then-repoint ordering, since a cron id does not exist until its job
+  does, and the teardown that the layout is there to make possible: remove the
+  job, then remove its directory. Skill instructions only; subdirectories under
+  the scripts directory were already supported. (#326)
 
 ## [2026.8.17] - 2026-08-17
 

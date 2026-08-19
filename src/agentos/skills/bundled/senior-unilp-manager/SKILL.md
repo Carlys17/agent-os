@@ -483,6 +483,9 @@ safe and idempotent: identical terms print `already armed as <id>` and change no
 each try to burn the same NFT — so `disarm` the old one first if the new terms are the ones
 you want. Do not work around this by re-labelling: `--label` is only a display string.
 
+Disarming settles the mandate but leaves any cron monitor and its files standing. If nothing
+else needs the ticker, take those down too — see **Tearing one down**.
+
 ## One transaction, and why that matters
 
 A fire is a single `modifyLiquidities` call:
@@ -602,16 +605,23 @@ model in the loop.
 
 `tick` does the reconcile and the fire in one process on purpose: no agent judgement sits
 between deciding and sending — which is why the model in the loop is optional. Put the
-command in a script under `~/.agentos/scripts/` (again with the path spelled out) and the
-ticks cost no model call and no tokens; stdout is delivered verbatim, and a tick that prints
-nothing stays silent:
+command in a script under `~/.agentos/scripts/senior-unilp-manager/<cron_id>/` (again with
+the path spelled out) and the ticks cost no model call and no tokens; stdout is delivered
+verbatim, and a tick that prints nothing stays silent:
 
 ```
+# the shape a wired-up monitor ends in — <cron_id> is this job's own id,
+# so it is reached by the staging sequence below, not typed at add time
 cron(action="add", schedule={"kind": "every", "every_seconds": 600},
-     job_kind="script", script="ratchet-tick.sh", session_target="isolated")
+     job_kind="script", script="senior-unilp-manager/<cron_id>/tick.sh",
+     session_target="isolated")
 ```
 
-Write `--alert-only` into that script, alongside `--json`. Without it every tick delivers the
+Do not copy that `add` verbatim: a job created against a literal `<cron_id>` finds no file and
+retires itself in five ticks. **Files on disk for a monitor** below is the layout that path
+belongs to, and the sequence that fills the id in. Read it before wiring one up.
+
+Write `--alert-only` into `tick.sh`, alongside `--json`. Without it every tick delivers the
 full result of every mandate, which on a healthy ratchet is a block of JSON saying nothing
 happened, every ten minutes, until nobody reads it any more. With it a tick that found
 nothing still prints the whole payload — the run history keeps it — but ends on the line
@@ -647,6 +657,83 @@ rejected here. Both shapes need an interactive CLI or Web caller; neither can be
 from a chat channel. The script inherits the gateway process environment, so confirm
 `UNIV4_LP_PRIVATE_KEY` is visible there before arming: a missing key fails every tick, and
 five consecutive failures retire the job.
+
+## Files on disk for a monitor
+
+One monitor, one directory:
+
+```
+~/.agentos/scripts/senior-unilp-manager/<cron_id>/
+```
+
+`<cron_id>` is the id of the cron job that owns the monitor, so the mapping is one-to-one and
+mechanical: delete the job, delete the directory. Everything that monitor needs lives there
+and nowhere else — `tick.sh`, any Python helper you write for it, any scratch or output the
+run keeps. Never drop a file for it at the top of `~/.agentos/scripts/`: that directory is
+shared with every other skill's jobs, and a file with no owner in its path is a file nothing
+can ever safely clean up.
+
+The cron **job** id, not a mandate id, is what names the directory. A tick script runs
+`--all`, so it is not per-mandate: one job covers every mandate in the state directory, and
+naming its directory after one of them would be a lie about what it watches.
+
+**Mandate state does not go here.** The mandate JSON, the `.log.jsonl` write-ahead log, and
+the `.lock` stay where **State on disk** above puts them — `$UNILP_STATE_DIR`, else
+`$AGENTOS_HOME/state/unilp`, else `~/.agentos/state/unilp` — because that is where
+`ratchet.py` writes them and where it looks for them. The scripts directory holds the
+executable and its helpers; it is not a state directory, and a mandate written there is a
+mandate the runner never finds.
+
+### Getting the id into the path
+
+The job needs a script path at creation time, and the cron id only exists once the job has
+been created. Stage the script, then repoint:
+
+1. `mkdir -p ~/.agentos/scripts/senior-unilp-manager/pending/<stage>/` — only the base
+   `~/.agentos/scripts/` is created for you — and write the real, finished `tick.sh` there.
+   `<stage>` is any string unique to this monitor; see below.
+2. `cron(action="add", job_kind="script", name="<something a human will recognise>",
+   script="senior-unilp-manager/pending/<stage>/tick.sh", …)` and read `job_id` off the
+   result — that is `<cron_id>`. Pass `name` here: without one the job is named after
+   whatever `script` said at creation, and it would carry the staging path as its name for
+   the rest of its life, including in every failure alert.
+3. `mkdir -p ~/.agentos/scripts/senior-unilp-manager/<cron_id>/`, move `tick.sh` into it, and
+   remove the now-empty staging directory.
+4. `cron(action="update", job_id="<cron_id>", script="senior-unilp-manager/<cron_id>/tick.sh")`
+   to repoint the job at its final home. `action="update"` can repoint a live job's script, so
+   this keeps the id the user was just told, along with the job's whole run history.
+
+Stage a working script rather than a placeholder, and do steps 3 and 4 straight away: between
+the add and the repoint the job is already live, and a tick that fires at a path with no file
+behind it delivers `Script not found` — five consecutive failures retire the job.
+
+`<stage>` is a nonce, and it has to be one per monitor. Wiring a second monitor while the
+first is still between its add and its repoint, a shared `pending/tick.sh` does not merely
+clobber a file: job A still points at that path, so its next tick runs **B's** script. The id
+of the mandate you just armed is a unique string already to hand — use it, and it is gone
+again by step 4.
+
+Two things about the `script=` argument itself. It is relative to `~/.agentos/scripts/`, and
+an absolute or `~`-prefixed value is refused outright even when it points inside that
+directory — this is the one path in the skill that is *not* spelled out in full. Within that,
+subdirectories need no special handling: only paths escaping the scripts directory are
+rejected.
+
+### Tearing one down
+
+A monitor's files outlive the mandate that motivated it, and nothing removes them for you.
+When a mandate is disarmed and no other mandate needs the ticker, take the job and its
+directory down together:
+
+```bash
+# cron(action="remove", job_id="<cron_id>") first, then:
+rm -rf ~/.agentos/scripts/senior-unilp-manager/<cron_id>
+```
+
+That is the whole point of the layout: the directory name is the job id, so there is never a
+question of which files belonged to the job you just removed. Leave the state directory
+alone — `disarm` has already settled the mandate there, and the log is the record of what the
+monitor did.
 
 ## Before arming anything real
 
