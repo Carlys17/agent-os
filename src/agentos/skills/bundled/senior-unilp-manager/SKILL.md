@@ -596,15 +596,12 @@ conversation — a cron task string, a script on disk — has to carry the full 
 `{baseDir}/scripts/ratchet.py`, spelled out. This is the one place the `"$S"` form above is
 wrong.
 
-```
-cron(action="add", schedule={"kind": "cron", "expr": "*/5 * * * *"},
-     task="python3 {baseDir}/scripts/ratchet.py tick --all --broadcast --json — report the "
-          "result, and raise the alarm if any state is NEEDS_ATTENTION",
-     job_kind="agent_turn", session_target="isolated")
-```
+Two shapes can carry it, and they are not equal. **If the user did not say which one they
+want, schedule the script job.** Reach for `agent_turn` only when they explicitly ask for a
+model in the loop.
 
 `tick` does the reconcile and the fire in one process on purpose: no agent judgement sits
-between deciding and sending — which is why the model in the loop is optional. Put the same
+between deciding and sending — which is why the model in the loop is optional. Put the
 command in a script under `~/.agentos/scripts/` (again with the path spelled out) and the
 ticks cost no model call and no tokens; stdout is delivered verbatim, and a tick that prints
 nothing stays silent:
@@ -632,6 +629,17 @@ mandate sitting in `NEEDS_ATTENTION`, on **every** tick until a human clears it:
 reports the same `noop` as a healthy mandate, and going quiet on it would be the one silence
 that costs money. `--alert-only` only changes `--json` output; run by hand without it and the
 command prints exactly what it always did.
+
+The other shape puts a model on every tick. Use it **only** when the user explicitly asks
+for one — so it can summarize the result or escalate in its own words — and know what it
+costs: a full turn every five minutes for a job that is almost always a no-op.
+
+```
+cron(action="add", schedule={"kind": "cron", "expr": "*/5 * * * *"},
+     task="python3 {baseDir}/scripts/ratchet.py tick --all --broadcast --json — report the "
+          "result, and raise the alarm if any state is NEEDS_ATTENTION",
+     job_kind="agent_turn", session_target="isolated")
+```
 
 A script job runs the file itself and never starts an agent turn, so it takes **no**
 `tool_policy` — `tool_policy.elevated` belongs to the `agent_turn` shape above and is
