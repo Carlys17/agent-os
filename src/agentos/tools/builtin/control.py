@@ -27,7 +27,12 @@ from agentos.scheduler.payloads import (
 )
 from agentos.scheduler.prompt_safety import scan_cron_prompt as _scan_cron_prompt
 from agentos.scheduler.schedule_normalizer import coerce_schedule_from_params
-from agentos.scheduler.scripts import normalize_script_value, validate_script_path
+from agentos.scheduler.scripts import (
+    ScriptPathError,
+    normalize_script_value,
+    resolve_script_path,
+    validate_script_path,
+)
 from agentos.scheduler.types import (
     DeliveryConfig,
     DeliveryMode,
@@ -720,7 +725,10 @@ def _session_storage_or_none() -> Any:
                 "job_kind='agent_turn' it is a pre-run collector: its stdout is "
                 "given to the agent as context, and no output means the turn is "
                 "skipped entirely. Either way it needs an interactive CLI or Web "
-                "caller."
+                "caller. Subdirectories are allowed, and '{job_id}' anywhere in "
+                "the path is replaced with the created job's own id — use it to "
+                "give a job its own directory in one call, then write the file "
+                "to the 'script_path' the result reports."
             ),
         },
         "script_args": {
@@ -1385,7 +1393,11 @@ async def cron(
             "schedule_kind": _enum_value(schedule_kind),
             "schedule_value": schedule_value,
             "task": task,
-            "script": script or "",
+            # Read back off the created job rather than echoed from the
+            # argument: a `{job_id}` in the path was resolved by the scheduler
+            # against the id this same result reports, and the caller needs the
+            # resolved form to know where to write the file.
+            "script": payload_script(job.payload),
             "payload_kind": job_kind,
             "session_target": session_target,
             "wake_mode": wake_mode,
@@ -1396,6 +1408,19 @@ async def cron(
             "delivery": _cron_delivery_summary(job.delivery),
             "status": "scheduled",
         }
+        created_script = payload_script(job.payload)
+        if created_script:
+            # Spelled out in full on purpose: `script` is relative to a
+            # directory the caller is not told the location of, and a job whose
+            # script does not exist yet is one the caller is about to write.
+            # Forward slashes on every platform, for the same reason skill_view
+            # reports its linked files that way: the model quotes this straight
+            # back as a `write_file` path, where a backslash is a JSON escape.
+            # Windows accepts a forward-slash path everywhere this one is used.
+            try:
+                added["script_path"] = resolve_script_path(created_script).as_posix()
+            except ScriptPathError:
+                pass
         if source_job is not None:
             added["cloned_from"] = clone_from
         return json.dumps(added)

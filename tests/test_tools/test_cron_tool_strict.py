@@ -29,6 +29,9 @@ class _ToolFakeScheduler:
 
         return SimpleNamespace(
             id="job-strict",
+            # The real scheduler returns the job it persisted, and the tool
+            # reads the stored payload back rather than echoing its argument.
+            payload=kwargs.get("payload") or {},
             delivery=SimpleNamespace(ws_topic=""),
         )
 

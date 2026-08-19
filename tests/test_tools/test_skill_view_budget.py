@@ -252,3 +252,81 @@ async def test_the_hub_is_not_suggested_to_a_session_that_cannot_reach_it(
     assert "skill_search_community" not in result
     assert "skill_install_community" not in result
     assert "skill_list" in result
+
+
+def _pinned_skill(dir_: Path, name: str) -> None:
+    """A skill whose rule sits at the very end, past any budget cut.
+
+    The shape that motivated pinning: `senior-unilp-manager` grew to 44k
+    characters, and two merged fixes wrote their rules into the last quarter of
+    it, where a 10k budget never reached. Both were silently ignored.
+    """
+    body = ["# Big", "", "Overview line.", ""]
+    for index in range(12):
+        body += [f"## Section {index}", "", "w" * 3_000, ""]
+    body += [
+        "<!-- always -->",
+        "## Rules",
+        "",
+        "Put every file under its own directory.",
+        "",
+    ]
+    skill_dir = dir_ / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: Use when testing pinned sections.\n---\n"
+        + "\n".join(body),
+        encoding="utf-8",
+    )
+
+
+@pytest.fixture()
+def pinned(tmp_path: Path) -> Iterator[SkillLoader]:
+    bundled = tmp_path / "bundled"
+    _pinned_skill(bundled, "pinned-skill")
+    _long_skill(bundled, "unpinned-skill", sections=12, section_chars=3_000)
+
+    loader = SkillLoader(
+        bundled_dir=bundled,
+        workspace_dir=tmp_path / "workspace",
+        managed_dir=tmp_path / "managed",
+        personal_agents_dir=tmp_path / "personal",
+        project_agents_dir=tmp_path / "project",
+        snapshot_path=tmp_path / "skills.snapshot.json",
+    )
+    previous_loader = skill_tools_module._loader
+    previous_config = control_module._gateway_config
+    skill_tools_module.create_skill_tools(loader)
+    try:
+        yield loader
+    finally:
+        skill_tools_module._loader = previous_loader
+        control_module._gateway_config = previous_config
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_section_survives_the_cut(pinned: SkillLoader) -> None:
+    _set_budget(None)
+
+    result = await _skill_view("pinned-skill")
+
+    assert "Put every file under its own directory." in result
+    # And the index does not send the model back for what it just received.
+    rules_line = next(
+        line for line in result.splitlines() if line.strip().startswith("- ") and "Rules" in line
+    )
+    assert rules_line.endswith("(shown above)")
+
+
+@pytest.mark.asyncio
+async def test_pinning_does_not_push_the_view_past_its_ceiling(pinned: SkillLoader) -> None:
+    """The head gives up room for the rule; the total does not grow."""
+    _set_budget(None)
+    unpinned = await _skill_view("unpinned-skill")
+
+    result = await _skill_view("pinned-skill")
+
+    # Only the sentence introducing the pinned block is new: the rule's own
+    # characters came out of the head's allowance, not out of thin air.
+    assert len(_body(result)) <= len(_body(unpinned)) + 400
+    assert "Overview line." in result  # the head is still real content

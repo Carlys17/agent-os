@@ -618,9 +618,11 @@ agentos cron add --every 15m --script watch_rss.py --name hn \
 
 `--script` implies `--job-kind script` and resolves relative to
 `~/.agentos/scripts/`; absolute paths, `~`, and `..` are refused, and so is a
-symlink out of that directory. `.sh`/`.bash` run under bash, anything else under
-python. `--script-arg` (repeatable) passes argv straight to the script — never
-through a shell. Non-empty stdout is delivered verbatim, empty stdout is a silent
+symlink out of that directory. Subdirectories are allowed, and `{job_id}`
+anywhere in the path is replaced with the created job's own id, so a job can own
+a directory named after itself in one `add`. `.sh`/`.bash` run under bash,
+anything else under python. `--script-arg` (repeatable) passes argv straight to
+the script — never through a shell. Non-empty stdout is delivered verbatim, empty stdout is a silent
 run, and a non-zero exit or `--timeout` delivers the error and fails the job.
 Secrets are masked in the output, and the gateway token is withheld from the
 child process. The bundled `cron-watchers` skill ships scripts for RSS, JSON

@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A cron job's `script` path may contain `{job_id}`, which the scheduler
+  replaces with the created job's own id before the job is persisted, and the
+  `cron` tool's add result now reports the resolved path as `script_path`. A
+  job that keeps its files in a directory named after itself could not name that
+  directory at creation time, because the id is minted by the create: the only
+  route there was to stage the script elsewhere, add the job against the staging
+  path, move the file, and repoint the job — four steps during which a live job
+  points at a path it will not keep, and any run abandoned midway leaves files
+  behind that nothing can attribute to a job. One `add` now does it. Works for
+  a `script` job and for an `agent_turn` job's pre-run script, from the tool,
+  the CLI, and the RPC surface alike, because the substitution happens in
+  `SchedulerOps`. A stored path that somehow still holds the placeholder refuses
+  to run rather than creating a directory called `{job_id}`. (#332)
+- Skills can pin a section so `skill_view` returns it wherever it sits in the
+  file: `<!-- always -->` on the line directly above a heading. Over the read
+  ceiling `skill_view` returns a skill's opening sections plus an index of the
+  rest, so position in the file decided what a model actually read — and a rule
+  written into a large skill's tail was never seen unless the model thought to
+  ask for that section. `senior-unilp-manager` is 44k characters against a 10k
+  ceiling, and two merged fixes wrote their rules past the cut; neither reached
+  the model, and the next run repeated both mistakes. Pinned sections come out
+  of the same ceiling rather than adding to it — at most half of it, with the
+  opening taking what is left — and the index marks them as already shown.
+  `skill_view.outlined` is now logged at INFO with a `pinned` count, because it
+  is the only event that says most of a skill did not reach the model. (#332)
+
 ### Fixed
 
 - Web chat: copying an assistant message no longer prepends the collapsible
@@ -18,6 +46,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- `senior-unilp-manager`'s monitor layout is now one `cron` call and one pinned
+  section. "Files on disk for a monitor" became "Setting up a monitor", shrank
+  from 4 238 characters to roughly 2 100 — the stage-add-move-repoint sequence
+  it existed to explain is replaced by `script="senior-unilp-manager/{job_id}/
+  tick.sh"` — and carries `<!-- always -->`, so it reaches the model whatever
+  the read ceiling is. The rule that a monitor is a `script` job unless a model
+  in the loop was asked for moved into that section for the same reason: it sat
+  past the cut too, and the run that motivated this shipped an agent task the
+  user had to correct by hand. (#332)
 - `senior-unilp-manager` now defaults the ratchet monitor to a `script` cron
   job. "Wiring it to cron" leads with the `job_kind="script"` shape and states
   the rule outright: if the user did not say which shape they want, schedule

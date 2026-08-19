@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -46,6 +47,25 @@ log = structlog.get_logger(__name__)
 MAX_SCRIPT_OUTPUT_CHARS = 16_000
 
 _SHELL_SUFFIXES = frozenset({".sh", ".bash"})
+
+#: Stands in for the owning job's id inside a script path. A job that keeps its
+#: files in a directory named after itself cannot write that name at creation
+#: time, because the id is minted by the create. Without the placeholder the
+#: only way there is to stage the script somewhere else, create the job against
+#: the staging path, move the file, and repoint the job — four steps during
+#: which a live job points at a path it will not keep, and any abandoned run
+#: leaves files behind that nothing can attribute.
+JOB_ID_PLACEHOLDER = "{job_id}"
+
+#: What the placeholder resolves to while a path is being validated, before any
+#: job exists. Shaped like a real id so containment is checked against a path
+#: the same length and depth as the one that will actually run.
+_PLACEHOLDER_PROBE = "00000000-0000-0000-0000-000000000000"
+
+#: A job id becomes a path segment, so it may only hold characters that cannot
+#: reshape the path. Real ids are uuid4; this is the backstop for the one place
+#: a value is spliced into a path rather than resolved as one.
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ScriptPathError(ValueError):
@@ -71,6 +91,23 @@ def normalize_script_value(script: str | None) -> str:
     return raw
 
 
+def substitute_job_id(script: str, job_id: str) -> str:
+    """Return *script* with every :data:`JOB_ID_PLACEHOLDER` replaced by *job_id*.
+
+    A path with no placeholder is returned as written, so this is safe to run
+    over every script path rather than only the ones that opted in.
+
+    Raises:
+        ScriptPathError: *job_id* is not id-shaped, and splicing it into a path
+            would change that path's shape rather than name a directory in it.
+    """
+    if JOB_ID_PLACEHOLDER not in (script or ""):
+        return script
+    if not _JOB_ID_RE.match(job_id or ""):
+        raise ScriptPathError(f"Blocked: {job_id!r} cannot name a directory in a script path")
+    return script.replace(JOB_ID_PLACEHOLDER, job_id)
+
+
 def resolve_script_path(script: str) -> Path:
     """Resolve *script* to an absolute path inside :func:`scripts_dir`.
 
@@ -80,11 +117,20 @@ def resolve_script_path(script: str) -> Path:
     escapes do not.
 
     Raises:
-        ScriptPathError: the path is empty or resolves outside the scripts dir.
+        ScriptPathError: the path is empty, still holds an unresolved
+            :data:`JOB_ID_PLACEHOLDER`, or resolves outside the scripts dir.
     """
     raw = normalize_script_value(script)
     if not raw:
         raise ScriptPathError("script path is required")
+    if JOB_ID_PLACEHOLDER in raw:
+        # Resolving it literally would make a directory actually called
+        # "{job_id}" and then report the file missing, which reads as a typo
+        # rather than as a job that was persisted before substitution ran.
+        raise ScriptPathError(
+            f"Blocked: script path still holds {JOB_ID_PLACEHOLDER}; it is replaced "
+            f"with the job's id when the job is created: {raw!r}"
+        )
 
     base = scripts_dir()
     base.mkdir(parents=True, exist_ok=True)
@@ -113,6 +159,10 @@ def validate_script_path(script: str | None) -> str | None:
 
     Existence is deliberately not checked — a job may be scheduled before its
     script is written, and a missing file surfaces as a delivered run error.
+
+    A :data:`JOB_ID_PLACEHOLDER` is allowed and stands in for one path segment
+    while the containment check runs: the path has to pass this gate before any
+    job exists to substitute into it.
     """
     raw = normalize_script_value(script)
     if not raw:
@@ -124,7 +174,7 @@ def validate_script_path(script: str | None) -> str | None:
             "place the script in that directory and pass just the file name."
         )
     try:
-        resolve_script_path(raw)
+        resolve_script_path(raw.replace(JOB_ID_PLACEHOLDER, _PLACEHOLDER_PROBE))
     except ScriptPathError as exc:
         return str(exc)
     return None
@@ -337,6 +387,7 @@ def has_actionable_output(output: str) -> bool:
 
 
 __all__ = [
+    "JOB_ID_PLACEHOLDER",
     "MAX_SCRIPT_OUTPUT_CHARS",
     "ScriptPathError",
     "has_actionable_output",
@@ -344,5 +395,6 @@ __all__ = [
     "resolve_script_path",
     "run_job_script",
     "scripts_dir",
+    "substitute_job_id",
     "validate_script_path",
 ]

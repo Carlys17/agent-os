@@ -463,6 +463,8 @@ agentos cron add --every 1h --job-kind agent_turn --text "Summarize updates"
 # script jobs run a file in ~/.agentos/scripts/ and deliver its stdout — no
 # model, no tokens. Empty stdout = silent; non-zero exit delivers the error and
 # fails the job. Relative paths only; CLI/Web callers only (never a channel).
+# Subdirectories are fine, and '{job_id}' in the path becomes the new job's id,
+# so a job can own a directory named after itself in a single add.
 agentos cron add --every 5m --script watch-memory.sh --name memory-watchdog
 # ...but a job added from the CLI has no chat to deliver into, so that stdout
 # only reaches the run record. --session-key names the chat it reports into

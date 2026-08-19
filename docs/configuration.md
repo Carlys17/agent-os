@@ -247,6 +247,29 @@ agentos config set skills.max_skills_prompt_chars 32000
 agentos gateway restart
 ```
 
+### Pinning a section
+
+Which sections survive the cut is otherwise decided by where they sit in the
+file, so a rule written into a large skill's tail is invisible and nothing says
+so. A skill can mark a section to be returned wherever it sits, by writing
+`<!-- always -->` on the line directly above its heading:
+
+```markdown
+<!-- always -->
+## Rules
+
+Every file this job needs lives in its own directory.
+```
+
+It is an HTML comment, so it renders as nothing anywhere the file is read as
+markdown, and it only counts as a marker when it is the nearest non-blank line
+above the heading — a skill that documents the marker does not pin whatever
+heading follows the explanation. Pinned sections come out of the same ceiling
+rather than adding to it: together they may take at most half of it, the opening
+gets what is left, and a section that does not fit is left in the index instead
+of being cut in half. Reserve it for invariants; pinning reference material
+spends the opening on it.
+
 ## First-Run Wizard
 
 ```sh

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from agentos.skills.outline import (
+    always_sections,
     find_section,
     head_sections,
     indexable,
     parse_sections,
     render_outline,
+    render_pinned,
 )
 
 
@@ -183,3 +185,109 @@ def test_the_index_marks_what_the_head_already_returned() -> None:
 def test_a_body_without_headings_has_nothing_to_index() -> None:
     assert parse_sections("just prose, no headings\n") == []
     assert indexable([]) == []
+
+
+def test_a_marked_section_is_pinned_wherever_it_sits() -> None:
+    """The rule a skill cannot afford to have truncated.
+
+    Section order otherwise decides what a model reads, so a rule added to a
+    large skill lands in the indexed tail and is never seen unless the model
+    thinks to ask for it.
+    """
+    body = _body(
+        "# T",
+        "intro",
+        "## One",
+        "x" * 400,
+        "<!-- always -->",
+        "## Rules",
+        "never do that",
+    )
+    sections = parse_sections(body)
+
+    pinned = always_sections(body, sections)
+
+    assert [s.title for s in pinned] == ["Rules"]
+
+
+def test_an_unmarked_skill_pins_nothing() -> None:
+    body = _body("# T", "i", "## One", "x" * 400, "## Two", "y" * 400)
+
+    assert always_sections(body, parse_sections(body)) == []
+
+
+def test_the_marker_is_read_through_blank_lines() -> None:
+    body = _body("# T", "i", "<!-- always -->", "", "## Rules", "r")
+
+    assert [s.title for s in always_sections(body, parse_sections(body))] == ["Rules"]
+
+
+def test_a_marker_that_is_not_the_nearest_line_pins_nothing() -> None:
+    """A marker with prose between it and the heading marks nothing.
+
+    Otherwise the word appearing anywhere above a heading would pin it, and a
+    skill discussing the marker would pin sections it never meant to.
+    """
+    body = _body("# T", "<!-- always -->", "some prose", "## Rules", "r")
+
+    assert always_sections(body, parse_sections(body)) == []
+
+
+def test_a_marker_inside_a_fence_pins_nothing() -> None:
+    """A skill documenting the marker shows it in a code block."""
+    body = _body(
+        "# T",
+        "```md",
+        "<!-- always -->",
+        "## Not a section",
+        "```",
+        "",
+        "## Real",
+        "r",
+    )
+
+    assert always_sections(body, parse_sections(body)) == []
+
+
+def test_the_index_marks_a_pinned_section_as_already_shown() -> None:
+    body = _body("# T", "i", "## One", "x" * 200, "<!-- always -->", "## Rules", "r")
+    sections = parse_sections(body)
+    pinned = always_sections(body, sections)
+
+    rendered = render_outline(
+        sections,
+        shown_through=0,
+        skill_name="demo",
+        also_shown=pinned,
+    )
+
+    lines = [line for line in rendered.splitlines() if "Rules" in line]
+    assert lines and lines[0].endswith("(shown above)")
+
+
+def test_pinned_text_is_rendered_under_a_heading_that_says_why() -> None:
+    body = _body("# T", "i", "<!-- always -->", "## Rules", "never do that")
+    sections = parse_sections(body)
+
+    rendered = render_pinned(body, always_sections(body, sections))
+
+    assert "## Rules" in rendered
+    assert "never do that" in rendered
+
+
+def test_a_pinned_subsection_of_a_pinned_section_is_not_pinned_twice() -> None:
+    """A section owns its subsections, so pinning both would render it twice."""
+    body = _body(
+        "# T",
+        "i",
+        "<!-- always -->",
+        "## Rules",
+        "outer",
+        "<!-- always -->",
+        "### Detail",
+        "inner",
+    )
+
+    pinned = always_sections(body, parse_sections(body))
+
+    assert [s.title for s in pinned] == ["Rules"]
