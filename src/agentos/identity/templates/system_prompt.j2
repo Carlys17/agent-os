@@ -245,7 +245,7 @@ Working directory: {{ runtime_info.workspace_dir }}
 
 {% endif -%}
 
-{% if prompt_mode == "full" -%}
+{% if channels_enabled and prompt_mode == "full" -%}
 ## Reply Tags
 
 When replying to a specific message, use:
@@ -256,7 +256,7 @@ Place reply tags at the very start of your response.
 
 {% endif -%}
 
-{% if prompt_mode == "full" -%}
+{% if channels_enabled and prompt_mode == "full" -%}
 ## Messaging
 
 - Route messages to the correct channel when multiple channels are active.
@@ -264,7 +264,7 @@ Place reply tags at the very start of your response.
 
 {% endif -%}
 
-{% if prompt_mode == "full" -%}
+{% if channels_enabled and prompt_mode == "full" -%}
 ## Reactions
 
 Use emoji reactions sparingly and only when they add meaning.
@@ -279,7 +279,7 @@ Prefer a brief text reply over a standalone reaction.
 
 {% endif -%}
 
-{% if prompt_mode == "full" -%}
+{% if (unattended_context or heartbeat_prompt) and prompt_mode == "full" -%}
 ## Silent Replies
 
 When processing internal system events (not user messages), you may use these
