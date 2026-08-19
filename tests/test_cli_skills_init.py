@@ -26,8 +26,8 @@ def temp_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_init_invalid_skill_name() -> None:
     runner = CliRunner()
 
-    # Invalid characters (spaces, underscores, stars)
-    for invalid_name in ["my skill", "my_skill", "my*skill", "../traversal"]:
+    # Invalid characters (spaces, stars)
+    for invalid_name in ["my skill", "my*skill", "../traversal"]:
         result = runner.invoke(skills_app, ["init", invalid_name])
         assert result.exit_code == 1
         assert "Invalid skill name" in result.output
@@ -238,3 +238,100 @@ def test_init_resolves_target_dir_fallback_order(
     # Since only candidate #3 exists (high priority candidate #1 and #2 don't exist yet),
     # it should be picked!
     assert (personal_skills / "resolved-skill" / "SKILL.md").is_file()
+
+
+def test_init_success_with_underscore(temp_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cwd_dir = temp_home / "cwd"
+    cwd_dir.mkdir()
+    monkeypatch.setattr(Path, "cwd", lambda: cwd_dir)
+
+    runner = CliRunner()
+    target = cwd_dir / "target_skills"
+    target.mkdir()
+
+    result = runner.invoke(
+        skills_app,
+        [
+            "init",
+            "my_skill",
+            "--target-dir",
+            str(target),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Initialized custom skill template" in result.output
+    assert (target / "my_skill" / "SKILL.md").is_file()
+
+
+def test_init_roundtrip_loader(temp_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from agentos.skills.loader import SkillLoader
+
+    cwd_dir = temp_home / "cwd"
+    cwd_dir.mkdir()
+    monkeypatch.setattr(Path, "cwd", lambda: cwd_dir)
+
+    runner = CliRunner()
+    target = cwd_dir / "target_skills"
+    target.mkdir()
+
+    result = runner.invoke(
+        skills_app,
+        [
+            "init",
+            "roundtrip-skill",
+            "--target-dir",
+            str(target),
+            "--description",
+            "Roundtrip test description",
+            "-t",
+            "trigger1",
+        ],
+    )
+    assert result.exit_code == 0
+
+    # Initialize loader with target as workspace_dir
+    loader = SkillLoader(workspace_dir=target)
+    skills = loader.load_all()
+
+    # Find the skill in loaded list
+    skill_spec = next((s for s in skills if s.name == "roundtrip-skill"), None)
+    assert skill_spec is not None
+    assert skill_spec.description == "Roundtrip test description"
+    assert skill_spec.triggers == ["trigger1"]
+    assert skill_spec.always is False
+    assert skill_spec.metadata is not None
+    assert skill_spec.metadata.emoji == "💡"
+
+    # Now let's test editing the SKILL.md to add metadata.requires in the YAML frontmatter
+    skill_md = target / "roundtrip-skill" / "SKILL.md"
+    content = skill_md.read_text(encoding="utf-8")
+
+    # Split frontmatter and body
+    parts = content.split("---")
+    assert len(parts) >= 3
+
+    # Load YAML frontmatter
+    frontmatter = yaml.safe_load(parts[1])
+
+    # Add requires under metadata
+    frontmatter["metadata"]["requires"] = {
+        "bins": ["curl"],
+        "env": ["API_KEY"],
+    }
+
+    # Dump it back
+    parts[1] = "\n" + yaml.safe_dump(frontmatter, sort_keys=False)
+    new_content = "---".join(parts)
+    skill_md.write_text(new_content, encoding="utf-8")
+
+    # Invalidate cache and reload
+    loader.invalidate_cache()
+    skills = loader.load_all()
+
+    skill_spec = next((s for s in skills if s.name == "roundtrip-skill"), None)
+    assert skill_spec is not None
+    assert skill_spec.metadata is not None
+    assert skill_spec.metadata.requires is not None
+    assert skill_spec.metadata.requires.bins == ["curl"]
+    # Coerced to list of SkillEnvVar
+    assert skill_spec.metadata.requires.env_names == ["API_KEY"]
