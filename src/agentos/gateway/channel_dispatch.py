@@ -26,6 +26,7 @@ import structlog
 
 from agentos.agents.scope import resolve_agent_model
 from agentos.artifacts import artifact_payload
+from agentos.ask_user import format_questions_as_text, questions_from_tool_result
 from agentos.channels._util import ChannelAccessPolicy, evaluate_policy
 from agentos.channels.artifact_delivery import (
     artifact_delivery_key as _artifact_delivery_key,
@@ -1615,6 +1616,12 @@ class _RuntimeChannelStreamRelay:
         if artifact is not None:
             self._artifacts.append(artifact)
             return
+        ask_text = _ask_user_reply_text(event)
+        if ask_text is not None:
+            prefix = "\n\n" if self.text_emitted else ""
+            self.text_emitted = True
+            await self._queue.put(f"{prefix}{ask_text}")
+            return
         text = _text_delta_from_event(event)
         if not text:
             return
@@ -1715,6 +1722,30 @@ class _RuntimeChannelStreamRelay:
                         self._inbound,
                     )
                 )
+
+
+def _ask_user_reply_text(event: Any) -> str | None:
+    """Render a presented ask_user question for a text-only channel reply.
+
+    Channels have no clickable options; the question is appended to the
+    reply as a numbered list and the user answers by typing a number or
+    free text as their next message. Duck-typed so both ToolResultEvent
+    instances and dict-shaped runtime events work.
+    """
+    if isinstance(event, dict):
+        tool_name = event.get("tool_name")
+        content = event.get("result")
+        is_error = bool(event.get("is_error"))
+    else:
+        tool_name = getattr(event, "tool_name", None)
+        content = getattr(event, "result", None)
+        is_error = bool(getattr(event, "is_error", False))
+    if is_error:
+        return None
+    questions = questions_from_tool_result(tool_name, content)
+    if questions is None:
+        return None
+    return format_questions_as_text(questions)
 
 
 def _text_delta_from_event(event: Any) -> str:
@@ -2163,6 +2194,9 @@ async def _run_turn_batch_path(
                         "session.event.tool_result",
                         _tool_result_payload(event),
                     )
+                ask_text = _ask_user_reply_text(event)
+                if ask_text:
+                    text_parts.append(("\n\n" if text_parts else "") + ask_text)
             elif isinstance(event, ErrorEvent):
                 log.error(
                     "channel_dispatch.agent_error",
@@ -2331,6 +2365,11 @@ async def _run_turn_streaming_path(
                         "session.event.tool_result",
                         _tool_result_payload(event),
                     )
+                ask_text = _ask_user_reply_text(event)
+                if ask_text:
+                    prefix = "\n\n" if text_emitted else ""
+                    text_emitted = True
+                    await queue.put(f"{prefix}{ask_text}")
             elif isinstance(event, ErrorEvent):
                 log.error(
                     "channel_dispatch.agent_error",

@@ -248,6 +248,13 @@ export const chat = defineNamespace('chat', {
   toolViewFull: 'View full',
   toolResultTitle: 'Tool Result',
 
+  // ask_user question card.
+  askCardLabel: 'The agent is asking you',
+  askSend: 'Send answer',
+  askOtherPlaceholder: 'Or type your own answer…',
+  askMultiHint: 'Choose one or more',
+  askAnswered: 'Answered',
+
   // Transcript: router visualization.
   routerChoosing: 'Choosing a model',
   routerSuggested: 'Suggested model',

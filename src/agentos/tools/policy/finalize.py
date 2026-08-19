@@ -18,6 +18,7 @@ from typing import Any
 
 import structlog
 
+from agentos.ask_user import ask_user_payload_terminates_turn
 from agentos.execution_status import (
     derive_is_error,
     execution_status_for_tool_result,
@@ -263,5 +264,12 @@ async def finalize(
         terminates_turn=(
             call.tool_name == "router_control"
             and router_control_payload_terminates_turn(content)
+        )
+        or (
+            # ask_user follows an end-turn-and-resume contract: presenting
+            # the question ends the turn; the answer is the next user message.
+            call.tool_name == "ask_user"
+            and not is_error
+            and ask_user_payload_terminates_turn(content)
         ),
     )

@@ -3082,3 +3082,118 @@
     width: 100%;
   }
 }
+
+/* ── ask_user question card (transcript/ask.ts) ─────────────────────────────
+   Rendered in the bubble body when the agent presents structured choices.
+   Signal-colored border marks it as the one element awaiting the user. */
+.chat-ask-card {
+  box-sizing: border-box;
+  max-width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  border-radius: var(--radius-compact);
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+.chat-ask-card--answered {
+  border-color: color-mix(in srgb, var(--foreground) 18%, transparent);
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+.chat-ask-eyebrow {
+  margin-bottom: 8px;
+  color: var(--primary);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.chat-ask-card--answered .chat-ask-eyebrow {
+  color: var(--dim);
+}
+.chat-ask-question + .chat-ask-question {
+  margin-top: 12px;
+}
+.chat-ask-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--foreground);
+  font-size: 0.78rem;
+}
+.chat-ask-header-chip {
+  padding: 1px 6px;
+  border-radius: var(--radius-compact);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.chat-ask-multi-hint {
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 0.64rem;
+}
+.chat-ask-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.chat-ask-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 22%, transparent);
+  border-radius: var(--radius-compact);
+  background: transparent;
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: 0.72rem;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-ask-option:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+}
+.chat-ask-option:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.chat-ask-option--selected {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.chat-ask-option-label {
+  font-weight: 600;
+}
+.chat-ask-option-desc {
+  color: var(--dim);
+  font-size: 0.64rem;
+}
+.chat-ask-footer {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.chat-ask-other {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 22%, transparent);
+  border-radius: var(--radius-compact);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: 0.72rem;
+}
+.chat-ask-answered {
+  margin-top: 10px;
+  color: var(--dim);
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}

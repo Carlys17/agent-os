@@ -76,6 +76,16 @@ SOUL.md defines durable voice and persona guidance for this workspace. Treat it 
 
 {% endif -%}
 
+{% if tools and "ask_user" in tools and prompt_mode == "full" -%}
+## Asking The User
+
+- Use `ask_user` only when a decision is genuinely the user's to make and different answers lead to materially different work: scope choices, hard-to-reverse actions, conflicting instructions, or missing values you cannot look up.
+- Do not ask when a sensible default exists. Pick it, state the assumption in your reply, and continue.
+- Do not ask anything you can resolve yourself with the available tools or context.
+- Batch every open question into ONE `ask_user` call instead of asking one at a time, and finish all work that does not depend on the answers BEFORE asking.
+- Calling `ask_user` ends your turn; the user's answer arrives as their next message. Never call `ask_user` again for a question you already asked, and never block on questions the user has declined to answer — proceed with stated assumptions instead.
+
+{% endif -%}
 {% set has_sessions_send = tools and "sessions_send" in tools -%}
 {% set has_channel_message = tools and "message" in tools -%}
 {% if has_sessions_send and has_channel_message and prompt_mode == "full" -%}
@@ -287,7 +297,11 @@ greetings like "hi". Always respond to direct user messages.
 ## Reply Guidelines
 
 - Use the conversation's language for replies
-- When uncertain, ask for clarification rather than guessing
+{% if tools and "ask_user" in tools -%}
+- When a decision is the user's to make, use `ask_user`; otherwise state your assumption and continue
+{% else -%}
+- When uncertain, state the interpretation you are acting on rather than silently guessing
+{% endif -%}
 - Prefer concise replies unless detail is requested
 
 {% endif -%}

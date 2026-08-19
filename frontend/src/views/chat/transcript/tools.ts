@@ -21,6 +21,7 @@ import { t } from '@/i18n'
 import '@/i18n/en/chat'
 
 import type { StreamEventPayload } from '../types'
+import { buildAskCardDOM, parseAskQuestions } from './ask'
 
 /* ── Constants (ported from chat.js, modernized to vector icon keys) ────── */
 
@@ -410,6 +411,13 @@ export interface ToolRendererDeps {
   pushMessage: (message: Record<string, unknown>) => void
   /** chat.js `UI.modal` — open the "View full" result modal. Default: no-op. */
   openModal?: (title: string, html: string, buttons: Array<Record<string, unknown>>) => void
+  /**
+   * ask_user card → send the composed answer as the next user message
+   * (the composer's chat.send path). Returns false when the send did not go
+   * out (e.g. the stream is still settling) so the card stays active.
+   * Absent → the card renders read-only.
+   */
+  sendUserAnswer?: (text: string) => boolean
   /** chat.js `_chatDiag` — the diagnostics ring. Default: no-op. */
   diag?: (event: string, detail: Record<string, unknown>) => void
 }
@@ -695,6 +703,22 @@ export function createToolRenderer(deps: ToolRendererDeps) {
       return
     }
 
+    // ask_user: render the interactive question card in the bubble body
+    // (outside the collapsed tool details). The answer goes out through the
+    // injected chat.send path; the turn has already been terminated
+    // server-side, so the send lands as the next user message.
+    if (toolName === 'ask_user' && !isError) {
+      const questions = parseAskQuestions(payload)
+      if (questions && body && !body.querySelector(`[data-ask-for="${toolId}"]`)) {
+        const askCard = buildAskCardDOM(questions, deps.sendUserAnswer)
+        if (toolId) askCard.setAttribute('data-ask-for', toolId)
+        deps.flushPendingTextSegment()
+        body.appendChild(askCard)
+        deps.newTextSegment()
+        diag('tool_result.ask_card', { toolId, questions: questions.length })
+      }
+    }
+
     // Only show result preview if non-empty.
     const resultDiv = buildToolResultDOM(content, isError, toolResultIsTruncated(payload), toolName)
     if (!resultDiv) {
@@ -805,6 +829,23 @@ export function createToolRenderer(deps: ToolRendererDeps) {
                   injectProviderBadge(details.querySelector('.chat-tools-summary'), provider)
                 }
               }
+            }
+          }
+
+          // ask_user: rebuild the interactive question card. The post-stream
+          // history resync replaces the live bubble with this reconstruction,
+          // so without this branch the card only exists for the seconds
+          // between the tool result and the resync. Cards answered in earlier
+          // turns are locked afterwards by lockAnsweredAskCards (history.ts).
+          if (resultToolName === 'ask_user' && !isError) {
+            const questions = parseAskQuestions({
+              tool_name: 'ask_user',
+              result: content,
+            } as StreamEventPayload)
+            if (questions && !body.querySelector(`[data-ask-for="${toolId}"]`)) {
+              const askCard = buildAskCardDOM(questions, deps.sendUserAnswer)
+              if (toolId) askCard.setAttribute('data-ask-for', toolId)
+              body.appendChild(askCard)
             }
           }
         }

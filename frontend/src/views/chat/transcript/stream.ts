@@ -340,6 +340,8 @@ export interface StreamControllerDeps {
    * injects the React modal bridge; default no-op keeps tool cards standalone.
    */
   openModal?: (title: string, html: string, buttons: Array<Record<string, unknown>>) => void
+  /** ask_user card → send the composed answer via the composer's chat.send path. */
+  sendUserAnswer?: (text: string) => boolean
   /**
    * chat.js:7814 `_addMessage` with provenance options — append the subagent
    * completion system row. Distinct from `addMessage` above (which is the
@@ -1500,6 +1502,7 @@ export function createStreamController(
     addMessage: addMessageWithOptions,
     pushMessage,
     openModal,
+    sendUserAnswer: deps.sendUserAnswer,
     diag,
   })
 

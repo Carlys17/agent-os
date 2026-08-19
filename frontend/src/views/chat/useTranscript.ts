@@ -344,6 +344,10 @@ export function useTranscript(opts: {
   // change across renders. Route it through a ref so every View-full click sees
   // the latest callback without rebuilding the imperative transcript controller.
   const openModalRef = useRef(opts.openModal)
+  // ask_user card → composer send path. `send` is defined after the
+  // controller exists, so the card reaches it through a ref (same
+  // late-binding pattern as openModalRef).
+  const sendUserAnswerRef = useRef<((text: string) => boolean) | null>(null)
   const messageActionsRef = useRef({
     onEdit: opts.onEditMessage,
     onRegenerate: opts.onRegenerateMessage,
@@ -498,6 +502,7 @@ export function useTranscript(opts: {
       historyHasRendered: () => historyHasRenderedRef.current,
       historyHydrating: () => historyHydratingRef.current,
       openModal: (title, html, buttons) => openModalRef.current?.(title, html, buttons),
+      sendUserAnswer: (text) => sendUserAnswerRef.current?.(text) ?? false,
       // Artifact preview/download URLs + download Authorization header
       // (chat.js:7575/7657 `App.getAuthToken()`).
       getAuthToken,
@@ -983,6 +988,18 @@ export function useTranscript(opts: {
     },
     [rpc, controller, routerConfigGate],
   )
+
+  // Late-bind the ask_user card's answer path to the freshest `send` so a
+  // card built mid-stream still sends through the current session wiring.
+  // Reports success so the card only locks itself once the answer went out
+  // (send() is a no-op while the ended turn's stream is still settling).
+  useEffect(() => {
+    sendUserAnswerRef.current = (text) => {
+      if (controller.isStreaming()) return false
+      send(text)
+      return true
+    }
+  }, [controller, send])
 
   // chat.js:8439-8450 `_onStop`. Abort only while streaming; set the abort flag,
   // fire `chat.abort` with `{ sessionKey, source }` (chat.js:8444), and end the

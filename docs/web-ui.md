@@ -230,6 +230,16 @@ Turn it off with `control_ui.show_thinking = false` (or
 thinking events nor serves reasoning bodies. This is WebUI-only either way:
 channel adapters (Slack, Telegram, …) never receive thinking.
 
+### Agent questions (ask_user)
+
+When the agent needs a decision that is genuinely yours — scope, a
+hard-to-reverse action, conflicting instructions — it can call the `ask_user`
+tool. The chat renders a question card with clickable options (plus a
+free-text field); picking an answer sends it as your next message and the
+agent continues from there. Asking ends the agent's turn, so nothing blocks
+while you decide, and typing a reply in the composer works exactly the same
+as clicking the card.
+
 ## Manual Compaction
 
 Long sessions can be compacted from chat. If no compaction is needed, the UI

@@ -95,6 +95,7 @@ current_tool_context: contextvars.ContextVar[ToolContext | None] = contextvars.C
 
 SUBAGENT_TOOL_DENY: frozenset[str] = frozenset(
     {
+        "ask_user",
         "cron",
         "gateway",
         "agents_list",

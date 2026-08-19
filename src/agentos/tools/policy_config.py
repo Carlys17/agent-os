@@ -34,6 +34,9 @@ _TOOL_GROUPS: Mapping[str, frozenset[str]] = {
     "group:memory": frozenset({"memory_search", "memory_get"}),
     "group:web": frozenset({"web_search", "web_fetch", "http_request", "x_search"}),
     "group:messaging": frozenset({"message"}),
+    # Structured user questions. Interactive surfaces only — the runtime
+    # capability layer hides ask_user on unattended runs regardless of profile.
+    "group:interaction": frozenset({"ask_user"}),
     "channel:chat": frozenset(
         {
             "message",
@@ -115,8 +118,12 @@ _TOOL_PROFILES: Mapping[str, frozenset[str] | None] = {
         | _TOOL_GROUPS["group:runtime"]
         | _TOOL_GROUPS["group:sessions"]
         | _TOOL_GROUPS["group:memory"]
+        # Coding turns hit the most decisions that are genuinely the user's
+        # (scope, destructive steps); the ask tool belongs on this surface.
+        | _TOOL_GROUPS["group:interaction"]
     ),
     "messaging": _TOOL_GROUPS["group:messaging"]
+    | _TOOL_GROUPS["group:interaction"]
     | frozenset(
         {
             "sessions_list",

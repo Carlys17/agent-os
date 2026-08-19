@@ -1530,3 +1530,15 @@
     animation-iteration-count: 1 !important;
   }
 }
+
+/* ask_user question card — unified skin: product-facing prompt, so Inter for
+   the question text while options keep their mono base from chat.css. */
+.chat-ask-card {
+  font-family: var(--font-sans);
+}
+.chat-ask-title {
+  font-size: 0.84rem;
+}
+.chat-ask-option {
+  font-family: var(--font-sans);
+}

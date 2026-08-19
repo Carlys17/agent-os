@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
 
+from agentos.ask_user import format_questions_as_text, questions_from_tool_result
 from agentos.cli.chat.output import ChatOutputHandle
 from agentos.cli.chat.turn import TurnResult, UsageSummary
 from agentos.execution_status import derive_is_error
@@ -501,6 +502,17 @@ async def stream_response_gateway(
                                     ),
                                 ),
                             )
+                            ask_questions = questions_from_tool_result(
+                                event.get("tool_name") or event.get("toolName"),
+                                event.get("result"),
+                            )
+                            if ask_questions:
+                                # No buttons on this surface: show the numbered
+                                # list; the user types the answer as their next
+                                # message.
+                                await renderer.aappend_text(
+                                    "\n\n" + format_questions_as_text(ask_questions)
+                                )
                     elif event_name == "session.event.artifact":
                         artifact = artifact_event_payload(event)
                         artifacts.append(artifact)
@@ -638,6 +650,14 @@ async def stream_response_turnrunner(
                                     legacy_is_error=event.is_error,
                                 ),
                             )
+                            ask_questions = questions_from_tool_result(
+                                event.tool_name,
+                                event.result,
+                            )
+                            if ask_questions:
+                                await renderer.aappend_text(
+                                    "\n\n" + format_questions_as_text(ask_questions)
+                                )
                     elif isinstance(event, ArtifactEvent):
                         artifact = artifact_event_payload(event)
                         artifacts.append(artifact)

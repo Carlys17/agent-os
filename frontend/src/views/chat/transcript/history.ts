@@ -13,6 +13,7 @@ import { t } from '@/i18n'
 import '@/i18n/en/chat'
 
 import type { ChatMessage } from '../types'
+import { lockAnsweredAskCards } from './ask'
 import type { Artifact } from './artifacts'
 import type { TurnMeta, TurnUsage } from './message'
 import type { TranscriptHeaderStateRef } from './stream'
@@ -694,6 +695,11 @@ export function createHistoryRenderer(deps: HistoryRenderDeps) {
     ) {
       deps.clearPendingFinalizedAssistantBubble()
     }
+
+    // Ask cards rebuilt above come back active; lock the ones a later user
+    // message already answered so only a genuinely pending question invites
+    // a click.
+    lockAnsweredAskCards(th)
 
     renderHistoryScopeRow(state)
 

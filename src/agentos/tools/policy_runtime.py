@@ -18,7 +18,9 @@ _SESSION_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset(
     {"sessions_send", "sessions_spawn", "sessions_yield"}
 )
 _CHANNEL_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"message"})
-_INTERACTIVE_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"agents_list", "subagents"})
+_INTERACTIVE_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset(
+    {"agents_list", "ask_user", "subagents"}
+)
 _GATEWAY_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"gateway"})
 _SCHEDULER_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"cron"})
 
