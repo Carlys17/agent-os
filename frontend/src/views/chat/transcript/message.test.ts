@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMessageRenderer, historyTurnMeta } from './message'
+import { createThinkingBlock } from './thinking'
 
 const chatCss = readFileSync('src/views/chat/chat.css', 'utf8')
 
@@ -114,6 +115,31 @@ describe('message renderer', () => {
     expect(row.querySelector('.msg-meta')).toHaveTextContent(
       'model↑1.3k ↓42cache:500think:12$0.00125',
     )
+  })
+
+  it('copies only the reply text when the bubble carries a reasoning block', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const { renderer } = makeRenderer()
+    const row = renderer.addMessage('assistant', 'the reply', '2026-07-22T12:34:00Z')!
+    const body = row.querySelector<HTMLElement>('.msg-body')!
+    const parts = createThinkingBlock({ open: false })
+    body.insertAdjacentElement('afterbegin', parts.details)
+
+    // Collapsed: the `Thinking` summary label must not leak into the clipboard.
+    expect(renderer.extractBubbleText(row)).toBe('the reply')
+
+    // Expanded: neither does the reasoning body fetched on first expand.
+    parts.details.open = true
+    parts.content.textContent = 'chain of thought that must stay private'
+    expect(renderer.extractBubbleText(row)).toBe('the reply')
+
+    row.querySelector<HTMLButtonElement>('.msg-action[data-action="copy"]')!.click()
+    await Promise.resolve()
+    expect(writeText).toHaveBeenCalledWith('the reply')
   })
 
   it('does not render the retired savings or combo UI from usage payloads', () => {

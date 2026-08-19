@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Web chat: copying an assistant message no longer prepends the collapsible
+  reasoning block. `extractBubbleText()` cloned `.msg-body` and stripped only
+  `.msg-actions` and `.msg-meta`, so the `Thinking` summary label — and the
+  full reasoning body once the block had been expanded — landed in the
+  clipboard ahead of the reply. `.thinking-block` now joins the strip list, so
+  copy yields the reply text alone whether the block is collapsed or expanded.
+  (#322)
+
 ### Changed
 
 - `senior-unilp-manager` now defaults the ratchet monitor to a `script` cron
