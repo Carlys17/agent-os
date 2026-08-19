@@ -36,6 +36,19 @@ _OUTLINE_DEPTH = 2
 #: every heading, and asking for a parent indexes its children.
 _MAX_OUTLINE_ENTRIES = 30
 
+#: Written on its own line directly above a heading, this pins that section:
+#: ``skill_view`` returns it whether or not the budget reaches that far. It is
+#: an HTML comment so it renders as nothing wherever the file is read as
+#: markdown. Position in the file otherwise decides what a model sees, which
+#: makes a rule added to a large skill invisible for no reason the author can
+#: tell from reading their own change.
+ALWAYS_MARKER = "<!-- always -->"
+
+#: The share of the view budget pinned sections may take between them. Pinning
+#: everything would leave no head, and a skill that opens on its index reads as
+#: a table of contents rather than as a skill.
+_ALWAYS_BUDGET_SHARE = 0.5
+
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(\S.*?)[ \t]*#*[ \t]*$")
 _FENCE_RE = re.compile(r"^[ \t]*(```+|~~~+)")
 
@@ -120,6 +133,58 @@ def parse_sections(body: str) -> list[Section]:
             Section(level=level, title=title, start=start, end=end, ancestors=ancestors)
         )
     return sections
+
+
+def always_sections(body: str, sections: list[Section]) -> list[Section]:
+    """The sections marked with :data:`ALWAYS_MARKER`, in document order.
+
+    The marker is the nearest non-blank line above the heading. Requiring it to
+    be the nearest line is what keeps a skill that *documents* the marker from
+    pinning whatever heading happens to follow the discussion — and a marker
+    shown inside a code fence pins nothing at all, because the heading under it
+    is not a section in the first place.
+    """
+    pinned: list[Section] = []
+    for section in sections:
+        # rstrip drops the blank lines an author leaves between the marker and
+        # the heading, so what remains ends on the nearest non-blank line.
+        preceding = body[: section.start].rstrip()
+        nearest = preceding[preceding.rfind("\n") + 1 :].strip()
+        if nearest == ALWAYS_MARKER:
+            pinned.append(section)
+    return pinned
+
+
+def within_always_budget(pinned: list[Section], limit: int) -> list[Section]:
+    """The pinned sections that fit their share of *limit*, in document order.
+
+    A section that would push the total past the share is dropped rather than
+    truncated: half a rule is worse than a line in the index saying where the
+    whole one is.
+    """
+    if limit <= 0:
+        return []
+    share = int(limit * _ALWAYS_BUDGET_SHARE)
+    kept: list[Section] = []
+    used = 0
+    for section in pinned:
+        if used + section.size > share:
+            continue
+        kept.append(section)
+        used += section.size
+    return kept
+
+
+def render_pinned(body: str, pinned: list[Section]) -> str:
+    """Render pinned sections verbatim, under a line saying why they are here."""
+    if not pinned:
+        return ""
+    parts = [
+        "Marked by the skill as rules rather than reference, and so returned in "
+        "full wherever they sit in it:"
+    ]
+    parts.extend(body[section.start : section.end].strip() for section in pinned)
+    return "\n\n".join(parts)
 
 
 def _base_level(sections: list[Section]) -> int:
@@ -218,16 +283,24 @@ def render_outline(
     *,
     shown_through: int,
     skill_name: str,
+    also_shown: list[Section] | None = None,
 ) -> str:
-    """Render the index of sections, marking the ones already returned."""
+    """Render the index of sections, marking the ones already returned.
+
+    *also_shown* names sections returned out of order — pinned ones, which sit
+    past the cut but were rendered anyway. Without it the index would invite a
+    second tool call for text the model is already holding.
+    """
     entries = indexable(sections)
     if not entries:
         return ""
     base = _base_level(sections)
+    pinned_starts = {section.start for section in (also_shown or [])}
     lines = ["Sections:"]
     for section in entries:
         indent = "  " * (section.level - base)
-        note = " (shown above)" if section.end <= shown_through else ""
+        shown = section.end <= shown_through or section.start in pinned_starts
+        note = " (shown above)" if shown else ""
         lines.append(f"- {indent}{section.title} — {_human(section.size)} chars{note}")
     lines.append("")
     lines.append(

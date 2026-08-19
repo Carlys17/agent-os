@@ -536,10 +536,13 @@ def create_skill_tools(loader: SkillLoader) -> None:
     def _skill_body_within_budget(skill: Any, raw: str) -> str:
         """Return the body whole, or its opening plus an index of the rest."""
         from agentos.skills.outline import (
+            always_sections,
             head_sections,
             parse_sections,
             render_linked_files,
             render_outline,
+            render_pinned,
+            within_always_budget,
         )
 
         budget = _view_budget()
@@ -559,8 +562,23 @@ def create_skill_tools(loader: SkillLoader) -> None:
             )
             return raw
 
-        head, shown_through = head_sections(raw, sections, budget)
-        outline = render_outline(sections, shown_through=shown_through, skill_name=skill.name)
+        # Pinned sections are taken out of the budget before the head, so a
+        # rule the skill marked as one survives no matter how far down it sits.
+        pinned = within_always_budget(always_sections(raw, sections), budget)
+        head, shown_through = head_sections(
+            raw, sections, budget - sum(section.size for section in pinned)
+        )
+        # One the head already reached needs no second copy. The head keeps the
+        # reduced budget rather than being recomputed against the freed space:
+        # the cost is a slightly shorter opening, and a single pass is easier to
+        # reason about than a loop that re-decides what it has already shown.
+        pinned = [section for section in pinned if section.end > shown_through]
+        outline = render_outline(
+            sections,
+            shown_through=shown_through,
+            skill_name=skill.name,
+            also_shown=pinned,
+        )
         linked = render_linked_files(_linked_files(skill), skill.name)
         parts = [
             head,
@@ -570,6 +588,7 @@ def create_skill_tools(loader: SkillLoader) -> None:
                 "its opening sections. The rest is indexed below — read only what the task "
                 "needs rather than the whole skill."
             ),
+            render_pinned(raw, pinned),
             outline,
         ]
         if linked:
@@ -582,12 +601,16 @@ def create_skill_tools(loader: SkillLoader) -> None:
         if len(outlined) >= len(raw):
             return raw
 
-        logger.debug(
+        # INFO, not DEBUG: this is the event that says most of a skill did not
+        # reach the model. A rule written into the indexed tail is invisible
+        # until someone asks for it, and nothing else reports that.
+        logger.info(
             "skill_view.outlined",
             skill=skill.name,
             chars=len(raw),
             returned=len(outlined),
             budget=budget,
+            pinned=len(pinned),
         )
         return outlined
 

@@ -13,8 +13,14 @@ from agentos.tools.policy_config import normalize_tool_profile
 from .delivery import validate_webhook_url
 from .jobs import _next_run
 from .parser import parse_cron, parse_iso_at, validate_tz
-from .payloads import normalize_contract, normalize_origin_session_key, payload_agent_id
+from .payloads import (
+    normalize_contract,
+    normalize_origin_session_key,
+    payload_agent_id,
+    payload_script,
+)
 from .persistence import JobStore
+from .scripts import JOB_ID_PLACEHOLDER, substitute_job_id
 from .stagger import compute_jitter
 from .types import (
     CronJob,
@@ -26,6 +32,21 @@ from .types import (
     ScheduleKind,
     SessionTarget,
 )
+
+
+def _resolve_script_placeholder(job: CronJob) -> None:
+    """Replace ``{job_id}`` in the job's script path with the job's own id.
+
+    A monitor that keeps its files in a directory named after its job cannot
+    write that name when it creates the job, because the id is minted by the
+    create. Substituting here — the last thing before the job is persisted, on
+    the path every surface takes — means no store ever holds the placeholder,
+    so there is no window in which a live job points at a path it will not keep.
+    """
+    script = payload_script(job.payload)
+    if JOB_ID_PLACEHOLDER not in script:
+        return
+    job.payload = {**job.payload, "script": substitute_job_id(script, job.id)}
 
 
 def _normalized_tool_policy(
@@ -280,6 +301,7 @@ class SchedulerOps:
             # CRON or EVERY with cron expression: scan forward
             job.next_run_at = _next_run(job, now)
 
+        _resolve_script_placeholder(job)
         await self._store.save(job)
         return job
 
@@ -400,6 +422,7 @@ class SchedulerOps:
         )
 
         job.updated_at = now
+        _resolve_script_placeholder(job)
         await self._store.save(job)
         return job
 
