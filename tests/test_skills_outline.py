@@ -273,3 +273,21 @@ def test_pinned_text_is_rendered_under_a_heading_that_says_why() -> None:
 
     assert "## Rules" in rendered
     assert "never do that" in rendered
+
+
+def test_a_pinned_subsection_of_a_pinned_section_is_not_pinned_twice() -> None:
+    """A section owns its subsections, so pinning both would render it twice."""
+    body = _body(
+        "# T",
+        "i",
+        "<!-- always -->",
+        "## Rules",
+        "outer",
+        "<!-- always -->",
+        "### Detail",
+        "inner",
+    )
+
+    pinned = always_sections(body, parse_sections(body))
+
+    assert [s.title for s in pinned] == ["Rules"]

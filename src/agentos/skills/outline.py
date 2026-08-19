@@ -143,6 +143,10 @@ def always_sections(body: str, sections: list[Section]) -> list[Section]:
     pinning whatever heading happens to follow the discussion — and a marker
     shown inside a code fence pins nothing at all, because the heading under it
     is not a section in the first place.
+
+    A section already inside a pinned one is dropped: a section owns its
+    subsections, so marking both a parent and a child would render the child
+    twice and charge the budget for it twice.
     """
     pinned: list[Section] = []
     for section in sections:
@@ -150,8 +154,11 @@ def always_sections(body: str, sections: list[Section]) -> list[Section]:
         # the heading, so what remains ends on the nearest non-blank line.
         preceding = body[: section.start].rstrip()
         nearest = preceding[preceding.rfind("\n") + 1 :].strip()
-        if nearest == ALWAYS_MARKER:
-            pinned.append(section)
+        if nearest != ALWAYS_MARKER:
+            continue
+        if any(outer.start <= section.start and section.end <= outer.end for outer in pinned):
+            continue
+        pinned.append(section)
     return pinned
 
 
