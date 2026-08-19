@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from agentos.engine.runtime import _persisted_tool_result_segment
+from agentos.engine.types import ToolResultEvent
+from agentos.result_budget import (
+    clear_persisted_result_budgets,
+    persisted_result_max_chars,
+)
 from agentos.skills.loader import SkillLoader
 from agentos.skills.outline import DEFAULT_MAX_SKILL_VIEW_CHARS
 from agentos.tools.builtin import control as control_module
@@ -86,6 +93,7 @@ def loaded(tmp_path: Path) -> Iterator[SkillLoader]:
     finally:
         skill_tools_module._loader = previous_loader
         control_module._gateway_config = previous_config
+        clear_persisted_result_budgets()
 
 
 def _set_budget(value: int | None) -> None:
@@ -330,3 +338,56 @@ async def test_pinning_does_not_push_the_view_past_its_ceiling(pinned: SkillLoad
     # characters came out of the head's allowance, not out of thin air.
     assert len(_body(result)) <= len(_body(unpinned)) + 400
     assert "Overview line." in result  # the head is still real content
+
+
+def test_skill_view_declares_a_persistence_ceiling(loaded: SkillLoader) -> None:
+    """Registering the tool set is what puts the ceiling in place.
+
+    Asserted through the public resolver rather than the closure, so the test
+    fails if the registration is ever dropped from ``create_skill_tools``.
+    """
+    _set_budget(10_000)
+
+    assert persisted_result_max_chars("skill_view", default=2_000) == 14_000
+
+
+def test_the_persistence_ceiling_follows_the_configured_budget(loaded: SkillLoader) -> None:
+    """One source of truth: lower the read ceiling and persistence lowers with it."""
+    _set_budget(4_000)
+
+    assert persisted_result_max_chars("skill_view", default=2_000) == 8_000
+
+
+def test_turning_the_read_ceiling_off_turns_off_persistence_truncation(
+    loaded: SkillLoader,
+) -> None:
+    _set_budget(0)
+
+    assert persisted_result_max_chars("skill_view", default=2_000) == sys.maxsize
+
+
+@pytest.mark.asyncio
+async def test_a_viewed_skill_survives_into_the_transcript_whole(loaded: SkillLoader) -> None:
+    """The bug this ceiling exists for: a skill read on one turn, gone by the next.
+
+    ``big-skill`` is far over the old flat 2,000-character persistence cap, and
+    the section index sits at the end of the view — exactly the part a head-only
+    truncation drops.
+    """
+    _set_budget(10_000)
+    viewed = await _skill_view("big-skill")
+    assert len(viewed) > 2_000
+    assert "Section 11" in viewed  # the index, at the tail
+
+    segment = _persisted_tool_result_segment(
+        ToolResultEvent(
+            tool_use_id="call_1",
+            tool_name="skill_view",
+            result=viewed,
+            is_error=False,
+        )
+    )
+
+    assert segment["result"] == viewed
+    assert "result_truncated" not in segment
+    assert "Section 11" in segment["result"]

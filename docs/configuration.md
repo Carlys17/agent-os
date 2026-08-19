@@ -270,6 +270,11 @@ gets what is left, and a section that does not fit is left in the index instead
 of being cut in half. Reserve it for invariants; pinning reference material
 spends the opening on it.
 
+A pinned section is worth little if it only lasts the turn that read it, so the
+transcript keeps a `skill_view` result up to this ceiling rather than the short
+preview it keeps of ordinary tool output. Raising `max_skill_view_chars` raises
+what is stored per view with it.
+
 ## First-Run Wizard
 
 ```sh
