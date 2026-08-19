@@ -1413,8 +1413,12 @@ async def cron(
             # Spelled out in full on purpose: `script` is relative to a
             # directory the caller is not told the location of, and a job whose
             # script does not exist yet is one the caller is about to write.
+            # Forward slashes on every platform, for the same reason skill_view
+            # reports its linked files that way: the model quotes this straight
+            # back as a `write_file` path, where a backslash is a JSON escape.
+            # Windows accepts a forward-slash path everywhere this one is used.
             try:
-                added["script_path"] = str(resolve_script_path(created_script))
+                added["script_path"] = resolve_script_path(created_script).as_posix()
             except ScriptPathError:
                 pass
         if source_job is not None:

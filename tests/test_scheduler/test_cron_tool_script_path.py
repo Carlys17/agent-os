@@ -132,7 +132,10 @@ async def test_add_reports_the_resolved_script_and_its_full_path(scheduler) -> N
 
     job_id = result["job_id"]
     assert result["script"] == f"unilp/{job_id}/tick.sh"
+    # Forward slashes on every platform: the model quotes this back as a
+    # `write_file` path, where a backslash is a JSON escape.
     assert result["script_path"].endswith(f"scripts/unilp/{job_id}/tick.sh")
+    assert "\\" not in result["script_path"]
     assert "{job_id}" not in result["script"]
     assert "{job_id}" not in result["script_path"]
 
