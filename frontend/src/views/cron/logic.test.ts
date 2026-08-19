@@ -987,6 +987,7 @@ describe('jobElevated', () => {
   })
   it('reads the top-level wire field', () => {
     expect(jobElevated({ id: 'x', elevated: 'bypass' })).toBe('bypass')
+    expect(jobElevated({ id: 'x', effectiveElevated: 'bypass' })).toBe('bypass')
   })
   it('falls back to the policy blob the mode is stored in', () => {
     expect(jobElevated({ id: 'x', toolPolicy: { elevated: 'full' } })).toBe('full')
