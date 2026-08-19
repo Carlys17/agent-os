@@ -18,7 +18,8 @@ from agentos.provider.audio import (
     ElevenLabsSpeechToTextResult,
 )
 
-_MAX_TRANSCRIPTION_BYTES = 30 * 1024 * 1024
+MAX_TRANSCRIPTION_BYTES = 30 * 1024 * 1024
+_MAX_TRANSCRIPTION_BYTES = MAX_TRANSCRIPTION_BYTES
 
 
 def _default_provider_factory(config: GatewayConfig) -> ElevenLabsAudioProductionProvider:

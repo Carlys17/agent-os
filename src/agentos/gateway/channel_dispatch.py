@@ -59,6 +59,7 @@ from agentos.engine.types import (
 )
 from agentos.execution_status import normalize_execution_status
 from agentos.gateway.attachment_ingest import AttachmentIngestResult, ingest_attachments
+from agentos.gateway.audio_transcription import MAX_TRANSCRIPTION_BYTES
 from agentos.gateway.session_events import build_sessions_changed_payload
 from agentos.paths import media_root_from_config
 from agentos.permissions import configured_default_elevated
@@ -1857,7 +1858,7 @@ async def _ingest_channel_message_attachments(
 
     if audio_enabled and transcribe_voice:
         non_audio_materialized = []
-        has_changes = False
+        successfully_transcribed_file_ids = set()
         for att in materialized:
             is_audio = False
             # Resolve fields check if att is dict (from failure) or Attachment object
@@ -1869,9 +1870,7 @@ async def _ingest_channel_message_attachments(
                 att.get("mime_type") if isinstance(att, dict) else None
             )
 
-            if media_kind in ("voice", "audio", "video_note") or (
-                mime_type and (mime_type.startswith("audio/") or mime_type.startswith("video/"))
-            ):
+            if media_kind in ("voice", "audio", "video_note"):
                 is_audio = True
 
             if is_audio:
@@ -1881,18 +1880,17 @@ async def _ingest_channel_message_attachments(
                 data = getattr(att, "data", None) or (
                     att.get("data") if isinstance(att, dict) else None
                 )
-                size = getattr(att, "size", None) or (
-                    att.get("size") if isinstance(att, dict) else None
-                )
-                if size is None and data is not None:
-                    size = len(data)
 
                 # Check if there was an ingest/materialization error
                 ingest_error = att.get("_ingest_error") if isinstance(att, dict) else None
                 if ingest_error:
                     error_msg = (
-                        "Voice message could not be transcribed "
-                        f"(download failed: {ingest_error})."
+                        ingest_error
+                        if "exceeds" in ingest_error
+                        else (
+                            "Voice message could not be transcribed "
+                            f"(download failed: {ingest_error})."
+                        )
                     )
                     if route_envelope is not None:
                         try:
@@ -1927,11 +1925,10 @@ async def _ingest_channel_message_attachments(
                     continue
 
                 # Check size limit
-                max_size_bytes = 30 * 1024 * 1024
+                max_size_bytes = MAX_TRANSCRIPTION_BYTES
                 if len(data) > max_size_bytes:
                     error_msg = (
-                        "Audio clip exceeds the maximum size of 30 MB "
-                        "and could not be transcribed."
+                        "Audio clip exceeds the maximum size of 30 MB and could not be transcribed."
                     )
                     if route_envelope is not None:
                         try:
@@ -1958,7 +1955,7 @@ async def _ingest_channel_message_attachments(
                     # Update msg.content
                     media_placeholder = f"[{media_kind or 'voice'}]"
                     if media_placeholder in msg.content:
-                        msg.content = msg.content.replace(media_placeholder, transcript)
+                        msg.content = msg.content.replace(media_placeholder, transcript, 1)
                     else:
                         if msg.content:
                             msg.content = f"{msg.content}\n\n{transcript}"
@@ -1972,16 +1969,13 @@ async def _ingest_channel_message_attachments(
                     file_id = metadata.get("telegram_file_id")
                     if file_id:
                         msg.metadata["telegram_file_id"] = file_id
+                        successfully_transcribed_file_ids.add(file_id)
                     if stt_result.language_code:
                         msg.metadata["language_code"] = stt_result.language_code
 
-                    has_changes = True
                 except Exception as exc:
                     log.warning("channel.transcribe_audio_failed", error=str(exc))
-                    error_msg = (
-                        "Voice message could not be transcribed "
-                        "(provider error)."
-                    )
+                    error_msg = "Voice message could not be transcribed (provider error)."
                     if route_envelope is not None:
                         try:
                             await channel.send(
@@ -1993,21 +1987,14 @@ async def _ingest_channel_message_attachments(
             else:
                 non_audio_materialized.append(att)
 
-        if has_changes:
+        if successfully_transcribed_file_ids:
             materialized = non_audio_materialized
             # Clean up matching attachments from msg.attachments
-            transcribed_file_ids = set()
-            for att in msg.attachments:
-                metadata = getattr(att, "metadata", {})
-                media_kind = metadata.get("telegram_media_kind")
-                if media_kind in ("voice", "audio", "video_note"):
-                    file_id = metadata.get("telegram_file_id")
-                    if file_id:
-                        transcribed_file_ids.add(file_id)
             msg.attachments = [
                 att
                 for att in msg.attachments
-                if getattr(att, "metadata", {}).get("telegram_file_id") not in transcribed_file_ids
+                if getattr(att, "metadata", {}).get("telegram_file_id")
+                not in successfully_transcribed_file_ids
             ]
 
     result = await ingest_attachments(

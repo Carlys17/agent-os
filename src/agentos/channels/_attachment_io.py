@@ -33,8 +33,6 @@ def attachment_limit_for_mime(mime: str | None) -> int:
     normalized = normalize_attachment_mime(mime)
     if normalized in ALLOWED_MEDIA_TYPES:
         return attachment_size_limit_for_mime(normalized, staged=True)
-    if normalized and (normalized.startswith("audio/") or normalized.startswith("video/")):
-        return 30 * 1024 * 1024  # 30 MB transcription limit
     return MAX_ATTACHMENT_BYTES
 
 

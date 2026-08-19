@@ -43,6 +43,7 @@ from agentos.channels.contract import (
 from agentos.channels.types import Attachment, ChannelHealth, IncomingMessage, OutgoingMessage
 from agentos.engine.native_commands import telegram_bot_commands
 from agentos.env import trust_env as _trust_env
+from agentos.gateway.audio_transcription import MAX_TRANSCRIPTION_BYTES
 
 log = structlog.get_logger(__name__)
 
@@ -124,7 +125,7 @@ class TelegramChannelConfig(BaseModel):
     group_chat_ids: list[str] = Field(default_factory=list)
     group_mention_required: bool = True
     transcribe_voice: bool = False
-    max_voice_duration_s: int = 120
+    max_voice_duration_s: int = Field(default=120, gt=0)
 
     model_config = {}
 
@@ -759,7 +760,29 @@ class TelegramChannel:
         file_id = attachment.metadata.get("telegram_file_id")
         if not isinstance(file_id, str) or not file_id:
             return attachment
-        limit = attachment_limit_for_mime(attachment.mime_type)
+
+        media_kind = attachment.metadata.get("telegram_media_kind")
+        is_transcription_kind = media_kind in ("voice", "audio", "video_note")
+        transcribe_enabled = getattr(self.config, "transcribe_voice", False)
+
+        if transcribe_enabled and is_transcription_kind:
+            # Check duration limit pre-download
+            duration = attachment.metadata.get("duration")
+            max_duration = getattr(self.config, "max_voice_duration_s", 120)
+            if duration is not None and duration > max_duration:
+                raise ValueError(
+                    f"Audio clip exceeds the maximum duration of {max_duration} "
+                    "seconds and could not be transcribed."
+                )
+            # Check size limit pre-download
+            if attachment.size is not None and attachment.size > MAX_TRANSCRIPTION_BYTES:
+                raise ValueError(
+                    "Audio clip exceeds the maximum size of 30 MB and could not be transcribed."
+                )
+            limit = MAX_TRANSCRIPTION_BYTES
+        else:
+            limit = attachment_limit_for_mime(attachment.mime_type)
+
         ensure_declared_size_within_limit(attachment.size, name=attachment.name, limit=limit)
         file_info = await self._api("getFile", {"file_id": file_id})
         if not isinstance(file_info, dict):
