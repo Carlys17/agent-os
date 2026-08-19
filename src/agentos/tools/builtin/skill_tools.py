@@ -522,10 +522,11 @@ def create_skill_tools(loader: SkillLoader) -> None:
         is worse than not having read it, because it does not know that.
 
         The view ceiling bounds the body; the outline index, the directory note
-        and the configured-settings block are appended after it. The widest of
-        those across the bundled tree is around 1,300 characters, so the
-        headroom covers them with room to spare and still refuses an unbounded
-        row. A ceiling of 0 means the operator turned the read cap off, and
+        and the configured-settings block are appended after it. Measured over
+        the whole bundled tree at a 10,000 ceiling, the widest view runs 2,696
+        characters past it (`senior-unilp-manager`), and none reaches the
+        headroom below — which is what it is for, rather than a round number.
+        A ceiling of 0 means the operator turned the read cap off, and
         persistence follows rather than re-imposing one.
         """
 
