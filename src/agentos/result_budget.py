@@ -14,11 +14,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+import structlog
+
 WEB_FETCH_MIN_MAX_CHARS = 100
+
+logger = structlog.get_logger(__name__)
 
 
 class ToolResultBudgetClass(StrEnum):
@@ -393,6 +399,59 @@ class ToolResultBudgetTracker:
                 returned_chars=returned_chars,
                 budget_class=budget_class,
             )
+
+
+# How much of a tool's result is written to the transcript.
+#
+# The default suits volatile output: a shell command's stdout is worth a
+# preview and nothing more, and keeping the whole of it would grow the session
+# store without ever being read again. Instructions are the opposite kind of
+# payload. A skill body is the reason the model knows how to do the task at
+# all, and a later turn that replays only its first characters is a turn
+# working from an instruction sheet with the ending torn off.
+#
+# So a tool may register the ceiling its own results are kept under. Nothing is
+# assumed about any tool that does not, which is every tool but one today.
+_PERSISTED_RESULT_BUDGETS: dict[str, Callable[[], int]] = {}
+
+
+def register_persisted_result_budget(tool_name: str, resolver: Callable[[], int]) -> None:
+    """Declare the ceiling ``tool_name``'s results are persisted under.
+
+    The resolver is called each time a result is persisted rather than once at
+    registration, for two reasons: the value usually comes from config, which is
+    not necessarily loaded when tools are registered, and config can be changed
+    while the gateway runs. A resolver returning ``0`` means the tool's results
+    are never truncated.
+    """
+
+    _PERSISTED_RESULT_BUDGETS[tool_name] = resolver
+
+
+def clear_persisted_result_budgets() -> None:
+    """Drop every registration. For tests, and for re-registering a tool set."""
+
+    _PERSISTED_RESULT_BUDGETS.clear()
+
+
+def persisted_result_max_chars(tool_name: str, *, default: int) -> int:
+    """The persistence ceiling for ``tool_name``, or ``default`` if it declared none."""
+
+    resolver = _PERSISTED_RESULT_BUDGETS.get(tool_name)
+    if resolver is None:
+        return default
+    try:
+        declared = resolver()
+    except Exception:  # pragma: no cover - persisting a turn is never worth failing on
+        logger.debug("persisted_result_budget.resolver_failed", tool=tool_name, exc_info=True)
+        return default
+    if not isinstance(declared, int):
+        return default
+    if declared == 0:
+        return sys.maxsize
+    if declared < 0:
+        return default
+    return declared
 
 
 def resolve_budget_class(tool_name: str, explicit: Any = None) -> ToolResultBudgetClass:

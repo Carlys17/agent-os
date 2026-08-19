@@ -32,9 +32,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   of the same ceiling rather than adding to it — at most half of it, with the
   opening taking what is left — and the index marks them as already shown.
   `skill_view.outlined` is now logged at INFO with a `pinned` count, because it
-  is the only event that says most of a skill did not reach the model. (#332)
+  is the only event that says most of a skill did not reach the model. Pinning
+  governs what one `skill_view` call returns; what survives into later turns is
+  the transcript's business, fixed separately in #334. (#332)
 
 ### Fixed
+
+- A tool may now declare the ceiling its own results are persisted under, and
+  `skill_view` sets one from `[skills].max_skill_view_chars`. Every tool result
+  was written to the transcript truncated to its first 2,000 characters, so a
+  skill body read on one turn came back on the next as an opening that stops
+  mid-sentence — and 40 of the 50 bundled skills are larger than that. A session
+  read `senior-unilp-manager`, saw the pinned directory rule from #332 in an
+  11,996-character result, and one turn later replayed 2,000 characters that did
+  not contain it and wrote the files flat. Nothing downstream could recover it:
+  the request builder compacts from what was persisted, not from the original,
+  so the layer under no pressure at all — writing one SQLite row — was cutting
+  harder, and more crudely, than the layer that has a budget to defend. The
+  ceiling is resolved when a result is persisted rather than at registration, so
+  it follows a config change, and a tool that declares nothing keeps the 2,000
+  characters that suit volatile output. (#334)
 
 - Web chat: copying an assistant message no longer prepends the collapsible
   reasoning block. `extractBubbleText()` cloned `.msg-body` and stripped only

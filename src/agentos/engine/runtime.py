@@ -146,6 +146,7 @@ from agentos.provider import (
     classify_provider_error,
     decide_recovery_action,
 )
+from agentos.result_budget import persisted_result_max_chars
 from agentos.router_control import (
     RouterControlHoldStore,
     render_router_control_prompt_block,
@@ -897,9 +898,22 @@ def _persisted_tool_use_input(
 def _persisted_tool_result_segment(
     event: ToolResultEvent,
     *,
-    max_chars: int = _MAX_TOOL_RESULT_CHARS,
+    max_chars: int | None = None,
 ) -> dict[str, Any]:
-    """Create the transcript `tool_result` segment for a streamed event."""
+    """Create the transcript `tool_result` segment for a streamed event.
+
+    The ceiling comes from the tool unless the caller names one. Truncating here
+    cannot be undone by anything downstream — the request builder compacts from
+    whatever this wrote, not from the original — so a tool whose result is
+    instructions rather than output raises its own ceiling and keeps the loss at
+    the layer that has a budget to defend.
+    """
+
+    if max_chars is None:
+        max_chars = persisted_result_max_chars(
+            event.tool_name,
+            default=_MAX_TOOL_RESULT_CHARS,
+        )
 
     result = event.result
     segment: dict[str, Any] = {

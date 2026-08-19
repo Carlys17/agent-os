@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from agentos.result_budget import register_persisted_result_budget
 from agentos.skills.hub.defaults import (
     build_default_skill_installer,
     get_default_skill_router,
@@ -38,6 +39,8 @@ _MUTABLE_LAYERS = frozenset({SkillLayer.WORKSPACE})
 # Valid skill name pattern: lowercase alphanumeric + hyphens
 _SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9\-]{0,62}$")
 _INSTALL_OUTPUT_LIMIT = 4_000
+# Room after the view ceiling for the outline index and the trailing notes.
+_SKILL_VIEW_PERSIST_HEADROOM = 4_000
 _INSTALL_TIMEOUT_SECONDS = 120.0
 
 _BREW_FORMULA_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9/_@.+-]*$")
@@ -509,6 +512,29 @@ def create_skill_tools(loader: SkillLoader) -> None:
         except Exception:  # pragma: no cover — never block reading a skill
             logger.debug("skill_view.budget_lookup_failed", exc_info=True)
         return DEFAULT_MAX_SKILL_VIEW_CHARS
+
+    def _view_persist_budget() -> int:
+        """How much of a `skill_view` result is kept in the transcript.
+
+        A skill body is not output, it is instructions, and the turn that acts
+        on them is usually not the turn that read them. Persisting only the
+        opening leaves every later turn holding a skill it half-remembers, which
+        is worse than not having read it, because it does not know that.
+
+        The view ceiling bounds the body; the outline index, the directory note
+        and the configured-settings block are appended after it. The widest of
+        those across the bundled tree is around 1,300 characters, so the
+        headroom covers them with room to spare and still refuses an unbounded
+        row. A ceiling of 0 means the operator turned the read cap off, and
+        persistence follows rather than re-imposing one.
+        """
+
+        budget = _view_budget()
+        if budget <= 0:
+            return 0
+        return budget + _SKILL_VIEW_PERSIST_HEADROOM
+
+    register_persisted_result_budget("skill_view", _view_persist_budget)
 
     def _linked_files(skill: Any) -> list[str]:
         """Supporting files, relative to the skill directory, POSIX-style.
