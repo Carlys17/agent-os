@@ -342,6 +342,8 @@ export interface StreamControllerDeps {
   openModal?: (title: string, html: string, buttons: Array<Record<string, unknown>>) => void
   /** ask_user card → send the composed answer via the composer's chat.send path. */
   sendUserAnswer?: (text: string) => boolean
+  /** exit_plan_mode card → approve: plan mode off via RPC + go-ahead message. */
+  approvePlan?: () => boolean
   /**
    * chat.js:7814 `_addMessage` with provenance options — append the subagent
    * completion system row. Distinct from `addMessage` above (which is the
@@ -1503,6 +1505,7 @@ export function createStreamController(
     pushMessage,
     openModal,
     sendUserAnswer: deps.sendUserAnswer,
+    approvePlan: deps.approvePlan,
     diag,
   })
 

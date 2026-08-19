@@ -18,9 +18,11 @@ _SESSION_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset(
     {"sessions_send", "sessions_spawn", "sessions_yield"}
 )
 _CHANNEL_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"message"})
-_INTERACTIVE_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset(
-    {"agents_list", "ask_user", "subagents"}
-)
+_INTERACTIVE_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"agents_list", "subagents"})
+# Tools that need a human on the other end to answer, not an approval
+# operator: a channel DM qualifies even though the turn is marked
+# unattended, while cron/heartbeat/one-shot runs have nobody to reply.
+_HUMAN_REPLY_TOOL_NAMES: frozenset[str] = frozenset({"ask_user", "exit_plan_mode"})
 _GATEWAY_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"gateway"})
 _SCHEDULER_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"cron"})
 
@@ -148,6 +150,7 @@ def resolve_runtime_tool_surface(
     if ctx.interaction_mode is InteractionMode.UNATTENDED:
         if not caps.channel_backing:
             denied_tools |= set(_CHANNEL_RUNTIME_TOOL_NAMES)
+            denied_tools |= set(_HUMAN_REPLY_TOOL_NAMES)
         denied_tools |= set(_INTERACTIVE_RUNTIME_TOOL_NAMES)
     if private_memory_read_tools_blocked(ctx):
         denied_tools |= set(_PRIVATE_MEMORY_READ_TOOL_NAMES)

@@ -348,6 +348,7 @@ export function useTranscript(opts: {
   // controller exists, so the card reaches it through a ref (same
   // late-binding pattern as openModalRef).
   const sendUserAnswerRef = useRef<((text: string) => boolean) | null>(null)
+  const approvePlanRef = useRef<(() => boolean) | null>(null)
   const messageActionsRef = useRef({
     onEdit: opts.onEditMessage,
     onRegenerate: opts.onRegenerateMessage,
@@ -503,6 +504,7 @@ export function useTranscript(opts: {
       historyHydrating: () => historyHydratingRef.current,
       openModal: (title, html, buttons) => openModalRef.current?.(title, html, buttons),
       sendUserAnswer: (text) => sendUserAnswerRef.current?.(text) ?? false,
+      approvePlan: () => approvePlanRef.current?.() ?? false,
       // Artifact preview/download URLs + download Authorization header
       // (chat.js:7575/7657 `App.getAuthToken()`).
       getAuthToken,
@@ -999,7 +1001,24 @@ export function useTranscript(opts: {
       send(text)
       return true
     }
-  }, [controller, send])
+    // Plan approval is out of band by design: turn plan mode off via RPC
+    // FIRST, then send the go-ahead so the next turn already has its full
+    // tool surface back. The card locks optimistically; an RPC failure
+    // surfaces as an error message in the transcript via the send path.
+    approvePlanRef.current = () => {
+      if (controller.isStreaming()) return false
+      const key = sessionKeyRef.current
+      if (!key) return false
+      void rpc
+        .call('plan.mode.set', { key, mode: 'off' })
+        .then(() => send(t('chat.planApprovedMessage')))
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err)
+          messageRendererRef.current?.addMessage('error', t('chat.sendFailed', { message }))
+        })
+      return true
+    }
+  }, [controller, rpc, send])
 
   // chat.js:8439-8450 `_onStop`. Abort only while streaming; set the abort flag,
   // fire `chat.abort` with `{ sessionKey, source }` (chat.js:8444), and end the

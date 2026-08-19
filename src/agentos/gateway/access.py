@@ -37,6 +37,7 @@ CHANNEL_RPC_METHODS: frozenset[str] = frozenset(
         "commands.list_for_surface",
         "doctor.memory.status",
         "models.list",
+        "plan.mode.set",
         "router.hold.clear",
         "router.hold.set",
         "sessions.abort",

@@ -22,6 +22,7 @@ import '@/i18n/en/chat'
 
 import type { StreamEventPayload } from '../types'
 import { buildAskCardDOM, parseAskQuestions } from './ask'
+import { buildPlanCardDOM, parsePlanFromToolResult } from './plan'
 
 /* ── Constants (ported from chat.js, modernized to vector icon keys) ────── */
 
@@ -418,6 +419,12 @@ export interface ToolRendererDeps {
    * Absent → the card renders read-only.
    */
   sendUserAnswer?: (text: string) => boolean
+  /**
+   * exit_plan_mode card → approve the plan: turn plan mode off via RPC and
+   * send the go-ahead as the next user message. Returns false when the
+   * approval did not go out yet. Absent → the card renders read-only.
+   */
+  approvePlan?: () => boolean
   /** chat.js `_chatDiag` — the diagnostics ring. Default: no-op. */
   diag?: (event: string, detail: Record<string, unknown>) => void
 }
@@ -719,6 +726,21 @@ export function createToolRenderer(deps: ToolRendererDeps) {
       }
     }
 
+    // exit_plan_mode: render the plan card with the out-of-band Approve
+    // button. Same end-turn contract and same dual-path rendering rule as
+    // the ask card (live + reconstruct below).
+    if (toolName === 'exit_plan_mode' && !isError) {
+      const plan = parsePlanFromToolResult(payload)
+      if (plan && body && !body.querySelector(`[data-ask-for="${toolId}"]`)) {
+        const planCard = buildPlanCardDOM(plan, deps.approvePlan)
+        if (toolId) planCard.setAttribute('data-ask-for', toolId)
+        deps.flushPendingTextSegment()
+        body.appendChild(planCard)
+        deps.newTextSegment()
+        diag('tool_result.plan_card', { toolId, planChars: plan.length })
+      }
+    }
+
     // Only show result preview if non-empty.
     const resultDiv = buildToolResultDOM(content, isError, toolResultIsTruncated(payload), toolName)
     if (!resultDiv) {
@@ -846,6 +868,19 @@ export function createToolRenderer(deps: ToolRendererDeps) {
               const askCard = buildAskCardDOM(questions, deps.sendUserAnswer)
               if (toolId) askCard.setAttribute('data-ask-for', toolId)
               body.appendChild(askCard)
+            }
+          }
+
+          // exit_plan_mode: same resync-survival rule as the ask card.
+          if (resultToolName === 'exit_plan_mode' && !isError) {
+            const plan = parsePlanFromToolResult({
+              tool_name: 'exit_plan_mode',
+              result: content,
+            } as StreamEventPayload)
+            if (plan && !body.querySelector(`[data-ask-for="${toolId}"]`)) {
+              const planCard = buildPlanCardDOM(plan, deps.approvePlan)
+              if (toolId) planCard.setAttribute('data-ask-for', toolId)
+              body.appendChild(planCard)
             }
           }
         }

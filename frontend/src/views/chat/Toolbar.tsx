@@ -166,6 +166,37 @@ export function Toolbar({
 
   // chat.js:1395-1417 — patch agentos_router.enabled + rollout_phase, revert on
   // failure.
+  // ── Plan mode ─────────────────────────────────────────────────────────────
+  // Per-session flag in gateway process memory (PlanModeStore); read back on
+  // mount so a reopened popover reflects the real state, not a guess.
+  const planQuery = useQuery<{ planMode?: boolean }>({
+    queryKey: ['plan.mode.get', sessionKey],
+    queryFn: async () => {
+      await rpc.waitForConnection()
+      return rpc.call<{ planMode?: boolean }>('plan.mode.get', { key: sessionKey })
+    },
+    enabled: !!sessionKey,
+    retry: false,
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+  })
+  const planChecked = !!planQuery.data?.planMode
+
+  const onPlanToggle = useCallback(
+    async (next: boolean) => {
+      if (!sessionKey) return
+      try {
+        await rpc.call('plan.mode.set', { key: sessionKey, mode: next ? 'on' : 'off' })
+        toast.info('Plan mode: ' + (next ? 'ON' : 'OFF'))
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        toast.error('Failed to toggle plan mode: ' + message, { duration: 3500 })
+      }
+      await queryClient.invalidateQueries({ queryKey: ['plan.mode.get', sessionKey] })
+    },
+    [rpc, sessionKey, queryClient],
+  )
+
   const onRouterToggle = useCallback(
     async (next: boolean) => {
       setRouterPending(next)
@@ -267,6 +298,20 @@ export function Toolbar({
               type="checkbox"
               checked={routerChecked}
               onChange={(e) => void onRouterToggle(e.target.checked)}
+            />
+            <span className="chat-toggle-track" aria-hidden="true">
+              <span className="chat-toggle-thumb" />
+            </span>
+          </label>
+        </div>
+
+        <div className="chat-toolbar-row">
+          <span className="chat-toolbar-row-label t-label">{t('chat.toolbarPlanMode')}</span>
+          <label className="chat-toggle" aria-label={t('chat.toolbarPlanMode')}>
+            <input
+              type="checkbox"
+              checked={planChecked}
+              onChange={(e) => void onPlanToggle(e.target.checked)}
             />
             <span className="chat-toggle-track" aria-hidden="true">
               <span className="chat-toggle-thumb" />

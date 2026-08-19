@@ -51,6 +51,7 @@ GATEWAY_SLASH_HANDLER_WORDS = frozenset(
         "/new",
         "/path",
         "/permissions",
+        "/plan",
         "/quit",
         "/rename",
         "/reset",
@@ -199,9 +200,9 @@ async def handle_gateway_slash_command(
             # resolve is authoritative for the persisted display name and
             # the active router hold, so prefer its view over the local
             # title arg (covers the titled-session resume path too).
-            state.display_name = _resolved.get("displayName") or _resolved.get(
-                "display_name"
-            ) or state.display_name
+            state.display_name = (
+                _resolved.get("displayName") or _resolved.get("display_name") or state.display_name
+            )
             tier = _resolved.get("router_hold_tier")
             state.router_hold_tier = tier if isinstance(tier, str) and tier else None
         except Exception:  # noqa: BLE001 - network/timeout; non-fatal
@@ -409,6 +410,24 @@ async def handle_gateway_slash_command(
         state.router_hold_tier = tier
         sync_session_chrome_from_state(state)
         console.print(f"[{ACCENT}]router pinned to tier {tier}[/]{suffix}")
+        return True
+
+    if cmd == "/plan" or cmd.startswith("/plan "):
+        arg = cmd[len("/plan") :].strip().lower()
+        mode = "off" if arg in {"off", "exit", "stop"} else "on"
+        try:
+            res = await client.call(
+                "plan.mode.set",
+                {"key": state.session_key, "mode": mode},
+            )
+        except Exception as exc:  # noqa: BLE001 - keep chat alive on RPC error
+            console.print(f"[yellow]{exc}[/yellow]")
+            return True
+        enabled = bool(isinstance(res, dict) and res.get("planMode"))
+        if enabled:
+            console.print(f"[{ACCENT}]plan mode on[/] — research only until the plan is approved")
+        else:
+            console.print(f"[{ACCENT}]plan mode off[/]")
         return True
 
     if cmd == "/auto":
@@ -834,8 +853,7 @@ async def _handle_elevated_command(
         )
     elif arg == "on":
         console.print(
-            f"[yellow]permissions: on[/yellow] - exec on host, approvals required. "
-            f"{revoked_suffix}"
+            f"[yellow]permissions: on[/yellow] - exec on host, approvals required. {revoked_suffix}"
         )
     elif arg == "bypass":
         console.print(

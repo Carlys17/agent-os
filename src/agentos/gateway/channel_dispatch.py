@@ -63,6 +63,7 @@ from agentos.gateway.attachment_ingest import AttachmentIngestResult, ingest_att
 from agentos.gateway.session_events import build_sessions_changed_payload
 from agentos.paths import media_root_from_config
 from agentos.permissions import configured_default_elevated
+from agentos.plan_mode import format_plan_as_text, plan_from_tool_result
 from agentos.session.keys import canonicalize_session_key as _canonicalize_session_key
 from agentos.session.terminal_reply import build_terminal_reply
 
@@ -1743,9 +1744,12 @@ def _ask_user_reply_text(event: Any) -> str | None:
     if is_error:
         return None
     questions = questions_from_tool_result(tool_name, content)
-    if questions is None:
-        return None
-    return format_questions_as_text(questions)
+    if questions is not None:
+        return format_questions_as_text(questions)
+    plan = plan_from_tool_result(tool_name, content)
+    if plan is not None:
+        return format_plan_as_text(plan)
+    return None
 
 
 def _text_delta_from_event(event: Any) -> str:

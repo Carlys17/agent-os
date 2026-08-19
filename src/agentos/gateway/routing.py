@@ -385,6 +385,23 @@ def tool_context_from_envelope(
         denied_tools = set(cron_baseline_deny)
     elif caller_kind is CallerKind.SUBAGENT:
         denied_tools = set(SUBAGENT_TOOL_DENY)
+    if caller_kind not in {CallerKind.CRON, CallerKind.SUBAGENT}:
+        # Plan mode: the session is research-only until the plan is approved.
+        # Applied as an ALLOWLIST intersection so a tool added later is never
+        # granted to plan mode by omission, and enforced both at tool-list
+        # time (visibility) and at dispatch time (policy chain allowlist
+        # check). Cron and subagent turns keep their own surfaces — plan mode
+        # is a property of the user-facing session, not of background work.
+        # Channel turns count as user-facing even though they are marked
+        # unattended: a human is on the other end to approve the plan.
+        from agentos.plan_mode import PLAN_MODE_TOOL_ALLOW, get_plan_mode_store
+
+        if get_plan_mode_store().is_enabled(envelope.session_key):
+            allowed_tools = (
+                set(PLAN_MODE_TOOL_ALLOW)
+                if allowed_tools is None
+                else allowed_tools & PLAN_MODE_TOOL_ALLOW
+            )
     source_kind = envelope.metadata.get("tool_source_kind") or envelope.source_kind.value
     source_name = envelope.metadata.get("tool_source_name") or envelope.source_name
     channel_admission = envelope.runtime_state.channel_admission

@@ -74,6 +74,10 @@ def format_channel_success_reply(*, name: str, method: str, payload: Any) -> str
         return "Automatic model routing is already active."
     if method == "router.hold.set":
         return _format_router_hold(payload)
+    if method == "plan.mode.set" and isinstance(payload, dict) and "planMode" in payload:
+        if payload["planMode"]:
+            return "Plan mode on: research only until the plan is approved."
+        return "Plan mode off."
     if method == "commands.list_for_surface":
         return _format_help(payload)
     if method == "chat.history":

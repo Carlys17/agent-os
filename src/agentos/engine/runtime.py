@@ -4294,6 +4294,7 @@ class TurnRunner:
             apply_prompt_cache,
             filter_skills,
             inject_env_probe,
+            inject_plan_mode,
             inject_platform_hint,
             inject_subagent_grounding,
             observe_reasoning_hint,
@@ -4404,6 +4405,7 @@ class TurnRunner:
                 inject_subagent_grounding,
                 inject_env_probe,
                 inject_platform_hint,
+                inject_plan_mode,
                 apply_prompt_cache,
             ],
         )

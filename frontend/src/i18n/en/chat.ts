@@ -255,6 +255,14 @@ export const chat = defineNamespace('chat', {
   askMultiHint: 'Choose one or more',
   askAnswered: 'Answered',
 
+  // exit_plan_mode plan card + toolbar row.
+  planCardLabel: 'Proposed plan',
+  planApprove: 'Approve plan',
+  planApproved: 'Plan approved — implementation starting',
+  planRefineHint: 'or keep chatting to refine the plan',
+  planApprovedMessage: 'Plan approved — proceed with the implementation.',
+  toolbarPlanMode: 'Plan mode',
+
   // Transcript: router visualization.
   routerChoosing: 'Choosing a model',
   routerSuggested: 'Suggested model',

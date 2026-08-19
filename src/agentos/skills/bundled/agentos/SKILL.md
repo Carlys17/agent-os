@@ -77,6 +77,9 @@ in both gateway and `--standalone` modes:
   thinking level and pricing baseline. Distinct from `/model`, whose argument
   filters the listing rather than switching.
 - `/auto` — restore automatic Pilot Router routing (clear the pin).
+- `/plan [off]` — toggle plan mode (gateway mode only): the session becomes
+  research-only until the plan the agent presents via `exit_plan_mode` is
+  approved (Web UI plan card, or `/plan off` + telling it to proceed).
 
 A pin withdraws the model's own `router_control` tool, so it cannot route
 around the choice. Image turns still go to a vision tier (they are routed

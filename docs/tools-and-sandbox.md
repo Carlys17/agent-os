@@ -25,7 +25,8 @@ For a focused permissions guide, see
 | Skills | `skill_list`, `skill_view`, `skill_create`, `skill_edit`, `install_skill_deps`, `meta_invoke`. |
 | Control | cron scheduling and gateway control operations. |
 | Channels/platforms | messaging, chat, and media helpers across supported channel adapters. |
-| User interaction | `ask_user` — structured questions with 2-4 options each. Presenting the question ends the turn; the answer arrives as the next user message. The Web UI renders a clickable card; the CLI and channels render a numbered list you answer by typing. Hidden on unattended surfaces (cron, subagents, heartbeats). |
+| User interaction | `ask_user` — structured questions with 2-4 options each. Presenting the question ends the turn; the answer arrives as the next user message. The Web UI renders a clickable card; the CLI and channels render a numbered list you answer by typing. Hidden on surfaces with nobody to reply (cron, subagents, heartbeats); channel DMs count as having a responder. |
+| Plan mode | `/plan` flips the session into research-only planning: the turn's tool surface narrows to a read/search/analysis allowlist and the agent presents its finished plan via `exit_plan_mode` (which ends the turn, like `ask_user`). Approval is out of band — the Web UI plan card's Approve button or `/plan off` — so the model cannot talk itself out of plan mode. State is per-session gateway memory; a gateway restart clears it. |
 
 ## Permission Modes
 

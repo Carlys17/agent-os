@@ -25,6 +25,7 @@ from agentos.execution_status import (
     mark_execution_status_truncated,
     normalize_execution_status,
 )
+from agentos.plan_mode import exit_plan_payload_terminates_turn
 from agentos.result_budget import (
     ToolResultBudgetTracker,
     ToolRunBudgetExceededError,
@@ -271,5 +272,12 @@ async def finalize(
             call.tool_name == "ask_user"
             and not is_error
             and ask_user_payload_terminates_turn(content)
+        )
+        or (
+            # exit_plan_mode shares that contract: presenting the plan ends
+            # the turn; approval arrives out of band.
+            call.tool_name == "exit_plan_mode"
+            and not is_error
+            and exit_plan_payload_terminates_turn(content)
         ),
     )

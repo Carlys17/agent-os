@@ -87,6 +87,7 @@ The most useful ones:
 | `/c0` … `/c3` | Pin the Pilot Router to a configured tier for this session. The pin appears in the bottom toolbar (e.g. `tier:c3`) and stays active until you exit or run `/auto`. |
 | `/use <model-id>` | Pin the route to a specific model, outside the configured tiers. The model must belong to the active provider. |
 | `/auto` | Restore automatic Pilot Router routing (clears the tier pin). |
+| `/plan [off]` | Toggle plan mode: the session becomes research-only (read, search, and analysis tools) until you approve the plan the agent presents via `exit_plan_mode`. `/plan off` leaves plan mode — from text surfaces it is also how you approve a presented plan before telling the agent to proceed. Gateway mode only. |
 | `/help` | List the commands available on the current surface. |
 | `/exit` / `/quit` | Leave the REPL. |
 

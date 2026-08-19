@@ -216,6 +216,13 @@ def _model_hold(envelope: Any, args: str = "") -> dict[str, str]:
     return {"key": envelope.session_key, "model": args.strip()}
 
 
+def _plan_mode(envelope: Any, args: str = "") -> dict[str, str]:
+    """`/plan [off]` — enter plan mode, or leave it with the `off` argument."""
+
+    mode = "off" if args.strip().lower() in {"off", "exit", "stop"} else "on"
+    return {"key": envelope.session_key, "mode": mode}
+
+
 def _session_name(envelope: Any, args: str = "") -> dict[str, str]:
     """`/rename <name>` — label the current session so it is easy to find.
 
@@ -471,6 +478,21 @@ _COMMANDS: tuple[CommandDef, ...] = (
             _S: _local("session.rename"),
             _C: _rpc("sessions.rename", _session_name),
         },
+    ),
+    # ---- Plan mode (web + cli-gateway + channel) --------------------------
+    # /plan flips the session into research-only planning; /plan off leaves
+    # it (and is how a presented plan gets approved from text surfaces).
+    # Standalone CLI has no gateway store, so the command is absent there.
+    CommandDef(
+        name="/plan",
+        usage="/plan [off]",
+        description="Toggle plan mode: research-only until the plan is approved.",
+        execution={
+            _W: _rpc("plan.mode.set", _plan_mode),
+            _T: _rpc("plan.mode.set", _plan_mode),
+            _C: _rpc("plan.mode.set", _plan_mode),
+        },
+        argument_choices=(ArgumentChoice("off", "Leave plan mode"),),
     ),
     CommandDef(
         name="/exit",

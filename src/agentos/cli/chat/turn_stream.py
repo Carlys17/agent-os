@@ -17,6 +17,7 @@ from agentos.ask_user import format_questions_as_text, questions_from_tool_resul
 from agentos.cli.chat.output import ChatOutputHandle
 from agentos.cli.chat.turn import TurnResult, UsageSummary
 from agentos.execution_status import derive_is_error
+from agentos.plan_mode import format_plan_as_text, plan_from_tool_result
 from agentos.session.terminal_reply import build_terminal_reply
 
 _DEFAULT_STREAM_HEARTBEAT_INTERVAL_SECONDS = 15.0
@@ -513,6 +514,14 @@ async def stream_response_gateway(
                                 await renderer.aappend_text(
                                     "\n\n" + format_questions_as_text(ask_questions)
                                 )
+                            plan_text = plan_from_tool_result(
+                                event.get("tool_name") or event.get("toolName"),
+                                event.get("result"),
+                            )
+                            if plan_text:
+                                await renderer.aappend_text(
+                                    "\n\n" + format_plan_as_text(plan_text)
+                                )
                     elif event_name == "session.event.artifact":
                         artifact = artifact_event_payload(event)
                         artifacts.append(artifact)
@@ -657,6 +666,14 @@ async def stream_response_turnrunner(
                             if ask_questions:
                                 await renderer.aappend_text(
                                     "\n\n" + format_questions_as_text(ask_questions)
+                                )
+                            plan_text = plan_from_tool_result(
+                                event.tool_name,
+                                event.result,
+                            )
+                            if plan_text:
+                                await renderer.aappend_text(
+                                    "\n\n" + format_plan_as_text(plan_text)
                                 )
                     elif isinstance(event, ArtifactEvent):
                         artifact = artifact_event_payload(event)

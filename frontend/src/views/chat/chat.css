@@ -3197,3 +3197,27 @@
   font-size: 0.7rem;
   overflow-wrap: anywhere;
 }
+
+/* ── exit_plan_mode plan card (transcript/plan.ts) ──────────────────────────
+   Shares the ask-card frame (and its answered/locked state); adds a
+   scrollable plan body and the approve footer. */
+.chat-plan-body {
+  max-height: 320px;
+  margin-top: 4px;
+  padding: 10px;
+  overflow-y: auto;
+  border-radius: var(--radius-compact);
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+  color: var(--foreground);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-plan-footer {
+  align-items: center;
+}
+.chat-plan-refine-hint {
+  color: var(--dim);
+  font-size: 0.66rem;
+}

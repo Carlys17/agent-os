@@ -230,6 +230,17 @@ Turn it off with `control_ui.show_thinking = false` (or
 thinking events nor serves reasoning bodies. This is WebUI-only either way:
 channel adapters (Slack, Telegram, …) never receive thinking.
 
+### Plan mode
+
+Flip **Plan mode** in the run-modes popover (or type `/plan`) to make the
+session research-only: the agent keeps its read, search, and analysis tools
+but every mutating tool is withheld until you approve a plan. When the agent
+finishes planning it calls `exit_plan_mode`, its turn ends, and the chat
+shows the plan in a card with an **Approve plan** button. Approving turns
+plan mode off and sends the go-ahead; typing feedback instead keeps plan
+mode on and refines the plan. Plan mode is per-session and lives in gateway
+memory — a gateway restart clears it.
+
 ### Agent questions (ask_user)
 
 When the agent needs a decision that is genuinely yours — scope, a

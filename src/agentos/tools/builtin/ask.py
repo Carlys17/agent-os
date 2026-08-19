@@ -14,6 +14,7 @@ import json
 from agentos.ask_user import build_presented_payload, validate_questions
 from agentos.tools.registry import tool
 from agentos.tools.types import (
+    CallerKind,
     InteractionMode,
     SafeToolError,
     UnsupportedSurfaceError,
@@ -82,10 +83,16 @@ from agentos.tools.types import (
 )
 async def ask_user(questions: list[object]) -> str:
     ctx = current_tool_context.get()
-    if ctx is not None and ctx.interaction_mode is InteractionMode.UNATTENDED:
+    if (
+        ctx is not None
+        and ctx.interaction_mode is InteractionMode.UNATTENDED
+        and ctx.caller_kind is not CallerKind.CHANNEL
+    ):
         # Runtime-surface resolution already denies the tool on unattended
-        # surfaces; this guard keeps the contract even for contexts built
-        # outside that path.
+        # surfaces without a human on the other end; this guard keeps the
+        # contract even for contexts built outside that path. Channel turns
+        # are marked unattended (no approval operator) but DO have a human
+        # responder, so they pass.
         raise UnsupportedSurfaceError(
             "ask_user requires a live user, but this run is unattended. "
             "Choose a sensible default and state the assumption instead."

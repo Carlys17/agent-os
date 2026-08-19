@@ -21,6 +21,7 @@ _NAMES = [
     "messaging",
     "nodes",
     "patch",
+    "plan",
     "router_control",
     "sessions",
     "session_search",

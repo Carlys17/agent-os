@@ -2,6 +2,7 @@
 
 from agentos.engine.pipeline import TurnContext
 from agentos.engine.steps.inject_env_probe import inject_env_probe
+from agentos.engine.steps.inject_plan_mode import inject_plan_mode
 from agentos.engine.steps.inject_platform_hint import inject_platform_hint
 from agentos.engine.steps.inject_subagent_grounding import inject_subagent_grounding
 from agentos.engine.steps.prompt_cache import apply_prompt_cache
@@ -22,6 +23,7 @@ __all__ = [
     "apply_agentos_router",
     "filter_skills",
     "inject_env_probe",
+    "inject_plan_mode",
     "inject_platform_hint",
     "inject_subagent_grounding",
     "observe_reasoning_hint",
