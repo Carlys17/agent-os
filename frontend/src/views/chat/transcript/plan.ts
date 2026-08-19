@@ -17,6 +17,7 @@ import { t } from '@/i18n'
 import '@/i18n/en/chat'
 
 import type { StreamEventPayload } from '../types'
+import { buildCardIconSVG, CARD_ICON_CHECK } from './ask'
 
 const PLAN_TOOL_NAME = 'exit_plan_mode'
 const PLAN_STATUS_PRESENTED = 'plan_presented'
@@ -65,7 +66,14 @@ export function buildPlanCardDOM(
 
   const eyebrow = document.createElement('div')
   eyebrow.className = 'chat-ask-eyebrow'
-  eyebrow.textContent = t('chat.planCardLabel')
+  eyebrow.appendChild(
+    buildCardIconSVG(
+      '<rect x="8" y="2" width="8" height="4" rx="1"/>' +
+        '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>' +
+        '<path d="m9 14 2 2 4-4"/>',
+    ),
+  )
+  eyebrow.appendChild(document.createTextNode(t('chat.planCardLabel')))
   card.appendChild(eyebrow)
 
   const body = document.createElement('div')
@@ -77,7 +85,7 @@ export function buildPlanCardDOM(
   footer.className = 'chat-ask-footer chat-plan-footer'
   const approveBtn = document.createElement('button')
   approveBtn.type = 'button'
-  approveBtn.className = 'btn btn--sm chat-ask-send chat-plan-approve'
+  approveBtn.className = 'chat-ask-send chat-plan-approve'
   approveBtn.textContent = t('chat.planApprove')
   if (!approvePlan) approveBtn.disabled = true
   let answered = false
@@ -93,7 +101,8 @@ export function buildPlanCardDOM(
     })
     const done = document.createElement('div')
     done.className = 'chat-ask-answered'
-    done.textContent = t('chat.planApproved')
+    done.appendChild(buildCardIconSVG(CARD_ICON_CHECK))
+    done.appendChild(document.createTextNode(t('chat.planApproved')))
     card.appendChild(done)
   })
   footer.appendChild(approveBtn)

@@ -1531,14 +1531,9 @@
   }
 }
 
-/* ask_user question card — unified skin: product-facing prompt, so Inter for
-   the question text while options keep their mono base from chat.css. */
-.chat-ask-card {
-  font-family: var(--font-sans);
-}
-.chat-ask-title {
-  font-size: 0.84rem;
-}
-.chat-ask-option {
-  font-family: var(--font-sans);
+/* ask_user / plan cards — the base skin (chat.css) already sets Inter for
+   product-facing text and mono for the header chip; no unified override
+   needed beyond keeping machine data mono. */
+.chat-ask-card .chat-plan-body {
+  font-family: var(--font-mono);
 }

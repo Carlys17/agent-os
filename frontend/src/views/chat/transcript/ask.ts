@@ -150,6 +150,28 @@ export function lockAnsweredAskCards(container: HTMLElement): void {
     })
 }
 
+/* ── SVG helpers (Lucide paths; stroke = currentColor, no emoji icons) ──── */
+
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+/** Build a stroke-based icon svg from raw path/shape markup. */
+export function buildCardIconSVG(inner: string, viewBox = '0 0 24 24'): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  svg.setAttribute('viewBox', viewBox)
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '2')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.innerHTML = inner
+  return svg
+}
+
+export const CARD_ICON_QUESTION =
+  '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>'
+export const CARD_ICON_CHECK = '<path d="M20 6 9 17l-5-5"/>'
+
 /* ── Imperative DOM builder (composed by the tool renderer) ─────────────── */
 
 export function buildAskCardDOM(
@@ -167,7 +189,8 @@ export function buildAskCardDOM(
 
   const eyebrow = document.createElement('div')
   eyebrow.className = 'chat-ask-eyebrow'
-  eyebrow.textContent = t('chat.askCardLabel')
+  eyebrow.appendChild(buildCardIconSVG(CARD_ICON_QUESTION))
+  eyebrow.appendChild(document.createTextNode(t('chat.askCardLabel')))
   card.appendChild(eyebrow)
 
   // One-question single-select cards send on click; everything else
@@ -192,7 +215,8 @@ export function buildAskCardDOM(
     })
     const done = document.createElement('div')
     done.className = 'chat-ask-answered'
-    done.textContent = `${t('chat.askAnswered')}: ${text}`
+    done.appendChild(buildCardIconSVG(CARD_ICON_CHECK))
+    done.appendChild(document.createTextNode(`${t('chat.askAnswered')}: ${text}`))
     card.appendChild(done)
   }
 
@@ -223,19 +247,27 @@ export function buildAskCardDOM(
     q.options.forEach((opt) => {
       const btn = document.createElement('button')
       btn.type = 'button'
-      btn.className = 'chat-ask-option'
+      btn.className = 'chat-ask-option' + (q.multiSelect ? ' chat-ask-option--multi' : '')
+      btn.setAttribute('aria-pressed', 'false')
       if (!sendAnswer) btn.disabled = true
+      const check = document.createElement('span')
+      check.className = 'chat-ask-option-check'
+      check.setAttribute('aria-hidden', 'true')
+      check.appendChild(buildCardIconSVG(CARD_ICON_CHECK))
+      btn.appendChild(check)
+      const textCol = document.createElement('span')
+      textCol.className = 'chat-ask-option-text'
       const label = document.createElement('span')
       label.className = 'chat-ask-option-label'
       label.textContent = opt.label
-      btn.appendChild(label)
+      textCol.appendChild(label)
       if (opt.description) {
         const desc = document.createElement('span')
         desc.className = 'chat-ask-option-desc'
         desc.textContent = opt.description
-        btn.appendChild(desc)
-        btn.title = opt.description
+        textCol.appendChild(desc)
       }
+      btn.appendChild(textCol)
       btn.addEventListener('click', () => {
         if (answered) return
         if (instantSend) {
@@ -253,12 +285,15 @@ export function buildAskCardDOM(
           if (at >= 0) current.splice(at, 1)
           else current.push(opt.label)
           btn.classList.toggle('chat-ask-option--selected', at < 0)
+          btn.setAttribute('aria-pressed', at < 0 ? 'true' : 'false')
         } else {
           selections[qi] = [opt.label]
-          optionRow
-            .querySelectorAll('.chat-ask-option--selected')
-            .forEach((el) => el.classList.remove('chat-ask-option--selected'))
+          optionRow.querySelectorAll('.chat-ask-option--selected').forEach((el) => {
+            el.classList.remove('chat-ask-option--selected')
+            el.setAttribute('aria-pressed', 'false')
+          })
           btn.classList.add('chat-ask-option--selected')
+          btn.setAttribute('aria-pressed', 'true')
         }
       })
       optionRow.appendChild(btn)
@@ -286,7 +321,7 @@ export function buildAskCardDOM(
   if (!instantSend) {
     const sendBtn = document.createElement('button')
     sendBtn.type = 'button'
-    sendBtn.className = 'btn btn--sm chat-ask-send'
+    sendBtn.className = 'chat-ask-send'
     sendBtn.textContent = t('chat.askSend')
     if (!sendAnswer) sendBtn.disabled = true
     sendBtn.addEventListener('click', submit)
