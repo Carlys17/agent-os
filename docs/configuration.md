@@ -241,6 +241,12 @@ Two cases are deliberately left whole: a body with no headings, because there
 would be no way to ask for the rest, and a body only slightly over the ceiling,
 where the index would cost more than it saves. Set `0` to switch it off.
 
+```sh
+agentos config get skills.max_skills_prompt_chars
+agentos config set skills.max_skills_prompt_chars 32000
+agentos gateway restart
+```
+
 ### Pinning a section
 
 Which sections survive the cut is otherwise decided by where they sit in the
@@ -263,12 +269,6 @@ rather than adding to it: together they may take at most half of it, the opening
 gets what is left, and a section that does not fit is left in the index instead
 of being cut in half. Reserve it for invariants; pinning reference material
 spends the opening on it.
-
-```sh
-agentos config get skills.max_skills_prompt_chars
-agentos config set skills.max_skills_prompt_chars 32000
-agentos gateway restart
-```
 
 ## First-Run Wizard
 

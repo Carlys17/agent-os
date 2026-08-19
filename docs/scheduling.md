@@ -124,9 +124,9 @@ agentos cron add --every 10m --script 'lp-monitor/{job_id}/tick.sh' --name lp-ra
 That gives a job a directory named after itself in a single `add` — the id does
 not exist until the job does, so the alternative is to create the job against a
 staging path and repoint it afterwards, leaving a live job pointing at a path it
-will not keep. The command prints the resolved path; write the script there. A
-job whose stored path somehow still holds `{job_id}` refuses to run rather than
-creating a directory by that name.
+will not keep. The job it prints back carries the resolved path in its `script`
+field; write the file there. A job whose stored path somehow still holds
+`{job_id}` refuses to run rather than creating a directory by that name.
 
 Arguments go through `--script-arg`, repeated once per argument:
 
