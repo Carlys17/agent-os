@@ -676,7 +676,7 @@ def make_system_event_handler(
                     "kind": "cron",
                     "source_tool": f"cron:{job.id}",
                 },
-            )
+        )
 
         await delivery_chain.notify_start(job, text)
         heartbeat_loop = heartbeat_loop_ref() if heartbeat_loop_ref else None
@@ -728,7 +728,6 @@ def make_system_event_handler(
             heartbeat_kwargs["delivery_override"] = delivery_override
         run_once_now = getattr(heartbeat_loop, "run_once_now", None)
         if callable(run_once_now):
-
             async def _run_once():
                 run_once_kwargs: dict[str, Any] = {
                     "reason": reason,
@@ -743,7 +742,6 @@ def make_system_event_handler(
                 return await run_once_now(**run_once_kwargs)
 
         else:
-
             async def _run_once():
                 return await heartbeat_service.run_once(**heartbeat_kwargs)
 

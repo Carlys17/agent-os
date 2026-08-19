@@ -11,7 +11,7 @@ import structlog
 
 from agentos.channel_pairing import ChannelAdmission
 from agentos.channels.types import IncomingMessage
-from agentos.permissions import cron_tool_policy_elevated
+from agentos.permissions import CRON_ELEVATED_MODES, cron_tool_policy_elevated
 from agentos.session.keys import normalize_agent_id, parse_agent_id
 from agentos.tools.policy import apply_tool_policy_layer
 from agentos.tools.types import (
@@ -384,7 +384,7 @@ def tool_context_from_envelope(
             cron_elevated = None
             cron_source = None
 
-        if cron_elevated is not None:
+        if cron_elevated in CRON_ELEVATED_MODES:
             cron_baseline_allow = CRON_ELEVATED_ALLOW
             cron_baseline_deny = CRON_ELEVATED_DENY
             # An unattended turn is about to get a real shell. Logged here
@@ -413,7 +413,7 @@ def tool_context_from_envelope(
         channel_admission_validator = None
     elevated = envelope.metadata.get("elevated") or default_elevated
     if caller_kind is CallerKind.CRON:
-        elevated = cron_elevated
+        elevated = cron_elevated if cron_elevated in CRON_ELEVATED_MODES else None
     elif (
         elevated not in ("on", "bypass", "full")
         or caller_kind not in {CallerKind.CLI, CallerKind.WEB}

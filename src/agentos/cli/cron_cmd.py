@@ -433,7 +433,6 @@ def _render_jobs(rows: list[dict[str, Any]], *, title: str = "Cron jobs") -> Non
             str(row.get("agentId") or row.get("agent_id") or ""),
             str(
                 row.get("effectiveElevated")
-                or row.get("effective_elevated")
                 or row.get("elevated")
                 or ""
             ),

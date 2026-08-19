@@ -200,7 +200,7 @@ Main `agentos.toml` sections (full commented reference:
 | `[tools]` | model-visible tools and policy; `enabled = false` runs providers in plain-text mode; `profile` (`full` \| `coding` \| `messaging` \| `memory_only` \| `minimal`) sets the base allowlist — `agentos context` prices each one |
 | `[memory]` | memory source and embedding model, `[memory.nudge]` (periodic memory review) |
 | `[sandbox]` | `sandbox`, `default_level` (DISABLED/STANDARD/STRICT/LOCKED), `backend`, network/mounts |
-| `[permissions]` | `default_mode` = `off` \| `on` \| `bypass` \| `full` (pair with `agentos sandbox …`) |
+| `[permissions]` | `default_mode` = `off` \| `on` \| `bypass` \| `full` (pair with `agentos sandbox …`); `cron_default_mode` = `off` \| `bypass` \| `full` (default `bypass`) |
 | `[auth]` | gateway admission: `mode` (`none` on loopback or `token`), `token` |
 | `[control_ui]` | `allowed_origins` for reverse-proxy setups; `show_thinking` (default true) streams model reasoning to the WebUI as collapsible blocks — WebUI-only, channels never receive it |
 | `[updates]` | `notify` (default true) — the once-per-24h "new release available" notice |

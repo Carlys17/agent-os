@@ -33,12 +33,16 @@ def normalize_cron_elevated(value: Any) -> str | None:
     to be asked for by name because it also disables the sensitive-path block.
     """
 
-    if value is None or value is False:
+    if value is None:
         return None
+    if value is False:
+        return "off"
     if value is True:
         return "bypass"
     mode = str(value).strip().lower()
-    if mode in ("", "off", "false", "none"):
+    if mode in ("off", "false", "none"):
+        return "off"
+    if mode == "":
         return None
     if mode == "on":
         raise ValueError(
@@ -62,7 +66,8 @@ def cron_tool_policy_elevated(tool_policy: Any) -> str | None:
     if not isinstance(tool_policy, Mapping):
         return None
     try:
-        return normalize_cron_elevated(tool_policy.get("elevated"))
+        mode = normalize_cron_elevated(tool_policy.get("elevated"))
+        return None if mode == "off" else mode
     except ValueError:
         return None
 

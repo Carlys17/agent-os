@@ -90,12 +90,12 @@ async def test_ops_add_rejects_the_on_elevation_mode(tmp_path: Path) -> None:
         await store.close()
 
 
-async def test_ops_add_drops_a_falsy_elevation_key(tmp_path: Path) -> None:
-    """An unelevated job stores the same empty policy it always did."""
+async def test_ops_add_maps_a_falsy_elevation_key_to_off(tmp_path: Path) -> None:
+    """An explicitly unelevated job stores the 'off' policy."""
     store, ops = await _open_ops(tmp_path)
     try:
         job = await _add(ops, tool_policy={"elevated": False})
-        assert job.tool_policy == {}
+        assert job.tool_policy == {"elevated": "off"}
     finally:
         await store.close()
 
