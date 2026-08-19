@@ -76,7 +76,11 @@ async def test_http_request_returns_text_body_for_json_content_type(
 
     payload = json.loads(await _original_http_request()(url="https://example.test/data"))
 
-    assert payload["body"] == '{"ok":true}'
+    # Text bodies are external content: delivered inside the <untrusted>
+    # envelope, payload verbatim, source naming the fetched URL.
+    assert payload["body"] == (
+        "<untrusted source='https://example.test/data'>{\"ok\":true}</untrusted>"
+    )
     assert base64.b64decode(payload["body_base64"]) == b'{"ok":true}'
     assert payload["body_truncated"] is False
 
@@ -179,8 +183,11 @@ async def test_http_request_does_not_implicitly_save_large_text_response(
     assert payload["size"] == len(raw)
     assert payload["sha256"] == digest
     assert payload["body_saved"] is False
-    assert payload["body"].startswith("<feed>")
-    assert len(payload["body"]) == 10_000
+    envelope_open = "<untrusted source='https://example.test/feed'>"
+    assert payload["body"].startswith(envelope_open + "<feed>")
+    assert payload["body"].endswith("</untrusted>")
+    # The 10k text cap applies to the payload; the envelope rides on top.
+    assert len(payload["body"]) == len(envelope_open) + 10_000 + len("</untrusted>")
     assert payload["body_base64"] is not None
     assert payload["body_truncated"] is True
     assert payload["body_base64_truncated"] is False
