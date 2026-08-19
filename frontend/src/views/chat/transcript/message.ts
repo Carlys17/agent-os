@@ -193,7 +193,12 @@ export function createMessageRenderer(deps: MessageRendererDeps) {
     const attachmentText = body.querySelector('.msg-attachment-text')
     if (attachmentText) return (attachmentText.textContent || '').trim()
     const clone = body.cloneNode(true) as HTMLElement
-    clone.querySelectorAll('.msg-actions, .msg-meta').forEach((node) => node.remove())
+    // `.thinking-block` is the collapsible reasoning disclosure the history and
+    // stream renderers prepend inside `.msg-body`; its summary label and lazily
+    // fetched body are chrome, not reply text, so they never reach the clipboard.
+    clone
+      .querySelectorAll('.msg-actions, .msg-meta, .thinking-block')
+      .forEach((node) => node.remove())
     return (clone.textContent || '').trim()
   }
 
