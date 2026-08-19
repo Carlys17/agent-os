@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `senior-unilp-manager` now defaults the ratchet monitor to a `script` cron
+  job. "Wiring it to cron" leads with the `job_kind="script"` shape and states
+  the rule outright: if the user did not say which shape they want, schedule
+  the script job. `agent_turn` is documented as the explicit opt-in for when a
+  model is wanted in the loop — to summarize or escalate in its own words —
+  with its cost named, a full turn on every tick of a job that is almost always
+  a no-op. `tick` already reconciles and fires in one process, so the script
+  shape costs no model call, takes no `tool_policy`, and with `--alert-only`
+  stays quiet on a healthy ratchet. Instructions only; no behaviour changed.
+  (#325)
+
 ## [2026.8.17] - 2026-08-17
 
 ### Added
