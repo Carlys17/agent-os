@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.19] - 2026-08-19
+
 ### Added
 
 - A cron job's `script` path may contain `{job_id}`, which the scheduler
@@ -63,6 +65,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- The core system prompt was rewritten and is now gated by surface. Tool Call
+  Style teaches parallel tool batches and a verify-with-tools bias instead of
+  the no-op "wait for tool results" line, a new Task Execution block carries a
+  persistence rule with an anti-stuck escape hatch and an explicit
+  approval-denial boundary, and Safety gained irreversible/outward action
+  confirmation, secrets handling, and the `<untrusted>` envelope convention
+  with its coverage caveat. Reply Tags, Messaging and Reactions now render only
+  when at least one channel adapter is configured, and Silent Replies only for
+  sessions that can receive internal system events, so a pure Web UI/CLI
+  gateway no longer teaches reply-tag syntax, emoji reactions, or a `NO_REPLY`
+  sentinel it can never legitimately use — roughly 257 tokens saved per
+  full-mode session. Both gates are boot-time or session-kind stable, so the
+  cacheable base prompt does not churn. Section-level contract tests pin each
+  block per prompt mode and tool set. (#336, #338)
 - `senior-unilp-manager`'s monitor layout is now one `cron` call and one pinned
   section. "Files on disk for a monitor" became "Setting up a monitor", shrank
   from 4 238 characters to roughly 2 100 — the stage-add-move-repoint sequence
