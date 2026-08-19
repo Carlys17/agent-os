@@ -31,6 +31,8 @@ def assemble_system_prompt(
     heartbeat_prompt: str | None = None,
     model_aliases: list[str] | None = None,
     reasoning_tag_hint: str | None = None,
+    channels_enabled: bool = False,
+    unattended_context: bool = False,
 ) -> str:
     """Render the cacheable base of the system prompt for an agent profile.
 
@@ -51,6 +53,12 @@ def assemble_system_prompt(
         heartbeat_prompt: Heartbeat poll recognition and ack protocol text.
         model_aliases: List of model alias strings for Model Aliases section.
         reasoning_tag_hint: Reasoning format constraint (e.g. <think>/<final>).
+        channels_enabled: At least one channel adapter is configured. Gates the
+            channel-delivery sections (Reply Tags, Messaging, Reactions) so
+            channel-less surfaces such as a pure WebUI do not carry them.
+        unattended_context: This session can receive internal system events
+            (heartbeat polls, unattended runs). Gates the Silent Replies
+            sentinel guidance; a set ``heartbeat_prompt`` also implies it.
 
     Returns:
         Rendered system prompt string (cacheable base only).
@@ -77,6 +85,8 @@ def assemble_system_prompt(
         "heartbeat_prompt": heartbeat_prompt,
         "model_aliases": model_aliases or [],
         "reasoning_tag_hint": reasoning_tag_hint,
+        "channels_enabled": channels_enabled,
+        "unattended_context": unattended_context,
     }
 
     return template.render(**ctx).strip()

@@ -94,3 +94,69 @@ def test_minimal_mode_omits_behavior_blocks() -> None:
     assert "## Tool Call Style" not in prompt
     assert "## Task Execution" not in prompt
     assert "## Safety" not in prompt
+
+
+_CHANNEL_SECTIONS = ("## Reply Tags", "## Messaging", "## Reactions")
+
+
+def test_channel_sections_absent_by_default() -> None:
+    # A gateway with no channel adapters (pure WebUI/CLI) must not teach
+    # reply tags, channel routing, or emoji reactions.
+    prompt = _full_prompt()
+
+    for section in _CHANNEL_SECTIONS:
+        assert section not in prompt
+    assert "## Silent Replies" not in prompt
+    assert "NO_REPLY" not in prompt
+
+
+def test_channel_sections_present_when_channels_enabled() -> None:
+    prompt = assemble_system_prompt(
+        AgentProfile(agent_id="main", prompt_mode="full"),
+        tools=_TOOLS,
+        channels_enabled=True,
+    )
+
+    for section in _CHANNEL_SECTIONS:
+        assert section in prompt
+    # Channel presence alone does not imply system events.
+    assert "## Silent Replies" not in prompt
+
+
+def test_silent_replies_present_in_unattended_context() -> None:
+    prompt = assemble_system_prompt(
+        AgentProfile(agent_id="main", prompt_mode="full"),
+        tools=_TOOLS,
+        unattended_context=True,
+    )
+
+    assert "## Silent Replies" in prompt
+    assert "NO_REPLY" in prompt
+    for section in _CHANNEL_SECTIONS:
+        assert section not in prompt
+
+
+def test_heartbeat_prompt_implies_silent_replies() -> None:
+    # A configured heartbeat prompt renders its own section and must carry
+    # the sentinel guidance it depends on, even without the explicit flag.
+    prompt = assemble_system_prompt(
+        AgentProfile(agent_id="main", prompt_mode="full"),
+        tools=_TOOLS,
+        heartbeat_prompt="Heartbeat polls arrive as system events.",
+    )
+
+    assert "## Heartbeats" in prompt
+    assert "## Silent Replies" in prompt
+
+
+def test_minimal_mode_omits_gated_sections_regardless_of_flags() -> None:
+    prompt = assemble_system_prompt(
+        AgentProfile(agent_id="main", prompt_mode="minimal"),
+        tools=_TOOLS,
+        channels_enabled=True,
+        unattended_context=True,
+    )
+
+    for section in _CHANNEL_SECTIONS:
+        assert section not in prompt
+    assert "## Silent Replies" not in prompt

@@ -4056,6 +4056,16 @@ class TurnRunner:
             "shell": os.environ.get("SHELL", ""),
             "workspace_dir": str(bootstrap_workspace_dir),
         }
+        # Both flags are stable for the life of the process (channel and
+        # heartbeat config are boot-time) or for the session kind
+        # (bootstrap_context_mode keys the snapshot), so gating on them does
+        # not churn the cacheable base.
+        channels_enabled = bool(
+            getattr(getattr(self._config, "channels", None), "channels", None)
+        )
+        unattended_context = bool(
+            getattr(getattr(self._config, "heartbeat", None), "enabled", False)
+        ) or bootstrap_context_mode in {"heartbeat_light", "unattended"}
         base_prompt = assemble_system_prompt(
             agent_profile,
             tools=[td.name for td in tool_defs] if tool_defs else None,
@@ -4063,6 +4073,8 @@ class TurnRunner:
             runtime_info=runtime_info,
             docs_path=self._resolve_docs_path(),
             heartbeat_prompt=getattr(self._config, "heartbeat_prompt", None),
+            channels_enabled=channels_enabled,
+            unattended_context=unattended_context,
         )
         # daily_notes, workspace_files, and extra_context are per-turn /
         # per-day volatile content. Keeping them in the cacheable base
