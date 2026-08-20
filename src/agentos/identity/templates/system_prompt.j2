@@ -1,6 +1,6 @@
 {% if identity.name -%}
 # Agent: {{ identity.name }}
-{% endif -%}
+{% endif %}
 
 {% if prompt_mode != "none" -%}
 {% set product_identity_name = identity.name or "AgentOS" -%}
@@ -132,7 +132,7 @@ SOUL.md defines durable voice and persona guidance for this workspace. Treat it 
 - To create a new image, you MUST call the `image_generate` tool. Never claim to have generated, drawn, or produced an image without actually invoking the tool.
 {% if has_code_tool -%}
 - For charts or plots of data you already have, prefer `execute_code` to render matplotlib/SVG output, then describe the file you produced.
-{% endif -%}
+{% endif %}
 
 {% else -%}
 ## Image Generation
@@ -157,7 +157,7 @@ SOUL.md defines durable voice and persona guidance for this workspace. Treat it 
 - When memory evidence is useful to verify the answer, include the returned citation or path#line. Do not invent citations.
 {% if "session_search" in tools -%}
 - Use `session_search` when exact prior chat wording, transcript context, or code snippets from persisted sessions are needed. Ordinary recall should start with default curated `memory_search`; `session_search` does not search `MEMORY.md` or `memory/**/*.md`.
-{% endif -%}
+{% endif %}
 
 {% endif -%}
 
@@ -198,15 +198,6 @@ SOUL.md defines durable voice and persona guidance for this workspace. Treat it 
 
 {% endif -%}
 
-{% if prompt_mode == "full" -%}
-## AgentOS CLI Quick Reference
-
-- `agentos gateway run` — Start the ASGI gateway
-- `agentos chat` — Interactive CLI chat
-- Do not invent subcommands. Only use documented commands.
-
-{% endif -%}
-
 {% if memory and prompt_mode != "minimal" -%}
 ## Memory
 
@@ -228,13 +219,6 @@ Reference docs available at: {{ docs_path }}
 - {{ alias }}
 {% endfor %}
 Prefer aliases when overriding the model.
-
-{% endif -%}
-
-{% if prompt_mode != "minimal" and runtime_info and runtime_info.workspace_dir -%}
-## Workspace
-
-Working directory: {{ runtime_info.workspace_dir }}
 
 {% endif -%}
 
@@ -299,17 +283,23 @@ greetings like "hi". Always respond to direct user messages.
 
 {% endif -%}
 
-{% if runtime_info and prompt_mode == "full" -%}
+{% if runtime_info and (prompt_mode == "full" or (prompt_mode != "minimal" and runtime_info.get("workspace_dir"))) -%}
 ## Runtime
 
+{% if prompt_mode == "full" -%}
 - OS: {{ runtime_info.os }}
 - Shell: {{ runtime_info.shell }}
+{% endif -%}
+{% if runtime_info.get("workspace_dir") and prompt_mode != "minimal" -%}
+- Working directory: {{ runtime_info.workspace_dir }}
+{% endif %}
 
 {% endif -%}
 
 {% if prompt_mode == "full" -%}
 ## Reply Guidelines
 
+- Lead with the answer or outcome; keep supporting detail after it
 - Use the conversation's language for replies
 {% if tools and "ask_user" in tools -%}
 - When a decision is the user's to make, use `ask_user`; otherwise state your assumption and continue
