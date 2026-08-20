@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 from typing import Any
 from urllib.parse import urljoin
 
@@ -54,14 +53,6 @@ _RETRY_DELAY_SECONDS = 0.25
 _WEB_FETCH_DEFAULT_MAX_CHARS = 20_000
 _WEB_FETCH_MAX_CHARS_ENV = "AGENTOS_WEB_FETCH_MAX_CHARS"
 _MAX_REDIRECTS = 5
-
-_XML_ATTR_ESCAPES = {
-    "<": "&lt;",
-    ">": "&gt;",
-    "&": "&amp;",
-    '"': "&quot;",
-    "'": "&apos;",
-}
 
 
 def _check_ssrf(url: str) -> None:
@@ -392,34 +383,23 @@ async def web_fetch(
 
 
 def _wrap_content(source: str, content: str) -> str:
-    safe_source = _xml_escape_attr(source)
-    safe_content = _escape_external_content_boundaries(content)
-    return f'<external-content source="{safe_source}">{safe_content}</external-content>'
+    """Wrap fetched page content in the shared ``<untrusted>`` envelope.
 
+    Delegating to :func:`wrap_untrusted_boundary` keeps web content under
+    the same tag the system prompt teaches and the dispatch-layer
+    origin-trace refusal enforces, instead of a bespoke envelope neither
+    recognizes. Boundary-only escaping keeps the extracted markdown
+    readable.
+    """
+    from agentos.safety.injection_guard import wrap_untrusted_boundary
 
-def _xml_escape_attr(value: str) -> str:
-    return "".join(_XML_ATTR_ESCAPES.get(ch, ch) for ch in value)
-
-
-def _escape_external_content_boundaries(value: str) -> str:
-    out = re.sub(
-        r"<\s*/\s*external-content\s*>",
-        "&lt;/external-content&gt;",
-        value,
-        flags=re.IGNORECASE,
-    )
-    return re.sub(
-        r"<\s*external-content\b",
-        "&lt;external-content",
-        out,
-        flags=re.IGNORECASE,
-    )
+    return wrap_untrusted_boundary(content, source)
 
 
 def _extract_inner(wrapped: str) -> str:
-    """Extract content from inside <external-content> tags."""
+    """Extract content from inside the <untrusted> envelope."""
     start_tag_end = wrapped.find(">")
-    end_tag_start = wrapped.rfind("</external-content>")
+    end_tag_start = wrapped.rfind("</untrusted>")
     if start_tag_end == -1 or end_tag_start == -1:
         return wrapped
     return wrapped[start_tag_end + 1 : end_tag_start]

@@ -223,9 +223,15 @@ async def http_request(
     is_text = _is_text_response_content_type(content_type)
     raw_body = response.content
     should_save = output_path is not None
+    from agentos.safety.injection_guard import wrap_untrusted_boundary
+
     if should_save:
         saved_path, digest = _save_http_response_body(raw_body, output_path)
-        preview = response.text[:_TEXT_BODY_LIMIT] if is_text else None
+        preview = (
+            wrap_untrusted_boundary(response.text[:_TEXT_BODY_LIMIT], str(response.url))
+            if is_text
+            else None
+        )
         result = {
             "status": response.status_code,
             "url": str(response.url),
@@ -249,7 +255,7 @@ async def http_request(
     body_base64_truncated = len(raw_body) > _BINARY_BODY_LIMIT
     if is_text:
         text_body = response.text
-        body = text_body[:_TEXT_BODY_LIMIT]
+        body = wrap_untrusted_boundary(text_body[:_TEXT_BODY_LIMIT], str(response.url))
         body_truncated = len(text_body) > _TEXT_BODY_LIMIT
     else:
         body = None

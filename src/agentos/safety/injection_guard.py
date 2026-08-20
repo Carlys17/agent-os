@@ -2,11 +2,15 @@
 
 Ingress points:
 
-* :func:`wrap_untrusted` — wrap tool output, web fetch, file read, or
-  channel inbound content in ``<untrusted source='...'>...</untrusted>``
-  before it enters the LLM context. Inner payload is XML-escaped so
-  attempts to close the tag or inject sibling ``<system>`` /
-  ``<available_skills>`` elements fall through as inert entities.
+* :func:`wrap_untrusted` — wrap tool output, file read, or channel
+  inbound content in ``<untrusted source='...'>...</untrusted>`` before
+  it enters the LLM context. Inner payload is XML-escaped so attempts to
+  close the tag or inject sibling ``<system>`` / ``<available_skills>``
+  elements fall through as inert entities.
+* :func:`wrap_untrusted_boundary` — same envelope for bulk external
+  content (web pages, HTTP bodies) the model must read verbatim: only
+  nested ``<untrusted``/``</untrusted>`` markers are escaped, the rest
+  of the payload passes through unmodified.
 * :func:`xml_escape` — public escaping helper reused by
   :mod:`agentos.skills.filter` when assembling ``<available_skills>`` from
   skill metadata.
@@ -262,6 +266,33 @@ def wrap_untrusted(content: str, source: str) -> str:
     return f"<untrusted source='{escaped_source}'>{escaped_content}</untrusted>"
 
 
+_UNTRUSTED_CLOSE_IN_CONTENT = re.compile(r"<\s*/\s*untrusted\s*>", re.IGNORECASE)
+_UNTRUSTED_OPEN_IN_CONTENT = re.compile(r"<\s*untrusted\b", re.IGNORECASE)
+
+
+def wrap_untrusted_boundary(content: str, source: str) -> str:
+    """Wrap bulk external content in the untrusted envelope, readably.
+
+    Unlike :func:`wrap_untrusted`, only the envelope boundaries are
+    neutralized: nested ``<untrusted``/``</untrusted>`` markers in the
+    payload are entity-escaped so the envelope cannot be closed early or
+    forged, while the rest of the content (markdown, HTML entities, code)
+    passes through verbatim for the model to read. Use this for
+    full-document ingest such as web pages and HTTP bodies, and
+    :func:`wrap_untrusted` for short config-injected text where full XML
+    escaping costs nothing.
+
+    The close tag is escaped before the open tag: the close pattern also
+    contains the ``untrusted`` token, so the reverse order would corrupt
+    close markers into half-escaped fragments.
+    """
+
+    escaped_source = xml_escape(source)
+    safe = _UNTRUSTED_CLOSE_IN_CONTENT.sub("&lt;/untrusted&gt;", content)
+    safe = _UNTRUSTED_OPEN_IN_CONTENT.sub("&lt;untrusted", safe)
+    return f"<untrusted source='{escaped_source}'>{safe}</untrusted>"
+
+
 def is_untrusted_fragment(text: str) -> bool:
     """Return ``True`` iff ``text`` contains a matched untrusted envelope.
 
@@ -311,5 +342,6 @@ __all__ = [
     "is_untrusted_fragment",
     "scan_for_injection",
     "wrap_untrusted",
+    "wrap_untrusted_boundary",
     "xml_escape",
 ]
