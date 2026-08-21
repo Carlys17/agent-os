@@ -492,6 +492,8 @@ Read:
 ## Skills
 
 ```sh
+agentos skills init <name>
+agentos skills init <name> --description "A custom skill description" -t "trigger1" -t "trigger2" --with-script
 agentos skills list
 agentos skills list --json
 agentos skills search pdf
@@ -501,6 +503,13 @@ agentos skills install <skill-url> --source bankr
 agentos skills update --all
 agentos skills uninstall <skill-name>
 ```
+
+`agentos skills init <name>` initializes a new custom skill template.
+- `--description` / `-d` provides a description of the skill.
+- `--trigger` / `-t` registers activation trigger terms (repeatable).
+- `--target-dir` / `-p` specifies the target parent directory. If omitted, the tool resolves to the highest precedence existing layer directory in the workspace/personal layers list.
+- `--with-script` scaffolds an executable script `scripts/run.py` template and entrypoint command configuration.
+- `--force` / `-f` forces overwrite of generated files without purging the parent folder.
 
 The `skills list` table is unchanged: name, layer, eligible, description.
 `--json` carries more, and now reports the same facts the Web UI shows for the
