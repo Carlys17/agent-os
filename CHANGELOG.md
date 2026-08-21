@@ -6,6 +6,81 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.21] - 2026-08-21
+
+### Added
+
+- Inbound Telegram voice messages, audio files, and round video notes are
+  transcribed before the turn is built, and the speech-to-text output becomes
+  the message text. A voice note used to reach the agent as the placeholder
+  `[voice]` with the audio stripped, so the only way to be understood on a
+  phone was to type. The ElevenLabs STT call was factored out of
+  `audio_transcription.py` into a shared helper and wired into channel message
+  ingestion, so `voice`, `audio`, and `video_note` payloads all take the same
+  path. A default 120-second duration limit (configurable through
+  `max_voice_duration_s`) and a 30 MB size limit are checked before the
+  download; over either limit, or on an STT failure, the sender gets a reply
+  saying so and the message still reaches the agent under its placeholder
+  rather than being dropped. The channel download limit is relaxed to 30 MB for
+  `audio/` and `video/` types while the attachment whitelist stays strict —
+  raw audio is stripped once transcribed. Group mention detection now also
+  admits replies that target the bot, by user id or by username. (#312, #317)
+- `agentos skills init <name>` scaffolds a local custom skill that passes the
+  publish gate on the first try: a `SKILL.md` with clean YAML frontmatter and a
+  body long enough to clear the 20-character validation, plus
+  `scripts/run.py` and its entrypoint mapping under `--with-script`. Names are
+  validated against `^[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}$` so a name cannot walk out
+  of the target directory, and an existing file is only overwritten with
+  `--force`; other files in the directory are left alone. The target resolves
+  through the usual layer order — `~/.agentos/skills`, `~/.agents/skills`,
+  `<workspace>/.agents/skills`, `<workspace>/skills`. (#316, #321)
+
+### Changed
+
+- Scheduled agent turns (`agent_run` cron jobs) are elevated by default,
+  running in `bypass` mode instead of needing a per-job opt-in — an unattended
+  turn that stops to ask for an approval nobody is there to give is a turn that
+  does nothing. The new global `cron_default_mode` field on `PermissionsConfig`
+  holds the default, and the router resolves effective elevation at execution
+  time from the `handler_key` now carried in the cron envelope. Every other
+  unattended kind — reminders, system events, script runs — stays strictly
+  unelevated, and an explicit `--no-elevated` on any of them is honoured rather
+  than rejected. Elevated warnings log `source="config"` or `source="job"` so
+  the log says how elevation was granted, and the effective value is shown on
+  Web UI job cards and in the CLI `cron list` table. The wire-level `elevated`
+  field keeps meaning "explicit override", so existing jobs read back
+  unchanged. (#311, #323)
+- Web content the agent reads is wrapped in the same `<untrusted source='…'>`
+  envelope the system prompt teaches, through a new `wrap_untrusted_boundary`
+  helper in `safety/injection_guard.py`. `web_fetch` had its own
+  `<external-content>` tag, which the dispatch layer did not recognize: a
+  tool-call marker planted in a fetched page got zero enforcement. It now
+  trips the refusal path like any other untrusted fragment. Only nested
+  `<untrusted>` markers are entity-escaped, so the page itself passes through
+  verbatim and stays readable; the escaping is idempotent, so truncation
+  re-wrapping still works. `http_request` wraps its text `body` and
+  `body_preview` with the fetched URL as the source, with the 10k text cap
+  applying to the payload rather than the envelope. Binary and base64 paths are
+  unchanged, and `web_search`/`x_search` snippets stay out of scope. (#339,
+  #340)
+- The core system prompt drops `## AgentOS CLI Quick Reference` — two
+  hardcoded commands that drift from the real CLI, whose canonical references
+  are the bundled `agentos` skill and `docs/cli.md` — and folds `## Workspace`
+  into `## Runtime`, keeping each line's gating so OS and shell stay full-mode
+  only and the working-directory line keeps its own condition. Reply Guidelines
+  now open with "Lead with the answer or outcome; keep supporting detail after
+  it". Net −124 characters, about 31 tokens, on a full-mode render. (#343,
+  #344)
+
+### Fixed
+
+- Section headings in the rendered system prompt are no longer glued to the
+  section above them. Any section whose last line was conditional closed with
+  `{% endif -%}`, and the right-trim dash swallowed the blank line before the
+  next heading — every full-mode prompt shipped so far rendered `# Agent` stuck
+  onto `## Product Identity`, `## Image Generation` onto `## Memory Recall`,
+  and `## Memory Recall` onto `## Memory Write Guidance`. (#343, #344)
+
 ## [2026.8.19] - 2026-08-19
 
 ### Added
