@@ -554,3 +554,25 @@ def redact_terminal_output(output: str, command: str | None = None, *, force: bo
         output, force=force, code_file=not is_env_dump_command(command or "")
     )
     return redacted if redacted is not None else output
+
+
+#: CDP endpoint URLs (``ws(s)://…/devtools/browser/<token>``) carry a
+#: browser-session token in the path. Mask it in any log line so an attach /
+#: cloud debug endpoint never lands in the transcript verbatim.
+_CDP_WS_URL_RE = re.compile(
+    r"(wss?://[^\s'\"]*?/devtools/(?:browser|page)/)[A-Za-z0-9._-]+",
+    re.IGNORECASE,
+)
+
+
+def redact_cdp_url(value: str | None) -> str:
+    """Mask the session token in a CDP WebSocket URL, leaving the shape legible.
+
+    ``ws://127.0.0.1:9222/devtools/browser/abc123`` →
+    ``ws://127.0.0.1:9222/devtools/browser/«redacted»``. Safe on any string;
+    text without a CDP URL comes back unchanged.
+    """
+    if not value:
+        return value or ""
+    text = value if isinstance(value, str) else str(value)
+    return _CDP_WS_URL_RE.sub(lambda m: f"{m.group(1)}«redacted»", text)

@@ -14,11 +14,7 @@ _ONNX_DIR_PLACEHOLDER = "PATH_TO_ONNX_MODELS"
 
 
 def _known_provider_ids(rows: list[dict[str, Any]]) -> list[str]:
-    return [
-        provider_id
-        for row in rows
-        if (provider_id := str(row.get("providerId") or ""))
-    ]
+    return [provider_id for row in rows if (provider_id := str(row.get("providerId") or ""))]
 
 
 def _replacement_provider(active: str, known_provider_ids: list[str]) -> str:
@@ -209,8 +205,7 @@ def evaluate_provider(payload: dict[str, Any]) -> list[HealthFinding]:
             FixStep(
                 label="Configure provider",
                 command=(
-                    "agentos providers configure "
-                    f"{provider_id} --api-key {_API_KEY_PLACEHOLDER}"
+                    f"agentos providers configure {provider_id} --api-key {_API_KEY_PLACEHOLDER}"
                 ),
             ),
             FixStep(label="Restart gateway", command="agentos gateway restart"),
@@ -224,10 +219,7 @@ def evaluate_provider(payload: dict[str, Any]) -> list[HealthFinding]:
                 0,
                 FixStep(
                     label="Set provider environment variable",
-                    detail=(
-                        f"Set {api_key_env} in the gateway environment, then restart "
-                        "AgentOS."
-                    ),
+                    detail=(f"Set {api_key_env} in the gateway environment, then restart AgentOS."),
                 ),
             )
         findings.append(
@@ -479,9 +471,7 @@ def evaluate_search(payload: dict[str, Any]) -> list[HealthFinding]:
     provider = configured_provider or "unknown"
     if configured_provider and not payload.get("unknownProvider"):
         missing_keys = [
-            key
-            for key in ("configured", "runtimeSupported", "buildable")
-            if key not in payload
+            key for key in ("configured", "runtimeSupported", "buildable") if key not in payload
         ]
         if missing_keys:
             return _diagnostic_incomplete(
@@ -586,10 +576,7 @@ def evaluate_search(payload: dict[str, Any]) -> list[HealthFinding]:
             )
         ]
     if not configured:
-        detail = (
-            f"{provider} is selected for web search but is missing required "
-            "configuration."
-        )
+        detail = f"{provider} is selected for web search but is missing required configuration."
         fix_steps = [
             FixStep(label="Configure search", command=configure_command),
             FixStep(
@@ -607,10 +594,7 @@ def evaluate_search(payload: dict[str, Any]) -> list[HealthFinding]:
                 0,
                 FixStep(
                     label="Set search environment variable",
-                    detail=(
-                        f"Set {api_key_env} in the gateway environment, then restart "
-                        "AgentOS."
-                    ),
+                    detail=(f"Set {api_key_env} in the gateway environment, then restart AgentOS."),
                 ),
             )
         return [
@@ -652,6 +636,67 @@ def evaluate_search(payload: dict[str, Any]) -> list[HealthFinding]:
             surface="search",
             title="Search provider ready",
             detail=f"{provider} is configured and buildable.",
+            evidence=evidence,
+        )
+    ]
+
+
+def evaluate_browser(payload: dict[str, Any]) -> list[HealthFinding]:
+    if "enabled" not in payload:
+        return _diagnostic_incomplete(
+            "browser",
+            expected_key="enabled",
+            inspect_command="agentos doctor --json",
+        )
+    enabled = bool(payload.get("enabled"))
+    binary_present = bool(payload.get("binaryPresent"))
+    evidence = {
+        "enabled": enabled,
+        "binaryPresent": binary_present,
+        "binaryPath": payload.get("binaryPath"),
+        "attachMode": payload.get("attachMode"),
+    }
+    if not enabled:
+        return [
+            HealthFinding(
+                id="browser.disabled",
+                severity="info",
+                surface="browser",
+                title="Browser automation is disabled",
+                detail=(
+                    "The browser tool is turned off (browser.enabled = false). "
+                    "AgentOS runs fine without it; the agent cannot drive a browser."
+                ),
+                evidence=evidence,
+            )
+        ]
+    if not binary_present:
+        return [
+            HealthFinding(
+                id="browser.binary.missing",
+                severity="info",
+                surface="browser",
+                title="agent-browser is not installed",
+                detail=(
+                    "Browser automation is enabled but the agent-browser binary "
+                    "was not found, so the browser tool stays hidden from the model."
+                ),
+                evidence=evidence,
+                fix_steps=[
+                    FixStep(
+                        label="Install agent-browser",
+                        command="npm install -g agent-browser && agent-browser install",
+                    ),
+                ],
+            )
+        ]
+    return [
+        HealthFinding(
+            id="browser.ready",
+            severity="ok",
+            surface="browser",
+            title="Browser automation is ready",
+            detail="agent-browser is installed and the browser tool is available.",
             evidence=evidence,
         )
     ]
@@ -767,10 +812,7 @@ def evaluate_image_generation(payload: dict[str, Any]) -> list[HealthFinding]:
                 0,
                 FixStep(
                     label="Set image environment variable",
-                    detail=(
-                        f"Set {api_key_env} in the gateway environment, then restart "
-                        "AgentOS."
-                    ),
+                    detail=(f"Set {api_key_env} in the gateway environment, then restart AgentOS."),
                 ),
             )
     return [
@@ -800,9 +842,7 @@ def _router_runtime_invalid_finding(
     at "missing assets" + "Restart gateway".
     """
     reason = str(payload.get("runtimeInvalidReason") or "assets")
-    detail = str(
-        payload.get("error") or "The configured router runtime is unavailable."
-    )
+    detail = str(payload.get("error") or "The configured router runtime is unavailable.")
     restart = FixStep(label="Restart gateway", command="agentos gateway restart")
     reconfigure = FixStep(
         label="Reconfigure recommended router",
@@ -986,9 +1026,7 @@ def evaluate_router(payload: dict[str, Any]) -> list[HealthFinding]:
 
     enabled = bool(payload.get("enabled"))
     if enabled:
-        missing_keys = [
-            key for key in ("runtimeValid", "rolloutPhase") if key not in payload
-        ]
+        missing_keys = [key for key in ("runtimeValid", "rolloutPhase") if key not in payload]
         if missing_keys:
             return _diagnostic_incomplete(
                 "router",

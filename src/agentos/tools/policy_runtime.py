@@ -11,6 +11,7 @@ _PRIVATE_MEMORY_READ_TOOL_NAMES: frozenset[str] = frozenset(
 )
 _IMAGE_GENERATION_TOOL_NAMES: frozenset[str] = frozenset({"image_generate"})
 _X_SEARCH_TOOL_NAMES: frozenset[str] = frozenset({"x_search"})
+_BROWSER_TOOL_NAMES: frozenset[str] = frozenset({"browser"})
 _SESSION_READ_TOOL_NAMES: frozenset[str] = frozenset(
     {"session_status", "sessions_history", "sessions_list"}
 )
@@ -38,6 +39,7 @@ class ToolSurfaceCapabilities:
     channel_backing: bool = False
     image_generation: bool = True
     x_search: bool = True
+    browser: bool = True
 
 
 def private_memory_read_tools_blocked(ctx: ToolContext | None) -> bool:
@@ -62,10 +64,7 @@ def private_memory_read_tools_blocked(ctx: ToolContext | None) -> bool:
 def private_memory_read_tool_denied(ctx: ToolContext | None, tool_name: str) -> bool:
     """Return True when a specific tool call would read blocked private memory."""
 
-    return (
-        tool_name in _PRIVATE_MEMORY_READ_TOOL_NAMES
-        and private_memory_read_tools_blocked(ctx)
-    )
+    return tool_name in _PRIVATE_MEMORY_READ_TOOL_NAMES and private_memory_read_tools_blocked(ctx)
 
 
 def _detect_image_generation_capability() -> bool:
@@ -86,6 +85,15 @@ def _detect_x_search_capability() -> bool:
         return False
 
 
+def _detect_browser_capability() -> bool:
+    try:
+        from agentos.tools.builtin.browser import browser_available
+
+        return browser_available()
+    except Exception:
+        return False
+
+
 def tool_surface_capabilities_from_runtime(
     *,
     session_manager: object | None = None,
@@ -96,6 +104,7 @@ def tool_surface_capabilities_from_runtime(
     originating_envelope: object | None = None,
     image_generation: bool | None = None,
     x_search: bool | None = None,
+    browser: bool | None = None,
 ) -> ToolSurfaceCapabilities:
     """Build tool-surface capabilities from injected runtime dependencies."""
 
@@ -106,11 +115,10 @@ def tool_surface_capabilities_from_runtime(
         gateway_config=gateway_config is not None,
         channel_backing=channel_manager is not None or originating_envelope is not None,
         image_generation=(
-            _detect_image_generation_capability()
-            if image_generation is None
-            else image_generation
+            _detect_image_generation_capability() if image_generation is None else image_generation
         ),
         x_search=(_detect_x_search_capability() if x_search is None else x_search),
+        browser=(_detect_browser_capability() if browser is None else browser),
     )
 
 
@@ -138,6 +146,8 @@ def resolve_runtime_tool_surface(
         denied_tools |= set(_IMAGE_GENERATION_TOOL_NAMES)
     if not caps.x_search:
         denied_tools |= set(_X_SEARCH_TOOL_NAMES)
+    if not caps.browser:
+        denied_tools |= set(_BROWSER_TOOL_NAMES)
     if not caps.session_manager:
         denied_tools |= set(_SESSION_READ_TOOL_NAMES | _SESSION_RUNTIME_TOOL_NAMES)
     if not caps.task_runtime:
@@ -191,4 +201,5 @@ def detect_runtime_tool_surface_capabilities(
         channel_backing=channel_backing,
         image_generation=_detect_image_generation_capability(),
         x_search=_detect_x_search_capability(),
+        browser=_detect_browser_capability(),
     )

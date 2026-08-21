@@ -85,6 +85,28 @@
 # total_timeout_seconds = 300.0   # whole call including retries; 30-600
 # retries = 2                     # 5xx / timeout / connection errors only; 0-5
 
+# Browser automation via the agent-browser CLI engine (Vercel Labs, Apache-2.0).
+# Install: npm install -g agent-browser && agent-browser install. The `browser`
+# tool stays hidden from the model until the binary resolves. Managed headless is
+# the default; set cdp_port to attach to your own Chrome (localhost only — no URL
+# accepted — and attach_confirmed must also be true). See docs/features/browser.md.
+# [browser]
+# enabled = true
+# headless = true                 # false opens a visible window (managed mode)
+# binary_path = ""                # optional explicit path to agent-browser
+# cdp_port = 0                    # 0 = managed. >0 = attach to Chrome started with
+#                                 #   --remote-debugging-port=<port>. Localhost only.
+# attach_confirmed = false        # must be true to let the agent drive your Chrome
+# allowed_domains = []            # [] = open web (SSRF still blocks private IPs)
+# persist_profile = false         # true = keep cookies/login between sessions (on disk)
+# session_ttl_minutes = 15
+# max_sessions = 3
+# snapshot_max_chars = 24000
+# dialog_policy = "must_respond"  # must_respond | auto_dismiss | auto_accept
+# dialog_timeout_s = 300.0
+# restrict_evaluate = false       # true = block sensitive JS primitives in eval
+# allow_unsafe_evaluate = false   # true = override restrict_evaluate for trusted pages
+
 [llm]
 provider = "openrouter"
 model = "openai/gpt-5.6-luna"

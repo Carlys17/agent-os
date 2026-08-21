@@ -53,6 +53,15 @@ right operating instructions only when a task needs them.
 
 Read: [`features/skills.md`](features/skills.md)
 
+### Browser automation
+
+The `browser` tool drives a real Chromium — navigate, read pages as
+accessibility snapshots, click, type, run JavaScript, and answer dialogs — via
+the `agent-browser` engine, with SSRF, secret, and eval policy enforced in
+AgentOS. Managed headless by default; opt-in attach to your own Chrome.
+
+Read: [`features/browser.md`](features/browser.md)
+
 ### Compaction and Cache Continuity
 
 Long sessions can compact old context, preserve recent task state, and report

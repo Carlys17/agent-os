@@ -15,6 +15,7 @@ from agentos.gateway.rpc_logs import _build_logs_status
 from agentos.gateway.rpc_system import _handle_doctor_memory_status
 from agentos.gateway.rpc_tools import _handle_providers_status, _handle_search_status
 from agentos.health.evaluator import (
+    evaluate_browser,
     evaluate_channels,
     evaluate_control_ui,
     evaluate_image_generation,
@@ -61,13 +62,9 @@ def _collection_error(surface: str, exc: Exception) -> HealthFinding:
     if inspect_command:
         fix_steps.append(FixStep(label=f"Inspect {surface}", command=inspect_command))
     if inspect_command != "agentos diagnostics status":
-        fix_steps.append(
-            FixStep(label="Inspect diagnostics", command="agentos diagnostics status")
-        )
+        fix_steps.append(FixStep(label="Inspect diagnostics", command="agentos diagnostics status"))
     fix_steps.append(FixStep(label="Restart gateway", command="agentos gateway restart"))
-    severity: HealthSeverity = (
-        "error" if surface in _READINESS_CRITICAL_COLLECTIONS else "warn"
-    )
+    severity: HealthSeverity = "error" if surface in _READINESS_CRITICAL_COLLECTIONS else "warn"
     return HealthFinding(
         id=f"{surface}.diagnostic.unavailable",
         severity=severity,
@@ -345,9 +342,7 @@ def _router_payload(ctx: RpcContext) -> dict[str, Any]:
             # A local-endpoint judge (source="local") reports its base_url; the
             # api key is never surfaced.
             if judge_source == "local":
-                judge_base_url = (
-                    str(getattr(router, "judge_base_url", "") or "").strip() or None
-                )
+                judge_base_url = str(getattr(router, "judge_base_url", "") or "").strip() or None
             # A judge resolved to a provider different from llm.provider has no
             # credential source (tier entries carry no credentials), so every
             # turn degrades to judge_unavailable even though resolve_judge_target
@@ -355,9 +350,7 @@ def _router_payload(ctx: RpcContext) -> dict[str, Any]:
             # hand-edited cross-provider tier profile reaches (findings #2/#4),
             # which the explicit-only cross-provider config reset never sees. A
             # local-endpoint judge carries its own credentials and is exempt.
-            if not judge_provider_has_credentials(
-                judge_provider or "", llm_cfg, judge_source
-            ):
+            if not judge_provider_has_credentials(judge_provider or "", llm_cfg, judge_source):
                 judge_no_credentials = True
             # A configured local endpoint (judge_base_url) is only honored with
             # an EXPLICIT judge_model; in AUTO mode (judge_model unset) control
@@ -365,9 +358,7 @@ def _router_payload(ctx: RpcContext) -> dict[str, Any]:
             # with source="auto", silently discarding the operator's local
             # endpoint. Surface it so the misconfiguration is not hidden behind a
             # working cloud judge.
-            if judge_source != "local" and str(
-                getattr(router, "judge_base_url", "") or ""
-            ).strip():
+            if judge_source != "local" and str(getattr(router, "judge_base_url", "") or "").strip():
                 judge_base_url_ignored = True
         elif strategy == "llm_judge" and bool(getattr(router, "enabled", False)):
             # An llm_judge router whose judge can never resolve degrades to
@@ -487,6 +478,18 @@ def _memory_embedding_payload(ctx: RpcContext) -> dict[str, Any]:
     }
 
 
+def _browser_payload(ctx: RpcContext) -> dict[str, Any]:
+    # Reads the adapter's live state (already configured at boot from the same
+    # config); side-effect-free so the doctor probe never mutates runtime state.
+    del ctx
+    try:
+        from agentos.tools.agent_browser import browser_doctor_status
+
+        return browser_doctor_status()
+    except Exception:  # noqa: BLE001 - a doctor probe must never raise
+        return {"enabled": False, "binaryPresent": False, "binaryPath": "", "attachMode": False}
+
+
 def _control_ui_payload(ctx: RpcContext) -> dict[str, Any]:
     from agentos.gateway.control_ui import _DIST_DIR
     from agentos.health.control_ui import inspect_control_ui_bundle
@@ -563,6 +566,7 @@ async def _handle_doctor_status(params: dict | None, ctx: RpcContext) -> dict[st
             lambda: _image_generation_payload(ctx),
             evaluate_image_generation,
         ),
+        ("browser", lambda: _browser_payload(ctx), evaluate_browser),
         ("control_ui", lambda: _control_ui_payload(ctx), evaluate_control_ui),
     ]
 

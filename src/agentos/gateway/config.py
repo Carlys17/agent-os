@@ -1506,6 +1506,40 @@ class XSearchConfig(BaseSettings):
     retries: int = Field(default=2, ge=0, le=5)
 
 
+class BrowserConfig(BaseSettings):
+    """Browser automation via the ``agent-browser`` CLI engine.
+
+    The tool stays hidden from the model until the ``agent-browser`` binary
+    resolves (``enabled`` only says the operator wants it). Managed headless is
+    the default; ``cdp_port`` opts into attaching to the operator's own Chrome
+    (localhost only — a URL is never accepted). Attach mode additionally requires
+    ``attach_confirmed = true`` because it can drive signed-in sessions.
+    See docs/features/browser.md.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AGENTOS_BROWSER_",
+        env_nested_delimiter="__",
+    )
+
+    enabled: bool = True
+    headless: bool = True
+    binary_path: str = ""
+    #: 0 = managed mode. >0 = attach to a Chrome started with
+    #: --remote-debugging-port=<port>. Localhost only; URLs are not accepted.
+    cdp_port: int = Field(default=0, ge=0, le=65535)
+    attach_confirmed: bool = False
+    allowed_domains: list[str] = Field(default_factory=list)
+    persist_profile: bool = False
+    session_ttl_minutes: int = Field(default=15, ge=1, le=1440)
+    max_sessions: int = Field(default=3, ge=1, le=20)
+    snapshot_max_chars: int = Field(default=24000, ge=1000, le=500000)
+    dialog_policy: Literal["must_respond", "auto_dismiss", "auto_accept"] = "must_respond"
+    dialog_timeout_s: float = Field(default=300.0, ge=1.0, le=3600.0)
+    restrict_evaluate: bool = False
+    allow_unsafe_evaluate: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Channel config (BaseModel — no env-var binding, validated at TOML load)
 # Names use *Entry suffix to avoid shadowing adapter-level *ChannelConfig.
@@ -1804,6 +1838,7 @@ class GatewayConfig(BaseSettings):
     image_generation: ImageGenerationConfig = Field(default_factory=ImageGenerationConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     x_search: XSearchConfig = Field(default_factory=XSearchConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     agents: list[AgentEntryConfig] = Field(default_factory=list)
