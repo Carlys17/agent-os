@@ -683,18 +683,20 @@ delivery and failure destinations stay CLI/Web/RPC-only. See
 
 ### Letting a cron job run shell-based skills
 
-A cron turn runs under a read-only tool allowlist, so a job that is shown a
-skill can read `SKILL.md` and never carry it out — nearly every skill body is a
-block of shell. `--elevated` opts one job out of that:
+By default, cron jobs of kind `agent_run` run elevated under the `bypass` mode
+(controlled globally by `permissions.cron_default_mode`). This allows them to
+run shell-based commands (like those in skills) without interactive approval prompts.
+
+If you wish to opt out a job from elevated execution, pass `--no-elevated`:
 
 ```sh
-agentos cron add --every 6h --agent main --elevated \
+agentos cron add --every 6h --agent main --no-elevated \
   --name "LP check" --text "Use the senior-unilp-manager skill to review my LP positions"
 agentos cron list                       # the Elevated column shows the mode
-agentos cron update <job-id> --no-elevated
+agentos cron update <job-id> --elevated-mode bypass
 ```
 
-Related flags: `--elevated-mode {bypass,full}` (default `bypass`) and
+Related flags: `--elevated` (which sets the job to explicitly run elevated), `--elevated-mode {bypass,full}`, and
 `--tool-policy '<json>'` (`profile`, `allow`, `alsoAllow`, `deny` — can only
 narrow the cron baseline). `profile` must be one of `coding`, `full`,
 `memory_only`, `messaging`, `minimal`; omit the key to inherit rather than

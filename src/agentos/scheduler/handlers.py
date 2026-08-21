@@ -152,6 +152,7 @@ def _build_cron_tool_context(
     session_key: str | None = None,
     workspace_resolver: WorkspaceResolver | None = None,
     default_elevated: str | DefaultElevatedResolver | None = None,
+    cron_default_elevated: str | DefaultElevatedResolver | None = None,
 ) -> ToolContext:
     from agentos.scheduler.routing import build_cron_route_envelope, tool_context_from_envelope
 
@@ -179,6 +180,7 @@ def _build_cron_tool_context(
         workspace_dir=workspace_dir,
         workspace_strict=workspace_strict,
         default_elevated=_resolve_default_elevated(default_elevated),
+        cron_default_elevated=_resolve_default_elevated(cron_default_elevated),
     )
 
 
@@ -239,6 +241,7 @@ def make_agent_run_handler(
     task_runtime_ref: Callable[[], Any] | None = None,
     workspace_resolver: WorkspaceResolver | None = None,
     default_elevated: str | DefaultElevatedResolver | None = None,
+    cron_default_elevated: str | DefaultElevatedResolver | None = None,
 ) -> Callable:
     """Factory: creates an agent_run_handler with explicit DI.
 
@@ -387,6 +390,7 @@ def make_agent_run_handler(
                     session_key=session_key,
                     workspace_resolver=workspace_resolver,
                     default_elevated=default_elevated,
+                    cron_default_elevated=cron_default_elevated,
                 )
                 async for event in wrap_stream(
                     turn_runner.run(
@@ -642,6 +646,7 @@ def make_system_event_handler(
     heartbeat_loop_ref: Callable[[], Any] | None = None,
     workspace_resolver: WorkspaceResolver | None = None,
     default_elevated: str | DefaultElevatedResolver | None = None,
+    cron_default_elevated: str | DefaultElevatedResolver | None = None,
     wake_now_busy_max_wait_seconds: float = 120.0,
     wake_now_busy_retry_delay_seconds: float = 0.25,
 ) -> Callable:
@@ -708,6 +713,7 @@ def make_system_event_handler(
             session_key=session_key,
             workspace_resolver=workspace_resolver,
             default_elevated=default_elevated,
+            cron_default_elevated=cron_default_elevated,
         )
         heartbeat_kwargs: dict[str, Any] = {
             "reason": reason,

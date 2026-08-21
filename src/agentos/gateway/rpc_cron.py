@@ -8,7 +8,11 @@ from dataclasses import asdict
 from typing import Any, TypeGuard
 
 from agentos.gateway.rpc import RpcContext, RpcUnavailableError, get_dispatcher
-from agentos.permissions import cron_tool_policy_elevated, normalize_cron_elevated
+from agentos.permissions import (
+    configured_cron_default_elevated,
+    cron_tool_policy_elevated,
+    normalize_cron_elevated,
+)
 from agentos.scheduler.delivery_targets import validate_channel_target
 from agentos.scheduler.payloads import (
     AGENT_TURN_KIND,
@@ -53,7 +57,7 @@ def _require_scheduler(ctx: RpcContext) -> Any:
     return scheduler
 
 
-def _job_to_wire(j: Any) -> dict[str, Any]:
+def _job_to_wire(j: Any, config: Any = None) -> dict[str, Any]:
     """Map internal CronJob (dataclass or dict) to the wire format the Cron UI expects."""
     d = asdict(j) if hasattr(j, "__dataclass_fields__") else dict(j)
     status = d.get("status", "pending")
@@ -86,6 +90,16 @@ def _job_to_wire(j: Any) -> dict[str, Any]:
         if hasattr(schedule_kind_value, "value")
         else str(schedule_kind_value)
     )
+    tool_policy = d.get("tool_policy")
+    handler_key = d.get("handler_key") or getattr(j, "handler_key", None)
+    has_explicit = isinstance(tool_policy, dict) and "elevated" in tool_policy
+    if has_explicit:
+        effective_elevated = cron_tool_policy_elevated(tool_policy)
+    elif handler_key == "agent_run":
+        effective_elevated = configured_cron_default_elevated(config)
+    else:
+        effective_elevated = None
+
     return {  # noqa: PIE810 — wire schema favors flat literal dict
         "id": d.get("id"),
         "name": d.get("name", ""),
@@ -131,6 +145,7 @@ def _job_to_wire(j: Any) -> dict[str, Any]:
         # Elevation lives inside tool_policy on the job, but it is toggled
         # independently of allow/deny, so it gets its own top-level wire field.
         "elevated": cron_tool_policy_elevated(d.get("tool_policy")),
+        "effectiveElevated": effective_elevated,
     }
 
 
@@ -651,7 +666,7 @@ async def _handle_cron_list(params: dict | None, ctx: RpcContext) -> list[dict]:
     if scheduler is None:
         return []
     jobs = await scheduler.list_jobs()
-    result = [_job_to_wire(j) for j in jobs]
+    result = [_job_to_wire(j, config=ctx.config) for j in jobs]
     agent_id = (params or {}).get("agentId")
     if agent_id:
         result = [j for j in result if j.get("agentId") == agent_id]
@@ -666,7 +681,7 @@ async def _handle_cron_status(params: dict | None, ctx: RpcContext) -> dict[str,
     job = await scheduler.get_job(params["id"])
     if job is None:
         raise KeyError(f"Cron job not found: {params['id']}")
-    return _job_to_wire(job)
+    return _job_to_wire(job, config=ctx.config)
 
 
 @_d.method("cron.add")
@@ -700,6 +715,7 @@ async def _handle_cron_add(params: dict | None, ctx: RpcContext) -> dict[str, An
             schedule_kind=schedule_kind,
             schedule_value=schedule_value,
             schedule_tz=schedule_tz,
+            config=ctx.config,
         )
 
     # Infer or parse delivery config
@@ -756,6 +772,7 @@ async def _handle_cron_add(params: dict | None, ctx: RpcContext) -> dict[str, An
         schedule_kind=schedule_kind,
         schedule_value=schedule_value,
         schedule_tz=schedule_tz,
+        config=ctx.config,
     )
 
 
@@ -773,6 +790,7 @@ async def _finalize_cron_add(
     schedule_kind: ScheduleKind,
     schedule_value: str,
     schedule_tz: str,
+    config: Any = None,
 ) -> dict[str, Any]:
     tz_value = (
         schedule_tz
@@ -811,7 +829,7 @@ async def _finalize_cron_add(
             await scheduler.update_job(job.id, delivery=job.delivery)
         except Exception:
             pass
-    return _job_to_wire(job)
+    return _job_to_wire(job, config=config)
 
 
 # Alias: cron.js sends cron.create for new jobs
@@ -998,10 +1016,7 @@ async def _handle_cron_update(params: dict | None, ctx: RpcContext) -> dict[str,
                     delivery_raw.get("failureDestination")
                 ),
             )
-        elif (
-            isinstance(delivery_raw, dict)
-            and delivery_raw.get("failureDestination") is not None
-        ):
+        elif isinstance(delivery_raw, dict) and delivery_raw.get("failureDestination") is not None:
             # Standalone FD patch: keep the existing primary delivery target,
             # only update the failure_destination side.
             existing = current_job.delivery
@@ -1016,9 +1031,7 @@ async def _handle_cron_update(params: dict | None, ctx: RpcContext) -> dict[str,
                 webhook_url=existing.webhook_url,
                 webhook_token=existing.webhook_token,
                 best_effort=existing.best_effort,
-                failure_destination=_build_failure_destination(
-                    delivery_raw["failureDestination"]
-                ),
+                failure_destination=_build_failure_destination(delivery_raw["failureDestination"]),
             )
 
     if "toolPolicy" in params or "tool_policy" in params:
@@ -1040,7 +1053,7 @@ async def _handle_cron_update(params: dict | None, ctx: RpcContext) -> dict[str,
         job = current_job
     if job is None:
         raise KeyError(f"Cron job not found: {params['id']}")
-    return _job_to_wire(job)
+    return _job_to_wire(job, config=ctx.config)
 
 
 @_d.method("cron.remove")

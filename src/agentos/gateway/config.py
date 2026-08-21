@@ -192,6 +192,7 @@ class PermissionsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     default_mode: Literal["off", "on", "bypass", "full"] = "bypass"
+    cron_default_mode: Literal["off", "bypass", "full"] = "bypass"
 
 
 class TaskRuntimeConfig(BaseModel):
