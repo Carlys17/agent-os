@@ -624,6 +624,39 @@ bills xAI directly rather than appearing in `agentos cost`.
 
 Read: [`x-search.md`](x-search.md)
 
+## Browser automation
+
+```toml
+[browser]
+enabled = true
+headless = true
+cdp_port = 0
+attach_confirmed = false
+allowed_domains = []
+restrict_evaluate = false
+```
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `browser.enabled` | `true` | Off hides the tool even when the binary is installed. |
+| `browser.headless` | `true` | Managed mode; `false` opens a visible window. |
+| `browser.binary_path` | `""` | Optional explicit path to `agent-browser`; otherwise found on `PATH`. |
+| `browser.cdp_port` | `0` | `0` = managed. `>0` = attach to your Chrome's debug port. Localhost only; a URL is never accepted. |
+| `browser.attach_confirmed` | `false` | Must be `true` for attach mode to run — it can drive signed-in sessions. |
+| `browser.allowed_domains` | `[]` | `[]` = open web (SSRF still blocks private ranges). A non-empty list bounds navigation in AgentOS and in the engine. |
+| `browser.persist_profile` | `false` | `true` keeps cookies/login between sessions (written to disk). |
+| `browser.session_ttl_minutes` | `15` | Idle sessions are reaped after this. Range 1-1440. |
+| `browser.max_sessions` | `3` | Concurrent browser sessions; oldest-idle evicted. Range 1-20. |
+| `browser.snapshot_max_chars` | `24000` | Snapshots over this are truncated with a marker. |
+| `browser.dialog_policy` | `must_respond` | `must_respond`, `auto_dismiss`, or `auto_accept` for native dialogs. |
+| `browser.dialog_timeout_s` | `300.0` | Watchdog for an unanswered dialog. Range 1-3600. |
+| `browser.restrict_evaluate` | `false` | `true` blocks sensitive JS primitives in `eval` (off by default — it also blocks ordinary DOM extraction). |
+| `browser.allow_unsafe_evaluate` | `false` | `true` overrides `restrict_evaluate` for a trusted page. |
+
+The tool is hidden from the model until the `agent-browser` binary is installed.
+
+Read: [`features/browser.md`](features/browser.md)
+
 ## Channel Configuration
 
 List supported channel types:

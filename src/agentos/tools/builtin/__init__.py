@@ -11,6 +11,7 @@ _NAMES = [
     "agents",
     "artifacts",
     "ask",
+    "browser",
     "code_exec",
     "control",
     "env_tools",

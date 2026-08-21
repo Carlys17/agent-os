@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -575,7 +577,33 @@ def create_gateway_app(
         ),
     ]
 
-    app = Starlette(routes=routes, middleware=middleware, debug=config.debug)
+    def _close_browser_sessions() -> None:
+        """Release managed browsers when the server shuts down.
+
+        ``agentos gateway stop`` sends SIGTERM, which uvicorn turns into an ASGI
+        lifespan shutdown — so this is the hook that actually fires. A managed
+        session owns a Chromium that otherwise outlives the gateway (an earlier
+        build leaked one browser per run); attach sessions only disconnect, so
+        the operator's own browser is never killed.
+        """
+        try:
+            from agentos.tools.agent_browser import close_all_sessions
+
+            close_all_sessions()
+        except Exception:  # noqa: BLE001 - shutdown must not raise
+            pass
+
+    @contextlib.asynccontextmanager
+    async def _lifespan(_app: Starlette) -> AsyncIterator[None]:
+        yield
+        _close_browser_sessions()
+
+    app = Starlette(
+        routes=routes,
+        middleware=middleware,
+        debug=config.debug,
+        lifespan=_lifespan,
+    )
     app.state.diagnostics_state = diagnostics_state
 
     # Bridge upload endpoint: self-hosted multipart sink that

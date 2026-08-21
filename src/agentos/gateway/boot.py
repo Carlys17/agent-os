@@ -364,6 +364,17 @@ class ServiceContainer:
                 except Exception:
                     pass
 
+        # ── 3. Close browser sessions ──
+        # Reached by the one-shot `agentos agent` path, which is the only caller
+        # of this method. The long-running gateway never calls it, so the server
+        # closes browsers from its ASGI shutdown hook instead (gateway/app.py).
+        try:
+            from agentos.tools.agent_browser import close_all_sessions
+
+            close_all_sessions()
+        except Exception:
+            pass
+
 
 # Server boot timestamp (set once at first start)
 _boot_time_ms: int = 0
@@ -1823,6 +1834,15 @@ async def build_services(
         log.info("build_services.x_search_initialized", available=x_search_available())
     except Exception as e:
         log.warning("build_services.x_search_failed", error=str(e))
+
+    # ── Browser automation via agent-browser ────────────────────────
+    try:
+        from agentos.tools.builtin.browser import browser_available, configure_browser
+
+        configure_browser(config.browser)
+        log.info("build_services.browser_initialized", available=browser_available())
+    except Exception as e:
+        log.warning("build_services.browser_failed", error=str(e))
 
     # ── MCP discovery (boot order 22) ───────────────────────────────
     await _discover_configured_mcp_servers(config, tool_registry)

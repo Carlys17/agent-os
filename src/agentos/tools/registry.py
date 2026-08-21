@@ -97,9 +97,8 @@ class ToolRegistry:
     @staticmethod
     def _parameters_for(rt: RegisteredTool, ctx: ToolContext) -> dict[str, Any]:
         raw_parameters = rt.spec.parameters
-        if (
-            raw_parameters.get("type") == "object"
-            and isinstance(raw_parameters.get("properties"), Mapping)
+        if raw_parameters.get("type") == "object" and isinstance(
+            raw_parameters.get("properties"), Mapping
         ):
             raw_parameters = raw_parameters["properties"]
         parameters = copy.deepcopy(raw_parameters)
@@ -137,6 +136,18 @@ class ToolRegistry:
                 f"{description} For temporary scripts, logs, debug output, and "
                 f"candidate patches, use the configured scratch directory: {scratch_dir}."
             )
+        if rt.spec.name == "browser":
+            # Which browser the session drives (visible-and-attached vs headless)
+            # changes when this tool is the right choice, and only the runtime
+            # knows which one is active.
+            try:
+                from agentos.tools.builtin.browser import browser_mode_hint
+
+                hint = browser_mode_hint()
+            except Exception:  # noqa: BLE001 - schema enrichment must not hide the tool
+                hint = ""
+            if hint:
+                description = f"{description} {hint}"
         return description
 
     def to_tool_definitions(self, ctx: ToolContext | None = None) -> list[ToolDefinition]:
@@ -175,8 +186,7 @@ class ToolRegistry:
         tool_surface_capabilities: ToolSurfaceCapabilities | None = None,
     ) -> list[dict[str, Any]]:
         has_runtime_context = any(
-            value is not None
-            for value in (session_key, agent_id, caller_kind, interaction_mode)
+            value is not None for value in (session_key, agent_id, caller_kind, interaction_mode)
         )
         if has_runtime_context:
             ctx = self._effective_context(

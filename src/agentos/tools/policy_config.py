@@ -32,7 +32,13 @@ _TOOL_GROUPS: Mapping[str, frozenset[str]] = {
         }
     ),
     "group:memory": frozenset({"memory_search", "memory_get"}),
-    "group:web": frozenset({"web_search", "web_fetch", "http_request", "x_search"}),
+    # ``browser`` belongs here so that denying web access denies it too: it
+    # reaches the network like the rest, and an operator writing
+    # ``deny = ["group:web"]`` means "no web", not "no web except a full
+    # browser". ``group:browser`` addresses it on its own, for allowing or
+    # denying the browser without touching the cheaper fetch tools.
+    "group:web": frozenset({"web_search", "web_fetch", "http_request", "x_search", "browser"}),
+    "group:browser": frozenset({"browser"}),
     "group:messaging": frozenset({"message"}),
     # Structured user questions. Interactive surfaces only — the runtime
     # capability layer hides ask_user on unattended runs regardless of profile.
@@ -409,9 +415,7 @@ def apply_channel_layer(
     if profile_allowed is not None:
         allowed_tools = profile_allowed
     channel_selectors = (
-        (policy.allow | policy.also_allow)
-        - _SENDER_SCOPED_TOOL_GROUPS
-        - _SENDER_SCOPED_TOOL_NAMES
+        (policy.allow | policy.also_allow) - _SENDER_SCOPED_TOOL_GROUPS - _SENDER_SCOPED_TOOL_NAMES
     )
     allowed_tools = add_allowed(
         allowed_tools,

@@ -39,9 +39,7 @@ def _top_level_classes(path: Path) -> set[str]:
 def _top_level_functions(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     return {
-        node.name
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
 
@@ -108,7 +106,7 @@ def test_internal_tool_modules_depend_on_policy_runtime_not_policy_facade() -> N
 
 def test_policy_runtime_preserves_runtime_capability_denylists() -> None:
     ctx = ToolContext(
-                caller_kind=CallerKind.SUBAGENT,
+        caller_kind=CallerKind.SUBAGENT,
         interaction_mode=InteractionMode.UNATTENDED,
         allowed_tools={
             "agents_list",
@@ -156,10 +154,12 @@ def test_policy_runtime_builds_capabilities_from_injected_dependencies() -> None
         channel_manager=None,
         originating_envelope=object(),
         image_generation=False,
-        # Both credential-backed capabilities are passed explicitly: left to
-        # auto-detection they would read the ambient environment and flip on a
-        # machine that happens to export the provider key.
+        # Every auto-detected capability is passed explicitly: left to
+        # detection they read the ambient machine — the provider key in the
+        # environment, or whether `agent-browser` happens to be installed — and
+        # the assertion below would then pass locally and fail in CI.
         x_search=False,
+        browser=False,
     )
 
     assert caps == ToolSurfaceCapabilities(
@@ -170,6 +170,7 @@ def test_policy_runtime_builds_capabilities_from_injected_dependencies() -> None
         channel_backing=True,
         image_generation=False,
         x_search=False,
+        browser=False,
     )
 
 

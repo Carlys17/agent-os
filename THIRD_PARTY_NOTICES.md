@@ -298,6 +298,23 @@ SOFTWARE.
     handling, and dead-token quarantine follow the upstream implementation;
     the token store, async refresh path, and network-free availability check
     are original.
+  - `src/agentos/tools/browser_supervisor.py` — adapted from
+    `tools/browser_supervisor.py`. The CDP dialog-interception model
+    (must_respond / auto_dismiss / auto_accept), the pending-dialog state
+    machine, console capture, and the per-session supervisor registry follow the
+    upstream implementation; the pluggable transport, WebSocket loop, and
+    AgentOS wiring are original.
+  - `src/agentos/tools/browser_eval_policy.py` — adapted from the eval-policy
+    helpers in `tools/browser_tool.py` (`_enforce_browser_eval_policy`,
+    `_risky_browser_eval_reason`, `_sensitive_browser_eval_token_reason`,
+    `_expression_targets_private_url`, `_redact_browser_output`). The risky-
+    primitive denylist, string-literal deobfuscation, URL-literal SSRF pre-scan,
+    and output redaction follow the upstream implementation.
+  - `src/agentos/tools/agent_browser.py` and
+    `src/agentos/tools/builtin/browser.py` — original AgentOS code that reuses
+    the upstream lessons on subprocess env-scrubbing (GHSA-m4m8-xjp4-5rmm),
+    CDP-URL redaction, first-open timeouts, and the session model; the engine
+    invoked (`agent-browser`) is the same one Hermes uses.
   - Cron prompt-injection scanner reference material (reviewed, not copied).
 - Upstream project: https://github.com/NousResearch/hermes-agent
 - License: MIT
