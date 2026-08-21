@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -15,9 +15,11 @@ from agentos.gateway.uploads import _extract_authorization_token
 from agentos.provider.audio import (
     ElevenLabsAudioProductionProvider,
     ElevenLabsSpeechToTextRequest,
+    ElevenLabsSpeechToTextResult,
 )
 
-_MAX_TRANSCRIPTION_BYTES = 30 * 1024 * 1024
+MAX_TRANSCRIPTION_BYTES = 30 * 1024 * 1024
+_MAX_TRANSCRIPTION_BYTES = MAX_TRANSCRIPTION_BYTES
 
 
 def _default_provider_factory(config: GatewayConfig) -> ElevenLabsAudioProductionProvider:
@@ -26,6 +28,37 @@ def _default_provider_factory(config: GatewayConfig) -> ElevenLabsAudioProductio
         api_key=getattr(provider_cfg, "api_key", ""),
         api_key_env=getattr(provider_cfg, "api_key_env", "ELEVENLABS_API_KEY"),
         base_url=getattr(provider_cfg, "base_url", "https://api.elevenlabs.io"),
+    )
+
+
+async def transcribe_audio_bytes(
+    config: GatewayConfig,
+    payload: bytes,
+    *,
+    filename: str = "voice.webm",
+    mime_type: str = "audio/webm",
+    model_id: str | None = None,
+    language_code: str | None = None,
+    provider_factory: Callable[[GatewayConfig], Any] = _default_provider_factory,
+) -> ElevenLabsSpeechToTextResult:
+    """Helper to call speech-to-text using the configured provider."""
+    if not getattr(config.audio, "enabled", False):
+        raise RuntimeError("Audio transcription is disabled")
+
+    provider_cfg = config.audio.providers.elevenlabs
+    actual_model_id = (
+        model_id or getattr(provider_cfg, "speech_to_text_model", "scribe_v2") or "scribe_v2"
+    )
+
+    provider = cast(ElevenLabsAudioProductionProvider, provider_factory(config))
+    return await provider.transcribe_audio(
+        ElevenLabsSpeechToTextRequest(
+            audio_bytes=payload,
+            filename=filename,
+            mime_type=mime_type,
+            model_id=actual_model_id,
+            language_code=language_code or None,
+        )
     )
 
 
@@ -43,8 +76,7 @@ def register_audio_transcription_routes(
                 return JSONResponse(
                     {
                         "error": (
-                            "Authorization header (Bearer ...) required for "
-                            "/api/audio/transcribe"
+                            "Authorization header (Bearer ...) required for /api/audio/transcribe"
                         ),
                         "code": "UNAUTHORIZED",
                     },
@@ -60,9 +92,7 @@ def register_audio_transcription_routes(
         try:
             form = await request.form()
         except Exception as exc:
-            return JSONResponse(
-                {"error": f"multipart/form-data required: {exc}"}, status_code=400
-            )
+            return JSONResponse({"error": f"multipart/form-data required: {exc}"}, status_code=400)
 
         upload = form.get("file")
         if upload is None or not hasattr(upload, "read"):
@@ -98,14 +128,14 @@ def register_audio_transcription_routes(
         language_code = language_code_value if isinstance(language_code_value, str) else None
 
         try:
-            result = await provider_factory(config).transcribe_audio(
-                ElevenLabsSpeechToTextRequest(
-                    audio_bytes=payload,
-                    filename=str(filename),
-                    mime_type=mime_type,
-                    model_id=model_id,
-                    language_code=language_code or None,
-                )
+            result = await transcribe_audio_bytes(
+                config=config,
+                payload=payload,
+                filename=str(filename),
+                mime_type=mime_type,
+                model_id=model_id,
+                language_code=language_code,
+                provider_factory=provider_factory,
             )
         except Exception as exc:
             return JSONResponse(

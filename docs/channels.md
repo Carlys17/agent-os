@@ -126,6 +126,16 @@ agentos channels add telegram --name personal --token <bot-token> \
   --field group_mention_required=true
 ```
 
+### Voice Transcription
+
+Telegram channels can automatically transcribe inbound voice messages, audio files, and video notes before routing them to the model. This requires global audio features to be enabled (with valid ElevenLabs Speech-to-Text credentials) and the following fields set:
+
+```sh
+agentos channels add telegram --name personal --token <bot-token> \
+  --field transcribe_voice=true \
+  --field max_voice_duration_s=120
+```
+
 Pairing is sender-level: the same paired sender may use direct messages and
 explicitly configured groups. Removing the pairing disconnects that sender
 from both surfaces immediately.

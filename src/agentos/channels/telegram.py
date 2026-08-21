@@ -43,6 +43,7 @@ from agentos.channels.contract import (
 from agentos.channels.types import Attachment, ChannelHealth, IncomingMessage, OutgoingMessage
 from agentos.engine.native_commands import telegram_bot_commands
 from agentos.env import trust_env as _trust_env
+from agentos.gateway.audio_transcription import MAX_TRANSCRIPTION_BYTES
 
 log = structlog.get_logger(__name__)
 
@@ -123,6 +124,8 @@ class TelegramChannelConfig(BaseModel):
     groups_enabled: bool = False
     group_chat_ids: list[str] = Field(default_factory=list)
     group_mention_required: bool = True
+    transcribe_voice: bool = False
+    max_voice_duration_s: int = Field(default=120, gt=0)
 
     model_config = {}
 
@@ -212,10 +215,7 @@ class TelegramChannel:
 
     def record_access_denial(self, message: IncomingMessage, reason: str) -> None:
         """Create a durable pairing request for an unauthorized Telegram DM."""
-        if (
-            reason != "not_paired"
-            or bool(message.metadata.get("is_group"))
-        ):
+        if reason != "not_paired" or bool(message.metadata.get("is_group")):
             return
         profile = self._sender_profile(message)
         sender_id = profile["sender_id"]
@@ -685,11 +685,17 @@ class TelegramChannel:
             name = f"{default_name}-{suffix}"
         mime = media.get("mime_type") if isinstance(media.get("mime_type"), str) else default_mime
         size = media.get("file_size") if isinstance(media.get("file_size"), int) else None
+        duration = (
+            media.get("duration") if isinstance(media.get("duration"), (int, float)) else None
+        )
+        metadata = {"telegram_file_id": file_id, "telegram_media_kind": media_kind}
+        if duration is not None:
+            metadata["duration"] = duration
         return Attachment(
             name=name,
             mime_type=mime,
             size=size,
-            metadata={"telegram_file_id": file_id, "telegram_media_kind": media_kind},
+            metadata=metadata,
         )
 
     def _telegram_media_attachments(self, msg: dict[str, Any]) -> list[Attachment]:
@@ -730,6 +736,7 @@ class TelegramChannel:
             ("audio", "telegram-audio"),
             ("voice", "telegram-voice"),
             ("sticker", "telegram-sticker"),
+            ("video_note", "telegram-video-note"),
         ):
             media = msg.get(key)
             if isinstance(media, dict):
@@ -753,7 +760,29 @@ class TelegramChannel:
         file_id = attachment.metadata.get("telegram_file_id")
         if not isinstance(file_id, str) or not file_id:
             return attachment
-        limit = attachment_limit_for_mime(attachment.mime_type)
+
+        media_kind = attachment.metadata.get("telegram_media_kind")
+        is_transcription_kind = media_kind in ("voice", "audio", "video_note")
+        transcribe_enabled = getattr(self.config, "transcribe_voice", False)
+
+        if transcribe_enabled and is_transcription_kind:
+            # Check duration limit pre-download
+            duration = attachment.metadata.get("duration")
+            max_duration = getattr(self.config, "max_voice_duration_s", 120)
+            if duration is not None and duration > max_duration:
+                raise ValueError(
+                    f"Audio clip exceeds the maximum duration of {max_duration} "
+                    "seconds and could not be transcribed."
+                )
+            # Check size limit pre-download
+            if attachment.size is not None and attachment.size > MAX_TRANSCRIPTION_BYTES:
+                raise ValueError(
+                    "Audio clip exceeds the maximum size of 30 MB and could not be transcribed."
+                )
+            limit = MAX_TRANSCRIPTION_BYTES
+        else:
+            limit = attachment_limit_for_mime(attachment.mime_type)
+
         ensure_declared_size_within_limit(attachment.size, name=attachment.name, limit=limit)
         file_info = await self._api("getFile", {"file_id": file_id})
         if not isinstance(file_info, dict):
@@ -827,6 +856,13 @@ class TelegramChannel:
             if key in msg:
                 metadata[key] = msg[key]
 
+        reply_to_message = msg.get("reply_to_message")
+        if isinstance(reply_to_message, dict):
+            reply_to_from = reply_to_message.get("from") or {}
+            metadata["reply_to_message_id"] = str(reply_to_message.get("message_id", ""))
+            metadata["reply_to_message_from_id"] = str(reply_to_from.get("id", ""))
+            metadata["reply_to_message_from_username"] = str(reply_to_from.get("username", ""))
+
         content = msg.get("text") or msg.get("caption") or ""
         content_entity_key = "entities" if msg.get("text") else "caption_entities"
         content_entities = msg.get(content_entity_key)
@@ -834,7 +870,15 @@ class TelegramChannel:
             metadata["content_entities"] = content_entities
         attachments = self._telegram_media_attachments(msg)
         if not content:
-            for media_key in ("document", "photo", "video", "audio", "voice", "sticker"):
+            for media_key in (
+                "document",
+                "photo",
+                "video",
+                "audio",
+                "voice",
+                "sticker",
+                "video_note",
+            ):
                 if media_key in msg:
                     content = f"[{media_key}]"
                     break
@@ -853,6 +897,16 @@ class TelegramChannel:
         username = self.bot_username
         if not username:
             return False
+
+        # If this message is a reply to the bot, count it as a mention.
+        reply_to_from_id = msg.metadata.get("reply_to_message_from_id")
+        reply_to_from_username = msg.metadata.get("reply_to_message_from_username")
+        if (reply_to_from_id and str(reply_to_from_id) == str(self.bot_user_id or "")) or (
+            reply_to_from_username
+            and reply_to_from_username.casefold() == username.lstrip("@").casefold()
+        ):
+            return True
+
         mention = f"@{username}".lower()
         text = msg.content or ""
         entities = msg.metadata.get("content_entities")
