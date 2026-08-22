@@ -514,12 +514,14 @@ async def test_build_services_wires_hooks(tmp_path) -> None:
         tool_hooks=[toh],
         seed_agent_workspaces=False,
     )
+    try:
+        assert svc.turn_hooks == [th]
+        assert svc.compaction_hooks == [ch]
+        assert svc.tool_hooks == [toh]
 
-    assert svc.turn_hooks == [th]
-    assert svc.compaction_hooks == [ch]
-    assert svc.tool_hooks == [toh]
-
-    runner = build_turn_runner_from_services(svc, config=config)
-    assert th in runner._turn_hooks
-    assert runner._compaction_hooks == (ch,)
-    assert runner._tool_hooks == (toh,)
+        runner = build_turn_runner_from_services(svc, config=config)
+        assert th in runner._turn_hooks
+        assert runner._compaction_hooks == (ch,)
+        assert runner._tool_hooks == (toh,)
+    finally:
+        await svc.close()
