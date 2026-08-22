@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from starlette.requests import Request
@@ -82,41 +82,90 @@ def test_gateway_endpoints_reject_query_token() -> None:
         assert res_header.status_code == 200
 
 
-@pytest.mark.asyncio
-async def test_boot_gateway_disables_uvicorn_access_log() -> None:
+def test_boot_gateway_disables_uvicorn_access_log(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Gateway boot sequence configures uvicorn with access_log=False to prevent URL leaks."""
-    from agentos.gateway.boot import start_gateway_server
+    import asyncio
+    from types import SimpleNamespace
 
-    config = GatewayConfig(host="127.0.0.1", port=18791)
+    from agentos.gateway import boot
 
     captured_config: dict[str, Any] = {}
 
-    with (
-        patch("uvicorn.Config") as mock_uv_config,
-        patch("uvicorn.Server") as mock_uv_server,
-        patch("agentos.gateway.boot.create_background_task") as mock_bg_task,
-        patch("agentos.gateway.boot.preload_agentos_router_runtime") as _,
-    ):
-        mock_server_instance = MagicMock()
-
-        async def _dummy_serve() -> None:
+    class FakeTurnRunner:
+        def __init__(self, **_kwargs: Any) -> None:
             pass
 
-        mock_server_instance.serve = _dummy_serve
-        mock_uv_server.return_value = mock_server_instance
-        def _dummy_bg_task(coro: Any) -> Any:
-            if hasattr(coro, "close"):
-                coro.close()
-            return MagicMock()
+        def set_session_lock_provider(self, _provider: Any) -> None:
+            pass
 
-        mock_bg_task.side_effect = _dummy_bg_task
-
-        def _capture_config(*args: Any, **kwargs: Any) -> Any:
+    class FakeUvicornConfig:
+        def __init__(self, **kwargs: Any) -> None:
             captured_config.update(kwargs)
-            return MagicMock()
 
-        mock_uv_config.side_effect = _capture_config
+    class FakeServer:
+        def __init__(self, _config: Any) -> None:
+            self.should_exit = False
 
-        handle = await start_gateway_server(config=config, run=True)
-        assert handle is not None
-        assert captured_config.get("access_log") is False
+        async def serve(self) -> None:
+            return None
+
+    async def fake_build_services(**kwargs: Any) -> Any:
+        config = kwargs["config"]
+
+        async def close() -> None:
+            return None
+
+        return SimpleNamespace(
+            provider_selector=object(),
+            tool_registry=object(),
+            session_manager=object(),
+            skill_loader=object(),
+            usage_tracker=object(),
+            config=config,
+            memory_sync_managers={},
+            model_catalog=None,
+            memory_retrievers={},
+            turn_capture_services={},
+            cron_scheduler=None,
+            task_runtime=None,
+            agent_registry=None,
+            memory_managers={},
+            memory_stores={},
+            _turn_runner_ref=[],
+            close=close,
+        )
+
+    def fake_create_background_task(coro: Any) -> Any:
+        close = getattr(coro, "close", None)
+        if callable(close):
+            close()
+        return asyncio.create_task(asyncio.sleep(0))
+
+    monkeypatch.setattr("agentos.engine.runtime.TurnRunner", FakeTurnRunner)
+    monkeypatch.setattr(boot, "build_services", fake_build_services)
+    monkeypatch.setattr(boot, "_setup_file_logging", lambda config: None)
+    monkeypatch.setattr(boot, "emit_skill_filter_banner", lambda config: None)
+    monkeypatch.setattr(boot, "create_background_task", fake_create_background_task)
+    monkeypatch.setattr(boot.uvicorn, "Config", FakeUvicornConfig)
+    monkeypatch.setattr(boot.uvicorn, "Server", FakeServer)
+    monkeypatch.setattr("agentos.gateway.pidlock.GatewayPidLock.acquire", lambda self: None)
+    monkeypatch.setattr("agentos.gateway.pidlock.GatewayPidLock.release", lambda self: None)
+
+    config = GatewayConfig(
+        state_dir=str(tmp_path / "state"),
+        workspace_dir=str(tmp_path / "workspace"),
+        control_ui={"enabled": False},
+        channels={"channels": []},
+    )
+
+    async def run_case() -> None:
+        server = await boot.start_gateway_server(config=config, run=True)
+        try:
+            assert captured_config.get("access_log") is False
+        finally:
+            await server.close()
+
+    asyncio.run(run_case())
