@@ -561,6 +561,23 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
                     "tokenjuice projection is now the built-in tool-result path"
                 )
 
+    # Subagent auto-archive: the `archive_after_minutes` config key in
+    # `SubagentsGatewayConfig` had no timer or registry consumer, so it is
+    # removed (see issue #407). Existing configs carrying it are reported.
+    subagents = builder.payload.get("subagents")
+    if isinstance(subagents, dict):
+        deprecated_subagent: dict[str, object] = {}
+        if "archive_after_minutes" in subagents:
+            deprecated_subagent["subagents.archive_after_minutes"] = subagents.pop(
+                "archive_after_minutes"
+            )
+        if deprecated_subagent:
+            builder.removed_fields.extend(sorted(deprecated_subagent))
+            builder.warnings.append(
+                "subagents.archive_after_minutes was removed; auto-archive was never "
+                "implemented (issue #407)"
+            )
+
     # 2026-07: the skills-block budget default rose from 8000 to 24000 once the
     # block stopped emitting a filesystem path per skill. 8000 could not fit the
     # descriptions for the shipped set, so every install that saved a config was

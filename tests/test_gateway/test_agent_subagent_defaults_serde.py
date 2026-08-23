@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from agentos.gateway.config import (
     AgentDefaults,
     AgentEntryConfig,
@@ -9,6 +11,7 @@ from agentos.gateway.config import (
     GatewayConfig,
     SubagentsGatewayConfig,
 )
+from agentos.gateway.config_migration import migrate_config_payload
 
 
 def test_subagent_defaults_optional_fields_default_to_none() -> None:
@@ -51,7 +54,6 @@ def test_gateway_config_exposes_agents_defaults_and_subagents_subtree() -> None:
     assert isinstance(cfg.subagents, SubagentsGatewayConfig)
     assert cfg.subagents.enforce_disabled_agents is False
     assert cfg.subagents.subagent_reserved_slots == 2
-    assert cfg.subagents.archive_after_minutes == 60
 
 
 def test_gateway_config_accepts_explicit_subagent_defaults() -> None:
@@ -67,4 +69,41 @@ def test_gateway_config_accepts_explicit_subagent_defaults() -> None:
     assert cfg.agents_defaults.subagents.model == "haiku"
     assert cfg.subagents.enforce_disabled_agents is True
     assert cfg.subagents.subagent_reserved_slots == 4
-    assert cfg.subagents.archive_after_minutes == 0
+    assert "archive_after_minutes" not in SubagentsGatewayConfig.model_fields
+
+
+def test_an_existing_config_with_archive_after_minutes_still_loads(tmp_path: Path) -> None:
+    """The decisive case: an old agentos.toml carrying the dead key must load cleanly."""
+    config_path = tmp_path / "agentos.toml"
+    config_path.write_text(
+        "[subagents]\n"
+        "enforce_disabled_agents = true\n"
+        "archive_after_minutes = 99\n",
+        encoding="utf-8",
+    )
+
+    config = GatewayConfig.load(config_path)
+
+    assert config.subagents.enforce_disabled_agents is True
+    assert "archive_after_minutes" not in SubagentsGatewayConfig.model_fields
+
+
+def test_migration_reports_the_dropped_key_not_silently_eaten() -> None:
+    result = migrate_config_payload(
+        {"subagents": {"enforce_disabled_agents": True, "archive_after_minutes": 99}}
+    )
+
+    assert "subagents.archive_after_minutes" in result.removed_fields
+    assert result.changed is True
+    assert any("archive_after_minutes" in w for w in result.warnings)
+    # the key must be stripped from the payload handed to validation
+    assert "archive_after_minutes" not in result.payload["subagents"]
+
+
+def test_migration_leaves_live_subagent_keys_untouched() -> None:
+    payload = {"subagents": {"enforce_disabled_agents": True, "subagent_reserved_slots": 4}}
+    result = migrate_config_payload(payload)
+
+    assert result.removed_fields == ()
+    assert result.warnings == ()
+    assert result.payload["subagents"]["subagent_reserved_slots"] == 4
