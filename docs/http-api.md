@@ -51,7 +51,7 @@ These require no auth and are safe for load balancers and container probes.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/config` | Effective gateway configuration. |
-| `GET` | `/api/system/status` | Version, uptime, active provider, auth mode. |
+| `GET` | `/api/system/status` | Version, uptime, active provider, auth mode, plus `circuitBreaker` (the active provider's breaker) and `circuitBreakers` (every tracked provider). |
 | `GET` | `/api/sessions` | List sessions. |
 | `POST` | `/api/chat` | Send a chat turn. Body: `message` (required), `sessionKey` (optional). |
 | `GET` | `/api/chat/history?sessionKey=<key>` | Fetch a session transcript. |
