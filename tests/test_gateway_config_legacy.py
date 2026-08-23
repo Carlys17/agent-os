@@ -33,6 +33,8 @@ _ALL_DEPRECATED_MEMORY_FIELDS = {
     "memory.multi_hop_max_depth": "3",
     "memory.multi_hop_score_threshold": "0.7",
     "memory.recall_frequency": "always",
+    "memory.daily_note_max_chars": "4000",
+    "memory.daily_notes_total_max_chars": "8000",
     "memory.recall_top_k_default": "10",
     "memory.auto_recall_enabled": "true",
     "memory.prefetch_enabled": "true",

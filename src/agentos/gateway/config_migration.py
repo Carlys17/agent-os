@@ -68,6 +68,14 @@ DEPRECATED_MEMORY_FIELDS: frozenset[str] = frozenset(
         "memory.repair_enabled",
         "memory.repair_interval_seconds",
         "memory.repair_max_items_per_tick",
+        # Daily-note injection was removed (PR #111 stopped reading daily notes
+        # that are always discarded), but the size-limit keys survived in
+        # ``MemoryConfig`` and ``memory_mode_fingerprint()`` without any
+        # consumer. MemoryConfig forbids extras, so an existing agentos.toml
+        # carrying them would fail validation at boot once the fields are
+        # dropped; they join the deprecated set instead.
+        "memory.daily_note_max_chars",
+        "memory.daily_notes_total_max_chars",
     }
 )
 
