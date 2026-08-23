@@ -9,6 +9,7 @@ import { env } from './env'
 import { health } from './health'
 import { logs } from './logs'
 import { mcp } from './mcp'
+import { memory } from './memory'
 import { overview } from './overview'
 import { settings } from './settings'
 import { sessions } from './sessions'
@@ -44,6 +45,7 @@ export const en = {
   health,
   logs,
   mcp,
+  memory,
   overview,
   sessions,
   settings,

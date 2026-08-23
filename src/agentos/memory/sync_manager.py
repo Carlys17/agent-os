@@ -233,6 +233,15 @@ class MemorySyncManager:
                     if not is_memory_source_path(rel):
                         continue
                     result[rel] = path.stat().st_mtime
+        kb_dir = self._workspace_dir / "knowledge_base"
+        if kb_dir.is_dir():
+            for path in kb_dir.rglob("*"):
+                if path.is_file():
+                    rel_to_kb = path.relative_to(kb_dir)
+                    if any(part.startswith(".") for part in rel_to_kb.parts):
+                        continue
+                    rel = path.relative_to(self._workspace_dir).as_posix()
+                    result[rel] = path.stat().st_mtime
         return result
 
     async def _do_file_sync(
@@ -280,14 +289,30 @@ class MemorySyncManager:
             if not abs_path.is_file():
                 continue
             try:
-                content = abs_path.read_text(encoding="utf-8", errors="replace")
+                is_kb = rel_path.startswith("knowledge_base/") or rel_path.startswith(
+                    "knowledge_base\\"
+                )
+                if is_kb:
+                    from .ingest import extract_document_text
+
+                    content = extract_document_text(abs_path)
+                    source = MemorySource.knowledge_base
+                else:
+                    content = abs_path.read_text(encoding="utf-8", errors="replace")
+                    source = MemorySource.memory
+
                 n = await self._store.index_file(
                     path=rel_path,
                     content=content,
-                    source=MemorySource.memory,
+                    source=source,
                 )
                 if n > 0:
-                    logger.info("sync_manager.indexed", path=rel_path, chunks=n)
+                    logger.info(
+                        "sync_manager.indexed",
+                        path=rel_path,
+                        chunks=n,
+                        source=source.value,
+                    )
             except Exception:
                 logger.warning("sync_manager.index_failed", path=rel_path)
 
