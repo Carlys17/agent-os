@@ -6,7 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.23] - 2026-08-23
+
 ### Added
+
+- A `browser` built-in drives a real browser from the agent, backed by the
+  agent-browser CLI (Vercel Labs, Apache-2.0): navigate, read a page as an
+  accessibility snapshot with element refs, click, type, fill, wait, run
+  JavaScript, answer native dialogs, and screenshot. It runs managed and
+  headless by default; attach mode drives the operator's own browser when they
+  opt in. Policy is enforced in AgentOS rather than delegated to the engine —
+  SSRF checks on navigate and on the post-redirect URL plus a private-page guard
+  on reads, `file:` refused while `data:`/`about:` pass, `eval` SSRF-pre-scanned
+  in both modes with an opt-in `restrict_evaluate` denylist and a post-eval URL
+  recheck, `type`/`fill` refusing credential-shaped text, and every payload the
+  engine returns crossing into the transcript inside the untrusted envelope and
+  through credential redaction. The engine subprocess starts from a minimal
+  environment, never `os.environ`, so the gateway token and provider keys are
+  unreachable from it. An optional `allowed_domains` bounds navigation, and the
+  tool sits in `group:web`, so denying web denies it.
 
 - Provider failover is now health-aware. A circuit breaker counts consecutive
   provider-health failures (overload / gateway 5xx, transport errors, rate
@@ -25,7 +43,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `agentos doctor` (`provider.circuit.open` / `provider.circuit.half_open`), and
   `GET /api/system/status` (`circuitBreaker` / `circuitBreakers`). (#365)
 
+### Changed
+
+- Chart artifacts in the Web UI download as a rendered screenshot image instead
+  of a raw JSON link, so the button hands over the chart people actually see.
+
 ### Fixed
+
+- A pinned turn no longer shows another turn's router-fx strip. The
+  `route_pinned` early-return swept only live strips from the dock, so a settled
+  strip from an earlier turn lingered above the composer and read as this turn's
+  selection even though the composer pill showed the pinned model. Every
+  router-fx strip for the current session is now swept on the pinned path —
+  live and settled alike — while strips from other sessions are left untouched.
+  (#345)
 
 - Skill dependency installs work for every kind a skill can declare. Three
   code paths carried their own idea of what `install.kind` meant — the Skills
