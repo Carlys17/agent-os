@@ -1,4 +1,4 @@
-# CLI Reference. 
+# CLI Reference
 
 The `agentos` CLI is the fastest way to configure, run, inspect, and
 automate AgentOS.
