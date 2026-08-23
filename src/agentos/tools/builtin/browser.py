@@ -172,26 +172,29 @@ def _domain_allowed(url: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in _allowed_domains)
 
 
-#: Hostless schemes a browser may open safely — no network, no local files.
-_SAFE_HOSTLESS_SCHEMES = ("about:",)
+#: Safe hostless navigation targets — no network, no local files, empty content.
+_SAFE_HOSTLESS_TARGETS = ("about:blank",)
 
 
 def _check_navigable(url: str) -> None:
     """Allowlist + SSRF gate for a navigation target. Raises ToolError.
 
-    ``about:`` targets (e.g. ``about:blank``) carry empty content — no host, no
-    network — and bypass both the allowlist and the SSRF check. ``file:`` and
-    ``data:`` URLs are refused (local-file exfiltration and script-execution
-    SSRF/allowlist bypass). Everything else must be a public http(s) URL: the
-    allowlist is checked first (cheap, no DNS), then the full SSRF check.
+    ``about:blank`` carries empty content — no host, no network — and bypasses
+    both the allowlist and the SSRF check. Other ``about:`` schemes (which Chrome
+    resolves to internal ``chrome://`` pages), ``file:``, and ``data:`` URLs are
+    refused (local-file exfiltration and script-execution SSRF/allowlist bypass).
+    Everything else must be a public http(s) URL: the allowlist is checked first
+    (cheap, no DNS), then the full SSRF check.
     """
     lowered = url.lower().strip()
-    if lowered.startswith(_SAFE_HOSTLESS_SCHEMES):
+    if lowered in _SAFE_HOSTLESS_TARGETS:
         return
     if lowered.startswith("file:"):
         raise ToolError("Refused to navigate: file:// URLs are not allowed.")
     if lowered.startswith("data:"):
         raise ToolError("Refused to navigate: data: URLs are not allowed.")
+    if lowered.startswith("about:"):
+        raise ToolError("Refused to navigate: only about:blank is permitted for about: URLs.")
     if not _domain_allowed(url):
         raise ToolError(
             f"Refused to navigate to {_host_of(url)!r}: not in browser.allowed_domains "
@@ -239,13 +242,16 @@ def _url_is_private(url: str) -> bool:
     """True when *url* targets a private/internal, file://, or data: address.
 
     Fail-open on harmless hostless schemes (like about:blank) and unparseable
-    probe results; fail-closed on file:// and data: schemes that could exfiltrate
-    local content or execute inline script after a redirect.
+    probe results; fail-closed on file://, data:, and internal about:/chrome:
+    schemes that could exfiltrate local content or execute inline script after
+    a redirect.
     """
     if not url:
         return False
     lowered = url.lower().strip()
-    if lowered.startswith(("file:", "data:")):
+    if lowered == "about:blank":
+        return False
+    if lowered.startswith(("file:", "data:", "about:", "chrome:")):
         return True
     if not lowered.startswith(("http://", "https://")):
         return False

@@ -179,10 +179,19 @@ class TestSsrf:
         assert result["success"] is True
 
     @pytest.mark.asyncio
+    async def test_non_blank_about_url_refused(self, fake_binary: str) -> None:
+        browser_mod.configure_browser(_config(fake_binary))
+        result = await _call(action="navigate", url="about:version")
+        assert result["success"] is False
+        assert "about:blank" in result["error"]
+
+    @pytest.mark.asyncio
     async def test_redirect_to_data_url_blocked(self, fake_binary: str, no_dns: None) -> None:
         browser_mod.configure_browser(_config(fake_binary))
         assert browser_mod._url_is_private("data:text/html,<script></script>") is True
         assert browser_mod._url_is_private("file:///etc/passwd") is True
+        assert browser_mod._url_is_private("about:version") is True
+        assert browser_mod._url_is_private("chrome://version") is True
         assert browser_mod._url_is_private("about:blank") is False
 
 
