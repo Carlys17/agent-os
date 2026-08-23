@@ -424,3 +424,55 @@ def test_reset_drops_the_held_admission() -> None:
     selector.reset()
     selector.resolve()
     assert selector.active_provider_id == "ollama"
+
+
+def _three_link_selector(breaker: ProviderCircuitBreaker) -> ModelSelector:
+    return ModelSelector(
+        SelectorConfig(
+            primary=ProviderConfig("openrouter", "openai/gpt-5.6-luna", api_key="k"),
+            fallbacks=[
+                ProviderConfig("deepseek", "deepseek-chat", api_key="k"),
+                ProviderConfig("anthropic", "claude-opus-5", api_key="k"),
+            ],
+        ),
+        breaker=breaker,
+    )
+
+
+def test_failover_after_a_skipped_primary_advances_past_the_failing_link() -> None:
+    """Breaker skips the primary, then link 1 fails mid-stream -> land on link 2."""
+    clock = FakeClock()
+    breaker = _breaker(clock, threshold=2)
+    selector = _three_link_selector(breaker)
+
+    _fail(breaker, "openrouter", 2)
+    selector.resolve()
+    assert selector.active_provider_id == "deepseek"
+
+    selector.next_fallback_after_failure(RuntimeError("503"))
+    assert selector.active_provider_id == "anthropic"
+
+
+def test_next_fallback_after_a_skipped_primary_advances_past_the_failing_link() -> None:
+    clock = FakeClock()
+    breaker = _breaker(clock, threshold=2)
+    selector = _three_link_selector(breaker)
+
+    _fail(breaker, "openrouter", 2)
+    selector.resolve()
+    assert selector.active_provider_id == "deepseek"
+
+    selector.next_fallback()
+    assert selector.active_provider_id == "anthropic"
+
+
+def test_failover_from_the_primary_still_starts_at_the_first_fallback() -> None:
+    clock = FakeClock()
+    breaker = _breaker(clock, threshold=2)
+    selector = _three_link_selector(breaker)
+
+    selector.resolve()
+    assert selector.active_provider_id == "openrouter"
+
+    selector.next_fallback_after_failure(RuntimeError("503"))
+    assert selector.active_provider_id == "deepseek"

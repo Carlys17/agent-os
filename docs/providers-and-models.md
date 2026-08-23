@@ -168,6 +168,11 @@ timeout on every turn.
   window.
 - If every provider in the chain is in cooldown, the primary is used anyway —
   a provider in cooldown still beats no provider at all.
+- A per-turn model override (an explicit `model`, or one picked by the router)
+  applies to the primary link. While the primary's breaker is open the turn
+  runs on the fallback's own configured model instead — the same semantics as
+  an ordinary failover, but now for the whole cooldown window rather than only
+  after a live failure.
 
 Tune or disable it in `agentos.toml`:
 

@@ -206,6 +206,10 @@ class ModelSelector:
         """
         if not self.has_fallback():
             raise IndexError("No more provider fallbacks available")
+        # Reactive failover needs a *strict* advance: the held admission belongs
+        # to the link that just failed, so re-checking it would hand back the
+        # same provider.
+        self._admitted_index = None
         self._index = self._first_admitted_index(self._index + 1)
         return _build_provider(self._chain[self._index])
 
@@ -240,7 +244,11 @@ class ModelSelector:
         if not chain:
             raise IndexError("No fallback chain available")
         self._chain = [self._chain[0], *chain]
-        self._index = self._first_admitted_index(1)
+        # Same strict-advance rule as ``next_fallback``: when ``resolve()``
+        # already skipped an open primary the active link is 1+, so restarting
+        # the search at 1 would re-pick the link this call is failing over from.
+        self._admitted_index = None
+        self._index = self._first_admitted_index(max(1, self._index + 1))
         return _build_provider(self._chain[self._index])
 
     def override_model(self, model: str) -> None:
