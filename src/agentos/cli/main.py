@@ -347,8 +347,8 @@ def memory_ingest_cmd(
 @memory_app.command("list")
 def memory_list_cmd(
     agent_id: str = typer.Option("main", "--agent", help="Agent id (default: main)"),
-    source: str = typer.Option(
-        "all", "--source", help="Filter source: memory, knowledge_base, sessions, or all"
+    source: str | None = typer.Option(
+        None, "--source", help="Filter source: memory, knowledge_base, sessions, or all"
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
 ) -> None:
@@ -361,7 +361,10 @@ def memory_list_cmd(
     from agentos.cli.ui import console
 
     async def _run(client):
-        return await client.call("memory.list", {"agentId": agent_id, "source": source})
+        params: dict[str, object] = {"agentId": agent_id}
+        if source:
+            params["source"] = source
+        return await client.call("memory.list", params)
 
     payload = run_gateway_sync(_run, json_output=json_output)
     if json_output:
