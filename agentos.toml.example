@@ -7,8 +7,8 @@
 
 # Assistant speaker label shown on the ◢ marker, the pre-token waiting
 # row, and the queued-turn marker in `agentos chat`. Defaults to "agentos".
-# Env override: AGENTOS_ASSISTANT_LABEL="Hani"
-# assistant_label = "agentos"
+# Configured via environment variable (not a TOML key):
+# export AGENTOS_ASSISTANT_LABEL="Hani"
 
 # Workspace/state defaults
 # Defaults:
@@ -22,8 +22,8 @@
 # events while a run is active; stream idle timeout is the real upstream stall
 # detector. Keep browser grace above stream idle so server terminal errors win.
 # agent_stream_heartbeat_interval_seconds = 15.0
-# agent_stream_idle_timeout_seconds = 180.0
-# webui_stream_idle_grace_seconds = 210.0
+# agent_stream_idle_timeout_seconds = 600.0
+# webui_stream_idle_grace_seconds = 630.0
 # Keep a positive cap for smaller local models so repeated tool calls cannot
 # run forever. Zero means unlimited.
 # agent_max_iterations = 8
@@ -170,6 +170,20 @@ base_url = "https://openrouter.ai/api/v1"
 # table to keep gateway auto-routing.
 # [llm.provider_routing]
 # "glm-5.2" = "provider-id-from-live-catalog"
+
+# Prompt caching controls. Enables prefix caching for supported providers
+# (Anthropic, OpenAI, DeepSeek, OpenRouter, etc.).
+# mode: "auto" (default; on where supported), "on" (force on), "off" (disabled).
+# Env override: AGENTOS_CACHE_MODE=auto|on|off (legacy AGENTOS_CACHE_ENABLED is deprecated).
+# [prompt_cache]
+# mode = "auto"
+
+# Prompt-ingress safety controls.
+# wrap_untrusted_workspace: wrap untrusted workspace files with safety bounding markers.
+# injection_scan_mode: "report" (default; log findings), "enforce" (redact matched workspace-file content; the turn still runs), "off".
+# [safety]
+# wrap_untrusted_workspace = true
+# injection_scan_mode = "report"
 
 [memory]
 # "workspace" stores MEMORY.md and memory/*.md under workspace_dir.
@@ -580,3 +594,11 @@ default_mode = "bypass"                 # off | on | bypass | full
 # group_mention_required = true
 # transcribe_voice = false
 # max_voice_duration_s = 120
+
+# MCP (Model Context Protocol) external servers.
+# [[mcp.servers]]
+# name = "fetch"
+# transport = "stdio"
+# command = "uvx"
+# args = ["mcp-server-fetch"]
+# env = {}
