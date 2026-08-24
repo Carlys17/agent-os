@@ -76,9 +76,7 @@ def test_legacy_subagents_config_with_archive_after_minutes_still_loads(
     should still strip the dead key and rewrite the file with a backup."""
     config_path = tmp_path / "agentos.toml"
     config_path.write_text(
-        "[subagents]\n"
-        "archive_after_minutes = 60\n"
-        "enforce_disabled_agents = true\n",
+        "[subagents]\narchive_after_minutes = 60\nenforce_disabled_agents = true\n",
         encoding="utf-8",
     )
 

@@ -149,9 +149,11 @@ DEPRECATED_AGENT_TOKEN_SAVING_LEAVES: frozenset[str] = frozenset(
     k.removeprefix("agent_token_saving.") for k in DEPRECATED_AGENT_TOKEN_SAVING_FIELDS
 )
 
-# Auto-archive was removed; SubagentsGatewayConfig rejects unknown keys, so an
-# existing agentos.toml carrying `subagents.archive_after_minutes` would fail
-# validation at boot without this.
+# Auto-archive was removed. SubagentsGatewayConfig is a plain BaseModel and
+# Pydantic's default extra="ignore" means a toml carrying the key would still
+# load — but the dead key would silently linger in the user's file. This
+# migration strips it, rewrites the toml with a backup, and warns the user
+# that the setting is now a no-op.
 DEPRECATED_SUBAGENTS_FIELDS: frozenset[str] = frozenset(
     {
         "subagents.archive_after_minutes",
