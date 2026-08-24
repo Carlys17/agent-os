@@ -548,6 +548,14 @@ security_grading = false
 # with the sandbox section.
 default_mode = "bypass"                 # off | on | bypass | full
 
+# Default elevation posture for unattended cron turns (agent_turn jobs only;
+# reminders, script jobs, and system events are never elevated). Separate
+# from default_mode above, which only governs interactive Control turns.
+# "bypass" lets a scheduled job run shell-based skills with no approval
+# prompt; override per-job with `--no-elevated` or `--elevated-mode`.
+# See docs/cli.md#letting-a-cron-job-run-shell-based-skills.
+cron_default_mode = "bypass"            # off | bypass | full
+
 # [auth]
 # mode = "none"         # none | token | password
 # token = ""
