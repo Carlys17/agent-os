@@ -34,8 +34,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   source in the Skills hub, with the partner tabs ordered Robinhood, Bankr,
   Aeon, Capminal, Community.
 
-- `cron_default_mode` configures the default execution mode for new cron jobs.
-
 ### Fixed
 
 - The gateway no longer accepts an auth token from the query string, where it
@@ -61,6 +59,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Dead configuration keys that no code read: `sandbox.network_default` (#360),
   the memory daily-note keys (#405), and `subagents.archive_after_minutes`
   (#407).
+
+### Docs
+
+- `cron_default_mode` — the default elevation posture for unattended cron jobs,
+  shipped in 2026.8.21 — is now documented where it is set and where it is read:
+  `agentos.toml.example`, the bundled `agentos` skill, and the approvals and
+  permissions guide. (#413)
 
 ## [2026.8.23] - 2026-08-23
 
