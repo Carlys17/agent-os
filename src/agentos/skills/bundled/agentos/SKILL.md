@@ -154,6 +154,8 @@ list <name>`, `approve <name> <code>`, `deny <name> <sender-id>`, or `revoke
 groups are disabled by default; enable them only with explicit
 `group_chat_ids`, paired senders, and the desired mention requirement.
 
+Platform-native interactive tool approvals (Slack block actions, Telegram inline keyboard callbacks, and Discord message components) allow operators to approve or deny gated tool executions directly using interactive buttons. For security, these approvals are restricted to channel DMs (never group chats), access-gated by evaluating the clicker's sender ID against the channel's access policy, and strictly session-bound to their originating chat context.
+
 ## Configuration
 
 File resolution (highest precedence first):
