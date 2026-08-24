@@ -10,6 +10,7 @@ from typing import Any
 
 import structlog
 
+from agentos import __version__
 from agentos.env import trust_env as _trust_env
 from agentos.observability.trace import TraceEvent, TraceSink
 
@@ -21,8 +22,8 @@ def _to_hex32(val: str) -> str:
     clean = val.replace("-", "").strip().lower()
     if len(clean) == 32 and all(c in "0123456789abcdef" for c in clean):
         return clean
-    # Hash into 32-hex characters
-    return hashlib.md5(val.encode("utf-8")).hexdigest()
+    # Hash into 32-hex characters (usedforsecurity=False keeps working on FIPS-mode hosts)
+    return hashlib.md5(val.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _to_hex16(val: str) -> str:
@@ -71,9 +72,10 @@ class OtlpTraceSink(TraceSink):
         *,
         headers: dict[str, str] | None = None,
         service_name: str = "agentos",
-        service_version: str = "2026.8.19",
+        service_version: str | None = None,
         batch_size: int = 100,
         flush_interval_s: float = 5.0,
+        max_queue_size: int = 1000,
         allow_raw: bool = False,
     ) -> None:
         raw_ep = endpoint.rstrip("/")
@@ -83,9 +85,10 @@ class OtlpTraceSink(TraceSink):
             self.endpoint = raw_ep
         self.headers = headers or {}
         self.service_name = service_name
-        self.service_version = service_version
+        self.service_version = service_version if service_version is not None else __version__
         self.batch_size = batch_size
         self.flush_interval_s = flush_interval_s
+        self.max_queue_size = max_queue_size
         self.allow_raw = allow_raw
 
         self._queue: list[TraceEvent] = []
@@ -94,16 +97,20 @@ class OtlpTraceSink(TraceSink):
         self._closed = False
 
     def write(self, event: TraceEvent) -> None:
-        """Buffer a trace event for OTLP export."""
+        """Buffer a trace event for OTLP export with bounded queue capacity."""
         if event.privacy == "raw" and not self.allow_raw:
             return
         if self._closed:
             return
+        if len(self._queue) >= self.max_queue_size:
+            # Bound memory growth by evicting the oldest unexported event
+            self._queue.pop(0)
         self._queue.append(event)
         if len(self._queue) >= self.batch_size:
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self.flush())
+                if loop.is_running():
+                    loop.create_task(self.flush())
             except RuntimeError:
                 pass
 
@@ -211,10 +218,11 @@ class OtlpTraceSink(TraceSink):
                 return True
         except Exception as exc:
             log.warning("otlp.export_failed", endpoint=self.endpoint, error=str(exc))
-            # Put unsent events back on failure if queue hasn't grown too big
+            # Put unsent events back on failure up to max_queue_size
             async with self._lock:
-                if len(self._queue) < 1000:
-                    self._queue.extend(events_to_send)
+                remaining_space = max(0, self.max_queue_size - len(self._queue))
+                if remaining_space > 0:
+                    self._queue = events_to_send[-remaining_space:] + self._queue
             return False
 
     async def close(self) -> None:

@@ -524,7 +524,6 @@ def create_gateway_app(
         Route("/healthz", health, methods=["GET"]),
         Route("/ready", ready, methods=["GET"]),
         Route("/readyz", ready, methods=["GET"]),
-        Route("/metrics", metrics_endpoint, methods=["GET"]),
         Route("/api/config", api_config, methods=["GET"]),
         Route("/api/sessions", api_sessions, methods=["GET"]),
         Route("/api/chat", api_chat, methods=["POST"]),
@@ -541,6 +540,11 @@ def create_gateway_app(
         Route("/api/elevated-mode", api_elevated_mode, methods=["POST"]),
         WebSocketRoute("/ws", ws_endpoint),
     ]
+
+    # ── Prometheus metrics endpoint ──────────────────────────────────────────
+    if config.observability.metrics_enabled:
+        metrics_path = config.observability.metrics_path or "/metrics"
+        routes.append(Route(metrics_path, metrics_endpoint, methods=["GET"]))
 
     # ── Channel webhook routes (Slack, etc.) ──────────────────────────────
     if extra_routes:

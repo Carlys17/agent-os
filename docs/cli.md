@@ -748,12 +748,14 @@ the current one so the trade is visible before you make it. A profile is fixed
 for the session, so narrowing it does not disturb the prompt cache.
 
 Use diagnostics and replay when you need to understand why a turn behaved a
-certain way.
+certain way. For Prometheus metrics (`/metrics`), OTLP trace export, and log retention
+settings under `[observability]`, see [`configuration.md`](configuration.md#observability).
 
 Read:
 
 - [`usage-and-cost.md`](usage-and-cost.md)
 - [`diagnostics-and-replay.md`](diagnostics-and-replay.md)
+- [`configuration.md`](configuration.md)
 
 ## MCP Server Bridge
 

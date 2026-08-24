@@ -111,3 +111,77 @@ async def test_otlp_flush_network_call(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(captured_requests) == 1
     assert captured_requests[0]["url"] == "http://collector.internal:4318/v1/traces"
     assert "resourceSpans" in captured_requests[0]["json"]
+
+
+def test_otlp_queue_capacity_bounds() -> None:
+    sink = OtlpTraceSink(max_queue_size=5)
+    ctx = TraceContext.new(trace_id="bound-test")
+
+    # Write 10 events into queue with max_queue_size=5
+    for i in range(10):
+        sink.write(TraceEvent(kind=f"event_{i}", context=ctx))
+
+    assert len(sink._queue) == 5
+    # The 5 remaining should be the newest events (5..9)
+    kinds = [e.kind for e in sink._queue]
+    assert kinds == ["event_5", "event_6", "event_7", "event_8", "event_9"]
+
+
+def test_trace_sink_registration_and_fanout(tmp_path: Any) -> None:
+    from agentos.observability.trace import (
+        MemoryTraceSink,
+        clear_trace_sinks,
+        get_trace_sinks,
+        register_trace_sink,
+        unregister_trace_sink,
+        write_trace_event,
+    )
+
+    clear_trace_sinks()
+    mem_sink = MemoryTraceSink()
+    try:
+        register_trace_sink(mem_sink)
+        assert mem_sink in get_trace_sinks()
+
+        ctx = TraceContext.new(trace_id="fanout-trace")
+        event = TraceEvent(kind="custom_action", context=ctx)
+
+        path = write_trace_event(event, log_dir=tmp_path)
+        assert path.exists()
+        assert len(mem_sink.events) == 1
+        assert mem_sink.events[0].kind == "custom_action"
+
+        unregister_trace_sink(mem_sink)
+        assert mem_sink not in get_trace_sinks()
+    finally:
+        clear_trace_sinks()
+
+
+@pytest.mark.asyncio
+async def test_boot_build_services_otlp_lifecycle() -> None:
+    from agentos.gateway.boot import build_services
+    from agentos.gateway.config import GatewayConfig
+    from agentos.observability.trace import clear_trace_sinks, get_trace_sinks
+
+    clear_trace_sinks()
+    cfg = GatewayConfig.model_validate(
+        {
+            "observability": {
+                "otlp_enabled": True,
+                "otlp_endpoint": "http://collector:4318",
+                "otlp_service_name": "agentos-prod",
+            }
+        }
+    )
+
+    try:
+        svc = await build_services(config=cfg)
+        assert svc.otlp_trace_sink is not None
+        assert svc.otlp_trace_sink in get_trace_sinks()
+        assert svc.otlp_trace_sink.service_name == "agentos-prod"
+
+        await svc.close()
+        assert svc.otlp_trace_sink is None
+        assert len(get_trace_sinks()) == 0
+    finally:
+        clear_trace_sinks()

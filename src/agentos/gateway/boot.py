@@ -267,6 +267,9 @@ class ServiceContainer:
     task_runtime: Any = None
     heartbeat_loop: Any = None
     heartbeat_watcher: Any = None
+    log_retention_sweeper: Any = None
+    log_retention_task: asyncio.Task | None = None
+    otlp_trace_sink: Any = None
     _compaction_listener_remove: Callable[[], None] | None = None
 
     # Backward-compat alias — returns the "main" store (or None).
@@ -282,6 +285,24 @@ class ServiceContainer:
         an in-flight cron job or heartbeat tick can drive TurnRunner ->
         TurnCaptureService.capture_turn against an already-closed store.
         """
+        if self.log_retention_task is not None:
+            self.log_retention_task.cancel()
+            try:
+                await self.log_retention_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self.log_retention_task = None
+
+        if self.otlp_trace_sink is not None:
+            try:
+                from agentos.observability.trace import unregister_trace_sink
+
+                unregister_trace_sink(self.otlp_trace_sink)
+                await self.otlp_trace_sink.close()
+            except Exception:
+                pass
+            self.otlp_trace_sink = None
+
         remove_compaction_listener = getattr(self, "_compaction_listener_remove", None)
         if callable(remove_compaction_listener):
             try:
@@ -1827,6 +1848,56 @@ async def build_services(
     # ── MCP discovery (boot order 22) ───────────────────────────────
     await _discover_configured_mcp_servers(config, tool_registry)
 
+    # ── Observability: OTLP trace export & log retention sweeper ────
+    otlp_trace_sink = None
+    if (
+        getattr(config, "observability", None)
+        and config.observability.otlp_enabled
+        and config.observability.otlp_endpoint
+    ):
+        try:
+            from agentos import __version__
+            from agentos.observability.otlp import OtlpTraceSink
+            from agentos.observability.trace import register_trace_sink
+
+            otlp_trace_sink = OtlpTraceSink(
+                endpoint=config.observability.otlp_endpoint,
+                headers=config.observability.otlp_headers,
+                service_name=config.observability.otlp_service_name,
+                service_version=__version__,
+            )
+            register_trace_sink(otlp_trace_sink)
+            log.info(
+                "build_services.otlp_trace_sink_registered",
+                endpoint=config.observability.otlp_endpoint,
+            )
+        except Exception as e:
+            log.warning("build_services.otlp_trace_sink_failed", error=str(e))
+
+    log_retention_sweeper = None
+    log_retention_task = None
+    if getattr(config, "observability", None) and (
+        config.observability.log_retention_days > 0
+        or config.observability.log_retention_max_total_mb > 0
+    ):
+        try:
+            from agentos.observability.retention import LogRetentionSweeper
+            from agentos.observability.trace import default_log_dir
+
+            log_retention_sweeper = LogRetentionSweeper(
+                log_dir=default_log_dir(),
+                retention_days=config.observability.log_retention_days,
+                max_total_bytes=config.observability.log_retention_max_total_mb * 1024 * 1024,
+                sweep_interval_s=config.observability.log_retention_sweep_interval_s,
+            )
+            try:
+                log_retention_task = create_background_task(log_retention_sweeper.run_loop())
+            except RuntimeError:
+                pass
+            log.info("build_services.log_retention_sweeper_started")
+        except Exception as e:
+            log.warning("build_services.log_retention_sweeper_failed", error=str(e))
+
     svc = ServiceContainer(
         config=config,
         provider_selector=provider_selector,
@@ -1844,6 +1915,9 @@ async def build_services(
         memory_retrievers=memory_retrievers,
         turn_capture_services=turn_capture_services,
         memory_provider_managers=memory_provider_managers,
+        log_retention_sweeper=log_retention_sweeper,
+        log_retention_task=log_retention_task,
+        otlp_trace_sink=otlp_trace_sink,
     )
     # Attach deferred callback ref so start_gateway_server can wire TurnRunner
     svc._turn_runner_ref = _turn_runner_ref  # type: ignore[attr-defined]

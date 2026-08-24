@@ -546,3 +546,16 @@ default_mode = "bypass"                 # off | on | bypass | full
 # groups_enabled = false
 # group_chat_ids = ["-1001234567890"]
 # group_mention_required = true
+
+# [observability]
+# Prometheus metrics endpoint exposition, OTLP trace export, and log retention.
+# metrics_enabled = true                # Expose Prometheus metrics endpoint
+# metrics_path = "/metrics"             # HTTP route path for Prometheus exposition
+# otlp_enabled = false                  # Export traces to OpenTelemetry collector
+# otlp_endpoint = "http://localhost:4318" # OTLP/HTTP traces endpoint URL
+# otlp_headers = {}                     # Optional headers for OTLP exporter
+# otlp_service_name = "agentos"         # Service name reported in OTLP resource spans
+# log_retention_days = 14               # Prune log/trace files older than N days (0 = disabled)
+# log_retention_max_total_mb = 500      # Prune oldest logs when total dir size exceeds MB (0 = disabled)
+# log_retention_sweep_interval_s = 3600.0 # Cadence for background retention sweeps
+

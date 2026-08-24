@@ -210,6 +210,7 @@ Main `agentos.toml` sections (full commented reference:
 | `[channels]` | messaging channels (`[[channels.channels]]` entries) |
 | `[auxiliary]` | model for work AgentOS runs itself, not the agent's turn (document analysis, image description): `provider`, `model`, `timeout_seconds`, `[auxiliary.tasks.<task>]`. Empty = reuse `[llm]` |
 | `[prompt]` | prompt-layer flags: `platform_hint_enabled`, `env_probe_enabled` (local-toolchain block, names only) |
+| `[observability]` | Prometheus metrics (`metrics_enabled`, `metrics_path`), OTLP trace export (`otlp_enabled`, `otlp_endpoint`, `otlp_headers`, `otlp_service_name`), log retention (`log_retention_days`, `log_retention_max_total_mb`, `log_retention_sweep_interval_s`) |
 | `[compaction]`, `[agent_token_saving]`, `[task_runtime]` | context compaction, tool-result projection, concurrency |
 
 Slack native commands auto-sync when a Slack channel entry provides `app_id`,

@@ -43,13 +43,24 @@ def _format_number(val: float | int) -> str:
     return f"{val:.6g}"
 
 
+MAX_SERIES_PER_METRIC: int = 500
+MAX_DYNAMIC_METRICS: int = 100
+
+
 class Counter:
     """Thread-safe multi-dimensional metric counter."""
 
-    def __init__(self, name: str, help_text: str, label_names: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        name: str,
+        help_text: str,
+        label_names: tuple[str, ...] = (),
+        max_series: int = MAX_SERIES_PER_METRIC,
+    ) -> None:
         self.name = name
         self.help_text = help_text
         self.label_names = label_names
+        self.max_series = max_series
         self._lock = threading.Lock()
         self._values: dict[tuple[tuple[str, str], ...], float] = defaultdict(float)
 
@@ -58,6 +69,8 @@ class Counter:
             raise ValueError("Counter increments must be non-negative")
         key = tuple(sorted((k, str(v)) for k, v in (labels or {}).items()))
         with self._lock:
+            if key not in self._values and len(self._values) >= self.max_series:
+                return
             self._values[key] += value
 
     def get(self, labels: dict[str, str] | None = None) -> float:
@@ -89,26 +102,39 @@ class Counter:
 class Gauge:
     """Thread-safe multi-dimensional metric gauge."""
 
-    def __init__(self, name: str, help_text: str, label_names: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        name: str,
+        help_text: str,
+        label_names: tuple[str, ...] = (),
+        max_series: int = MAX_SERIES_PER_METRIC,
+    ) -> None:
         self.name = name
         self.help_text = help_text
         self.label_names = label_names
+        self.max_series = max_series
         self._lock = threading.Lock()
         self._values: dict[tuple[tuple[str, str], ...], float] = defaultdict(float)
 
     def set(self, value: float, labels: dict[str, str] | None = None) -> None:
         key = tuple(sorted((k, str(v)) for k, v in (labels or {}).items()))
         with self._lock:
+            if key not in self._values and len(self._values) >= self.max_series:
+                return
             self._values[key] = float(value)
 
     def inc(self, value: float = 1.0, labels: dict[str, str] | None = None) -> None:
         key = tuple(sorted((k, str(v)) for k, v in (labels or {}).items()))
         with self._lock:
+            if key not in self._values and len(self._values) >= self.max_series:
+                return
             self._values[key] += float(value)
 
     def dec(self, value: float = 1.0, labels: dict[str, str] | None = None) -> None:
         key = tuple(sorted((k, str(v)) for k, v in (labels or {}).items()))
         with self._lock:
+            if key not in self._values and len(self._values) >= self.max_series:
+                return
             self._values[key] -= float(value)
 
     def get(self, labels: dict[str, str] | None = None) -> float:
@@ -163,11 +189,13 @@ class Histogram:
         help_text: str,
         label_names: tuple[str, ...] = (),
         buckets: tuple[float, ...] = DEFAULT_HISTOGRAM_BUCKETS,
+        max_series: int = MAX_SERIES_PER_METRIC,
     ) -> None:
         self.name = name
         self.help_text = help_text
         self.label_names = label_names
         self.buckets = tuple(sorted(buckets))
+        self.max_series = max_series
         self._lock = threading.Lock()
         # key -> (counts per bucket, sum, count)
         self._data: dict[tuple[tuple[str, str], ...], tuple[list[int], float, int]] = {}
@@ -177,6 +205,8 @@ class Histogram:
         key = tuple(sorted((k, str(v)) for k, v in (labels or {}).items()))
         with self._lock:
             if key not in self._data:
+                if len(self._data) >= self.max_series:
+                    return
                 self._data[key] = ([0] * len(self.buckets), 0.0, 0)
             bucket_counts, sum_val, count = self._data[key]
             for i, b in enumerate(self.buckets):
@@ -218,11 +248,13 @@ class Histogram:
 class MetricsRegistry:
     """Central registry of all AgentOS system metrics."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_dynamic_metrics: int = MAX_DYNAMIC_METRICS) -> None:
+        self.max_dynamic_metrics = max_dynamic_metrics
         self._lock = threading.Lock()
         self._counters: dict[str, Counter] = {}
         self._gauges: dict[str, Gauge] = {}
         self._histograms: dict[str, Histogram] = {}
+        self._dynamic_metrics: set[str] = set()
         self._register_default_metrics()
 
     def _register_default_metrics(self) -> None:
@@ -289,11 +321,22 @@ class MetricsRegistry:
 
     def record(self, name: str, value: float = 1.0, **labels: Any) -> None:
         """Dynamically record a metric without throwing if unregistered."""
-        clean_labels = {k: str(v) for k, v in labels.items() if v is not None}
+        # Filter high-cardinality keys defensively
+        clean_labels = {
+            k: str(v)
+            for k, v in labels.items()
+            if v is not None and k not in {"session_key", "session_id", "turn_id"}
+        }
         with self._lock:
             counter = self._counters.get(name)
             gauge = self._gauges.get(name)
             histogram = self._histograms.get(name)
+            if counter is None and gauge is None and histogram is None:
+                if len(self._dynamic_metrics) >= self.max_dynamic_metrics:
+                    return
+                counter = Counter(name, f"Dynamically registered {name}")
+                self._counters[name] = counter
+                self._dynamic_metrics.add(name)
 
         if counter is not None:
             counter.inc(value, clean_labels)
@@ -301,10 +344,6 @@ class MetricsRegistry:
             gauge.set(value, clean_labels)
         elif histogram is not None:
             histogram.observe(value, clean_labels)
-        else:
-            # Auto-register as counter if unknown
-            new_counter = self.register_counter(name, f"Dynamically registered {name}")
-            new_counter.inc(value, clean_labels)
 
     def reset(self) -> None:
         with self._lock:

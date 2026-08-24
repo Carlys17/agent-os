@@ -90,3 +90,47 @@ def test_gateway_metrics_endpoint() -> None:
         assert "text/plain" in resp.headers["content-type"]
         assert "agentos_queue_depth" in resp.text
         assert "in_flight_turns_total" in resp.text
+
+
+def test_gateway_metrics_endpoint_disabled() -> None:
+    cfg = GatewayConfig.model_validate({"observability": {"metrics_enabled": False}})
+    app = create_gateway_app(config=cfg)
+    with TestClient(app, base_url="http://localhost") as client:
+        resp = client.get("/metrics")
+        assert resp.status_code == 404
+
+
+def test_gateway_metrics_endpoint_custom_path() -> None:
+    cfg = GatewayConfig.model_validate(
+        {"observability": {"metrics_enabled": True, "metrics_path": "/custom-metrics"}}
+    )
+    app = create_gateway_app(config=cfg)
+    with TestClient(app, base_url="http://localhost") as client:
+        resp = client.get("/custom-metrics")
+        assert resp.status_code == 200
+        assert "text/plain" in resp.headers["content-type"]
+
+        # Default /metrics should not exist when customized
+        resp_old = client.get("/metrics")
+        assert resp_old.status_code == 404
+
+
+def test_metrics_cardinality_and_session_key_exclusion() -> None:
+    reg = MetricsRegistry(max_dynamic_metrics=5)
+
+    # Session key is stripped to prevent cardinality leak
+    reg.record("agentos_queue_depth", 10, session_key="user-sess-123", agent_id="default")
+    text = reg.format_prometheus()
+    assert "session_key" not in text
+    assert 'agent_id="default"' in text
+
+    # Per-metric series cap
+    counter = Counter("bounded_counter", "help", max_series=3)
+    for i in range(10):
+        counter.inc(1.0, {"label_idx": str(i)})
+    assert len(counter._values) == 3
+
+    # Registry dynamic metric name cap
+    for i in range(10):
+        reg.record(f"dynamic_metric_{i}", 1.0)
+    assert len(reg._dynamic_metrics) == 5

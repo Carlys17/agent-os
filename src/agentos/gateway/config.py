@@ -1711,10 +1711,13 @@ class SubagentsGatewayConfig(BaseModel):
     """When enabled, subagent bootstrap prompts keep only AGENTS.md and TOOLS.md."""
 
 
-class ObservabilityConfig(BaseModel):
+class ObservabilityConfig(BaseSettings):
     """Observability, Prometheus metrics, OTLP trace export, and log retention configuration."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = SettingsConfigDict(
+        env_prefix="AGENTOS_OBSERVABILITY_",
+        extra="forbid",
+    )
 
     metrics_enabled: bool = True
     metrics_path: str = "/metrics"
@@ -1727,6 +1730,16 @@ class ObservabilityConfig(BaseModel):
     log_retention_days: int = Field(default=14, ge=0)
     log_retention_max_total_mb: int = Field(default=500, ge=0)
     log_retention_sweep_interval_s: float = Field(default=3600.0, gt=0)
+
+    @field_validator("metrics_path")
+    @classmethod
+    def _validate_metrics_path(cls, value: str) -> str:
+        path = value.strip()
+        if not path:
+            return "/metrics"
+        if not path.startswith("/"):
+            path = "/" + path
+        return path
 
 
 class UpdatesConfig(BaseModel):

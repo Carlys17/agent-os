@@ -13,19 +13,17 @@ from pathlib import Path
 
 import structlog
 
-from agentos.observability.trace import _default_log_dir
+from agentos.observability.trace import default_log_dir
 
 log = structlog.get_logger(__name__)
 
-# Default exempt or protected file basenames
+# Default managed log file families (excludes unrelated files in the log directory)
 DEFAULT_LOG_PATTERNS: tuple[str, ...] = (
     "decisions-*.jsonl",
     "traces-*.jsonl",
     "safety-*.jsonl",
     "turn-calls-*.jsonl",
     "agentos.log*",
-    "*.jsonl",
-    "*.log",
 )
 
 
@@ -66,7 +64,7 @@ def prune_expired_log_files(
         LogPruneResult containing metrics for pruned files and bytes freed.
     """
     started = time.monotonic()
-    target_dir = Path(log_dir) if log_dir is not None else _default_log_dir()
+    target_dir = Path(log_dir) if log_dir is not None else default_log_dir()
 
     if not target_dir.is_dir():
         return LogPruneResult(
@@ -159,12 +157,13 @@ class LogRetentionSweeper:
         retention_days: int = 14,
         max_total_bytes: int = 500 * 1024 * 1024,
         sweep_interval_s: float = 3600.0,
+        initial_sweep: bool = True,
     ) -> None:
-        self.log_dir = Path(log_dir) if log_dir is not None else _default_log_dir()
+        self.log_dir = Path(log_dir) if log_dir is not None else default_log_dir()
         self.retention_days = retention_days
         self.max_total_bytes = max_total_bytes
         self.sweep_interval_s = sweep_interval_s
-        self._last_sweep = 0.0
+        self._last_sweep = 0.0 if initial_sweep else time.monotonic()
 
     async def maybe_sweep(self) -> LogPruneResult | None:
         """Run sweep if ``sweep_interval_s`` has elapsed since last sweep."""
