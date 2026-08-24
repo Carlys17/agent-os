@@ -36,12 +36,9 @@ def test_onboarding_finish_output_separates_summary_from_commands():
     assert "uv run" not in text
 
 
-def test_onboarding_finish_output_summarizes_all_capability_sections(monkeypatch):
+def test_onboarding_finish_output_summarizes_all_capability_sections():
     from agentos.gateway.config import GatewayConfig, LlmProviderConfig
     from agentos.onboarding.next_steps import format_next_steps
-
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_EMBEDDINGS_API_KEY", raising=False)
 
     cfg = GatewayConfig()
     cfg.llm = LlmProviderConfig(

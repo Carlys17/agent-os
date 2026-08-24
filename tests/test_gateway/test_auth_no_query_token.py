@@ -82,11 +82,11 @@ def test_gateway_endpoints_reject_query_token() -> None:
         assert res_header.status_code == 200
 
 
-def test_boot_gateway_disables_uvicorn_access_log(
+def test_boot_gateway_access_log_reflects_debug_mode(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Gateway boot sequence configures uvicorn with access_log=False to prevent URL leaks."""
+    """Gateway boot sequence configures uvicorn access_log to follow config.debug."""
     import asyncio
     from types import SimpleNamespace
 
@@ -154,18 +154,35 @@ def test_boot_gateway_disables_uvicorn_access_log(
     monkeypatch.setattr("agentos.gateway.pidlock.GatewayPidLock.acquire", lambda self: None)
     monkeypatch.setattr("agentos.gateway.pidlock.GatewayPidLock.release", lambda self: None)
 
-    config = GatewayConfig(
-        state_dir=str(tmp_path / "state"),
-        workspace_dir=str(tmp_path / "workspace"),
-        control_ui={"enabled": False},
-        channels={"channels": []},
-    )
-
-    async def run_case() -> None:
-        server = await boot.start_gateway_server(config=config, run=True)
+    async def run_cases() -> None:
+        # Default / debug=False -> access_log is False
+        config_default = GatewayConfig(
+            state_dir=str(tmp_path / "state1"),
+            workspace_dir=str(tmp_path / "workspace1"),
+            control_ui={"enabled": False},
+            channels={"channels": []},
+            debug=False,
+        )
+        server_default = await boot.start_gateway_server(config=config_default, run=True)
         try:
             assert captured_config.get("access_log") is False
         finally:
-            await server.close()
+            await server_default.close()
 
-    asyncio.run(run_case())
+        captured_config.clear()
+
+        # debug=True -> access_log is True
+        config_debug = GatewayConfig(
+            state_dir=str(tmp_path / "state2"),
+            workspace_dir=str(tmp_path / "workspace2"),
+            control_ui={"enabled": False},
+            channels={"channels": []},
+            debug=True,
+        )
+        server_debug = await boot.start_gateway_server(config=config_debug, run=True)
+        try:
+            assert captured_config.get("access_log") is True
+        finally:
+            await server_debug.close()
+
+    asyncio.run(run_cases())
