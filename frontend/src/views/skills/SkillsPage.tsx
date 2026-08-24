@@ -85,12 +85,14 @@ const SHOW_AEON = true
 type Tab = 'installed' | 'bankr' | 'capminal' | 'aeon' | 'robinhood' | 'community'
 type RegistryGroup = 'bankr' | 'capminal' | 'aeon' | 'community'
 type PartnerBrand = 'bankr' | 'capminal' | 'aeon' | 'robinhood'
+// Drives arrow-key focus movement, so it must stay in lockstep with the order
+// the buttons are rendered in below.
 const TAB_ORDER: Tab[] = [
   'installed',
-  ...(SHOW_BANKR ? ['bankr' as const] : []),
-  ...(SHOW_CAPMINAL ? ['capminal' as const] : []),
-  ...(SHOW_AEON ? ['aeon' as const] : []),
   'robinhood',
+  ...(SHOW_BANKR ? ['bankr' as const] : []),
+  ...(SHOW_AEON ? ['aeon' as const] : []),
+  ...(SHOW_CAPMINAL ? ['capminal' as const] : []),
   'community',
 ]
 
@@ -1118,6 +1120,14 @@ export function SkillsPage() {
             icon={<PackageIcon aria-hidden="true" />}
             onSelect={setTab}
           />
+          <TabButton
+            current={tab}
+            tab="robinhood"
+            label={PARTNER_BRANDS.robinhood.label}
+            description={t('skills.tabRobinhoodDesc')}
+            icon={<PartnerLogo brand="robinhood" className="sk-tab__brand" decorative />}
+            onSelect={setTab}
+          />
           {SHOW_BANKR ? (
             <TabButton
               current={tab}
@@ -1125,16 +1135,6 @@ export function SkillsPage() {
               label={PARTNER_BRANDS.bankr.label}
               description={t('skills.tabPartnerDesc')}
               icon={<PartnerLogo brand="bankr" className="sk-tab__brand" decorative />}
-              onSelect={setTab}
-            />
-          ) : null}
-          {SHOW_CAPMINAL ? (
-            <TabButton
-              current={tab}
-              tab="capminal"
-              label={PARTNER_BRANDS.capminal.label}
-              description={t('skills.tabPartnerDesc')}
-              icon={<PartnerLogo brand="capminal" className="sk-tab__brand" decorative />}
               onSelect={setTab}
             />
           ) : null}
@@ -1148,14 +1148,16 @@ export function SkillsPage() {
               onSelect={setTab}
             />
           ) : null}
-          <TabButton
-            current={tab}
-            tab="robinhood"
-            label={PARTNER_BRANDS.robinhood.label}
-            description={t('skills.tabRobinhoodDesc')}
-            icon={<PartnerLogo brand="robinhood" className="sk-tab__brand" decorative />}
-            onSelect={setTab}
-          />
+          {SHOW_CAPMINAL ? (
+            <TabButton
+              current={tab}
+              tab="capminal"
+              label={PARTNER_BRANDS.capminal.label}
+              description={t('skills.tabPartnerDesc')}
+              icon={<PartnerLogo brand="capminal" className="sk-tab__brand" decorative />}
+              onSelect={setTab}
+            />
+          ) : null}
           <TabButton
             current={tab}
             tab="community"
