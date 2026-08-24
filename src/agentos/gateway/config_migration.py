@@ -168,12 +168,29 @@ DEPRECATED_AGENT_TOKEN_SAVING_LEAVES: frozenset[str] = frozenset(
     k.removeprefix("agent_token_saving.") for k in DEPRECATED_AGENT_TOKEN_SAVING_FIELDS
 )
 
+# Auto-archive was removed. SubagentsGatewayConfig is a plain BaseModel and
+# Pydantic's default extra="ignore" means a toml carrying the key would still
+# load — but the dead key would silently linger in the user's file. This
+# migration strips it, rewrites the toml with a backup, and warns the user
+# that the setting is now a no-op.
+DEPRECATED_SUBAGENTS_FIELDS: frozenset[str] = frozenset(
+    {
+        "subagents.archive_after_minutes",
+    }
+)
+DEPRECATED_SUBAGENTS_LEAVES: frozenset[str] = frozenset(
+    k.removeprefix("subagents.") for k in DEPRECATED_SUBAGENTS_FIELDS
+)
+
 _LEGACY_MEMORY_FIELDS_WARN_LOCK = threading.Lock()
 _LEGACY_MEMORY_FIELDS_WARNED = False
 _LEGACY_MEMORY_FIELDS_SEEN: set[str] = set()
 _LEGACY_AGENT_TOKEN_SAVING_FIELDS_WARN_LOCK = threading.Lock()
 _LEGACY_AGENT_TOKEN_SAVING_FIELDS_WARNED = False
 _LEGACY_AGENT_TOKEN_SAVING_FIELDS_SEEN: set[str] = set()
+_LEGACY_SUBAGENTS_FIELDS_WARN_LOCK = threading.Lock()
+_LEGACY_SUBAGENTS_FIELDS_WARNED = False
+_LEGACY_SUBAGENTS_FIELDS_SEEN: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -289,6 +306,51 @@ def handle_deprecated_agent_token_saving_fields(
             "AgentOS: %d legacy agent_token_saving.tool_result_compression_* "
             "config field(s) migrated or ignored (e.g. %s); see %s for details. "
             "Tokenjuice projection is now the built-in tool-result path.",
+            n,
+            first_three,
+            log_ref,
+        )
+
+
+def handle_deprecated_subagents_fields(
+    found: dict[str, object],
+    source: str,
+) -> None:
+    """Record and warn once for deprecated subagents fields removed from config data."""
+    global _LEGACY_SUBAGENTS_FIELDS_WARNED
+
+    if not found:
+        return
+
+    with _LEGACY_SUBAGENTS_FIELDS_WARN_LOCK:
+        _LEGACY_SUBAGENTS_FIELDS_SEEN.update(found.keys())
+        should_warn = not _LEGACY_SUBAGENTS_FIELDS_WARNED
+        if should_warn:
+            _LEGACY_SUBAGENTS_FIELDS_WARNED = True
+            warning_fields = sorted(_LEGACY_SUBAGENTS_FIELDS_SEEN)
+        else:
+            warning_fields = []
+
+    _write_legacy_field_log(found, source)
+
+    if should_warn:
+        n = len(warning_fields)
+        first_three = ", ".join(warning_fields[:3])
+        try:
+            logs_dir = default_agentos_home() / "logs"
+            log_ref = str(logs_dir)
+        except Exception:
+            log_ref = "~/.agentos/logs"
+        warnings.warn(
+            f"AgentOS: {n} legacy subagents.* config field(s) ignored "
+            f"(e.g. {first_three}); see {log_ref} for details. "
+            "These fields will be removed in 0.2.0.",
+            DeprecationWarning,
+            stacklevel=6,
+        )
+        logging.getLogger(__name__).warning(
+            "AgentOS: %d legacy subagents.* config field(s) ignored (e.g. %s); "
+            "see %s for details. These fields will be removed in 0.2.0.",
             n,
             first_three,
             log_ref,
@@ -592,6 +654,17 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
                     "agent_token_saving.tool_result_compression_* was removed; "
                     "tokenjuice projection is now the built-in tool-result path"
                 )
+
+    subagents_section = builder.payload.get("subagents")
+    if isinstance(subagents_section, dict):
+        deprecated_subagents: dict[str, object] = {}
+        for leaf in list(subagents_section):
+            if leaf in DEPRECATED_SUBAGENTS_LEAVES:
+                deprecated_subagents[f"subagents.{leaf}"] = subagents_section.pop(leaf)
+
+        if deprecated_subagents:
+            builder.removed_fields.extend(sorted(deprecated_subagents))
+            handle_deprecated_subagents_fields(deprecated_subagents, "config_migration")
 
     # 2026-07: the skills-block budget default rose from 8000 to 24000 once the
     # block stopped emitting a filesystem path per skill. 8000 could not fit the
