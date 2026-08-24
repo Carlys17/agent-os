@@ -14,11 +14,7 @@ _ONNX_DIR_PLACEHOLDER = "PATH_TO_ONNX_MODELS"
 
 
 def _known_provider_ids(rows: list[dict[str, Any]]) -> list[str]:
-    return [
-        provider_id
-        for row in rows
-        if (provider_id := str(row.get("providerId") or ""))
-    ]
+    return [provider_id for row in rows if (provider_id := str(row.get("providerId") or ""))]
 
 
 def _replacement_provider(active: str, known_provider_ids: list[str]) -> str:
@@ -209,8 +205,7 @@ def evaluate_provider(payload: dict[str, Any]) -> list[HealthFinding]:
             FixStep(
                 label="Configure provider",
                 command=(
-                    "agentos providers configure "
-                    f"{provider_id} --api-key {_API_KEY_PLACEHOLDER}"
+                    f"agentos providers configure {provider_id} --api-key {_API_KEY_PLACEHOLDER}"
                 ),
             ),
             FixStep(label="Restart gateway", command="agentos gateway restart"),
@@ -224,10 +219,7 @@ def evaluate_provider(payload: dict[str, Any]) -> list[HealthFinding]:
                 0,
                 FixStep(
                     label="Set provider environment variable",
-                    detail=(
-                        f"Set {api_key_env} in the gateway environment, then restart "
-                        "AgentOS."
-                    ),
+                    detail=(f"Set {api_key_env} in the gateway environment, then restart AgentOS."),
                 ),
             )
         findings.append(
@@ -276,7 +268,86 @@ def evaluate_provider(payload: dict[str, Any]) -> list[HealthFinding]:
                 evidence={"providerId": provider_id, "model": active_row.get("model")},
             )
         )
+    findings.extend(_circuit_breaker_findings(provider_id, active_row))
     return findings
+
+
+def _circuit_breaker_findings(
+    provider_id: str,
+    active_row: dict[str, Any],
+) -> list[HealthFinding]:
+    """Report the active provider's failover breaker when it is not closed."""
+    breaker = active_row.get("circuitBreaker")
+    if not isinstance(breaker, dict):
+        return []
+    state = str(breaker.get("state") or "closed")
+    if state == "closed":
+        return []
+    failures = _int_from_payload(breaker, "consecutiveFailures")
+    threshold = _int_from_payload(breaker, "failureThreshold")
+    evidence = {
+        "providerId": provider_id,
+        "state": state,
+        "consecutiveFailures": failures,
+        "failureThreshold": threshold,
+        "cooldownRemainingSeconds": breaker.get("cooldownRemainingSeconds"),
+        "lastFailureKind": str(breaker.get("lastFailureKind") or ""),
+        "lastFailureReason": str(breaker.get("lastFailureReason") or ""),
+    }
+    if state == "half_open":
+        return [
+            HealthFinding(
+                id="provider.circuit.half_open",
+                severity="info",
+                readiness_impact="optional",
+                surface="provider",
+                title="Active provider is being probed after a cooldown",
+                detail=(
+                    f"{provider_id} tripped its failover circuit breaker and is now "
+                    "serving a single probe request. A successful turn closes the "
+                    "breaker; another failure re-opens it with a longer cooldown."
+                ),
+                evidence=evidence,
+                fix_steps=[
+                    FixStep(
+                        label="Inspect provider status",
+                        command="agentos providers status --json",
+                    )
+                ],
+            )
+        ]
+    remaining = breaker.get("cooldownRemainingSeconds")
+    cooldown_text = ""
+    if isinstance(remaining, int | float) and remaining > 0:
+        cooldown_text = f" Turns skip it for another {round(float(remaining))}s."
+    return [
+        HealthFinding(
+            id="provider.circuit.open",
+            severity="warn",
+            readiness_impact="degrades",
+            surface="provider",
+            title="Active provider is in failover cooldown",
+            detail=(
+                f"{provider_id} failed {failures} consecutive health checks "
+                f"(threshold {threshold}), so its circuit breaker is open."
+                f"{cooldown_text} Turns run on the fallback chain until it recovers."
+            ),
+            evidence=evidence,
+            fix_steps=[
+                FixStep(
+                    label="Inspect provider status",
+                    command="agentos providers status --json",
+                ),
+                FixStep(
+                    label="Check the provider's own status page",
+                    detail=(
+                        "The breaker re-probes automatically; it only stays open "
+                        "while the provider keeps failing."
+                    ),
+                ),
+            ],
+        )
+    ]
 
 
 def evaluate_memory(payload: dict[str, Any]) -> list[HealthFinding]:
@@ -479,9 +550,7 @@ def evaluate_search(payload: dict[str, Any]) -> list[HealthFinding]:
     provider = configured_provider or "unknown"
     if configured_provider and not payload.get("unknownProvider"):
         missing_keys = [
-            key
-            for key in ("configured", "runtimeSupported", "buildable")
-            if key not in payload
+            key for key in ("configured", "runtimeSupported", "buildable") if key not in payload
         ]
         if missing_keys:
             return _diagnostic_incomplete(
@@ -586,10 +655,7 @@ def evaluate_search(payload: dict[str, Any]) -> list[HealthFinding]:
             )
         ]
     if not configured:
-        detail = (
-            f"{provider} is selected for web search but is missing required "
-            "configuration."
-        )
+        detail = f"{provider} is selected for web search but is missing required configuration."
         fix_steps = [
             FixStep(label="Configure search", command=configure_command),
             FixStep(
@@ -607,10 +673,7 @@ def evaluate_search(payload: dict[str, Any]) -> list[HealthFinding]:
                 0,
                 FixStep(
                     label="Set search environment variable",
-                    detail=(
-                        f"Set {api_key_env} in the gateway environment, then restart "
-                        "AgentOS."
-                    ),
+                    detail=(f"Set {api_key_env} in the gateway environment, then restart AgentOS."),
                 ),
             )
         return [
@@ -652,6 +715,67 @@ def evaluate_search(payload: dict[str, Any]) -> list[HealthFinding]:
             surface="search",
             title="Search provider ready",
             detail=f"{provider} is configured and buildable.",
+            evidence=evidence,
+        )
+    ]
+
+
+def evaluate_browser(payload: dict[str, Any]) -> list[HealthFinding]:
+    if "enabled" not in payload:
+        return _diagnostic_incomplete(
+            "browser",
+            expected_key="enabled",
+            inspect_command="agentos doctor --json",
+        )
+    enabled = bool(payload.get("enabled"))
+    binary_present = bool(payload.get("binaryPresent"))
+    evidence = {
+        "enabled": enabled,
+        "binaryPresent": binary_present,
+        "binaryPath": payload.get("binaryPath"),
+        "attachMode": payload.get("attachMode"),
+    }
+    if not enabled:
+        return [
+            HealthFinding(
+                id="browser.disabled",
+                severity="info",
+                surface="browser",
+                title="Browser automation is disabled",
+                detail=(
+                    "The browser tool is turned off (browser.enabled = false). "
+                    "AgentOS runs fine without it; the agent cannot drive a browser."
+                ),
+                evidence=evidence,
+            )
+        ]
+    if not binary_present:
+        return [
+            HealthFinding(
+                id="browser.binary.missing",
+                severity="info",
+                surface="browser",
+                title="agent-browser is not installed",
+                detail=(
+                    "Browser automation is enabled but the agent-browser binary "
+                    "was not found, so the browser tool stays hidden from the model."
+                ),
+                evidence=evidence,
+                fix_steps=[
+                    FixStep(
+                        label="Install agent-browser",
+                        command="npm install -g agent-browser && agent-browser install",
+                    ),
+                ],
+            )
+        ]
+    return [
+        HealthFinding(
+            id="browser.ready",
+            severity="ok",
+            surface="browser",
+            title="Browser automation is ready",
+            detail="agent-browser is installed and the browser tool is available.",
             evidence=evidence,
         )
     ]
@@ -767,10 +891,7 @@ def evaluate_image_generation(payload: dict[str, Any]) -> list[HealthFinding]:
                 0,
                 FixStep(
                     label="Set image environment variable",
-                    detail=(
-                        f"Set {api_key_env} in the gateway environment, then restart "
-                        "AgentOS."
-                    ),
+                    detail=(f"Set {api_key_env} in the gateway environment, then restart AgentOS."),
                 ),
             )
     return [
@@ -800,9 +921,7 @@ def _router_runtime_invalid_finding(
     at "missing assets" + "Restart gateway".
     """
     reason = str(payload.get("runtimeInvalidReason") or "assets")
-    detail = str(
-        payload.get("error") or "The configured router runtime is unavailable."
-    )
+    detail = str(payload.get("error") or "The configured router runtime is unavailable.")
     restart = FixStep(label="Restart gateway", command="agentos gateway restart")
     reconfigure = FixStep(
         label="Reconfigure recommended router",
@@ -986,9 +1105,7 @@ def evaluate_router(payload: dict[str, Any]) -> list[HealthFinding]:
 
     enabled = bool(payload.get("enabled"))
     if enabled:
-        missing_keys = [
-            key for key in ("runtimeValid", "rolloutPhase") if key not in payload
-        ]
+        missing_keys = [key for key in ("runtimeValid", "rolloutPhase") if key not in payload]
         if missing_keys:
             return _diagnostic_incomplete(
                 "router",

@@ -60,6 +60,7 @@ from agentos.engine.types import (
 )
 from agentos.execution_status import normalize_execution_status
 from agentos.gateway.attachment_ingest import AttachmentIngestResult, ingest_attachments
+from agentos.gateway.audio_transcription import MAX_TRANSCRIPTION_BYTES
 from agentos.gateway.session_events import build_sessions_changed_payload
 from agentos.paths import media_root_from_config
 from agentos.permissions import configured_default_elevated
@@ -466,7 +467,12 @@ async def run_channel_dispatch(
                 route_envelope=route_envelope,
             )
 
-        ingested = await _ingest_channel_message_attachments(channel=channel, msg=msg)
+        ingested = await _ingest_channel_message_attachments(
+            channel=channel,
+            msg=msg,
+            config=config,
+            route_envelope=route_envelope,
+        )
 
         async with _maybe_lock(session_lock):
             await _record_delivery_context(
@@ -751,11 +757,7 @@ async def _dispatch_channel_new_command(
 
     ctx = context_factory(route_envelope)
     access = getattr(ctx, "access", None)
-    if (
-        access is None
-        or not access.admitted
-        or access.surface is not ConnectionSurface.CHANNEL
-    ):
+    if access is None or not access.admitted or access.surface is not ConnectionSurface.CHANNEL:
         return _route_envelope_reply_message(
             "/new denied: paired channel connection required",
             route_envelope,
@@ -824,7 +826,12 @@ async def _dispatch_combined_message_after_debounce(channel: Any, combined: Any,
         if _should_skip_unmentioned(channel, msg, session_key, route_envelope):
             return
 
-    ingested = await _ingest_channel_message_attachments(channel=channel, msg=msg)
+    ingested = await _ingest_channel_message_attachments(
+        channel=channel,
+        msg=msg,
+        config=config,
+        route_envelope=route_envelope,
+    )
 
     async with _maybe_lock(session_lock):
         await _record_delivery_context(session_manager, session_key, msg, session_prefix, route_envelope=route_envelope)  # noqa: E501
@@ -1752,6 +1759,108 @@ def _ask_user_reply_text(event: Any) -> str | None:
     return None
 
 
+def _pending_approval_payload(content: Any) -> dict[str, Any] | None:
+    payload = None
+    if isinstance(content, dict):
+        payload = content
+    elif isinstance(content, str):
+        try:
+            payload = json.loads(content)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("status") not in {"approval_required", "approval_pending"}:
+        return None
+    approval_id = payload.get("approval_id")
+    if not isinstance(approval_id, str) or not approval_id:
+        return None
+    return payload
+
+
+async def _send_channel_approval_prompt(
+    channel: Any, inbound: IncomingMessage, pending: dict[str, Any]
+) -> None:
+    approval_id = pending.get("approval_id")
+    command = pending.get("command") or ""
+    tool_name = pending.get("tool_name") or "tool"
+
+    text = f"⚠️ Tool '{tool_name}' requires human approval:\n\n`{command}`"
+
+    metadata: dict[str, Any] = {"channel": inbound.channel_id}
+    if hasattr(channel, "_reply_thread_ts"):
+        thread_ts = channel._reply_thread_ts(inbound)
+        if thread_ts:
+            metadata["thread_ts"] = thread_ts
+
+    transport = getattr(channel, "transport_name", lambda: "")()
+    if callable(transport):
+        transport = transport()
+
+    if transport == "telegram":
+        metadata["reply_markup"] = {
+            "inline_keyboard": [
+                [
+                    {"text": "Approve", "callback_data": f"approve:{approval_id}"},
+                    {"text": "Deny", "callback_data": f"deny:{approval_id}"},
+                ]
+            ]
+        }
+    elif transport == "slack":
+        metadata["blocks"] = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"⚠️ Tool *{tool_name}* requires human approval:\n```{command}```",
+                },
+            },
+            {
+                "type": "actions",
+                "block_id": "approval_actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Approve"},
+                        "style": "primary",
+                        "value": f"approve:{approval_id}",
+                        "action_id": "approve_btn",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Deny"},
+                        "style": "danger",
+                        "value": f"deny:{approval_id}",
+                        "action_id": "deny_btn",
+                    },
+                ],
+            },
+        ]
+    elif transport == "discord":
+        metadata["components"] = [
+            {
+                "type": 1,
+                "components": [
+                    {
+                        "type": 2,
+                        "style": 3,
+                        "label": "Approve",
+                        "custom_id": f"approve:{approval_id}",
+                    },
+                    {
+                        "type": 2,
+                        "style": 4,
+                        "label": "Deny",
+                        "custom_id": f"deny:{approval_id}",
+                    },
+                ],
+            }
+        ]
+
+    msg = OutgoingMessage(content=text, reply_to=inbound.channel_id, metadata=metadata)
+    await channel.send(msg)
+
+
 def _text_delta_from_event(event: Any) -> str:
     if isinstance(event, TextDeltaEvent):
         return event.text
@@ -1867,11 +1976,164 @@ async def _ingest_channel_message_attachments(
     *,
     channel: Any,
     msg: IncomingMessage,
+    config: Any = None,
+    route_envelope: Any = None,
 ) -> AttachmentIngestResult:
     materialized = await _materialize_channel_attachments(
         channel,
         list(getattr(msg, "attachments", []) or []),
     )
+
+    # Check if voice transcription is enabled on this channel & globally
+    transcribe_voice = False
+    if hasattr(channel, "config"):
+        transcribe_voice = getattr(channel.config, "transcribe_voice", False)
+
+    audio_enabled = False
+    if config is not None and getattr(config, "audio", None) is not None:
+        audio_enabled = getattr(config.audio, "enabled", False)
+
+    if audio_enabled and transcribe_voice:
+        non_audio_materialized = []
+        successfully_transcribed_file_ids = set()
+        for att in materialized:
+            is_audio = False
+            # Resolve fields check if att is dict (from failure) or Attachment object
+            metadata = getattr(att, "metadata", None) or (
+                att.get("metadata", {}) if isinstance(att, dict) else {}
+            )
+            media_kind = metadata.get("telegram_media_kind")
+            mime_type = getattr(att, "mime_type", None) or (
+                att.get("mime_type") if isinstance(att, dict) else None
+            )
+
+            if media_kind in ("voice", "audio", "video_note"):
+                is_audio = True
+
+            if is_audio:
+                name = getattr(att, "name", None) or (
+                    att.get("name") if isinstance(att, dict) else "audio"
+                )
+                data = getattr(att, "data", None) or (
+                    att.get("data") if isinstance(att, dict) else None
+                )
+
+                # Check if there was an ingest/materialization error
+                ingest_error = att.get("_ingest_error") if isinstance(att, dict) else None
+                if ingest_error:
+                    error_msg = (
+                        ingest_error
+                        if "exceeds" in ingest_error
+                        else (
+                            "Voice message could not be transcribed "
+                            f"(download failed: {ingest_error})."
+                        )
+                    )
+                    if route_envelope is not None:
+                        try:
+                            await channel.send(
+                                _route_envelope_reply_message(error_msg, route_envelope)
+                            )
+                        except Exception:
+                            log.exception("channel.transcribe_reply_failed")
+                    non_audio_materialized.append(att)
+                    continue
+
+                if not data:
+                    non_audio_materialized.append(att)
+                    continue
+
+                # Check duration limit
+                duration = metadata.get("duration")
+                max_duration = getattr(channel.config, "max_voice_duration_s", 120)
+                if duration is not None and duration > max_duration:
+                    error_msg = (
+                        f"Audio clip exceeds the maximum duration of {max_duration} "
+                        "seconds and could not be transcribed."
+                    )
+                    if route_envelope is not None:
+                        try:
+                            await channel.send(
+                                _route_envelope_reply_message(error_msg, route_envelope)
+                            )
+                        except Exception:
+                            log.exception("channel.transcribe_reply_failed")
+                    non_audio_materialized.append(att)
+                    continue
+
+                # Check size limit
+                max_size_bytes = MAX_TRANSCRIPTION_BYTES
+                if len(data) > max_size_bytes:
+                    error_msg = (
+                        "Audio clip exceeds the maximum size of 30 MB and could not be transcribed."
+                    )
+                    if route_envelope is not None:
+                        try:
+                            await channel.send(
+                                _route_envelope_reply_message(error_msg, route_envelope)
+                            )
+                        except Exception:
+                            log.exception("channel.transcribe_reply_failed")
+                    non_audio_materialized.append(att)
+                    continue
+
+                # Call STT
+                from agentos.gateway.audio_transcription import transcribe_audio_bytes
+
+                try:
+                    stt_result = await transcribe_audio_bytes(
+                        config=config,
+                        payload=data,
+                        filename=str(name),
+                        mime_type=mime_type or "audio/ogg",
+                    )
+                    transcript = stt_result.text
+
+                    # Update msg.content
+                    media_placeholder = f"[{media_kind or 'voice'}]"
+                    if media_placeholder in msg.content:
+                        msg.content = msg.content.replace(media_placeholder, transcript, 1)
+                    else:
+                        if msg.content:
+                            msg.content = f"{msg.content}\n\n{transcript}"
+                        else:
+                            msg.content = transcript
+
+                    # Set metadata
+                    msg.metadata["transcribed_from"] = media_kind or "voice"
+                    if duration is not None:
+                        msg.metadata["duration"] = duration
+                    file_id = metadata.get("telegram_file_id")
+                    if file_id:
+                        msg.metadata["telegram_file_id"] = file_id
+                        successfully_transcribed_file_ids.add(file_id)
+                    if stt_result.language_code:
+                        msg.metadata["language_code"] = stt_result.language_code
+
+                except Exception as exc:
+                    log.warning("channel.transcribe_audio_failed", error=str(exc))
+                    error_msg = "Voice message could not be transcribed (provider error)."
+                    if route_envelope is not None:
+                        try:
+                            await channel.send(
+                                _route_envelope_reply_message(error_msg, route_envelope)
+                            )
+                        except Exception:
+                            log.exception("channel.transcribe_reply_failed")
+                    non_audio_materialized.append(att)
+            else:
+                non_audio_materialized.append(att)
+
+        if successfully_transcribed_file_ids:
+            materialized = non_audio_materialized
+            # Clean up matching attachments from msg.attachments
+            msg.attachments = [
+                att
+                for att in msg.attachments
+                if getattr(att, "metadata", {}).get("telegram_file_id")
+                not in successfully_transcribed_file_ids
+            ]
+
     result = await ingest_attachments(
         msg.content,
         materialized,
@@ -2198,9 +2460,13 @@ async def _run_turn_batch_path(
                         "session.event.tool_result",
                         _tool_result_payload(event),
                     )
-                ask_text = _ask_user_reply_text(event)
-                if ask_text:
-                    text_parts.append(("\n\n" if text_parts else "") + ask_text)
+                pending_approval = _pending_approval_payload(event.result)
+                if pending_approval is not None:
+                    await _send_channel_approval_prompt(channel, msg, pending_approval)
+                else:
+                    ask_text = _ask_user_reply_text(event)
+                    if ask_text:
+                        text_parts.append(("\n\n" if text_parts else "") + ask_text)
             elif isinstance(event, ErrorEvent):
                 log.error(
                     "channel_dispatch.agent_error",
@@ -2369,11 +2635,15 @@ async def _run_turn_streaming_path(
                         "session.event.tool_result",
                         _tool_result_payload(event),
                     )
-                ask_text = _ask_user_reply_text(event)
-                if ask_text:
-                    prefix = "\n\n" if text_emitted else ""
-                    text_emitted = True
-                    await queue.put(f"{prefix}{ask_text}")
+                pending_approval = _pending_approval_payload(event.result)
+                if pending_approval is not None:
+                    await _send_channel_approval_prompt(channel, msg, pending_approval)
+                else:
+                    ask_text = _ask_user_reply_text(event)
+                    if ask_text:
+                        prefix = "\n\n" if text_emitted else ""
+                        text_emitted = True
+                        await queue.put(f"{prefix}{ask_text}")
             elif isinstance(event, ErrorEvent):
                 log.error(
                     "channel_dispatch.agent_error",

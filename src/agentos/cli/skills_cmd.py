@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -369,7 +370,8 @@ def skills_install(
         "--source",
         "-s",
         help=(
-            "Source (clawhub, github, bankr). GitHub accepts owner/repo, owner/repo:path, "
+            "Source (clawhub, github, bankr, capminal, aeon). GitHub accepts owner/repo, "
+            "owner/repo:path, "
             "or GitHub URLs. Bankr accepts a BankrBot/skills URL or a bankr.bot skill URL."
         ),
     ),
@@ -534,3 +536,259 @@ def skills_publish(
             console.print(f"[red]Failed:[/] {result.message}")
 
     asyncio.run(_publish())
+
+
+# ── Init command ──────────────────────────────────────────────────────────
+
+
+@skills_app.command("init")
+def skills_init(
+    name: str = typer.Argument(
+        ...,
+        help="The directory and skill name (must be a valid safe name)",
+    ),
+    description: str = typer.Option(
+        "",
+        "--description",
+        "-d",
+        help="Short description of the skill",
+    ),
+    triggers: list[str] = typer.Option(
+        None,
+        "--trigger",
+        "-t",
+        help="Repeatable trigger terms that activate this skill",
+    ),
+    target_dir: Path = typer.Option(
+        None,
+        "--target-dir",
+        "-p",
+        help="Explicit parent target directory to place the skill in",
+    ),
+    with_script: bool = typer.Option(
+        False,
+        "--with-script",
+        help="Additionally generate a scripts/run.py script template",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Overwrite generated files if they already exist, without deleting the directory",
+    ),
+) -> None:
+    """Initialize a custom skill template with a compliant SKILL.md."""
+    import re
+
+    # 1. Validate name
+    # SAFE_NAME_RE: ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$
+    safe_name_re = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
+    if not safe_name_re.match(name):
+        emit_error(
+            f"Invalid skill name '{name}'. "
+            f"Must match SAFE_NAME_RE: ^[a-zA-Z0-9][a-zA-Z0-9._-]{{0,63}}$",
+            json_output=False,
+            code="INVALID_SKILL_NAME",
+        )
+        raise typer.Exit(1)
+
+    # 2. Resolve target parent directory
+    if target_dir is not None:
+        target_parent = target_dir
+    else:
+        import os
+
+        from agentos.skills.paths import resolve_skill_layer_dirs
+
+        try:
+            from agentos.gateway.config import GatewayConfig
+
+            config = GatewayConfig.load(os.environ.get("AGENTOS_GATEWAY_CONFIG_PATH"))
+            workspace_root = Path(config.workspace_dir) if config.workspace_dir else None
+            workspace_override = (
+                Path(config.skills.workspace_dir) if config.skills.workspace_dir else None
+            )
+            allow_bundled = config.skills.allow_bundled
+            managed_override = config.skills.managed_dir
+            extra_dirs = [Path(d) for d in config.skills.extra_dirs]
+        except Exception:
+            workspace_root = None
+            workspace_override = None
+            allow_bundled = True
+            managed_override = None
+            extra_dirs = []
+
+        layer_dirs = resolve_skill_layer_dirs(
+            allow_bundled=allow_bundled,
+            workspace_root=workspace_root,
+            workspace_override=workspace_override,
+            managed_override=managed_override,
+            extra_dirs=extra_dirs,
+        )
+
+        candidates: list[Path] = []
+        if layer_dirs.workspace_dir is not None:
+            candidates.append(layer_dirs.workspace_dir)
+        if layer_dirs.project_agents_dir is not None:
+            candidates.append(layer_dirs.project_agents_dir)
+        if layer_dirs.extra_dirs:
+            candidates.extend(layer_dirs.extra_dirs)
+        if layer_dirs.personal_agents_dir is not None:
+            candidates.append(layer_dirs.personal_agents_dir)
+
+        target_parent = None
+        for candidate in candidates:
+            if candidate.is_dir():
+                target_parent = candidate
+                break
+
+        if target_parent is None:
+            if workspace_override is not None:
+                target_parent = workspace_override
+            else:
+                project_root = workspace_root if workspace_root is not None else Path.cwd()
+                target_parent = project_root / "skills"
+
+    # 3. Define target file paths
+    skill_dir = target_parent / name
+    skill_md = skill_dir / "SKILL.md"
+    run_py = skill_dir / "scripts" / "run.py"
+
+    # 4. Check for existing files
+    if not force:
+        if skill_md.exists():
+            console.print(
+                f"[red]Error:[/] File '{skill_md}' already exists. Use --force to overwrite."
+            )
+            raise typer.Exit(1)
+        if with_script and run_py.exists():
+            console.print(
+                f"[red]Error:[/] File '{run_py}' already exists. Use --force to overwrite."
+            )
+            raise typer.Exit(1)
+
+    # 5. Create directories
+    try:
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        if with_script:
+            (skill_dir / "scripts").mkdir(exist_ok=True)
+    except Exception as exc:
+        console.print(f"[red]Error:[/] Failed to create directory '{skill_dir}': {exc}")
+        raise typer.Exit(1)
+
+    # 6. Generate SKILL.md contents
+    import yaml
+
+    frontmatter = {
+        "name": name,
+        "description": description or "A custom skill template.",
+        "always": False,
+        "triggers": list(triggers or []),
+        "provenance": {
+            "origin": "local",
+            "license": "Apache-2.0",
+            "upstream_url": "",
+            "maintained_by": "Local",
+        },
+        "metadata": {
+            "agentos": {
+                "emoji": "💡",
+            }
+        },
+    }
+
+    if with_script:
+        frontmatter["entrypoint"] = {
+            "command": "python {baseDir}/scripts/run.py",
+            "args": [
+                "--message",
+                "{{ inputs.user_message }}",
+            ],
+            "parse": "json",
+            "timeout": 30,
+        }
+
+    try:
+        fm_yaml = yaml.safe_dump(frontmatter, sort_keys=False)
+    except Exception as exc:
+        console.print(f"[red]Error:[/] Failed to serialize frontmatter: {exc}")
+        raise typer.Exit(1)
+
+    skill_md_content = f"""---
+{fm_yaml}---
+
+# {name.title()} Skill
+
+A custom skill template initialized via `agentos skills init`.
+
+## How it works
+
+This skill packages task-specific instructions to guide the agent.
+The instructions here are loaded by the agent to understand how to handle the prompt or invoke code.
+"""
+
+    if with_script:
+        skill_md_content += """
+### Script Execution
+
+This skill includes an executable script `scripts/run.py` that is invoked by the agent.
+The entrypoint configures the command:
+```yaml
+entrypoint:
+  command: python {baseDir}/scripts/run.py
+  args:
+    - --message
+    - "{{ inputs.user_message }}"
+```
+The script processes arguments, runs custom logic, and outputs a JSON response structure.
+"""
+
+    skill_md_content += """
+### Declaring Dependencies
+
+To declare binary or environment variables dependencies, edit the frontmatter block in this file
+under `metadata`:
+```yaml
+# metadata:
+#   requires:
+#     bins: [curl]       # Binaries needed on PATH
+#     env: [API_KEY]     # Environment variables needed
+```
+"""
+
+    # 7. Generate scripts/run.py contents if requested
+    run_py_content = """import argparse
+import json
+import sys
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Custom skill script")
+    parser.add_argument("--message", type=str, default="", help="Input message")
+    args = parser.parse_args()
+
+    # Custom script logic goes here
+    result = {
+        "status": "success",
+        "message": f"Hello from custom script! Received: {args.message}",
+    }
+    print(json.dumps(result))
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+    # 8. Write files
+    try:
+        skill_md.write_text(skill_md_content, encoding="utf-8")
+        if with_script:
+            run_py.write_text(run_py_content, encoding="utf-8")
+            console.print(
+                f"[green]Initialized custom skill with script template:[/] {name} at {skill_dir}"
+            )
+        else:
+            console.print(f"[green]Initialized custom skill template:[/] {name} at {skill_dir}")
+    except Exception as exc:
+        console.print(f"[red]Error writing skill template files:[/] {exc}")
+        raise typer.Exit(1)

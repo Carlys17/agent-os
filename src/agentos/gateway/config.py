@@ -192,6 +192,7 @@ class PermissionsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     default_mode: Literal["off", "on", "bypass", "full"] = "bypass"
+    cron_default_mode: Literal["off", "bypass", "full"] = "bypass"
 
 
 class TaskRuntimeConfig(BaseModel):
@@ -257,6 +258,21 @@ class TaskRuntimeConfig(BaseModel):
         return value
 
 
+class LlmCircuitBreakerConfig(BaseModel):
+    """Provider health breaker: skip a failing provider instead of retrying it.
+
+    ``failure_threshold`` consecutive provider-health failures (overload,
+    transport, rate limit) open the breaker for ``cooldown_seconds``; the
+    window doubles per consecutive trip up to ``max_cooldown_seconds``. One
+    half-open probe per window re-closes it when the provider recovers.
+    """
+
+    enabled: bool = True
+    failure_threshold: int = Field(default=3, ge=1)
+    cooldown_seconds: float = Field(default=60.0, gt=0)
+    max_cooldown_seconds: float = Field(default=600.0, gt=0)
+
+
 class LlmProviderConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENTOS_LLM_")
 
@@ -274,6 +290,8 @@ class LlmProviderConfig(BaseSettings):
     # provider name. Mapped models send provider.order=[name] so the provider
     # is preferred without disabling OpenRouter fallback.
     provider_routing: dict[str, str] = Field(default_factory=dict)
+    # Health-aware failover: see LlmCircuitBreakerConfig.
+    circuit_breaker: LlmCircuitBreakerConfig = Field(default_factory=LlmCircuitBreakerConfig)
 
     @model_validator(mode="after")
     def _normalize_direct_deepseek_model(self) -> LlmProviderConfig:
@@ -601,8 +619,6 @@ class MemoryConfig(BaseSettings):
     )
     capture_max_chars: int = 2000
     capture_roll_max_chars: int = Field(default=50_000, ge=0)
-    daily_note_max_chars: int = Field(default=4000, ge=0)
-    daily_notes_total_max_chars: int = Field(default=8000, ge=0)
 
     # Retriever tuning
     temporal_decay_enabled: bool = False
@@ -1103,6 +1119,7 @@ class AgentOSRouterConfig(BaseSettings):
     )
 
     enabled: bool = True
+    cost_aware: bool = True
     auto_thinking: bool = True
     rollout_phase: str = "full"  # "observe" | "prompt_only" | "full"
     # "pilot-v1" (default: local ONNX+MiniLM router, English-optimized, no LLM
@@ -1505,6 +1522,40 @@ class XSearchConfig(BaseSettings):
     retries: int = Field(default=2, ge=0, le=5)
 
 
+class BrowserConfig(BaseSettings):
+    """Browser automation via the ``agent-browser`` CLI engine.
+
+    The tool stays hidden from the model until the ``agent-browser`` binary
+    resolves (``enabled`` only says the operator wants it). Managed headless is
+    the default; ``cdp_port`` opts into attaching to the operator's own Chrome
+    (localhost only — a URL is never accepted). Attach mode additionally requires
+    ``attach_confirmed = true`` because it can drive signed-in sessions.
+    See docs/features/browser.md.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AGENTOS_BROWSER_",
+        env_nested_delimiter="__",
+    )
+
+    enabled: bool = True
+    headless: bool = True
+    binary_path: str = ""
+    #: 0 = managed mode. >0 = attach to a Chrome started with
+    #: --remote-debugging-port=<port>. Localhost only; URLs are not accepted.
+    cdp_port: int = Field(default=0, ge=0, le=65535)
+    attach_confirmed: bool = False
+    allowed_domains: list[str] = Field(default_factory=list)
+    persist_profile: bool = False
+    session_ttl_minutes: int = Field(default=15, ge=1, le=1440)
+    max_sessions: int = Field(default=3, ge=1, le=20)
+    snapshot_max_chars: int = Field(default=24000, ge=1000, le=500000)
+    dialog_policy: Literal["must_respond", "auto_dismiss", "auto_accept"] = "must_respond"
+    dialog_timeout_s: float = Field(default=300.0, ge=1.0, le=3600.0)
+    restrict_evaluate: bool = False
+    allow_unsafe_evaluate: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Channel config (BaseModel — no env-var binding, validated at TOML load)
 # Names use *Entry suffix to avoid shadowing adapter-level *ChannelConfig.
@@ -1593,6 +1644,8 @@ class TelegramChannelEntry(ConfiguredChannelEntry):
     groups_enabled: bool = False
     group_chat_ids: list[str] = Field(default_factory=list)
     group_mention_required: bool = True
+    transcribe_voice: bool = False
+    max_voice_duration_s: int = Field(default=120, gt=0)
 
     @field_validator("group_chat_ids", mode="before")
     @classmethod
@@ -1702,10 +1755,6 @@ class SubagentsGatewayConfig(BaseModel):
     subagent_reserved_slots: int = Field(default=2, ge=0)
     """Number of slots in ``task_runtime.max_concurrency`` reserved for
     non-subagent tasks so a fan-out parent never starves itself."""
-
-    archive_after_minutes: int = Field(default=60, ge=0)
-    """Minutes after a subagent session goes terminal before its transcript
-    is archived. ``0`` disables auto-archive."""
 
     prompt_compact: bool = False
     """When enabled, subagent bootstrap prompts keep only AGENTS.md and TOOLS.md."""
@@ -1832,6 +1881,7 @@ class GatewayConfig(BaseSettings):
     image_generation: ImageGenerationConfig = Field(default_factory=ImageGenerationConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     x_search: XSearchConfig = Field(default_factory=XSearchConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     agents: list[AgentEntryConfig] = Field(default_factory=list)
@@ -2131,8 +2181,6 @@ class GatewayConfig(BaseSettings):
             "mode": "stable",
             "prompt_cache_mode": self.prompt_cache.effective_mode,
             "query_embedding_cache": self.memory.cost.query_embedding_cache,
-            "daily_note_max_chars": str(self.memory.daily_note_max_chars),
-            "daily_notes_total_max_chars": str(self.memory.daily_notes_total_max_chars),
             "auto_capture_enabled": str(self.memory.auto_capture_enabled).lower(),
             "capture_effective_enabled": str(capture_effective_enabled).lower(),
             "capture_mode": self.memory.capture_mode,

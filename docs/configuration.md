@@ -402,6 +402,27 @@ to the provider and no tool handler is exposed for the turn. When you do enable
 tools on smaller local models, keep a positive `agent_max_iterations` so
 malformed or repetitive tool calls terminate predictably.
 
+## Prompt Cache Configuration
+
+Controls prompt prefix caching for LLM providers that support it (Anthropic, OpenAI, DeepSeek, OpenRouter, etc.):
+
+```toml
+[prompt_cache]
+mode = "auto"   # "auto" | "on" | "off"
+```
+
+- `auto` (default): Enables prompt caching when the active provider and model support prefix caching.
+- `on`: Forces prompt caching on.
+- `off`: Disables prompt caching.
+
+Environment variable override:
+```sh
+export AGENTOS_CACHE_MODE="auto"   # auto | on | off
+```
+
+> [!NOTE]
+> The legacy `prompt_cache.enabled` key and `AGENTOS_CACHE_ENABLED` environment variable are deprecated and mapped automatically to `mode` (`on`/`off`) with a deprecation warning.
+
 ## Router Configuration
 
 Router modes:
@@ -624,6 +645,39 @@ bills xAI directly rather than appearing in `agentos cost`.
 
 Read: [`x-search.md`](x-search.md)
 
+## Browser automation
+
+```toml
+[browser]
+enabled = true
+headless = true
+cdp_port = 0
+attach_confirmed = false
+allowed_domains = []
+restrict_evaluate = false
+```
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `browser.enabled` | `true` | Off hides the tool even when the binary is installed. |
+| `browser.headless` | `true` | Managed mode; `false` opens a visible window. |
+| `browser.binary_path` | `""` | Optional explicit path to `agent-browser`; otherwise found on `PATH`. |
+| `browser.cdp_port` | `0` | `0` = managed. `>0` = attach to your Chrome's debug port. Localhost only; a URL is never accepted. |
+| `browser.attach_confirmed` | `false` | Must be `true` for attach mode to run — it can drive signed-in sessions. |
+| `browser.allowed_domains` | `[]` | `[]` = open web (SSRF still blocks private ranges). A non-empty list bounds navigation in AgentOS and in the engine. |
+| `browser.persist_profile` | `false` | `true` keeps cookies/login between sessions (written to disk). |
+| `browser.session_ttl_minutes` | `15` | Idle sessions are reaped after this. Range 1-1440. |
+| `browser.max_sessions` | `3` | Concurrent browser sessions; oldest-idle evicted. Range 1-20. |
+| `browser.snapshot_max_chars` | `24000` | Snapshots over this are truncated with a marker. |
+| `browser.dialog_policy` | `must_respond` | `must_respond`, `auto_dismiss`, or `auto_accept` for native dialogs. |
+| `browser.dialog_timeout_s` | `300.0` | Watchdog for an unanswered dialog. Range 1-3600. |
+| `browser.restrict_evaluate` | `false` | `true` blocks sensitive JS primitives in `eval` (off by default — it also blocks ordinary DOM extraction). |
+| `browser.allow_unsafe_evaluate` | `false` | `true` overrides `restrict_evaluate` for a trusted page. |
+
+The tool is hidden from the model until the `agent-browser` binary is installed.
+
+Read: [`features/browser.md`](features/browser.md)
+
 ## Channel Configuration
 
 List supported channel types:
@@ -760,6 +814,24 @@ agentos agent \
 ```
 
 Read: [`tools-and-sandbox.md`](tools-and-sandbox.md)
+
+## Safety Configuration
+
+Controls prompt-ingress safety scanning and untrusted workspace containment:
+
+```toml
+[safety]
+wrap_untrusted_workspace = true
+injection_scan_mode = "report"   # "report" | "enforce" | "off"
+```
+
+- `wrap_untrusted_workspace` (default `true`): Wraps files read from untrusted workspace directories with safety bounding markers to mitigate prompt-injection framing in workspace files.
+- `injection_scan_mode` (applied to bootstrap workspace files, not all ingress):
+  - `report` (default): Scans those files and logs detected patterns without changing the content; the turn still runs.
+  - `enforce`: Redacts matched content from untrusted workspace files before it reaches the prompt; the turn still runs.
+  - `off`: Disables prompt-injection scanning.
+
+`[safety]` is TOML-only; there is no environment-variable override for these keys.
 
 ## Gateway Binding
 

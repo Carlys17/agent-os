@@ -6,7 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from agentos.permissions import normalize_cron_elevated
+from agentos.permissions import CRON_ELEVATED_MODES, normalize_cron_elevated
 from agentos.session.keys import normalize_agent_id
 from agentos.tools.policy_config import normalize_tool_profile
 
@@ -82,7 +82,7 @@ def _normalized_tool_policy(
     if mode is None:
         policy.pop("elevated")
         return policy
-    if handler_key != "agent_run":
+    if mode in CRON_ELEVATED_MODES and handler_key != "agent_run":
         raise ValueError(
             "cron elevation is only supported for agent_turn jobs; reminder, "
             "system_event and script jobs never run an agent turn with the job's "

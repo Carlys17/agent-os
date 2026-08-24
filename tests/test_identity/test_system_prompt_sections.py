@@ -8,7 +8,7 @@ weakens a block fails loudly instead of shipping silently.
 from __future__ import annotations
 
 from agentos.identity.prompt import assemble_system_prompt
-from agentos.identity.types import AgentProfile
+from agentos.identity.types import AgentIdentity, AgentProfile
 
 _TOOLS = ["exec_command", "read_file", "write_file", "web_fetch"]
 
@@ -147,6 +147,65 @@ def test_heartbeat_prompt_implies_silent_replies() -> None:
 
     assert "## Heartbeats" in prompt
     assert "## Silent Replies" in prompt
+
+
+def test_cli_quick_reference_stays_removed() -> None:
+    # The bundled agentos skill is the canonical CLI reference; a two-line
+    # in-prompt copy only drifts from the real CLI.
+    prompt = _full_prompt()
+
+    assert "AgentOS CLI Quick Reference" not in prompt
+
+
+def test_runtime_section_carries_os_shell_and_working_directory() -> None:
+    prompt = assemble_system_prompt(
+        AgentProfile(agent_id="main", prompt_mode="full"),
+        tools=_TOOLS,
+        runtime_info={"os": "Darwin", "shell": "/bin/zsh", "workspace_dir": "<WS>"},
+    )
+
+    assert prompt.count("## Runtime") == 1
+    assert "## Workspace" not in prompt
+    assert "- OS: Darwin" in prompt
+    assert "- Shell: /bin/zsh" in prompt
+    assert "- Working directory: <WS>" in prompt
+
+
+def test_runtime_section_omits_workspace_line_when_unset() -> None:
+    prompt = assemble_system_prompt(
+        AgentProfile(agent_id="main", prompt_mode="full"),
+        tools=_TOOLS,
+        runtime_info={"os": "Darwin", "shell": "/bin/zsh"},
+    )
+
+    assert "- OS: Darwin" in prompt
+    assert "Working directory:" not in prompt
+
+
+def test_reply_guidelines_lead_with_the_answer() -> None:
+    prompt = _full_prompt()
+
+    assert "## Reply Guidelines" in prompt
+    assert "Lead with the answer or outcome" in prompt
+
+
+def test_section_headings_always_follow_a_blank_line() -> None:
+    # Sections that end with a conditional bullet used to glue onto the next
+    # heading: a trailing `{% endif -%}` swallowed the separator blank line.
+    prompt = assemble_system_prompt(
+        AgentProfile(agent_id="main", prompt_mode="full", identity=AgentIdentity(name="Bin")),
+        tools=[*_TOOLS, "image_generate", "execute_code", "memory_search", "session_search"],
+        memory="MEMORY (your personal notes)\n\n- example",
+        runtime_info={"os": "Darwin", "shell": "/bin/zsh", "workspace_dir": "<WS>"},
+        heartbeat_prompt="Heartbeat polls arrive as system events.",
+        channels_enabled=True,
+        unattended_context=True,
+    )
+
+    lines = prompt.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("## ") and i > 0:
+            assert lines[i - 1] == "", f"heading glued to content: {lines[i - 1]!r} -> {line!r}"
 
 
 def test_minimal_mode_omits_gated_sections_regardless_of_flags() -> None:

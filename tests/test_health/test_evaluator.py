@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from agentos.health.evaluator import (
+    evaluate_browser,
     evaluate_channels,
     evaluate_image_generation,
     evaluate_logs,
@@ -11,6 +12,31 @@ from agentos.health.evaluator import (
     evaluate_sandbox,
     evaluate_search,
 )
+
+
+def test_browser_evaluator_incomplete_without_enabled() -> None:
+    findings = evaluate_browser({})
+    assert findings
+    assert "incomplete" in findings[0].id or "diagnostic" in findings[0].id
+
+
+def test_browser_evaluator_disabled_is_info() -> None:
+    findings = evaluate_browser({"enabled": False, "binaryPresent": False})
+    assert findings[0].severity == "info"
+    assert findings[0].id == "browser.disabled"
+
+
+def test_browser_evaluator_missing_binary_names_the_fix() -> None:
+    findings = evaluate_browser({"enabled": True, "binaryPresent": False})
+    finding = findings[0]
+    assert finding.id == "browser.binary.missing"
+    assert any("agent-browser install" in step.command for step in finding.fix_steps)
+
+
+def test_browser_evaluator_ready_when_binary_present() -> None:
+    findings = evaluate_browser({"enabled": True, "binaryPresent": True})
+    assert findings[0].severity == "ok"
+    assert findings[0].id == "browser.ready"
 
 
 def _impact(finding) -> str:
@@ -152,10 +178,7 @@ def test_provider_evaluator_explains_missing_configured_api_key_env() -> None:
     assert finding.id == "provider.active.not_configured"
     assert finding.evidence["apiKeyEnv"] == "AGENTOS_PROVIDER_KEY"
     assert "AGENTOS_PROVIDER_KEY" in finding.detail
-    assert any(
-        step.detail and "AGENTOS_PROVIDER_KEY" in step.detail
-        for step in finding.fix_steps
-    )
+    assert any(step.detail and "AGENTOS_PROVIDER_KEY" in step.detail for step in finding.fix_steps)
 
 
 def test_provider_evaluator_uses_configured_active_provider_when_missing_row() -> None:
@@ -707,10 +730,7 @@ def test_search_evaluator_explains_missing_configured_api_key_env() -> None:
     assert finding.id == "search.provider.not_configured"
     assert finding.evidence["apiKeyEnv"] == "CUSTOM_SEARCH_KEY"
     assert "CUSTOM_SEARCH_KEY" in finding.detail
-    assert any(
-        step.detail and "CUSTOM_SEARCH_KEY" in step.detail
-        for step in finding.fix_steps
-    )
+    assert any(step.detail and "CUSTOM_SEARCH_KEY" in step.detail for step in finding.fix_steps)
 
 
 def test_search_evaluator_treats_empty_provider_as_optional_setup() -> None:
@@ -854,10 +874,7 @@ def test_image_generation_evaluator_explains_missing_configured_api_key_env() ->
     assert finding.id == "image_generation.credentials.missing"
     assert finding.evidence["apiKeyEnv"] == "CUSTOM_IMAGE_KEY"
     assert "CUSTOM_IMAGE_KEY" in finding.detail
-    assert any(
-        step.detail and "CUSTOM_IMAGE_KEY" in step.detail
-        for step in finding.fix_steps
-    )
+    assert any(step.detail and "CUSTOM_IMAGE_KEY" in step.detail for step in finding.fix_steps)
 
 
 def test_image_generation_unknown_provider_uses_supported_default_recovery() -> None:
@@ -1118,14 +1135,12 @@ def test_router_evaluator_skips_tier_mismatch_without_tier_providers() -> None:
     }
 
     assert [f.id for f in evaluate_router(payload)] == ["router.ready"]
-    assert [
-        f.id for f in evaluate_router({**payload, "tierProviders": {}})
-    ] == ["router.ready"]
+    assert [f.id for f in evaluate_router({**payload, "tierProviders": {}})] == ["router.ready"]
     # Tiers that omit the provider key are filtered by the payload builder;
     # empty values that slip through must not fire either.
-    assert [
-        f.id for f in evaluate_router({**payload, "tierProviders": {"c0": ""}})
-    ] == ["router.ready"]
+    assert [f.id for f in evaluate_router({**payload, "tierProviders": {"c0": ""}})] == [
+        "router.ready"
+    ]
 
 
 def test_memory_embedding_evaluator_flags_explicit_remote_without_key() -> None:

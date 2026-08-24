@@ -410,7 +410,7 @@ async def test_rpc_update_can_clear_elevation_without_touching_the_lists() -> No
         RpcContext(conn_id="test", cron_scheduler=scheduler),
     )
 
-    assert scheduler.updated["tool_policy"] == {"deny": ["web_fetch"]}
+    assert scheduler.updated["tool_policy"] == {"deny": ["web_fetch"], "elevated": "off"}
 
 
 async def test_rpc_update_applies_other_fields_to_a_paused_job() -> None:

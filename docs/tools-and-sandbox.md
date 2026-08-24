@@ -18,11 +18,12 @@ For a focused permissions guide, see
 | Shell and code | `exec_command`, `background_process`, `process`, `execute_code`. |
 | Git | `git_status`, `git_diff`, `git_log`, `git_commit`, `apply_patch`. |
 | Web | `web_search`, `web_fetch`, `http_request`, `x_search` (X/Twitter via xAI — see [x-search.md](x-search.md); hidden without an xAI key). |
+| Browser | `browser` — drive a real Chromium (navigate, snapshot, click, type, fill, wait, eval, dialog, screenshot) via the `agent-browser` engine. Hidden until the binary is installed. **Runs outside the sandbox** (Chromium can't run inside bubblewrap/seatbelt). See [features/browser.md](features/browser.md). |
 | Memory | `memory_search`, `memory_save`, `memory_get`, `memory_delete`, `memory`. |
 | Sessions | `sessions_send`, `sessions_spawn`, `sessions_list`, `sessions_history`, `session_status`, `session_rename`. |
 | Artifacts | `publish_artifact`. The mime decides the rendering: some draw inline in chat rather than as a download chip — see [artifacts-and-media.md](artifacts-and-media.md#inline-charts). |
 | Media | image generation, PDF, TTS, and media helpers. |
-| Skills | `skill_list`, `skill_view`, `skill_create`, `skill_edit`, `install_skill_deps`, `meta_invoke`. |
+| Skills | `skill_list`, `skill_view`, `skill_create`, `skill_edit`, `install_skill_deps`. |
 | Control | cron scheduling and gateway control operations. |
 | Channels/platforms | messaging, chat, and media helpers across supported channel adapters. |
 | User interaction | `ask_user` — structured questions with 2-4 options each. Presenting the question ends the turn; the answer arrives as the next user message. The Web UI renders a clickable card; the CLI and channels render a numbered list you answer by typing. Hidden on surfaces with nobody to reply (cron, subagents, heartbeats); channel DMs count as having a responder. |

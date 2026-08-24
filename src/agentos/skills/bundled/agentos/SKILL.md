@@ -128,7 +128,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `env` | `list [--missing] [--category]`, `get <NAME> [--reveal]`, `set <NAME> --stdin`, `import <NAME>`, `unset <NAME>` |
 | `providers` | `list`, `status`, `configure <id> [-m MODEL] [-k API_KEY] [--base-url] [--proxy]` |
 | `models` | `list` |
-| `skills` | `list`, `search`, `view`, `install`, `uninstall`, `update`, `publish`, `tap add/list/remove` |
+| `skills` | `init`, `list`, `search`, `view`, `install`, `uninstall`, `update`, `publish`, `tap add/list/remove` |
 | `sessions` | `list`, `show`, `rename`, `resume`, `abort`, `delete`, `export` |
 | `cron` | `list`, `status`, `add` (also takes `--session-key`, the chat a job reports into), `update` (both take `--job-kind`, `--script`, `--script-arg`, `--workdir`, `--elevated`, `--elevated-mode`, `--tool-policy`; the policy's `profile` must be one of `coding`/`full`/`memory_only`/`messaging`/`minimal`, or be omitted), `remove`, `run`, `runs` |
 | `channels` | `list`, `status`, `types`, `describe`, `native-commands`, `add`, `remove`, `enable`, `disable`, `edit`, `restart`, `logout`, `pairing …` |
@@ -153,6 +153,8 @@ list <name>`, `approve <name> <code>`, `deny <name> <sender-id>`, or `revoke
 <name> <sender-id>`. Pairing is binary and has no admin/owner tier. Telegram
 groups are disabled by default; enable them only with explicit
 `group_chat_ids`, paired senders, and the desired mention requirement.
+
+Platform-native interactive tool approvals (Slack block actions, Telegram inline keyboard callbacks, and Discord message components) allow operators to approve or deny gated tool executions directly using interactive buttons. For security, these approvals are restricted to channel DMs (never group chats), access-gated by evaluating the clicker's sender ID against the channel's access policy, and strictly session-bound to their originating chat context.
 
 ## Configuration
 
@@ -197,13 +199,14 @@ Main `agentos.toml` sections (full commented reference:
 | --- | --- |
 | top-level | `workspace_dir`, `state_dir`, logging, `search_provider`/`search_api_key`, timeouts |
 | `[x_search]` | xAI-backed X (Twitter) search: `enabled`, `model` (default `grok-4.5`), `api_key`/`api_key_env` (`XAI_API_KEY`), `reasoning_effort`, `timeout_seconds`, `total_timeout_seconds`, `retries`. The `x_search` tool is hidden until a credential resolves |
+| `[browser]` | Browser automation via `agent-browser`: `enabled`, `headless`, `cdp_port` (0=managed; >0 attaches to your Chrome, localhost only) + `attach_confirmed`, `allowed_domains`, `persist_profile`, `dialog_policy`, `restrict_evaluate`. The `browser` tool is hidden until the binary is installed (`npm install -g agent-browser && agent-browser install`). See docs/features/browser.md |
 | `[llm]` | `provider`, `model`, `api_key`, `base_url`, `proxy`, `[llm.provider_routing]` |
 | `[agentos_router]` | router on/off, `strategy` (`pilot-v1`), tier settings under `[agentos_router.tiers.c0..c3]` |
 | `[skills]` | skill filtering/injection: `filter_strategy`, `filter_top_k`, `injection_mode`, `max_skills_prompt_chars` (default 24000), `max_skill_view_chars` (default 10000, 0 disables) |
 | `[tools]` | model-visible tools and policy; `enabled = false` runs providers in plain-text mode; `profile` (`full` \| `coding` \| `messaging` \| `memory_only` \| `minimal`) sets the base allowlist — `agentos context` prices each one |
 | `[memory]` | memory source and embedding model, `[memory.nudge]` (periodic memory review) |
 | `[sandbox]` | `sandbox`, `default_level` (DISABLED/STANDARD/STRICT/LOCKED), `backend`, network/mounts |
-| `[permissions]` | `default_mode` = `off` \| `on` \| `bypass` \| `full` (pair with `agentos sandbox …`) |
+| `[permissions]` | `default_mode` = `off` \| `on` \| `bypass` \| `full` (pair with `agentos sandbox …`); `cron_default_mode` = `off` \| `bypass` \| `full` (default `bypass`) |
 | `[auth]` | gateway admission: `mode` (`none` on loopback or `token`), `token` |
 | `[control_ui]` | `allowed_origins` for reverse-proxy setups; `show_thinking` (default true) streams model reasoning to the WebUI as collapsible blocks — WebUI-only, channels never receive it |
 | `[updates]` | `notify` (default true) — the once-per-24h "new release available" notice |
@@ -211,6 +214,8 @@ Main `agentos.toml` sections (full commented reference:
 | `[auxiliary]` | model for work AgentOS runs itself, not the agent's turn (document analysis, image description): `provider`, `model`, `timeout_seconds`, `[auxiliary.tasks.<task>]`. Empty = reuse `[llm]` |
 | `[prompt]` | prompt-layer flags: `platform_hint_enabled`, `env_probe_enabled` (local-toolchain block, names only) |
 | `[observability]` | Prometheus metrics (`metrics_enabled`, `metrics_path`), OTLP trace export (`otlp_enabled`, `otlp_endpoint`, `otlp_headers`, `otlp_service_name`), log retention (`log_retention_days`, `log_retention_max_total_mb`, `log_retention_sweep_interval_s`) |
+| `[prompt_cache]` | Prompt-cache continuity: `mode` = `auto` (default) \| `on` \| `off`. Env override: `AGENTOS_CACHE_MODE` (legacy `prompt_cache.enabled` / `AGENTOS_CACHE_ENABLED` deprecated) |
+| `[safety]` | Prompt-ingress safety: `wrap_untrusted_workspace` (default true), `injection_scan_mode` (`report` default, `enforce` redacts matched workspace-file content, `off`) |
 | `[compaction]`, `[agent_token_saving]`, `[task_runtime]` | context compaction, tool-result projection, concurrency |
 
 Slack native commands auto-sync when a Slack channel entry provides `app_id`,
@@ -279,8 +284,9 @@ agentos gateway status --json  # machine-readable status
 agentos gateway stop
 ```
 
-Default port **18791**, loopback bind. `--listen HOST:PORT` overrides
-`--bind`/`--port` together. `gateway status` (and `--json`) reports **both**
+Default port **18791**, loopback bind. `--listen HOST` overrides
+`--bind` (use `--port PORT` to specify port, e.g. `--listen 0.0.0.0 --port 18791`).
+`gateway status` (and `--json`) reports **both**
 the installed CLI version (`cliVersion`) and the running gateway's version
 (`gatewayVersion`); a `versionMismatch` diagnostic means the gateway is running
 old code — restart it.
@@ -337,6 +343,7 @@ agentos skills search <query>
 agentos skills install <name>                    # from ClawHub (default source)
 agentos skills install owner/repo:path -s github # from a GitHub repo/URL
 agentos skills install <bankr-skill-url> -s bankr # from Bankr (repo or bankr.bot URL)
+agentos skills install <aeon-skill-url> -s aeon   # from Aeon (aeonfun/aeon skills/<slug>)
 agentos skills tap add owner/repo      # register a GitHub repo as a skill source
 agentos skills tap list
 agentos skills update
@@ -444,9 +451,11 @@ agentos agent --workspace /path --workspace-strict -m "Inspect this repo"
 ```
 
 Bounding flags: `--timeout` (wall-clock seconds), `--max-iterations`,
-`--iteration-timeout-seconds`, `--tool-timeout-seconds`; containment:
-`--workspace-strict` (reads), `--workspace-lockdown` (writes),
-`--scratch-dir`.
+`--iteration-timeout-seconds`, `--tool-timeout-seconds`, `--request-timeout-seconds`;
+containment: `--workspace-strict` (reads), `--workspace-lockdown` (writes),
+`--scratch-dir`; execution control: `--file`/`-f`, `--unattended`/`--interactive`,
+`--stateless`/`--clean-room`, `--stateless-keep-project-rules`, `--no-memory-capture`,
+`--session-id`.
 
 ### Day-two operations
 
@@ -486,11 +495,18 @@ agentos cron output <id> [--run <run-id>] [--json]
 agentos cron add --every 10m --job-kind agent_turn --script watch_rss.py \
   --script-arg --url --script-arg https://example.com/feed.xml \
   --text "Summarize anything urgent."
-# Cron turns are read-only by default, so a job cannot run a shell-based skill.
-# --elevated opts one agent-turn job out of that: no approval, no sandbox, host
-# shell as the user. See docs/cli.md before suggesting it.
-agentos cron add --every 6h --agent main --elevated --name "LP check" --text "..."
+# Cron turns run elevated by default (cron_default_mode="bypass"): an agent-turn
+# job CAN run shell-based skills unattended, with no approval prompt, no sandbox,
+# host shell as the user. --no-elevated opts one job out of that, running it
+# read-only instead. See docs/cli.md before suggesting either.
+agentos cron add --every 6h --agent main --no-elevated --name "LP check" --text "..."
 agentos cost                   # usage + estimated spend
+# cost support filtering and grouping:
+# agentos cost [--by-model] [--json] [--csv]
+# agentos cost --start-date YYYY-MM-DD --end-date YYYY-MM-DD
+# agentos cost --agent-id <agent-id> --channel-type <channel-type>
+# agentos cost --tool-name <tool-name> --skill <skill-name>
+# agentos cost --export /path/to/export.csv
 agentos diagnostics on         # runtime diagnostics logging
 agentos migrate hermes --source <dir> [--apply]   # dry-run first, then --apply
 ```
@@ -524,7 +540,10 @@ Full reference: `docs/http-api.md` (https://useagentos.dev/docs/http-api).
 - **Gateway won't bind publicly** → intentional auth guard; see the
   public-bind recipe above.
 - **Provider/model errors** → `agentos providers status`,
-  `agentos models list`, then `agentos providers configure …`.
+  `agentos models list`, then `agentos providers configure …`. The `circuit`
+  column shows the failover circuit breaker: `open (42s)` means recent
+  provider-health failures parked it and turns are on the fallback chain; it
+  re-probes itself, so tune `[llm.circuit_breaker]` rather than restarting.
 - **Skill missing from prompt** → do not guess from the layer. Ask the
   surface that knows: the `availability.reason` on a `skills.list` row, or the
   `[not offered] …` line the agent's own `skill_list` prints. Then act on the
@@ -559,4 +578,5 @@ Full reference: `docs/http-api.md` (https://useagentos.dev/docs/http-api).
 `gateway`, `http-api`, `providers-and-models`, `channels`, `operations`,
 `scheduling`, `sessions`, `usage-and-cost`, `tools-and-sandbox`,
 `approvals-and-permissions`, `mcp-server`, `troubleshooting`, and
-`features/skills`, `features/agentos-router`, `features/memory`.
+`features/skills`, `features/agentos-router`, `features/memory`,
+`features/browser`, `features/compaction-and-cache`.

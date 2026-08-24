@@ -102,9 +102,8 @@ def _normalized_disk_payload(path: Path, raw: dict[str, Any]) -> dict[str, Any]:
     _assert_payload_is_modeled(migrated, disk_config)
     llm_payload = raw.get("llm") if isinstance(raw, dict) else None
     if (
-        (not isinstance(llm_payload, dict) or "api_key" not in llm_payload)
-        and disk_config.llm.api_key
-    ):
+        not isinstance(llm_payload, dict) or "api_key" not in llm_payload
+    ) and disk_config.llm.api_key:
         disk_config.mark_runtime_secret("llm.api_key")
     normalized = _normalized_config_payload(
         disk_config,
@@ -229,9 +228,7 @@ def config_disk_state(config: Any) -> ConfigDiskState:
 
     diverged = disk_payload != live_payload
     return ConfigDiskState(
-        revision=None
-        if diverged
-        else f"sha256:{hashlib.sha256(disk_bytes).hexdigest()}",
+        revision=None if diverged else f"sha256:{hashlib.sha256(disk_bytes).hexdigest()}",
         disk_diverged=diverged,
         write_blocked=diverged,
     )
@@ -259,8 +256,7 @@ def _assert_expected_revision(config: Any, expected: str | None) -> None:
     current = state.revision
     if expected != current:
         raise ValueError(
-            "config revision mismatch: "
-            f"expected {expected}, current {current}; refresh and retry"
+            f"config revision mismatch: expected {expected}, current {current}; refresh and retry"
         )
 
 
@@ -365,6 +361,12 @@ def sync_x_search(config: Any) -> None:
     configure_x_search(getattr(config, "x_search", None))
 
 
+def sync_browser(config: Any) -> None:
+    from agentos.tools.builtin.browser import configure_browser
+
+    configure_browser(getattr(config, "browser", None))
+
+
 def _runtime_steps(ctx: RpcContext, changed_paths: set[str]) -> list[tuple[str, HotApply]]:
     if getattr(ctx, "config", None) is None:
         return []
@@ -390,6 +392,8 @@ def _runtime_steps(ctx: RpcContext, changed_paths: set[str]) -> list[tuple[str, 
         steps.append(("search", sync_search))
     if _touches(changed_paths, {"x_search"}):
         steps.append(("x_search", sync_x_search))
+    if _touches(changed_paths, {"browser"}):
+        steps.append(("browser", sync_browser))
     return steps
 
 
@@ -436,9 +440,7 @@ def commit_config(
     has_existing_runtime = running_config is not None or source_config is not None
     if new_config.auth.mode == "token" and not new_config.auth.token:
         source_had_missing_token_mode = (
-            has_existing_runtime
-            and source.auth.mode == "token"
-            and not source.auth.token
+            has_existing_runtime and source.auth.mode == "token" and not source.auth.token
         )
         if not source_had_missing_token_mode:
             raise ValueError(

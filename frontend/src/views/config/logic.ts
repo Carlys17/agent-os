@@ -96,7 +96,16 @@ export const TABS: readonly TabDef[] = [
     get label() {
       return t('config.tabCapabilities')
     },
-    prefixes: ['tools', 'skills', 'attachments', 'search', 'image_generation', 'audio', 'mcp'],
+    prefixes: [
+      'tools',
+      'skills',
+      'attachments',
+      'search',
+      'image_generation',
+      'audio',
+      'browser',
+      'mcp',
+    ],
   },
   {
     id: 'connections',

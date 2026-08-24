@@ -90,12 +90,12 @@ async def test_ops_add_rejects_the_on_elevation_mode(tmp_path: Path) -> None:
         await store.close()
 
 
-async def test_ops_add_drops_a_falsy_elevation_key(tmp_path: Path) -> None:
-    """An unelevated job stores the same empty policy it always did."""
+async def test_ops_add_maps_a_falsy_elevation_key_to_off(tmp_path: Path) -> None:
+    """An explicitly unelevated job stores the 'off' policy."""
     store, ops = await _open_ops(tmp_path)
     try:
         job = await _add(ops, tool_policy={"elevated": False})
-        assert job.tool_policy == {}
+        assert job.tool_policy == {"elevated": "off"}
     finally:
         await store.close()
 
@@ -122,3 +122,19 @@ async def test_persisted_elevation_survives_a_store_round_trip(tmp_path: Path) -
 
     assert loaded is not None
     assert loaded.tool_policy == {"elevated": "full", "deny": ["web_fetch"]}
+
+
+async def test_ops_add_accepts_falsy_elevation_on_non_agent_job(tmp_path: Path) -> None:
+    """An explicit opt-out (False or 'off') on a non-agent job is accepted and stores 'off'."""
+    store, ops = await _open_ops(tmp_path)
+    try:
+        job = await _add(
+            ops,
+            handler_key="system_event",
+            payload=make_system_event_payload("wake"),
+            session_target=SessionTarget.MAIN,
+            tool_policy={"elevated": False},
+        )
+        assert job.tool_policy == {"elevated": "off"}
+    finally:
+        await store.close()

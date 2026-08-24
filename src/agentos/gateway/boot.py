@@ -53,7 +53,7 @@ from agentos.gateway.session_services import get_session_storage
 from agentos.gateway.session_streams import get_session_streams
 from agentos.gateway.websocket import get_registry
 from agentos.paths import default_agentos_home
-from agentos.permissions import configured_default_elevated
+from agentos.permissions import configured_cron_default_elevated, configured_default_elevated
 from agentos.router_tiers import DEFAULT_ROUTER_STRATEGY
 from agentos.session.terminal_reply import build_terminal_reply, sanitize_agent_error
 
@@ -384,6 +384,17 @@ class ServiceContainer:
                     await storage.close()
                 except Exception:
                     pass
+
+        # ── 3. Close browser sessions ──
+        # Reached by the one-shot `agentos agent` path, which is the only caller
+        # of this method. The long-running gateway never calls it, so the server
+        # closes browsers from its ASGI shutdown hook instead (gateway/app.py).
+        try:
+            from agentos.tools.agent_browser import close_all_sessions
+
+            close_all_sessions()
+        except Exception:
+            pass
 
 
 # Server boot timestamp (set once at first start)
@@ -1508,6 +1519,10 @@ async def build_services(
     proxy = llm_runtime.proxy
     if provider_selector is None:
         if _should_build_provider_selector(provider=llm_runtime.provider, api_key=api_key):
+            from agentos.provider.circuit_breaker import (
+                BreakerSettings,
+                ProviderCircuitBreaker,
+            )
             from agentos.provider.selector import (
                 ModelSelector,
                 ProviderConfig,
@@ -1516,6 +1531,9 @@ async def build_services(
 
             if resolved_base.endswith("/v1"):
                 resolved_base = resolved_base[:-3]
+            breaker_settings = BreakerSettings.from_config(
+                getattr(getattr(config, "llm", None), "circuit_breaker", None)
+            )
             provider_selector = ModelSelector(
                 SelectorConfig(
                     primary=ProviderConfig(
@@ -1526,7 +1544,8 @@ async def build_services(
                         proxy=proxy,
                         provider_routing=llm_runtime.provider_routing,
                     )
-                )
+                ),
+                breaker=ProviderCircuitBreaker(breaker_settings),
             )
             log.info(
                 "build_services.provider_ready",
@@ -1844,6 +1863,15 @@ async def build_services(
         log.info("build_services.x_search_initialized", available=x_search_available())
     except Exception as e:
         log.warning("build_services.x_search_failed", error=str(e))
+
+    # ── Browser automation via agent-browser ────────────────────────
+    try:
+        from agentos.tools.builtin.browser import browser_available, configure_browser
+
+        configure_browser(config.browser)
+        log.info("build_services.browser_initialized", available=browser_available())
+    except Exception as e:
+        log.warning("build_services.browser_failed", error=str(e))
 
     # ── MCP discovery (boot order 22) ───────────────────────────────
     await _discover_configured_mcp_servers(config, tool_registry)
@@ -2369,6 +2397,7 @@ async def start_gateway_server(
             task_runtime_ref=lambda: task_runtime,
             workspace_resolver=_cron_workspace_resolver,
             default_elevated=lambda: configured_default_elevated(config),
+            cron_default_elevated=lambda: configured_cron_default_elevated(config),
         )
         system_handler = make_system_event_handler(
             delivery_chain=delivery_chain,
@@ -2379,6 +2408,7 @@ async def start_gateway_server(
             heartbeat_loop_ref=lambda: heartbeat_loop,
             workspace_resolver=_cron_workspace_resolver,
             default_elevated=lambda: configured_default_elevated(config),
+            cron_default_elevated=lambda: configured_cron_default_elevated(config),
         )
         static_handler = make_static_message_handler(delivery_chain=delivery_chain)
         script_handler = make_script_run_handler(delivery_chain=delivery_chain)
@@ -2474,6 +2504,7 @@ async def start_gateway_server(
             "host": config.host,
             "port": config.port,
             "log_level": "info" if not config.debug else "debug",
+            "access_log": config.debug,
         }
         if config.tls.keyfile and config.tls.certfile:
             uvicorn_kwargs["ssl_keyfile"] = config.tls.keyfile
