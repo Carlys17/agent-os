@@ -491,6 +491,12 @@ agentos cron add --every 10m --job-kind agent_turn --script watch_rss.py \
 # shell as the user. See docs/cli.md before suggesting it.
 agentos cron add --every 6h --agent main --elevated --name "LP check" --text "..."
 agentos cost                   # usage + estimated spend
+# cost support filtering and grouping:
+# agentos cost [--by-model] [--json] [--csv]
+# agentos cost --start-date YYYY-MM-DD --end-date YYYY-MM-DD
+# agentos cost --agent-id <agent-id> --channel-type <channel-type>
+# agentos cost --tool-name <tool-name> --skill <skill-name>
+# agentos cost --export /path/to/export.csv
 agentos diagnostics on         # runtime diagnostics logging
 agentos migrate hermes --source <dir> [--apply]   # dry-run first, then --apply
 ```

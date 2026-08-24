@@ -758,6 +758,29 @@ every call in every turn — and the command prices each `[tools] profile` again
 the current one so the trade is visible before you make it. A profile is fixed
 for the session, so narrowing it does not disturb the prompt cache.
 
+`agentos cost` aggregates and displays model usage and estimated cost reports from the gateway:
+
+```sh
+agentos cost [--by-model] [--json] [--csv]
+agentos cost --start-date YYYY-MM-DD --end-date YYYY-MM-DD
+agentos cost --agent-id <agent-id> --channel-type <channel-type>
+agentos cost --tool-name <tool-name> --skill <skill-name>
+agentos cost --export /path/to/export.csv
+```
+
+| Option | Purpose |
+| --- | --- |
+| `--by-model` | Group aggregate rows by model. |
+| `--json` | Emit machine-readable JSON. |
+| `--csv` | Emit machine-readable CSV. |
+| `--start-date` | Filter by start date (YYYY-MM-DD). |
+| `--end-date` | Filter by end date (YYYY-MM-DD). |
+| `--agent-id` | Filter by agent ID. |
+| `--channel-type` | Filter by channel type. |
+| `--tool-name` | Filter by tool name. |
+| `--skill` | Filter by skill name. |
+| `--export` | Path to export results (JSON/CSV). |
+
 Use diagnostics and replay when you need to understand why a turn behaved a
 certain way.
 

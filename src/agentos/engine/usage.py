@@ -8,8 +8,39 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+
+import structlog
+
+from agentos.session.keys import normalize_agent_id
 
 from .pricing import calculate_cost_usd, lookup_price
+
+log = structlog.get_logger(__name__)
+
+
+def parse_session_key_scope(session_key: str) -> tuple[str, str]:
+    """Parse (agent_id, channel) from session_key."""
+    key = str(session_key or "").strip()
+    if key.startswith("subagent:"):
+        key = key[9:]
+    if not key.startswith("agent:"):
+        return "main", "system"
+
+    parts = key.split(":")
+    if len(parts) < 3:
+        return "main", "system"
+
+    agent_id = normalize_agent_id(parts[1])
+    channel = parts[2]
+    # Normalize channel names: if it is main/webchat/direct/subagent/etc.
+    if channel in {"main", "direct", "subagent"}:
+        channel = "system"
+    elif channel == "webchat":
+        channel = "webchat"
+    return agent_id, channel
+
 
 _current_usage_scope: ContextVar[str | None] = ContextVar(
     "agentos_usage_scope",
@@ -137,9 +168,7 @@ class SessionUsage:
         if not self._per_model:
             return "agentos_estimate"
         billed_count = sum(
-            1
-            for m in self._per_model.values()
-            if float(getattr(m, "billed_cost", 0.0) or 0.0) > 0
+            1 for m in self._per_model.values() if float(getattr(m, "billed_cost", 0.0) or 0.0) > 0
         )
         if billed_count == 0:
             return "agentos_estimate"

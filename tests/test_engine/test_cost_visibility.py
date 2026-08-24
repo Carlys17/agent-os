@@ -155,3 +155,36 @@ async def test_rpc_handle_usage_cost(tmp_path: Path):
     assert "totalCostUsd" in res
     assert len(res["breakdown"]) == 1
     assert res["breakdown"][0]["agentId"] == "agent-1"
+
+
+@pytest.mark.asyncio
+async def test_rpc_handle_usage_cost_fallback_decline() -> None:
+    class MockSessionManager:
+        async def list_sessions(self):
+            return []
+
+    class MockRpcContext:
+        usage_tracker = None
+        session_manager = MockSessionManager()
+
+    ctx = MockRpcContext()
+
+    # Querying without any filter should work fine
+    res = await _handle_usage_cost({}, ctx)
+    assert res == {"breakdown": [], "totalCostUsd": 0.0}
+
+    # Querying with agent_id or sessionKey should work fine (even if returning empty)
+    res = await _handle_usage_cost({"agentId": "agent-1"}, ctx)
+    assert res == {"breakdown": [], "totalCostUsd": 0.0}
+
+    # Querying with toolName should raise ValueError on fallback path
+    with pytest.raises(ValueError, match="The cost ledger returned no records"):
+        await _handle_usage_cost({"toolName": "custom_tool"}, ctx)
+
+    # Querying with skill should raise ValueError on fallback path
+    with pytest.raises(ValueError, match="The cost ledger returned no records"):
+        await _handle_usage_cost({"skill": "some_skill"}, ctx)
+
+    # Querying with startDate should raise ValueError on fallback path
+    with pytest.raises(ValueError, match="The cost ledger returned no records"):
+        await _handle_usage_cost({"startDate": "2026-01-01"}, ctx)
