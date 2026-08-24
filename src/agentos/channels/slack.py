@@ -731,11 +731,13 @@ class SlackChannel:
         else:
             content_type = request.headers.get("content-type", "")
             if content_type.startswith("application/x-www-form-urlencoded"):
-                log.warning("slack.webhook_blocked_unsigned_form")
-                return Response(
-                    "Slack signing secret required for interactive and slash command payloads",
-                    status_code=401,
-                )
+                form = await request.form()
+                if "payload" in form:
+                    log.warning("slack.webhook_blocked_unsigned_form")
+                    return Response(
+                        "Slack signing secret required for interactive payloads",
+                        status_code=401,
+                    )
             log.warning("slack.webhook_no_signing_secret")
 
         content_type = request.headers.get("content-type", "")
