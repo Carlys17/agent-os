@@ -167,9 +167,7 @@ class MemorySyncManager:
             deletes = set(self._pending_deletes)
             self._pending_changes.clear()
             self._pending_deletes.clear()
-            failed_deletes = await self._do_file_sync(
-                changes=changes, deletes=deletes
-            )
+            failed_deletes = await self._do_file_sync(changes=changes, deletes=deletes)
         else:
             failed_deletes = await self._do_file_sync(force=force)
 
@@ -235,13 +233,24 @@ class MemorySyncManager:
                     result[rel] = path.stat().st_mtime
         kb_dir = self._workspace_dir / "knowledge_base"
         if kb_dir.is_dir():
+            from .ingest import MAX_DOCUMENT_SIZE_BYTES, SUPPORTED_EXTENSIONS
+
             for path in kb_dir.rglob("*"):
                 if path.is_file():
                     rel_to_kb = path.relative_to(kb_dir)
                     if any(part.startswith(".") for part in rel_to_kb.parts):
                         continue
-                    rel = path.relative_to(self._workspace_dir).as_posix()
-                    result[rel] = path.stat().st_mtime
+                    suffix = path.suffix.lower()
+                    if suffix not in SUPPORTED_EXTENSIONS and suffix != "":
+                        continue
+                    try:
+                        stat = path.stat()
+                        if stat.st_size > MAX_DOCUMENT_SIZE_BYTES:
+                            continue
+                        rel = path.relative_to(self._workspace_dir).as_posix()
+                        result[rel] = stat.st_mtime
+                    except OSError:
+                        continue
         return result
 
     async def _do_file_sync(
@@ -326,12 +335,17 @@ class MemorySyncManager:
         """
         if self._session_indexer is None:
             return False
-        should_sync = force or reason in {
-            "initial",
-            "manual",
-            "session-start",
-            "session-delta",
-        } or reason.startswith("search:")
+        should_sync = (
+            force
+            or reason
+            in {
+                "initial",
+                "manual",
+                "session-start",
+                "session-delta",
+            }
+            or reason.startswith("search:")
+        )
         if not should_sync:
             return False
         try:

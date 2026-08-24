@@ -45,6 +45,8 @@ SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
+MAX_DOCUMENT_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB limit for single document ingestion
+
 
 @dataclass(frozen=True)
 class IngestDocumentResult:
@@ -216,6 +218,16 @@ async def ingest_document(
                 mtime = p.stat().st_mtime
     elif isinstance(source, bytes):
         size_bytes = len(source)
+
+    if size_bytes > MAX_DOCUMENT_SIZE_BYTES:
+        return IngestDocumentResult(
+            path=rel_path,
+            title=doc_title,
+            size_bytes=size_bytes,
+            chunks_indexed=0,
+            status="error",
+            error=f"Document exceeds maximum size limit ({MAX_DOCUMENT_SIZE_BYTES} bytes)",
+        )
 
     try:
         content = extract_document_text(source, filename=rel_path)

@@ -169,5 +169,51 @@ async def test_rpc_memory_curated_and_knowledge_base(tmp_path: Path):
         assert kb_list_after.ok
         assert kb_list_after.payload["count"] == 0
 
+        # 11. Security boundaries: path traversal / outside ingestion rejected
+        outside_file = tmp_path / "outside.txt"
+        outside_file.write_text("Secret outside content", encoding="utf-8")
+        ingest_outside_abs = await dispatcher.dispatch(
+            "r12",
+            "memory.knowledge_base.ingest",
+            {"agentId": "main", "path": str(outside_file)},
+            ctx,
+        )
+        assert not ingest_outside_abs.ok
+        assert "traversal" in str(ingest_outside_abs.error).lower()
+
+        ingest_outside_rel = await dispatcher.dispatch(
+            "r13",
+            "memory.knowledge_base.ingest",
+            {"agentId": "main", "path": "../outside.txt"},
+            ctx,
+        )
+        assert not ingest_outside_rel.ok
+        assert "traversal" in str(ingest_outside_rel.error).lower()
+
+        # 12. Security boundaries: cannot remove files outside knowledge_base/**
+        assert (workspace / "MEMORY.md").is_file()
+        rm_memory_md = await dispatcher.dispatch(
+            "r14",
+            "memory.knowledge_base.remove",
+            {"agentId": "main", "path": "MEMORY.md"},
+            ctx,
+        )
+        assert not rm_memory_md.ok
+        assert (workspace / "MEMORY.md").is_file()
+
+        rm_traversal = await dispatcher.dispatch(
+            "r15",
+            "memory.knowledge_base.remove",
+            {"agentId": "main", "path": "knowledge_base/../MEMORY.md"},
+            ctx,
+        )
+        assert not rm_traversal.ok
+        assert (workspace / "MEMORY.md").is_file()
+
+        # 13. Public char_limit and char_count accessors on CuratedMemoryStore
+        curated_store = manager.curated_store()
+        assert curated_store.char_limit("memory") > 0
+        assert curated_store.char_count("memory") > 0
+
     finally:
         await store.close()

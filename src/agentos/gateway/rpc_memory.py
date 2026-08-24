@@ -255,11 +255,6 @@ def _result_to_wire(result: Any) -> dict[str, Any]:
     }
 
 
-
-
-
-
-
 def _memory_source_rows(
     root: Path,
     source_filter: MemorySource | None = None,
@@ -424,7 +419,7 @@ def _validate_memory_path(path: str) -> None:
     if (
         not _is_memory_source_path(path)
         and rel.parts != ("USER.md",)
-        and not (len(rel.parts) >= 2 and rel.parts[0] in ("knowledge_base", "docs", "sessions"))
+        and not (len(rel.parts) >= 2 and rel.parts[0] == "knowledge_base")
     ):
         raise ValueError(
             "params.path must be MEMORY.md, USER.md, memory/**/*.md, or knowledge_base/**/*"
@@ -643,9 +638,9 @@ async def _handle_memory_curated_get(params: dict | None, ctx: RpcContext) -> di
         raise ValueError("params.target must be 'memory' or 'user'")
     store = manager.curated_store()
     entries = store.entries_for(target)
-    limit = store._char_limit(target)
+    limit = store.char_limit(target)
     usage = store.usage_for(target)
-    char_count = store._char_count(target)
+    char_count = store.char_count(target)
     return {
         "agentId": agent_id,
         "target": target,
@@ -778,6 +773,8 @@ async def _handle_knowledge_base_ingest(params: dict | None, ctx: RpcContext) ->
         if not filename:
             filename = "document.txt"
         clean_name = Path(filename).name
+        if not clean_name or clean_name in (".", ".."):
+            clean_name = "document.txt"
         rel_path = f"knowledge_base/{clean_name}"
         doc_bytes: bytes
         if isinstance(content, str):
@@ -798,14 +795,31 @@ async def _handle_knowledge_base_ingest(params: dict | None, ctx: RpcContext) ->
     target_path = Path(raw_path)
     if not target_path.is_absolute():
         target_path = (workspace / target_path).resolve()
+    else:
+        target_path = target_path.resolve()
+
+    try:
+        rel_to_ws = target_path.relative_to(workspace)
+    except ValueError as exc:
+        raise ValueError("path traversal is not allowed") from exc
+
     if not target_path.exists():
         raise FileNotFoundError(f"Path does not exist: {raw_path}")
 
     if target_path.is_dir():
-        results = await ingest_directory(store, target_path, recursive=recursive)
+        rel_prefix = rel_to_ws.as_posix()
+        if not rel_prefix or rel_prefix == ".":
+            rel_prefix = "knowledge_base"
+        elif not rel_prefix.startswith("knowledge_base"):
+            rel_prefix = f"knowledge_base/{rel_prefix}"
+        results = await ingest_directory(
+            store, target_path, base_rel_prefix=rel_prefix, recursive=recursive
+        )
         return {"agentId": agent_id, "results": [r.as_dict() for r in results]}
     else:
-        rel_path = f"knowledge_base/{target_path.name}"
+        rel_path = rel_to_ws.as_posix()
+        if not rel_path.startswith("knowledge_base/") and rel_path != "knowledge_base":
+            rel_path = f"knowledge_base/{rel_path}"
         res = await ingest_document(store, target_path, rel_path=rel_path, title=target_path.name)
         return {"agentId": agent_id, "results": [res.as_dict()]}
 
@@ -829,12 +843,21 @@ async def _handle_knowledge_base_remove(params: dict | None, ctx: RpcContext) ->
         raise ValueError("params.path is required")
     agent_id, manager = _require_memory_manager(ctx, params.get("agentId"))
     workspace = _memory_root(manager).resolve()
+    kb_root = (workspace / "knowledge_base").resolve()
+
     rel = Path(raw_path)
     if rel.is_absolute() or any(part in {"", ".", ".."} for part in rel.parts):
         raise ValueError("path traversal is not allowed")
+    if len(rel.parts) < 2 or rel.parts[0] != "knowledge_base":
+        raise ValueError("params.path must be within knowledge_base/**")
+
+    target_file = (workspace / rel).resolve()
+    try:
+        target_file.relative_to(kb_root)
+    except ValueError as exc:
+        raise ValueError("path traversal is not allowed") from exc
 
     await manager.store.remove_file(raw_path)
-    target_file = (workspace / raw_path).resolve()
     if target_file.is_file():
         try:
             target_file.unlink()
@@ -842,8 +865,3 @@ async def _handle_knowledge_base_remove(params: dict | None, ctx: RpcContext) ->
             pass
 
     return {"agentId": agent_id, "path": raw_path, "removed": True}
-
-
-
-
-
