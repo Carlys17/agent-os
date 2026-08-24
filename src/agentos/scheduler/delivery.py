@@ -28,7 +28,9 @@ SCRIPT_HANDLER_KEY = "script_run"
 
 
 _WEBHOOK_TIMEOUT_SECONDS = 10.0
-_REPLY_DIRECTIVE_RE = re.compile(r"\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\]\s*")
+_REPLY_DIRECTIVE_RE = re.compile(
+    r"\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\]\s*"
+)
 
 
 def strip_reply_directives(text: str | None) -> str | None:
@@ -46,7 +48,9 @@ def validate_webhook_url(url: str) -> None:
     except ValueError as exc:
         raise ValueError(f"invalid webhook URL: {url!r}") from exc
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"webhook URL must use http or https scheme, got {parsed.scheme!r}")
+        raise ValueError(
+            f"webhook URL must use http or https scheme, got {parsed.scheme!r}"
+        )
     if not parsed.hostname:
         raise ValueError(f"webhook URL is missing a hostname: {url!r}")
 
@@ -284,21 +288,18 @@ class DeliveryChain:
             target is not None and target.kind == "channel"
         ):
             return "skipped"
-        channel_name = (
-            target.channel_name
-            if target is not None and target.kind == "channel" and target.channel_name
-            else job.delivery.channel_name
-        )
-        channel_id = (
-            target.to
-            if target is not None and target.kind == "channel" and target.to is not None
-            else job.delivery.channel_id
-        )
-        thread_id = (
-            target.thread_id
-            if target is not None and target.kind == "channel"
-            else job.delivery.thread_id
-        )
+
+        if target is not None and target.kind == "channel":
+            channel_name = target.channel_name or ""
+            channel_id = target.to or ""
+            thread_id = target.thread_id or ""
+            account_id = target.account_id or ""
+        else:
+            channel_name = job.delivery.channel_name or ""
+            channel_id = job.delivery.channel_id or ""
+            thread_id = job.delivery.thread_id or ""
+            account_id = job.delivery.account_id or ""
+
         if self._is_same_webchat_session_delivery(
             job,
             channel_name=channel_name or "",
@@ -323,11 +324,6 @@ class DeliveryChain:
             session_key=session_key,
         ):
             return await self._deliver_origin_webchat_to_session(job, text, session_key)
-        account_id = (
-            target.account_id
-            if target is not None and target.kind == "channel" and target.account_id
-            else job.delivery.account_id
-        )
         if not self._channel_manager_ref:
             return "skipped"
         return await self._post_to_channel(
@@ -447,7 +443,6 @@ class DeliveryChain:
             thread_id = resolved.thread_id
         else:
             adapter = cm.get(channel_name)
-
         if adapter is None:
             log.warning(
                 "delivery.adapter_not_found",
@@ -567,6 +562,7 @@ class DeliveryChain:
                 text=text,
                 channel_name=fd.channel_name,
                 channel_id=fd.channel_id,
+                account_id=fd.account_id or "",
                 thread_id=fd.thread_id,
             )
         return "skipped"
