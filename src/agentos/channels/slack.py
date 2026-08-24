@@ -731,8 +731,14 @@ class SlackChannel:
         else:
             content_type = request.headers.get("content-type", "")
             if content_type.startswith("application/x-www-form-urlencoded"):
-                form = await request.form()
-                if "payload" in form:
+                import urllib.parse
+
+                try:
+                    decoded_body = body.decode("utf-8")
+                except UnicodeDecodeError:
+                    decoded_body = ""
+                parsed = urllib.parse.parse_qs(decoded_body)
+                if "payload" in parsed:
                     log.warning("slack.webhook_blocked_unsigned_form")
                     return Response(
                         "Slack signing secret required for interactive payloads",
