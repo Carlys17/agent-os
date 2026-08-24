@@ -1919,11 +1919,8 @@ def build_turn_runner_from_services(
         memory_provider_managers=getattr(svc, "memory_provider_managers", None) or None,
         session_lock_provider=_standalone_lock_provider,
         diagnostics_state=diagnostics_state,
-        # Hook registries forwarded from services when present so any future
-        # user-registered TurnHook / CompactionHook / ToolHook instance flows through to
-        # TurnRunner without another boot edit.
-        # None today (no production services expose either registry); the
-        # plumbing stays here so the path is wired end-to-end.
+        # Hook registries forwarded from services when present so any user-registered
+        # TurnHook / CompactionHook / ToolHook instance flows through to TurnRunner.
         turn_hooks=getattr(svc, "turn_hooks", None),
         compaction_hooks=getattr(svc, "compaction_hooks", None),
         tool_hooks=getattr(svc, "tool_hooks", None),
@@ -1940,6 +1937,9 @@ async def start_gateway_server(
     channel_manager: Any = None,
     usage_tracker: Any = None,
     run: bool = True,
+    turn_hooks: Sequence[Any] | None = None,
+    compaction_hooks: Sequence[Any] | None = None,
+    tool_hooks: Sequence[Any] | None = None,
 ) -> GatewayServer:
     """
     Boot sequence:
@@ -2016,6 +2016,9 @@ async def start_gateway_server(
         tool_registry=tool_registry,
         usage_tracker=usage_tracker,
         session_db_path=str(_state_path(config, "sessions.db")),
+        turn_hooks=turn_hooks,
+        compaction_hooks=compaction_hooks,
+        tool_hooks=tool_hooks,
     )
 
     # Record boot time for uptime calculation (gateway-specific)

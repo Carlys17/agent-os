@@ -798,6 +798,7 @@ class _CompactionHandler:
         )
 
     async def _fire_before_compact(self, state: CompactionState) -> None:
+        # Imported inline to avoid import cycle
         from agentos.engine.hooks import fire_before_compact
 
         await fire_before_compact(self._compaction_hooks, state)
@@ -807,6 +808,7 @@ class _CompactionHandler:
         state: CompactionState,
         outcome: dict[str, Any],
     ) -> None:
+        # Imported inline to avoid import cycle
         from agentos.engine.hooks import fire_after_compact
 
         await fire_after_compact(self._compaction_hooks, state, outcome)
