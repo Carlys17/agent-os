@@ -81,7 +81,7 @@ export const skills = defineNamespace('skills', {
   aeonDesc:
     'On-chain investigation, token research, and trend-tracking skills maintained by the Aeon team.',
   aeonNotice:
-    'Aeon skills are written for Aeon\'s scheduled runtime; AgentOS adapts them on install. Some need an API key you supply yourself — each card lists what it wants.',
+    "Aeon skills are written for Aeon's scheduled runtime; AgentOS adapts them on install. Some need an API key you supply yourself — each card lists what it wants.",
   robinhoodTitle: 'Robinhood skills',
   robinhoodDesc:
     'Official bundled capabilities for Robinhood products and on-chain assets, maintained by AgentOS against the Robinhood Trading MCP.',

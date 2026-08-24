@@ -101,11 +101,7 @@ const TAB_ORDER: Tab[] = [
  */
 const hiddenRegistrySources: ReadonlySet<string> = new Set(
   (
-    [
-      SHOW_BANKR ? 'bankr' : '',
-      SHOW_CAPMINAL ? 'capminal' : '',
-      SHOW_AEON ? 'aeon' : '',
-    ] as const
+    [SHOW_BANKR ? 'bankr' : '', SHOW_CAPMINAL ? 'capminal' : '', SHOW_AEON ? 'aeon' : ''] as const
   ).filter(Boolean),
 )
 

@@ -416,9 +416,7 @@ describe('communityFilter', () => {
     item({ source: 'clawhub', name: 'c' }),
   ]
   it('drops bankr and capminal rows when their tabs are shown', () => {
-    expect(communityFilter(rows, new Set(['bankr', 'capminal'])).map((r) => r.name)).toEqual([
-      'c',
-    ])
+    expect(communityFilter(rows, new Set(['bankr', 'capminal'])).map((r) => r.name)).toEqual(['c'])
     expect(communityFilter(rows, new Set(['bankr'])).map((r) => r.name)).toEqual(['cap', 'c'])
     expect(communityFilter(rows, new Set(['capminal'])).map((r) => r.name)).toEqual(['b', 'c'])
   })
