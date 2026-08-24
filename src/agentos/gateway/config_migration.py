@@ -140,6 +140,19 @@ RETIRED_CHANNEL_TYPE_ALIASES: dict[str, str] = {
     "wecom": "wecom",
 }
 
+DEPRECATED_SANDBOX_FIELDS: frozenset[str] = frozenset(
+    {
+        # sandbox.network_default was a silent no-op: no code read it, and its
+        # only non-default value (proxy_allowlist) is unimplemented on both
+        # sandbox backends. Dropped so existing agentos.toml files carrying it
+        # keep loading instead of silently doing nothing.
+        "sandbox.network_default",
+    }
+)
+DEPRECATED_SANDBOX_LEAVES: frozenset[str] = frozenset(
+    k.removeprefix("sandbox.") for k in DEPRECATED_SANDBOX_FIELDS
+)
+
 DEPRECATED_AGENT_TOKEN_SAVING_FIELDS: frozenset[str] = frozenset(
     {
         "agent_token_saving.tool_result_compression_enabled",
@@ -533,6 +546,19 @@ def migrate_config_payload(data: dict[str, Any]) -> ConfigMigrationResult:
         if deprecated:
             builder.removed_fields.extend(sorted(deprecated))
             handle_deprecated_memory_fields(deprecated, "config_migration")
+
+    sandbox_section = builder.payload.get("sandbox")
+    if isinstance(sandbox_section, dict):
+        deprecated_sandbox: dict[str, object] = {}
+        for leaf in list(sandbox_section):
+            if leaf in DEPRECATED_SANDBOX_LEAVES:
+                deprecated_sandbox[f"sandbox.{leaf}"] = sandbox_section.pop(leaf)
+        if deprecated_sandbox:
+            builder.removed_fields.extend(sorted(deprecated_sandbox))
+            builder.warnings.append(
+                "sandbox.network_default was removed; no code read it and "
+                "proxy_allowlist is unimplemented on both sandbox backends"
+            )
 
     token_saving = builder.payload.get("agent_token_saving")
     if isinstance(token_saving, dict):
