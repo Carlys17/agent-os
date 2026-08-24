@@ -413,6 +413,15 @@ default and require an explicit group chat ID, a paired sender, and—by
 default—a bot mention. Any connected Control client may approve, deny, or
 disconnect a pairing.
 
+### Platform-Native Interactive Approvals
+
+Platform-native interactive tool approvals (such as Slack block actions, Telegram inline keyboard callbacks, and Discord message components) allow operators to approve or deny gated tool executions directly using interactive buttons in their messaging app.
+
+For security, interactive approvals are:
+- **Restricted to Direct Messages (DMs)**: Interactive approval prompts are only sent in channel DMs, not group/channel chats, ensuring they cannot be triggered or visible to unauthorized participants in a shared room.
+- **Access Gated**: Each button click/interaction verifies that the clicker's sender ID is paired and authorized under the channel's access policy. Clicking by an unpaired or unauthorized user is dropped and rejected.
+- **Session Bound**: Approval tokens are strictly bound to their originating chat session key. A click received from a different chat context or user session will mismatch and be ignored.
+
 Raw config:
 
 ```sh

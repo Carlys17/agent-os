@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from starlette.requests import Request
 
+from agentos.channel_pairing import ChannelAdmission
 from agentos.channels.discord import DiscordChannel, DiscordChannelConfig
 from agentos.channels.slack import SlackChannel
 from agentos.channels.telegram import TelegramChannel, TelegramChannelConfig
@@ -38,26 +39,31 @@ async def test_telegram_callback_query_parsing_and_resolution() -> None:
     channel._api = fake_api
 
     # Simulate callback query update for "approve"
-    update = {
-        "update_id": 100,
-        "callback_query": {
-            "id": "cb123",
-            "from": {"id": 12345, "username": "bob"},
-            "message": {
-                "message_id": 999,
-                "chat": {"id": 12345, "type": "private"},
-                "text": "Do you want to run this command?",
-            },
-            "data": f"approve:{approval_id}",
+    callback_query = {
+        "id": "cb123",
+        "from": {"id": 12345, "username": "bob"},
+        "message": {
+            "message_id": 999,
+            "chat": {"id": 12345, "type": "private"},
+            "text": "Do you want to run this command?",
         },
+        "data": f"approve:{approval_id}",
     }
 
-    inbound = channel.parse_incoming(update)
-    assert inbound.content == "Approve"
-    assert inbound.sender_id == "12345"
+    # Verify that an unpaired user gets rejected (admission check fails)
+    await channel._handle_telegram_callback(callback_query)
+    # Verify ApprovalQueue is NOT resolved
+    entry = queue.get(approval_id)
+    assert entry.resolved is False
+    assert len(calls) == 1
+    assert calls[0][0] == "answerCallbackQuery"
+    assert "Only paired users" in calls[0][1]["text"]
+    calls.clear()
 
-    # Wait for the background task _handle_telegram_callback to complete
-    await asyncio.sleep(0.1)
+    # Pair the user and verify they can resolve it
+    admission_mock = ChannelAdmission("telegram", "12345", "grant1", 1)
+    with patch.object(channel.pairing_store, "admission", return_value=admission_mock):
+        await channel._handle_telegram_callback(callback_query)
 
     # Verify ApprovalQueue is resolved
     entry = queue.get(approval_id)
@@ -72,6 +78,57 @@ async def test_telegram_callback_query_parsing_and_resolution() -> None:
     assert calls[1][1]["message_id"] == 999
     assert "Approved ✅" in calls[1][1]["text"]
     assert calls[1][1]["reply_markup"] is None
+
+    # Verify a virtual "Approve" message is enqueued
+    msg = await channel.receive()
+    assert msg.content == "Approve"
+    assert msg.sender_id == "12345"
+
+
+@pytest.mark.asyncio
+async def test_telegram_callback_query_session_mismatch() -> None:
+    queue = get_approval_queue()
+    # Approval is bound to a specific session key
+    approval_id = queue.request(
+        "exec",
+        {
+            "argv": ["rm", "-rf"],
+            "action_kind": "exec",
+            "sessionKey": "agent:main:telegram:direct:99999",
+        },
+    )
+
+    channel = TelegramChannel(TelegramChannelConfig(token="test-token"))
+    calls = []
+
+    async def fake_api(method: str, payload: dict | None = None) -> Any:
+        calls.append((method, payload or {}))
+        return True
+
+    channel._api = fake_api
+
+    callback_query = {
+        "id": "cb123",
+        "from": {"id": 12345, "username": "bob"},
+        "message": {
+            "message_id": 999,
+            "chat": {"id": 12345, "type": "private"},
+            "text": "Do you want to run this command?",
+        },
+        "data": f"approve:{approval_id}",
+    }
+
+    # Pair the user but click from a mismatched chat context (session key direct:99999 vs 12345)
+    admission_mock = ChannelAdmission("telegram", "12345", "grant1", 1)
+    with patch.object(channel.pairing_store, "admission", return_value=admission_mock):
+        await channel._handle_telegram_callback(callback_query)
+
+    # Verify ApprovalQueue is NOT resolved
+    entry = queue.get(approval_id)
+    assert entry.resolved is False
+    assert len(calls) == 1
+    assert calls[0][0] == "answerCallbackQuery"
+    assert "does not belong to this chat" in calls[0][1]["text"]
 
 
 @pytest.mark.asyncio
@@ -112,7 +169,6 @@ async def test_slack_interactive_payload_handling() -> None:
 
     post_calls = []
 
-    # Patch httpx.AsyncClient.post
     class FakeResponse:
         def raise_for_status(self):
             pass
@@ -120,6 +176,24 @@ async def test_slack_interactive_payload_handling() -> None:
     async def fake_post(url, json=None, **kwargs):
         post_calls.append((url, json))
         return FakeResponse()
+
+    # Reject if policy does not admit
+    from dataclasses import replace
+
+    channel.policy = replace(
+        channel.policy, allowlist=frozenset({"U99999"}), allowlist_enabled=True
+    )
+
+    with patch("httpx.AsyncClient.post", side_effect=fake_post):
+        await channel._handle_slack_interactive(payload)
+
+    # Verify ApprovalQueue is NOT resolved since clicker was rejected
+    entry = queue.get(approval_id)
+    assert entry.resolved is False
+    assert len(post_calls) == 0
+
+    # Admit by opening allowlist or disabling it
+    channel.policy = replace(channel.policy, allowlist=frozenset(), allowlist_enabled=False)
 
     with patch("httpx.AsyncClient.post", side_effect=fake_post):
         await channel._handle_slack_interactive(payload)
@@ -134,7 +208,6 @@ async def test_slack_interactive_payload_handling() -> None:
     assert post_calls[0][0] == "https://hooks.slack.com/actions/test"
     sent_json = post_calls[0][1]
     assert sent_json["replace_original"] is True
-    # Verify approval_actions block is removed and decision is appended
     assert len(sent_json["blocks"]) == 2
     assert sent_json["blocks"][1]["text"]["text"] == "*Approved ✅*"
 
@@ -142,6 +215,27 @@ async def test_slack_interactive_payload_handling() -> None:
     msg = await channel.receive()
     assert msg.content == "Approve"
     assert msg.sender_id == "U12345"
+
+
+@pytest.mark.asyncio
+async def test_slack_interactive_payload_unsigned_rejected() -> None:
+    channel = SlackChannel(token="xoxb-test", slack_channel_id="C12345", signing_secret=None)
+
+    # Mock fastapi request
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "headers": [(b"content-type", b"application/x-www-form-urlencoded")],
+    }
+    req = Request(scope)
+
+    async def mock_body():
+        return b"payload=%7B%22type%22%3A%22block_actions%22%7D"
+
+    req.body = mock_body
+
+    resp = await channel._handle_webhook(req)
+    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -181,6 +275,24 @@ async def test_discord_component_interaction_handling() -> None:
         },
     }
 
+    # Reject if policy does not admit
+    from dataclasses import replace
+
+    channel.policy = replace(
+        channel.policy, allowlist=frozenset({"usr999"}), allowlist_enabled=True
+    )
+
+    await channel._handle_discord_component_interaction(data)
+    entry = queue.get(approval_id)
+    assert entry.resolved is False
+    assert len(post_calls) == 1
+    assert "Only paired users" in post_calls[0][1]["data"]["content"]
+    post_calls.clear()
+
+    # Admit
+    channel.policy = replace(channel.policy, allowlist=frozenset(), allowlist_enabled=False)
+    channel._dedupe._seen.clear()
+
     await channel._handle_discord_component_interaction(data)
 
     # Verify ApprovalQueue is resolved
@@ -196,7 +308,7 @@ async def test_discord_component_interaction_handling() -> None:
     assert "Denied ❌" in payload["data"]["content"]
     assert payload["data"]["components"] == []
 
-    # Verify a virtual "Deny" message is enqueued
+    # Verify a virtual "Denied" message is enqueued
     msg = await channel.receive()
     assert msg.content == "Deny"
     assert msg.sender_id == "usr123"
