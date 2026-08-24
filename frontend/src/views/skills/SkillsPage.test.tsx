@@ -427,6 +427,7 @@ describe('SkillsPage', () => {
       'Installed',
       'Bankr',
       'Capminal',
+      'Aeon',
       'Robinhood',
       'Community',
     ])
