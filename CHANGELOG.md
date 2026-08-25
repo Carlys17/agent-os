@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `aero-stock-lp` joins the Bankr skill hub. The skill range-LPs Coinbase
+  tokenized equities (NVDA, AAPL, GOOGL, META) and AERO/USDC on Aerodrome
+  Slipstream (Base) — opening, recentering, and exiting concentrated-liquidity
+  positions, reporting pool status, NAV, yields, and P&L, and routing each
+  position to whichever side pays more at this epoch, staked for AERO emissions
+  or unstaked for trading fees. It is published as a directory in
+  `BankrBot/skills`, so it browses and installs through the existing repo half
+  of the Bankr source with no new code path.
+
+### Changed
+
+- The Bankr user-skill allowlist — the half that carries skills published from
+  a wallet on bankr.bot — is now empty. `stock-premium-lp-manager` was retired
+  from it in favour of `aero-stock-lp`, which covers the same tokenized-equity
+  LP workflow from the repository. Copies already installed keep working; the
+  slug is no longer offered for browse or install.
+
 ### Fixed
 
 - The Control UI bootstrap endpoint no longer leaks host details to any website

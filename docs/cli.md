@@ -571,9 +571,9 @@ allowlist and must never be rendered with a logo or read as a trust signal;
 `publisher` is the only field that answers "who vouches for this". It is empty
 only when it would repeat the resolved brand, so a partner skill is credited
 once rather than twice — a *different* credit survives. That is the
-`stock-premium-lp-manager` case: written from a wallet on bankr.bot but named in
-the wheel's user-skill allowlist, so it carries Bankr's `publisher` and
-`@igoryuzo` as its `author`.
+wallet-published case: a skill written from a wallet on bankr.bot but named in
+the wheel's user-skill allowlist carries Bankr's `publisher` and the author's
+handle (e.g. `@igoryuzo`) as its `author`.
 
 There is deliberately **no `availability` key** in CLI output. Whether the
 agent is currently being offered a skill depends on a chat session's tool
