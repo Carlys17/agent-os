@@ -237,6 +237,26 @@ def test_download_hint_rejects_a_url_the_executor_would_refuse() -> None:
     assert render_install_command(evil) == ""
 
 
+def test_download_hint_matches_executor_when_bins_is_absent() -> None:
+    # No bins declared: the executor falls back to the URL's last path segment,
+    # so the displayed command must name the same file. Using spec.id (a label)
+    # would render a command that writes the wrong filename on disk.
+    from agentos.skills.hub import deps
+
+    spec = SkillInstallSpec(
+        kind="download", id="mytool", url="https://example.com/releases/v1.2.3/mytool-binary"
+    )
+    hint = render_install_command(spec)
+    assert hint == (
+        "curl -fsSL -o ~/.local/bin/mytool-binary "
+        "https://example.com/releases/v1.2.3/mytool-binary && chmod +x ~/.local/bin/mytool-binary"
+    )
+    # The name the executor resolves must be exactly what the hint writes.
+    resolved = deps._resolve_download_dest(spec, spec.url)
+    assert resolved.name == "mytool-binary"
+    assert resolved.name in hint
+
+
 def test_apt_is_hint_only_for_the_agent_tool() -> None:
     assert _render_install_command(SPECS["apt"]) == "sudo apt-get install -y gh"
     with pytest.raises(ToolError, match="elevated privileges"):

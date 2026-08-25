@@ -153,7 +153,10 @@ def render_install_command(spec: SkillInstallSpec) -> str:
         url = spec.url
         if not url or not DOWNLOAD_URL_RE.match(url):
             return ""
-        bin_name = spec.bins[0] if spec.bins else spec.id
+        # Must agree with deps._resolve_download_dest: when bins is absent the
+        # executor falls back to the URL's last path segment, not the spec id
+        # (an id is a label, e.g. "mytool", and would name the binary wrong).
+        bin_name = spec.bins[0] if spec.bins else url.rsplit("/", 1)[-1]
         if not _BIN_NAME_RE.match(bin_name or ""):
             return ""
         dest = f"~/.local/bin/{bin_name}"
