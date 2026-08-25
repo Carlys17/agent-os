@@ -270,7 +270,14 @@ def test_successful_download_is_executable_and_atomic(
     asyncio.run(deps._fetch_to_file("https://example.test/bin", dest))
 
     assert dest.read_bytes() == b"#!/bin/sh\necho hi\n"
-    assert stat.S_IMODE(dest.stat().st_mode) & stat.S_IXUSR
+    mode = stat.S_IMODE(dest.stat().st_mode)
+    if os.name == "nt":
+        # Windows has no execute bit; chmod only drives the read-only flag, and
+        # what makes a file runnable there is PATHEXT. Assert the part that is
+        # real on this platform: the file is writable, not left read-only.
+        assert mode & stat.S_IWUSR
+    else:
+        assert mode & stat.S_IXUSR
     # no .part leftovers
     assert [p.name for p in (fake_home / ".local" / "bin").iterdir()] == ["bin"]
 
