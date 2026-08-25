@@ -150,7 +150,7 @@ async def test_search_empty_query_lists_all_bankr_skills(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_search_builds_provider_logo_and_identifier(monkeypatch) -> None:
+async def test_search_builds_provider_and_identifier_without_payload_logo(monkeypatch) -> None:
     import httpx
 
     monkeypatch.setattr(httpx, "AsyncClient", _AsyncClient)
@@ -160,13 +160,13 @@ async def test_search_builds_provider_logo_and_identifier(monkeypatch) -> None:
 
     alchemy = by_name["alchemy"]
     assert alchemy.provider == "Alchemy"
-    assert alchemy.logo == (
-        "https://raw.githubusercontent.com/BankrBot/skills/main/alchemy/alchemy.svg"
-    )
+    # A catalog-declared logo is ignored: partner-catalog cards wear the Bankr
+    # brand mark the tab wears, not whatever artwork the repository ships.
+    assert alchemy.logo == ""
     assert alchemy.identifier == "https://github.com/BankrBot/skills/tree/main/alchemy"
 
-    # Null logo in the catalog → empty logo, but the Bankr brand emoji fills in
-    # as the avatar so cards never render a bare initials box.
+    # Same for a null logo; the Bankr brand emoji fills in as the avatar so
+    # cards never render a bare initials box.
     assert by_name["bankr"].logo == ""
     assert by_name["bankr"].emoji == "📺"
     assert by_name["alchemy"].emoji == "📺"
