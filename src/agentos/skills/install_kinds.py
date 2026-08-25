@@ -64,8 +64,13 @@ _APT_PACKAGE_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.+-]*[a-z0-9])?$")
 #: A download URL never becomes an argv, but the hint that shows it must not
 #: be able to smuggle a second shell command past the operator.
 DOWNLOAD_URL_RE = re.compile(r"^https://[a-zA-Z0-9._/-]+$")
-# The binary a download lands as — it becomes an unquoted path in that hint.
-_BIN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+#: The binary a download lands as. It becomes an unquoted path in that hint and
+#: the last path segment the executor writes, so it is a bare name: no
+#: separator, no leading dot, no leading dash. Public because
+#: :mod:`agentos.skills.hub.deps` must apply the same rule the hint applies —
+#: the two disagreeing is what let an unvalidated name reach the filesystem.
+BIN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_BIN_NAME_RE = BIN_NAME_RE
 
 
 class InstallSpecError(ValueError):
