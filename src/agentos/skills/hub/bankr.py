@@ -475,12 +475,6 @@ class BankrSource(SkillSource):
             return None
 
         provider = str(catalog.get("provider") or "")
-        logo_name = catalog.get("logo")
-        logo = (
-            f"{self._raw_base}/{slug}/{logo_name}"
-            if isinstance(logo_name, str) and logo_name
-            else ""
-        )
 
         setup_raw = catalog.get("setup")
         setup = [str(s) for s in setup_raw] if isinstance(setup_raw, list) else []
@@ -499,7 +493,14 @@ class BankrSource(SkillSource):
             identifier=self._skill_url(slug),
             homepage=str(catalog.get("providerUrl") or self._skill_url(slug)),
             provider=provider,
-            logo=logo,
+            # The catalog's own ``logo`` is deliberately ignored. This is a
+            # curated partner catalog: every card in it is Bankr-distributed,
+            # so it wears the Bankr brand mark the tab and catalog header wear
+            # (``LogoBadge`` falls back to it on an empty logo). Honouring the
+            # payload's artwork made ``aero-stock-lp`` — the one entry that
+            # ships a ``logo.svg`` — the odd card out, and would let a
+            # repository-side edit repaint a partner card's identity.
+            logo="",
             emoji=emoji,
             category=infer_category(slug, provider),
             setup=setup,

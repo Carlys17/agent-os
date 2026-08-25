@@ -27,6 +27,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Bankr catalog cards all wear the Bankr brand mark again. `aero-stock-lp` is
+  the one entry in `BankrBot/skills` whose `catalog.json` ships a `logo`, so it
+  rendered that artwork while every other card in the partner tab showed the
+  Bankr symbol. The Bankr source now ignores the payload's logo entirely —
+  membership in the catalog is the brand, and a repository-side edit can no
+  longer repaint a partner card's identity.
+
 - The Control UI bootstrap endpoint no longer leaks host details to any website
   the operator visits. `{control_ui.base_path}/api/bootstrap` sat inside the
   prefix that is exempt from the loopback Origin guard, so with the default
