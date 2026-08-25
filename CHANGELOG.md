@@ -27,6 +27,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- `agentos chat`, `agentos sessions`, `agentos skills`, and `agentos env` now
+  send the resolved gateway token when they open their own WebSocket
+  connection, and honour `AGENTOS_GATEWAY_URL` consistently. `resolve_auth`
+  grants no loopback exemption in token mode, so setting `auth.mode = "token"`
+  previously broke all four commands even on a purely local install — the
+  token resolver existed (`default_gateway_token`) but these call sites never
+  used it. `chat` additionally ignored `AGENTOS_GATEWAY_URL` entirely and
+  always dialled the hardcoded `ws://localhost:18791/ws`.
+
 - Bankr catalog cards all wear the Bankr brand mark again. `aero-stock-lp` is
   the one entry in `BankrBot/skills` whose `catalog.json` ships a `logo`, so it
   rendered that artwork while every other card in the partner tab showed the
