@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The Control UI bootstrap endpoint no longer leaks host details to any website
+  the operator visits. `{control_ui.base_path}/api/bootstrap` sat inside the
+  prefix that is exempt from the loopback Origin guard, so with the default
+  `cors.allowed_origins = ["*"]` any page could `fetch()` it cross-origin and
+  read the absolute config file path (which reveals the OS username) along with
+  the configured `auth_mode`. The bootstrap payload no longer carries
+  `config_path` at all — the console reads it from the authenticated
+  `doctor.status` RPC instead — and the Origin guard's Control UI exemption now
+  stops at `{base_path}/api/`, so the shell and its fingerprinted assets stay
+  exempt while every JSON route under the prefix is fenced on the loopback
+  binds the guard covers. `AuthMiddleware` gets the same narrowing, with a
+  single carve-out for `/api/bootstrap` itself, which the console must read
+  before it holds a token. Fixes #351.
+
 ## [2026.8.24] - 2026-08-24
 
 ### Added
