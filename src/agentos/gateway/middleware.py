@@ -28,6 +28,21 @@ _PUBLIC_PATHS = frozenset({"/health", "/healthz", "/ready", "/readyz"})
 # that overlaps this must NOT be trusted as an exemption prefix.
 _API_PREFIX = "/api"
 
+# The one JSON route under the Control UI prefix that must answer before the
+# console holds a token: the SPA fetches it to learn its WS URL and auth mode.
+# Everything else under ``{base_path}/api/`` is Control surface and is treated
+# like the root ``/api/*`` routes.
+_UI_BOOTSTRAP_SUFFIX = f"{_API_PREFIX}/bootstrap"
+
+
+def _is_under(prefix: str, path: str) -> bool:
+    """True for the prefix itself or anything below it — never a bare-prefix match.
+
+    ``/control`` and ``/control/chat`` match ``/control``; ``/controlpanel``
+    does not, so a sibling route can never be swallowed by the exemption.
+    """
+    return path == prefix or path.startswith(prefix + "/")
+
 
 def _safe_ui_exempt_prefix(base_path: str) -> str | None:
     """Return the Control UI prefix safe to exempt from the Origin guard, or None.
@@ -124,6 +139,15 @@ class LoopbackOriginMiddleware(BaseHTTPMiddleware):
     and the Control UI shell is a served page (guarded by CSP /
     ``SecurityHeadersMiddleware``), not an RPC sink. Only the ``/api/*`` and
     RPC surface — the drive-by target — is gated.
+
+    The UI prefix exemption stops at ``{base_path}/api/`` (``_is_ui_path``
+    below): the shell and its fingerprinted assets are top-level navigations
+    and subresource loads, but the JSON routes mounted under the UI prefix
+    (``/control/api/bootstrap``) are fetch-only and therefore exactly the
+    drive-by target this guard exists for — with ``cors.allowed_origins``
+    defaulting to ``["*"]``, any page the operator visits could read the
+    response. Un-exempting the whole ``/api/`` subtree rather than that one
+    path keeps future JSON routes gated by default (#351).
     """
 
     def __init__(self, app: ASGIApp, config: GatewayConfig, bind_is_loopback: bool) -> None:
@@ -140,9 +164,12 @@ class LoopbackOriginMiddleware(BaseHTTPMiddleware):
     def _is_ui_path(self, path: str) -> bool:
         if self._ui_prefix is None:
             return False
-        # Exact shell ("/control") or anything under it ("/control/..."),
-        # never a bare-prefix match that would swallow sibling routes.
-        return path == self._ui_prefix or path.startswith(self._ui_prefix + "/")
+        if not _is_under(self._ui_prefix, path):
+            return False
+        # ...except the JSON surface mounted under the prefix: a cross-origin
+        # page cannot read the shell it navigates to, but it *can* read
+        # fetch("/control/api/bootstrap"). Those stay gated.
+        return not _is_under(self._ui_prefix + _API_PREFIX, path)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         path = request.url.path
@@ -184,9 +211,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self._ui_prefix = _safe_ui_exempt_prefix(base_path)
 
     def _is_ui_path(self, path: str) -> bool:
+        """True for the served Control UI surface that carries no credentials.
+
+        The shell and its assets are exempt. The JSON surface under
+        ``{base_path}/api/`` is not — it is Control surface and gets the same
+        token gate as the root ``/api/*`` routes — with one carve-out for
+        ``/api/bootstrap``, which the console must read before it has a token.
+        """
         if self._ui_prefix is None:
             return False
-        return path == self._ui_prefix or path.startswith(self._ui_prefix + "/")
+        if not _is_under(self._ui_prefix, path):
+            return False
+        if path == self._ui_prefix + _UI_BOOTSTRAP_SUFFIX:
+            return True
+        return not _is_under(self._ui_prefix + _API_PREFIX, path)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip auth for public endpoints and WebSocket upgrades (WS handles own auth)
@@ -249,7 +287,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def _is_ui_path(self, path: str) -> bool:
         if self._ui_prefix is None:
             return False
-        return path == self._ui_prefix or path.startswith(self._ui_prefix + "/")
+        return _is_under(self._ui_prefix, path)
 
     def _is_trusted_proxy(self, peer_ip: str | None) -> bool:
         if not peer_ip:
