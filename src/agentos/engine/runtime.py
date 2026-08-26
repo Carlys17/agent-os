@@ -3682,7 +3682,7 @@ class TurnRunner:
             return [], None
         from agentos.tools.dispatch import build_tool_handler
         from agentos.tools.policy import apply_tool_policy_from_config
-        from agentos.tools.registry import filter_by_profile, resolve_profile
+        from agentos.tools.registry import resolve_profile
 
         loaded_skills: list[Any] = []
         if self._skill_loader is not None:
@@ -3722,8 +3722,6 @@ class TurnRunner:
         )
         tool_defs = self._tool_registry.to_tool_definitions(ctx)
         profile = resolve_profile(ctx)
-        tool_defs = filter_by_profile(tool_defs, profile, ctx)
-        # layered intentionally — policy first, profile second.
         log.debug(
             "tool_policy.profile_post",
             allowed_tool_count=len(tool_defs),

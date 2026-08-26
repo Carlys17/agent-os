@@ -20,7 +20,6 @@ _NAMES = [
     "git",
     "media",
     "messaging",
-    "nodes",
     "patch",
     "plan",
     "router_control",
