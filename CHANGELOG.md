@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Spend budgets. A new `[budgets]` config section sets money ceilings per
+  session, per UTC day, per agent, and per channel. A turn that starts at or
+  above a hard limit is refused before any provider call with a
+  `budget_exceeded` error naming the scope and the number; a matching
+  `*_warn` threshold raises a one-shot `budget_warning` without stopping the
+  turn. Ceilings are re-checked between iterations within a turn as well, so a
+  single turn with a long tool loop cannot run past one. Spend is persisted to
+  `~/.agentos/state/spend_ledger.db`, so a ceiling survives a gateway restart —
+  a runaway overnight loop cannot be reset by a crash-and-respawn. Nothing is
+  enforced until an operator sets a number.
+
 - `aero-stock-lp` joins the Bankr skill hub. The skill range-LPs Coinbase
   tokenized equities (NVDA, AAPL, GOOGL, META) and AERO/USDC on Aerodrome
   Slipstream (Base) — opening, recentering, and exiting concentrated-liquidity
@@ -43,6 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `BUNDLED_TOOLS` resolves to a module under `agentos.tools.builtin`.
 
 ### Changed
+
+- `UsageTracker.check_warning()` is removed. It had no callers; the
+  `[budgets]` session ceilings replace it with a configurable, enforced
+  equivalent.
 
 - The Bankr user-skill allowlist — the half that carries skills published from
   a wallet on bankr.bot — is now empty. `stock-premium-lp-manager` was retired

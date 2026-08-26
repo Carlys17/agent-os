@@ -2491,6 +2491,49 @@ class TurnRunner:
                 "attachment_count": len(attachments),
             },
         )
+
+        # ── Spend budget gate ────────────────────────────────────────────
+        # Checked before any provider work so a runaway loop or fan-out stops
+        # costing money at the ceiling rather than one turn past it. Subagent
+        # turns run through this same path, so a fan-out is bounded too.
+        budget_stop, budget_message = self._check_spend_budget(session_key)
+        if budget_stop:
+            # The refusal hinges on the decision, never on the presentation
+            # string: a tracker that reports a stop without a message must
+            # still stop the turn.
+            budget_error = ErrorEvent(
+                message=budget_message or "A configured spend budget limit has been reached.",
+                code="budget_exceeded",
+            )
+            log.warning(
+                "turn_runner.budget_exceeded",
+                session_key=session_key,
+                agent_id=agent_id,
+                message=budget_error.message,
+            )
+            self._emit_turn_event(
+                "turn_error",
+                trace_context,
+                session_key=session_key,
+                agent_id=agent_id,
+                turn_id=turn_id,
+                run_kind=run_kind,
+                input_mode=input_mode,
+                seq=2,
+                payload={
+                    "error_type": "BudgetExceeded",
+                    "error_code": budget_error.code,
+                    "error_chars": len(budget_error.message),
+                },
+            )
+            await self._persist_turn_error(session_key, budget_error)
+            yield budget_error
+            return
+        if budget_message:
+            yield self._handle_runtime_warning(
+                WarningEvent(code="budget_warning", message=budget_message)
+            )
+
         try:
             input_out = await self._input_stage.run(
                 InputStageInput(
@@ -3188,6 +3231,33 @@ class TurnRunner:
             return None, None
         cloned = self._provider_selector.clone()
         return cloned.resolve(), cloned
+
+    def _check_spend_budget(self, session_key: str) -> tuple[bool, str | None]:
+        """Evaluate configured ``[budgets]`` ceilings for this session.
+
+        Returns ``(hard_stop, message)``. A budget check must never be the
+        reason a turn fails, so any unexpected error fails open with a log
+        line rather than blocking work the operator did not ask to block.
+        """
+        tracker = self._usage_tracker
+        if tracker is None:
+            return False, None
+        budgets = getattr(self._config, "budgets", None) if self._config else None
+        if budgets is None:
+            return False, None
+        check = getattr(tracker, "check_budget_limits", None)
+        if not callable(check):
+            return False, None
+        try:
+            hard_stop, message = check(session_key, budgets)
+        except Exception as exc:  # noqa: BLE001 - budget checks must fail open
+            log.warning(
+                "turn_runner.budget_check_failed",
+                session_key=session_key,
+                error=str(exc),
+            )
+            return False, None
+        return bool(hard_stop), message
 
     def _handle_runtime_warning(self, event: WarningEvent) -> WarningEvent:
         return event

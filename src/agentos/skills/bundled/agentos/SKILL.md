@@ -215,6 +215,7 @@ Main `agentos.toml` sections (full commented reference:
 | `[prompt]` | prompt-layer flags: `platform_hint_enabled`, `env_probe_enabled` (local-toolchain block, names only) |
 | `[prompt_cache]` | Prompt-cache continuity: `mode` = `auto` (default) \| `on` \| `off`. Env override: `AGENTOS_CACHE_MODE` (legacy `prompt_cache.enabled` / `AGENTOS_CACHE_ENABLED` deprecated) |
 | `[safety]` | Prompt-ingress safety: `wrap_untrusted_workspace` (default true), `injection_scan_mode` (`report` default, `enforce` redacts matched workspace-file content, `off`) |
+| `[budgets]` | money spend ceilings (USD): `session_limit`/`session_warn`, `daily_limit`/`daily_warn` (per UTC day, persisted across restarts), and per-key `[budgets.agent_daily_limit]` / `[budgets.channel_daily_limit]` (plus `*_warn`). A turn at or above a hard limit is refused with `budget_exceeded`; a warn threshold raises a one-shot `budget_warning`. Nothing is enforced until a ceiling is set |
 | `[compaction]`, `[agent_token_saving]`, `[task_runtime]` | context compaction, tool-result projection, concurrency |
 
 Slack native commands auto-sync when a Slack channel entry provides `app_id`,
