@@ -20,6 +20,19 @@ def test_parse_cron_accepts_named_dow_and_month() -> None:
     assert parse_cron("30 8 1 jan *").raw == "30 8 1 jan *"
 
 
+def test_parse_cron_names_are_case_insensitive() -> None:
+    # POSIX: month and day-of-week names are case-insensitive. The parser used
+    # to substitute only all-lowercase and all-uppercase spellings, so the
+    # common "Mon-Fri" business-hours schedule was rejected outright.
+    assert parse_cron("0 9 * * Mon-Fri").day_of_week.values == frozenset({1, 2, 3, 4, 5})
+    assert parse_cron("0 9 * * MON-FRI").day_of_week.values == frozenset({1, 2, 3, 4, 5})
+    assert parse_cron("0 0 * * Mon,Wed,Fri").day_of_week.values == frozenset({1, 3, 5})
+    assert parse_cron("0 9 * Jan *").month.values == frozenset({1})
+    assert parse_cron("0 9 * JAN *").month.values == frozenset({1})
+    assert parse_cron("0 0 * Jan-Mar *").month.values == frozenset({1, 2, 3})
+    assert parse_cron("0 0 * JAN-MAR/2 *").month.values == frozenset({1, 3})
+
+
 def test_parse_cron_accepts_preset_alias() -> None:
     assert parse_cron("@hourly").raw == "0 * * * *"
 

@@ -99,11 +99,14 @@ def _parse_field(token: str, field_name: str, names: dict[str, int] | None = Non
     for part in token.split(","):
         part = part.strip()
         if names:
-            # resolve names in ranges and steps too
+            # POSIX: month and day-of-week names are case-insensitive ("case
+            # doesn't matter"). Lowercase the token before substituting so
+            # Mon-Fri / JAN / jan all resolve; digits and the -, /, * ,
+            # separators are unaffected by lower().
+            part = part.lower()
             sub_parts = part.replace("/", "§").replace("-", "¶")
             for name, val in names.items():
-                sub_parts = sub_parts.replace(name.lower(), str(val))
-                sub_parts = sub_parts.replace(name.upper(), str(val))
+                sub_parts = sub_parts.replace(name, str(val))
             part = sub_parts.replace("§", "/").replace("¶", "-")
 
         if "/" in part:
