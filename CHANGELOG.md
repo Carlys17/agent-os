@@ -17,6 +17,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `BankrBot/skills`, so it browses and installs through the existing repo half
   of the Bankr source with no new code path.
 
+### Removed
+
+- Three subsystems that shipped in the wheel while being dead or
+  permanently-failing are gone (#362). The `onboard_agent` wizard — the
+  `wizard.start` / `wizard.next` / `wizard.cancel` / `wizard.status` RPC
+  methods plus their state machine — had no caller in the frontend or the CLI
+  and no side effect: its terminal step returned the collected answers and
+  never created an agent, while its hardcoded model list had gone two
+  generations stale. The Agents view already creates agents through
+  `agents.create`. The `canvas` and `nodes` built-in tools validated their
+  `action` argument and then raised `ToolError` unconditionally; no node
+  runtime exists anywhere in the tree to configure, and only
+  `exposed_by_default=False` kept them from failing in front of a model.
+  `tools/visibility.py` no longer exports `filter_by_profile` (returned its
+  input) or `profile_allows_tool` (returned `True`), nor does the dispatch
+  chain run the `ProfilePolicy` that only called them — profile enforcement
+  now has one home in `tools/policy_config.py`. `ToolProfile` and
+  `resolve_profile` stay; they are the live seam.
+
+- The `agentos dist` install inventory no longer advertises built-in tools that
+  are not in the wheel. `bundled_tools` listed `nodes` (deleted above) and
+  `agent` (no such module for some time), so an inventory diff across releases
+  showed capability that was not there. A new parity test asserts every name in
+  `BUNDLED_TOOLS` resolves to a module under `agentos.tools.builtin`.
+
 ### Changed
 
 - The Bankr user-skill allowlist — the half that carries skills published from
