@@ -121,6 +121,11 @@ def _parse_field(token: str, field_name: str, names: dict[str, int] | None = Non
                 start_str, end_str = range_part.split("-", 1)
                 start = _to_int(start_str, field_name, lo, hi)
                 end = _to_int(end_str, field_name, lo, hi)
+                # Same rule the plain-range branch applies. Without it a
+                # reversed range silently yields an empty step sequence, so the
+                # expression parses, stores, and then matches no instant at all.
+                if start > end:
+                    raise CronParseError(f"Range start > end in field '{field_name}'")
             else:
                 start = _to_int(range_part, field_name, lo, hi)
                 end = hi
