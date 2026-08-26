@@ -8,7 +8,7 @@ import logging
 import os
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -268,6 +268,9 @@ class ServiceContainer:
     heartbeat_loop: Any = None
     heartbeat_watcher: Any = None
     _compaction_listener_remove: Callable[[], None] | None = None
+    turn_hooks: Sequence[Any] | None = None
+    compaction_hooks: Sequence[Any] | None = None
+    tool_hooks: Sequence[Any] | None = None
 
     # Backward-compat alias — returns the "main" store (or None).
     @property
@@ -1379,6 +1382,9 @@ async def build_services(
     session_db_path: str = ":memory:",
     extra_agent_ids: list[str] | None = None,
     seed_agent_workspaces: bool = True,
+    turn_hooks: Sequence[Any] | None = None,
+    compaction_hooks: Sequence[Any] | None = None,
+    tool_hooks: Sequence[Any] | None = None,
 ) -> ServiceContainer:
     """Initialize reusable services without any gateway-specific side effects.
 
@@ -1872,6 +1878,9 @@ async def build_services(
         memory_retrievers=memory_retrievers,
         turn_capture_services=turn_capture_services,
         memory_provider_managers=memory_provider_managers,
+        turn_hooks=turn_hooks,
+        compaction_hooks=compaction_hooks,
+        tool_hooks=tool_hooks,
     )
     # Attach deferred callback ref so start_gateway_server can wire TurnRunner
     svc._turn_runner_ref = _turn_runner_ref  # type: ignore[attr-defined]
@@ -1918,13 +1927,11 @@ def build_turn_runner_from_services(
         memory_provider_managers=getattr(svc, "memory_provider_managers", None) or None,
         session_lock_provider=_standalone_lock_provider,
         diagnostics_state=diagnostics_state,
-        # Hook registries forwarded from services when present so any future
-        # user-registered TurnHook / CompactionHook instance flows through to
-        # TurnRunner without another boot edit.
-        # None today (no production services expose either registry); the
-        # plumbing stays here so the path is wired end-to-end.
+        # Hook registries forwarded from services when present so any user-registered
+        # TurnHook / CompactionHook / ToolHook instance flows through to TurnRunner.
         turn_hooks=getattr(svc, "turn_hooks", None),
         compaction_hooks=getattr(svc, "compaction_hooks", None),
+        tool_hooks=getattr(svc, "tool_hooks", None),
     )
 
 
@@ -1938,6 +1945,9 @@ async def start_gateway_server(
     channel_manager: Any = None,
     usage_tracker: Any = None,
     run: bool = True,
+    turn_hooks: Sequence[Any] | None = None,
+    compaction_hooks: Sequence[Any] | None = None,
+    tool_hooks: Sequence[Any] | None = None,
 ) -> GatewayServer:
     """
     Boot sequence:
@@ -2014,6 +2024,9 @@ async def start_gateway_server(
         tool_registry=tool_registry,
         usage_tracker=usage_tracker,
         session_db_path=str(_state_path(config, "sessions.db")),
+        turn_hooks=turn_hooks,
+        compaction_hooks=compaction_hooks,
+        tool_hooks=tool_hooks,
     )
 
     # Record boot time for uptime calculation (gateway-specific)
