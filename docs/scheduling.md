@@ -202,9 +202,11 @@ Per tick:
 
 Same directory rule, same argv handling, and the same operator gate as a script
 job. The script's stdout is untrusted input arriving inside a prompt — the
-header says so to the model, and a cron turn's read-only tool surface is the
-real containment. Think twice before combining a pre-run script that reads the
-open internet with `--elevated`.
+header says so to the model, but the turn still runs elevated by default
+(`cron_default_mode="bypass"`), so that output can drive real shell-based skill
+calls with no approval prompt. Pass `--no-elevated` to drop a job back to a
+read-only tool surface, and prefer that whenever a pre-run script reads the
+open internet.
 
 ## Choose the Session Target
 
