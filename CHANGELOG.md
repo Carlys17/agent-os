@@ -89,6 +89,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Security
 
+- Installing a skill from ClawHub no longer unpacks the downloaded zip
+  unbounded. `ClawHubSource.fetch` read every entry into memory with no cap on
+  entry count or uncompressed size, so a few tens of KB of nested deflate — a
+  classic zip bomb — could exhaust the gateway's memory and take the process
+  down. The download is now streamed against a size ceiling — httpx gunzips a
+  `Content-Encoding` body with no limit of its own, so a buffered read could
+  have been filled before any zip cap got a say — and the archive is refused
+  past an entry count, a per-entry size, and a total uncompressed size. Each
+  entry is decompressed in chunks against a running total, so an archive that
+  understates `ZipInfo.file_size` is caught mid-read rather than trusted. A
+  hostile archive also fails closed rather than raising through the installer:
+  an entry flagged encrypted, an unsupported compression method, or a truncated
+  deflate stream reaches the caller as "no bundle", not as an exception that
+  aborts a whole lockfile sync. Entry paths are also checked against
+  Windows-style escapes (`..\`, `C:\`), which
+  `posixpath.normpath` leaves intact; previously only the installer's resolve
+  check caught those. Closes #357.
+
 - `read_file`, `read_spreadsheet` and `grep_search` now mask credentials in the
   content they hand back to the model, and so do the two channels that quote
   file content alongside them: `edit_file`'s closest-match hint, and terminal
