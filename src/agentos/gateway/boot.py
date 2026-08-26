@@ -611,6 +611,10 @@ async def dispatch_task_runtime_turn(
             "provider_request_budget_exhausted",
             "provider_request_too_large",
             "current_turn_context_exhausted",
+            # A budget-refused turn never reached the model, so the user
+            # message persisted ahead of the run would otherwise linger as a
+            # reply-less turn and feed back into later context.
+            "budget_exceeded",
         }:
             message_id = getattr(run, "persisted_user_message_id", None)
             remove_message = getattr(session_manager, "remove_message", None)
@@ -1794,8 +1798,27 @@ async def build_services(
         log.warning("build_services.cron_scheduler_failed", error=str(e))
 
     # ── Usage tracker ───────────────────────────────────────────────
+    # The spend ledger that budget ceilings read lives in its own state file,
+    # not in the session DB: it is written synchronously from the turn hot
+    # path, and sharing a file with the session store's async writer would put
+    # every ledger commit behind that write lock on the event loop. An
+    # in-memory session DB (CLI standalone / tests) means no durable state
+    # directory is in play, so the tracker stays in-memory too.
     if usage_tracker is None:
-        usage_tracker = _UsageTracker(default_provider_id=config.llm.provider)
+        ledger_db_path: str | None = None
+        if session_db_path != ":memory:":
+            ledger_db = _state_path(config, "spend_ledger.db")
+            try:
+                ledger_db.parent.mkdir(parents=True, exist_ok=True)
+                ledger_db_path = str(ledger_db)
+            except OSError as e:
+                # A ledger we cannot create must not stop the gateway; budgets
+                # fall back to in-process accounting for this run.
+                log.warning("build_services.spend_ledger_unavailable", error=str(e))
+        usage_tracker = _UsageTracker(
+            default_provider_id=config.llm.provider,
+            ledger_db_path=ledger_db_path,
+        )
 
     # ── Auxiliary LLM client (needs the tracker above to bill side tasks) ──
     try:
