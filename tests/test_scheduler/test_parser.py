@@ -39,6 +39,32 @@ def test_parse_cron_rejects_garbage() -> None:
         parse_cron("not-a-cron")
 
 
+def test_parse_cron_accepts_dow_7_as_sunday() -> None:
+    # POSIX permits either 0 or 7 to mean Sunday in the day-of-week field.
+    expr = parse_cron("0 0 * * 7")
+    assert expr.day_of_week.values == frozenset({0})
+
+
+def test_parse_cron_dow_ranges_may_end_at_7() -> None:
+    # With Sunday spellable as 7, a "WED-SUN" style range is valid and must
+    # resolve to the same weekday set as its 0-terminated equivalent.
+    expr = parse_cron("0 0 * * WED-7")
+    assert expr.day_of_week.values == frozenset({0, 3, 4, 5, 6})
+
+
+def test_parse_cron_dow_7_dedups_with_0_and_names() -> None:
+    assert parse_cron("0 0 * * 0,7").day_of_week.values == frozenset({0})
+    assert parse_cron("0 0 * * MON,7").day_of_week.values == frozenset({0, 1})
+
+
+def test_parse_cron_dow_7_matches_sunday_not_monday() -> None:
+    expr = parse_cron("0 0 * * 7")
+    sunday = datetime(2026, 8, 30, 0, 0)  # a Sunday
+    monday = datetime(2026, 8, 31, 0, 0)  # the next Monday
+    assert expr.matches(sunday)
+    assert not expr.matches(monday)
+
+
 def test_parse_cron_rejects_unknown_preset() -> None:
     with pytest.raises(CronParseError, match="Unknown preset"):
         parse_cron("@bogus")
