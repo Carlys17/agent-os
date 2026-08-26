@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.27] - 2026-08-27
+
 ### Added
 
 - Spend budgets. A new `[budgets]` config section sets money ceilings per
