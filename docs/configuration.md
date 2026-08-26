@@ -901,8 +901,11 @@ their `*_limit` counterparts.
 - Subagent turns run through the same gate, and their spend is attributed to
   the parent agent id, so a fan-out is bounded by the agent and daily
   ceilings rather than multiplying past them.
-- Budgets are hot-applied: changing them through `agentos config` takes effect
-  on the next turn without a gateway restart.
+- Changing a ceiling requires a gateway restart to take effect. `budgets.*` is
+  not on the live-reload allowlist, so both `agentos config` and the Web UI
+  report `restart_required` when you change one. Restart before relying on a
+  new ceiling — a limit written while the gateway is running is not yet
+  enforcing.
 - Enforcement fails open. If the ledger cannot be read or written, the
   shortfall is logged (`usage_tracker.ledger_*`) and turns keep running: a
   budget check is never the reason a gateway stops working. Reads reconcile

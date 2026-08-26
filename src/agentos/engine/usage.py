@@ -467,17 +467,6 @@ class UsageTracker:
             with conn:
                 conn.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS spend_ledger (
-                        day TEXT,
-                        scope_kind TEXT,
-                        scope_id TEXT,
-                        cost_usd REAL NOT NULL DEFAULT 0.0,
-                        PRIMARY KEY (day, scope_kind, scope_id)
-                    )
-                    """
-                )
-                conn.execute(
-                    """
                     CREATE TABLE IF NOT EXISTS usage_records (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         session_key TEXT NOT NULL,
