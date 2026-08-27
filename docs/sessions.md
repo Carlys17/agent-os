@@ -161,9 +161,11 @@ The Web UI uses the same session system. In the control console, use the chat
 session selector to switch sessions, inspect status, and continue recent work.
 On the Sessions page, click a row's name to rename it inline — Enter saves,
 Escape cancels, and an empty value clears the custom name. In Chat, the header
-`⋯` menu has **Rename session** with the same keys, the chip shows the name once
-set (the key stays in its tooltip and in **Copy session key**), and the session
-switcher lists and searches by name as well as by key.
+`⋯` menu has **Rename session** with the same keys and **Move to project** (an
+in-place picker — choose a project, or **No project** to detach the current
+session), the chip shows the name once set (the key stays in its tooltip and
+in **Copy session key**), and the session switcher lists and searches by name
+as well as by key.
 
 Open:
 

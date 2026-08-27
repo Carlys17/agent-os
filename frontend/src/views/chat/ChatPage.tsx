@@ -348,6 +348,25 @@ export function ChatPage() {
     [rpc, sessionKey, sessionName],
   )
 
+  const onMoveSessionToProject = useCallback(
+    (projectId: string | null) => {
+      const previous = sessionProjectId
+      // Optimistic, mirroring onRenameSession: the badge is the confirmation.
+      setSessionProjectId(projectId ?? '')
+      void (async () => {
+        try {
+          await rpc.call('sessions.patch', { key: sessionKey, projectId })
+          toast.success(projectId ? t('chat.sessionMoved') : t('chat.sessionMoveDetached'))
+        } catch (err) {
+          setSessionProjectId(previous)
+          const message = err instanceof Error ? err.message : String(err)
+          toast.error(t('chat.sessionMoveFailed', { message }))
+        }
+      })()
+    },
+    [rpc, sessionKey, sessionProjectId],
+  )
+
   // The per-send session intent (chat.js:335 `_pendingSessionIntent`) — rides on
   // the next send (e.g. 'new_chat'), and is carried through the pending queue
   // (chat.js:8523/8547/8612). A ref: it is not rendered, only read at send time.
@@ -727,6 +746,8 @@ export function ChatPage() {
             onExport={onExportMarkdown}
             onRename={onRenameSession}
             projectsById={projectsById}
+            projectId={sessionProjectId}
+            onMoveToProject={onMoveSessionToProject}
           />
           {sessionProjectName ? (
             <span
