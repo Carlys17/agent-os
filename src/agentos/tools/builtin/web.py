@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 import httpx
 
@@ -53,8 +53,17 @@ def _sensitive_body_marker(body: str | None) -> str | None:
 
 def _sensitive_url_marker(url: str) -> str | None:
     parsed = urlparse(url)
+    # URL userinfo is a legitimate credential carrier (RFC 3986), and the
+    # HTTP client underneath converts it into an ``Authorization: Basic``
+    # header on the wire — so a credential placed there egresses to whatever
+    # host the URL names without ever appearing in the path or query. Check
+    # both components percent-decoded: the client decodes userinfo before
+    # sending, so ``sk%2Dant-…`` reaches the wire as ``sk-ant-…``.
+    for part in (parsed.username, parsed.password):
+        if part and secret_literal_marker(unquote(part)) is not None:
+            return "sensitive_url_userinfo"
     for segment in parsed.path.split("/"):
-        if secret_literal_marker(segment) is not None:
+        if secret_literal_marker(unquote(segment)) is not None:
             return "sensitive_url_path"
     if not parsed.query:
         return None
