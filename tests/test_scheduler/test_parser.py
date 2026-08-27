@@ -70,6 +70,20 @@ def test_parse_cron_rejects_unknown_preset() -> None:
         parse_cron("@bogus")
 
 
+def test_parse_cron_rejects_reversed_range_with_step() -> None:
+    # A reversed range in the step branch used to parse into an *empty* field
+    # set, so the expression validated, stored, and then matched nothing —
+    # _next_run would burn through its whole scan window and raise
+    # "No valid next run found" at job creation. Reject it up front like the
+    # plain-range branch already does.
+    with pytest.raises(CronParseError, match="Range start > end"):
+        parse_cron("5-3/2 * * * *")
+    with pytest.raises(CronParseError, match="Range start > end"):
+        parse_cron("0 0 * * FRI-TUE/2")
+    with pytest.raises(CronParseError, match="Range start > end"):
+        parse_cron("0 0 * dec-feb/2 *")
+
+
 # --- parse_iso_at --------------------------------------------------------
 
 
