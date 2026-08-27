@@ -18,6 +18,7 @@ import '@/i18n/en/projects'
 import type { AgentEntry, RawSession } from '@/views/sessions/logic'
 import { relTimeLabel, sessionName } from '@/views/sessions/logic'
 import {
+  groupProjectSessionsByAgent,
   knowledgeExcerpt,
   projectAgentId,
   projectId as projectIdOf,
@@ -110,6 +111,7 @@ function CreateProjectDialog({
                 </option>
               ))}
             </select>
+            <small className="proj-field__hint">{t('projects.agentHint')}</small>
           </label>
           <label className="proj-field">
             <span className="t-label">{t('projects.knowledgeLabel')}</span>
@@ -501,27 +503,38 @@ export function ProjectsPage() {
                   {selectedSessions.length === 0 ? (
                     <p className="proj-dim">{t('projects.detailNoSessions')}</p>
                   ) : (
-                    <ul className="proj-sessions__items">
-                      {selectedSessions.map((s) => {
-                        const key = s.key ?? ''
-                        return (
-                          <li key={key} className="proj-session-row">
-                            <button
-                              type="button"
-                              className="proj-session-row__key t-data"
-                              title={t('projects.openChat')}
-                              onClick={() => navigate('/chat?session=' + encodeURIComponent(key))}
-                            >
-                              <MessageSquareIcon aria-hidden="true" />
-                              <span>{sessionName(s) || key}</span>
-                            </button>
-                            <span className="proj-dim t-data">
-                              {s.updated_at != null ? relTimeLabel(s.updated_at) : ''}
-                            </span>
-                          </li>
-                        )
-                      })}
-                    </ul>
+                    // Projects are cross-agent — render the Project → Agents →
+                    // Sessions tree, one bucket per agent.
+                    groupProjectSessionsByAgent(selectedSessions).map((group) => (
+                      <div className="proj-agent-group" key={group.agentId}>
+                        <h4 className="proj-agent-group__label t-label">
+                          {t('projects.agentGroupLabel', { id: group.agentId })}
+                        </h4>
+                        <ul className="proj-sessions__items">
+                          {group.items.map((s) => {
+                            const key = s.key ?? ''
+                            return (
+                              <li key={key} className="proj-session-row">
+                                <button
+                                  type="button"
+                                  className="proj-session-row__key t-data"
+                                  title={t('projects.openChat')}
+                                  onClick={() =>
+                                    navigate('/chat?session=' + encodeURIComponent(key))
+                                  }
+                                >
+                                  <MessageSquareIcon aria-hidden="true" />
+                                  <span>{sessionName(s) || key}</span>
+                                </button>
+                                <span className="proj-dim t-data">
+                                  {s.updated_at != null ? relTimeLabel(s.updated_at) : ''}
+                                </span>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </div>
+                    ))
                   )}
                 </div>
 

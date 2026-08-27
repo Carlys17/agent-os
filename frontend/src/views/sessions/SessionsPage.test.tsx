@@ -538,20 +538,25 @@ describe('SessionsPage', () => {
       })
     })
 
-    it('moves a session into a project via sessions.patch', async () => {
+    it('moves a session into a project via sessions.patch (cross-agent allowed)', async () => {
       wireRpc({ projects: PROJECTS, sessions: SESSIONS_WITH_PROJECT })
       renderPage()
       await screen.findByText('agent:main:chat:aaa')
+      // Projects are cross-agent: the "bot" row can join proj-1 (agent "main").
       fireEvent.click(
         await screen.findByRole('button', {
           name: 'Move session agent:bot:chat:bbb to a project',
         }),
       )
-      // proj-1 belongs to agent "main", the row's agent is "bot" — only the
-      // detach option remains, so nothing is movable; cancel instead.
       const dialog = await screen.findByRole('dialog')
-      expect(within(dialog).queryByText('Research')).not.toBeInTheDocument()
-      fireEvent.click(within(dialog).getByRole('button', { name: /cancel/i }))
+      fireEvent.click(within(dialog).getByRole('radio', { name: 'Research' }))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Move' }))
+      await waitFor(() =>
+        expect(mockRpc.call).toHaveBeenCalledWith('sessions.patch', {
+          key: 'agent:bot:chat:bbb',
+          projectId: 'proj-1',
+        }),
+      )
 
       // The "main" row can move out of its project (detach).
       fireEvent.click(

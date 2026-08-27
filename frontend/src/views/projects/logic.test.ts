@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   filterProjects,
   filterSessionsByProject,
+  groupProjectSessionsByAgent,
   knowledgeExcerpt,
   projectId,
   projectName,
@@ -72,6 +73,21 @@ describe('sessionsInProject / filterSessionsByProject', () => {
     expect(filterSessionsByProject(sessions, 'all')).toHaveLength(4)
     expect(filterSessionsByProject(sessions, 'none').map((s) => s.key)).toEqual(['k4'])
     expect(filterSessionsByProject(sessions, 'p2').map((s) => s.key)).toEqual(['k3'])
+  })
+})
+
+describe('groupProjectSessionsByAgent', () => {
+  it('buckets by agent alphabetically, each bucket newest first', () => {
+    const sessions = [
+      { key: 'k1', agent_id: 'zeta', updated_at: 100 },
+      { key: 'k2', agentId: 'alpha', updated_at: 100 },
+      { key: 'k3', agent_id: 'alpha', updated_at: 300 },
+      { key: 'k4', updated_at: 50 },
+    ]
+    const groups = groupProjectSessionsByAgent(sessions)
+    expect(groups.map((g) => g.agentId)).toEqual(['alpha', 'main', 'zeta'])
+    expect(groups[0]!.items.map((s) => s.key)).toEqual(['k3', 'k2'])
+    expect(groups[1]!.items.map((s) => s.key)).toEqual(['k4'])
   })
 })
 

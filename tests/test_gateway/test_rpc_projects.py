@@ -169,7 +169,8 @@ class TestSessionsProjectIntegration:
         assert node.project_id is None
 
     @pytest.mark.asyncio
-    async def test_sessions_patch_rejects_cross_agent_move(self, dispatcher, ctx, manager):
+    async def test_sessions_patch_moves_across_agents(self, dispatcher, ctx, manager):
+        # Projects are cross-agent: any agent's session may join any project.
         other = await manager.create_project("other", "OtherProj")
         await manager.create("agent:main:webchat:11110004", agent_id="main")
         res = await dispatcher.dispatch(
@@ -178,7 +179,9 @@ class TestSessionsProjectIntegration:
             {"key": "agent:main:webchat:11110004", "projectId": other["project_id"]},
             ctx,
         )
-        assert res.ok is False
+        assert res.ok is True
+        node = await manager.get_session("agent:main:webchat:11110004")
+        assert node.project_id == other["project_id"]
 
     @pytest.mark.asyncio
     async def test_sessions_list_filters_and_exposes_project_id(self, dispatcher, ctx, manager):

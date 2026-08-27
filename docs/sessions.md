@@ -136,12 +136,14 @@ agentos projects update <project-id> --knowledge "Revised shared context"
 agentos projects delete <project-id>               # sessions survive, detached
 ```
 
-A **project** groups the sessions of one agent and carries a shared
-**knowledge** text. Every session in the project gets that knowledge injected
-into its system prompt as a `Project Knowledge` block on every turn — edit the
-knowledge and the next turn of every member session sees the new version. A
-session joins a project of its own agent only; moving one across agents is
-rejected.
+A **project** groups chat sessions and carries a shared **knowledge** text.
+Projects sit above agents: sessions of any agent can join the same project,
+and the project page lists its sessions grouped per agent. Every session in
+the project gets the knowledge injected into its system prompt as a
+`Project Knowledge` block on every turn — edit the knowledge and the next
+turn of every member session sees the new version. A project's `agent` field
+is only the **default agent** that "New chat in project" starts sessions
+with, not a membership boundary.
 
 - Create a session directly inside a project from the Web UI Projects page
   ("New chat in project"), or move existing sessions in and out at any time.

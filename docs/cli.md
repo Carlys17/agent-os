@@ -619,14 +619,15 @@ agentos projects move <session-key> <project-id>   # 'none' detaches
 agentos projects delete <project-id>               # sessions survive, detached
 ```
 
-A project groups the chat sessions of one agent and carries a free-form
+A project groups chat sessions across agents and carries a free-form
 **knowledge** text (capped at 32,000 characters). Every session in the project
 gets that knowledge injected into its system prompt as a `Project Knowledge`
-block — edit it and the next turn of every member session picks it up. New
-sessions can start inside a project (`agentos chat` sessions join via
-`projects move`, the Web UI has a "New chat in project" button), and deleting
-a project never deletes sessions: they just detach and stop receiving the
-knowledge. Agents can manage projects from prompting through the
+block — edit it and the next turn of every member session picks it up.
+Sessions of any agent can join the same project (the `--agent` on `create`
+only sets the default agent for new chats in the project). New sessions can
+start inside a project (`agentos chat` sessions join via `projects move`, the
+Web UI has a "New chat in project" button), and deleting a project never
+deletes sessions: they just detach and stop receiving the knowledge. Agents can manage projects from prompting through the
 `projects_create` / `projects_list` / `projects_update` /
 `projects_move_session` tools, and `session_search scope=project` searches
 only sibling sessions of the calling session's project.

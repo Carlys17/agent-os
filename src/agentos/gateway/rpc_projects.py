@@ -1,9 +1,11 @@
-"""Project CRUD RPC — per-agent grouping of chat sessions.
+"""Project CRUD RPC — cross-agent grouping of chat sessions.
 
 Projects carry free-form ``knowledge`` text injected into the system prompt
-of every member session (see ``TurnRunner._assemble_prompt``). Sessions join
-or leave a project via ``sessions.patch`` (``projectId``); the methods here
-manage the projects themselves. Control-plane only.
+of every member session; sessions of any agent may join any project, and the
+project's ``agentId`` only names the default agent for "new chat in
+project". Sessions join or leave a project via ``sessions.patch``
+(``projectId``); the methods here manage the projects themselves.
+Control-plane only.
 """
 
 from __future__ import annotations

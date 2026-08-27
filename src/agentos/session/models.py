@@ -188,10 +188,13 @@ class SessionNode(SQLModel, table=True):
 
 
 class ProjectNode(SQLModel, table=True):
-    """Persisted project grouping chat sessions of a single agent.
+    """Persisted project grouping chat sessions (cross-agent).
 
-    ``knowledge`` is free-form text injected into the system prompt of every
-    session belonging to the project (see ``TurnRunner._assemble_prompt``).
+    Sessions of any agent may join a project. ``agent_id`` is not a
+    membership boundary — it records the default agent that "new chat in
+    project" starts sessions with. ``knowledge`` is free-form text injected
+    into the system prompt of every member session (see
+    ``TurnRunner._augment_extra_context_with_project_knowledge``).
     """
 
     __tablename__ = "projects"

@@ -27,7 +27,8 @@ export const projects = defineNamespace('projects', {
   createTitle: 'Create project',
   nameLabel: 'Name',
   namePlaceholder: 'e.g. Token launch research',
-  agentLabel: 'Agent',
+  agentLabel: 'Default agent',
+  agentHint: 'New chats in this project start with this agent. Sessions of any agent can join.',
   knowledgeLabel: 'Project knowledge',
   knowledgePlaceholder:
     'Instructions and facts shared with every session in this project (optional)…',
@@ -37,6 +38,7 @@ export const projects = defineNamespace('projects', {
 
   // Detail panel.
   detailSessionsTitle: 'Sessions in this project',
+  agentGroupLabel: 'Agent · {id}',
   detailNoSessions: 'No sessions yet — start one below or move sessions in from the Sessions page.',
   newChatInProject: 'New chat in project',
   openChat: 'Open chat',

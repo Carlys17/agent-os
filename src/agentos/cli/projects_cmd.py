@@ -75,8 +75,10 @@ def projects_list(
 
 @app.command("create")
 def projects_create(
-    name: str = typer.Argument(..., help="Project name (unique per agent)"),
-    agent: str = typer.Option("main", "--agent", help="Owning agent id"),
+    name: str = typer.Argument(..., help="Project name (unique across projects)"),
+    agent: str = typer.Option(
+        "main", "--agent", help="Default agent for new chats in the project"
+    ),
     knowledge: str | None = typer.Option(
         None, "--knowledge", help="Shared knowledge text injected into member sessions"
     ),

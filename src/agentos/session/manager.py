@@ -251,7 +251,7 @@ class SessionManager:
         if existing is not None:
             raise ValueError(f"Session already exists: {session_key}")
         if kwargs.get("project_id"):
-            await self._validate_project_membership(str(kwargs["project_id"]), agent_id)
+            await self._require_project(str(kwargs["project_id"]))
 
         now = _now_ms()
         node = SessionNode(
@@ -641,18 +641,15 @@ class SessionManager:
                 f"Project knowledge exceeds {self.PROJECT_KNOWLEDGE_MAX_CHARS} characters"
             )
 
-    async def _validate_project_membership(
-        self, project_id: str, agent_id: str
-    ) -> ProjectNode:
-        """Ensure the project exists and belongs to ``agent_id``."""
+    async def _require_project(self, project_id: str) -> ProjectNode:
+        """Return the project or raise KeyError.
+
+        Projects are cross-agent: sessions of any agent may join any project,
+        so existence is the only membership requirement.
+        """
         project = await self._storage.get_project(project_id)
         if project is None:
             raise KeyError(f"Project not found: {project_id}")
-        if project.agent_id != normalize_agent_id(agent_id):
-            raise ValueError(
-                "Cannot attach a session to a project of a different agent "
-                f"(project agent: {project.agent_id}, session agent: {agent_id})"
-            )
         return project
 
     async def create_project(
@@ -661,13 +658,17 @@ class SessionManager:
         name: str,
         knowledge: str = "",
     ) -> dict[str, Any]:
-        """Create a project for ``agent_id``. Names are unique per agent."""
+        """Create a project. Names are unique across all projects.
+
+        ``agent_id`` is not a membership boundary — it records the default
+        agent that "new chat in project" starts sessions with.
+        """
         agent_id = normalize_agent_id(agent_id)
         self._validate_project_fields(name, knowledge)
         name = name.strip()
-        existing = await self._storage.list_projects(agent_id=agent_id)
+        existing = await self._storage.list_projects()
         if any(p.name.casefold() == name.casefold() for p in existing):
-            raise ValueError(f"Project name already exists for agent {agent_id}: {name}")
+            raise ValueError(f"Project name already exists: {name}")
         project = ProjectNode(agent_id=agent_id, name=name, knowledge=knowledge)
         await self._storage.upsert_project(project)
         return project.model_dump(mode="json")
@@ -704,14 +705,12 @@ class SessionManager:
         self._validate_project_fields(name, knowledge)
         if name is not None:
             stripped = name.strip()
-            siblings = await self._storage.list_projects(agent_id=project.agent_id)
+            siblings = await self._storage.list_projects()
             if any(
                 p.project_id != project_id and p.name.casefold() == stripped.casefold()
                 for p in siblings
             ):
-                raise ValueError(
-                    f"Project name already exists for agent {project.agent_id}: {stripped}"
-                )
+                raise ValueError(f"Project name already exists: {stripped}")
             project.name = stripped
         if knowledge is not None:
             project.knowledge = knowledge
@@ -739,15 +738,16 @@ class SessionManager:
     ) -> SessionNode:
         """Attach a session to a project (or detach with ``project_id=None``).
 
-        Single validation choke point for RPC, builtin tools, and CLI:
-        the project must exist and belong to the session's agent.
+        Single validation choke point for RPC, builtin tools, and CLI: the
+        project must exist. Projects are cross-agent, so sessions of any
+        agent may join any project.
         """
         session_key = canonicalize_session_key(session_key)
         node = await self._storage.get_session(session_key)
         if node is None:
             raise KeyError(f"Session not found: {session_key}")
         if project_id is not None:
-            await self._validate_project_membership(project_id, node.agent_id)
+            await self._require_project(project_id)
         return await self.update(session_key, project_id=project_id)
 
     async def get_project_knowledge_for_session(self, session_key: str) -> str | None:

@@ -79,6 +79,29 @@ export function sessionsInProject(sessions: RawSession[], id: string): RawSessio
     .sort((a, b) => (Number(b.updated_at ?? 0) || 0) - (Number(a.updated_at ?? 0) || 0))
 }
 
+/** Group a project's sessions by their agent id (alphabetical), each bucket
+ *  newest first. Projects are cross-agent, so the detail panel renders the
+ *  Project → Agents → Sessions tree from this. */
+export function groupProjectSessionsByAgent(
+  sessions: RawSession[],
+): Array<{ agentId: string; items: RawSession[] }> {
+  const buckets = new Map<string, RawSession[]>()
+  for (const s of sessions) {
+    const agentId = String(s.agent_id || s.agentId || '') || 'main'
+    const bucket = buckets.get(agentId)
+    if (bucket) bucket.push(s)
+    else buckets.set(agentId, [s])
+  }
+  return [...buckets.entries()]
+    .map(([agentId, items]) => ({
+      agentId,
+      items: [...items].sort(
+        (a, b) => (Number(b.updated_at ?? 0) || 0) - (Number(a.updated_at ?? 0) || 0),
+      ),
+    }))
+    .sort((a, b) => a.agentId.localeCompare(b.agentId))
+}
+
 /** Filter sessions by project: 'all' passes everything, 'none' passes
  *  project-less rows, any other value matches that project id. */
 export function filterSessionsByProject(

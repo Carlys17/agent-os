@@ -41,6 +41,9 @@ async def test_create_project_rejects_duplicate_name_case_insensitive(manager):
     await manager.create_project("main", "Research")
     with pytest.raises(ValueError, match="already exists"):
         await manager.create_project("main", "research")
+    # Names are unique globally, not per agent.
+    with pytest.raises(ValueError, match="already exists"):
+        await manager.create_project("other", "RESEARCH")
 
 
 @pytest.mark.asyncio
@@ -76,13 +79,16 @@ async def test_move_session_between_projects_and_detach(manager):
 
 
 @pytest.mark.asyncio
-async def test_move_session_rejects_cross_agent_project(manager):
+async def test_move_session_across_agents_is_allowed(manager):
+    # Projects are cross-agent: a session of any agent may join any project.
     project = await manager.create_project("other", "OtherProj")
     await manager.create("agent:main:webchat:aaaa0004", agent_id="main")
-    with pytest.raises(ValueError, match="different agent"):
-        await manager.move_session_to_project(
-            "agent:main:webchat:aaaa0004", project["project_id"]
-        )
+    node = await manager.move_session_to_project(
+        "agent:main:webchat:aaaa0004", project["project_id"]
+    )
+    assert node.project_id == project["project_id"]
+    rows = await manager.list_projects()
+    assert [(row["name"], row["session_count"]) for row in rows] == [("OtherProj", 1)]
 
 
 @pytest.mark.asyncio

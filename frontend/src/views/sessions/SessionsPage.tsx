@@ -1162,13 +1162,8 @@ export function SessionsPage() {
 
         {dialog.kind === 'move' ? (
           <MoveToProjectDialog
-            projects={projects.filter((p) => {
-              // A session can only join a project of its own agent.
-              const row = allSessions.find((s) => (s.key ?? '') === dialog.key)
-              const rowAgent = row?.agent_id || row?.agentId || agentIdFromKey(dialog.key) || 'main'
-              const projectAgent = String(p.agent_id || p.agentId || '')
-              return !projectAgent || projectAgent === rowAgent
-            })}
+            // Projects are cross-agent: any session may join any project.
+            projects={projects}
             current={(() => {
               const row = allSessions.find((s) => (s.key ?? '') === dialog.key)
               return row ? sessionProjectId(row) : ''

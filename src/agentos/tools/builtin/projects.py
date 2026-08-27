@@ -1,6 +1,6 @@
 """Project tools: create, list, update knowledge, move sessions.
 
-Projects group chat sessions of one agent; each project's ``knowledge``
+Projects group chat sessions across agents; each project's ``knowledge``
 text is injected into the system prompt of every member session. These
 tools let the agent manage projects from prompting — the same operations
 the ``projects.*`` RPC surface exposes to the Web UI and CLI.
@@ -67,7 +67,7 @@ def _current_session_key() -> str | None:
     params={
         "name": {
             "type": "string",
-            "description": "Project name (unique per agent).",
+            "description": "Project name (unique across projects).",
         },
         "knowledge": {
             "type": "string",
@@ -75,7 +75,10 @@ def _current_session_key() -> str | None:
         },
         "agent_id": {
             "type": "string",
-            "description": "Owning agent ID (defaults to the calling agent).",
+            "description": (
+                "Default agent for new chats in the project "
+                "(defaults to the calling agent); not a membership boundary."
+            ),
         },
     },
     required=["name"],

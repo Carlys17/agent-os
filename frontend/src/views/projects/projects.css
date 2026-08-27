@@ -253,6 +253,16 @@
   gap: 0.75rem;
 }
 
+.proj-agent-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.proj-agent-group__label {
+  color: var(--muted-foreground);
+}
+
 .proj-sessions__items {
   display: flex;
   flex-direction: column;

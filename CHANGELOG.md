@@ -8,9 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Projects. Chat sessions can now be grouped into per-agent projects, each
-  carrying a free-form **knowledge** text that is injected into the system
-  prompt of every member session (as an untrusted-wrapped `Project Knowledge`
+- Projects. Chat sessions can now be grouped into projects — cross-agent, so
+  sessions of any agent can join the same project (a project's agent field is
+  only the default for "new chat in project") — each carrying a free-form
+  **knowledge** text that is injected into the system prompt of every member
+  session (as an untrusted-wrapped `Project Knowledge`
   block, re-read each turn so edits land on the next turn). Surfaces: a new
   Projects page in the Web UI (create/rename/edit knowledge/delete, "New chat
   in project", session list per project), project badge + filter + "Move to
