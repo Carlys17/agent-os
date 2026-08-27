@@ -59,46 +59,43 @@ _SHELL_SEPARATORS = (";", "&&", "||", "|", "&")
 
 
 def _extract_rm_targets(command: str) -> list[str]:
-    """Pull every non-flag argument out of an ``rm`` invocation.
+    """Pull every non-flag argument out of every ``rm`` invocation.
 
-    Handles ``rm a b c``, ``rm -rf /a /b``, quoted paths, and stops at shell
-    separators. Does not try to be a full shell parser — falls back to
-    whitespace split on shlex errors (unbalanced quotes).
+    Handles ``rm a b c``, ``rm -rf /a /b``, quoted paths, and cuts at shell
+    separators. ``re.finditer`` (not ``re.search``) is required: a compound
+    command such as ``rm A; rm -rf B`` must surface *both* targets, otherwise
+    an approval for ``A`` would let ``rm A; rm -rf B`` slip ``B`` past the
+    cache with no prompt (the original single-``search`` implementation only
+    parsed the first ``rm``).
     """
-    match = re.search(r"\brm\b([^\n]*)", command)
-    if not match:
-        return []
-    tail = match.group(1)
-
-    # Cut at the first shell separator so ``rm foo; ls bar`` doesn't pick ``ls``/``bar``.
-    cut = len(tail)
-    for sep in _SHELL_SEPARATORS:
-        idx = tail.find(sep)
-        if idx != -1 and idx < cut:
-            cut = idx
-    tail = tail[:cut].strip()
-    if not tail:
-        return []
-
-    token_sets: list[list[str]] = []
-    try:
-        token_sets.append(shlex.split(tail))
-    except ValueError:
-        token_sets.append(tail.split())
-    if "\\" in tail and (os.name == "nt" or re.search(r"(?:^|\s)\\[^\s]", tail)):
-        try:
-            token_sets.append(shlex.split(tail, posix=False))
-        except ValueError:
-            token_sets.append(tail.split())
-
     targets: list[str] = []
     seen: set[str] = set()
-    for tokens in token_sets:
-        for token in tokens:
-            if not token or token.startswith("-") or token in seen:
-                continue
-            seen.add(token)
-            targets.append(token)
+    # Stop at the first shell separator so each ``rm`` invocation is parsed on
+    # its own. A bare ``[^\n]*`` would swallow the rest of the line into the
+    # first match and hide subsequent ``rm``s (an ``rm A; rm -rf B`` would only
+    # ever yield A).
+    for match in re.finditer(r"\brm\b([^;\n&|]*)", command):
+        tail = match.group(1).strip()
+        if not tail:
+            continue
+
+        token_sets: list[list[str]] = []
+        try:
+            token_sets.append(shlex.split(tail))
+        except ValueError:
+            token_sets.append(tail.split())
+        if "\\" in tail and (os.name == "nt" or re.search(r"(?:^|\s)\\\\[^\\s]", tail)):
+            try:
+                token_sets.append(shlex.split(tail, posix=False))
+            except ValueError:
+                token_sets.append(tail.split())
+
+        for tokens in token_sets:
+            for token in tokens:
+                if not token or token.startswith("-") or token in seen:
+                    continue
+                seen.add(token)
+                targets.append(token)
     return targets
 
 
