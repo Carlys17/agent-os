@@ -36,6 +36,17 @@ def _validate_http_url(url: str) -> None:
 
 _TEXT_BODY_LIMIT = 10_000
 _BINARY_BODY_LIMIT = 1_000_000
+# Hard ceiling on the number of response bytes http_request will buffer into
+# memory, independent of the display cap (_BINARY_BODY_LIMIT / _TEXT_BODY_LIMIT).
+# Those caps only truncate what the model sees; without a download cap, a single
+# unbounded response body (chunked encoding with no content-length, or a lying
+# content-length) is read fully into RAM via response.content, so one
+# attacker-influenced URL (search results, links inside fetched pages, user
+# input) can exhaust the process. 1 MiB covers every realistic response; the
+# display cap then decides how much of that is returned.
+_DOWNLOAD_LIMIT_BYTES = 1_000_000
+_DOWNLOAD_LIMIT_ENV = "AGENTOS_HTTP_DOWNLOAD_LIMIT"
+_STREAM_CHUNK_BYTES = 65_536
 _FETCH_DIR_NAME = ".fetch"
 
 
@@ -99,6 +110,18 @@ def _is_text_response_content_type(content_type: str) -> bool:
         or "json" in normalized
         or "xml" in normalized
     )
+
+
+def _resolve_download_limit_bytes() -> int:
+    """Resolve the hard download cap from env or the built-in default."""
+    raw = os.environ.get(_DOWNLOAD_LIMIT_ENV, "").strip()
+    if not raw:
+        return _DOWNLOAD_LIMIT_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DOWNLOAD_LIMIT_BYTES
+    return value if value >= _STREAM_CHUNK_BYTES else _DOWNLOAD_LIMIT_BYTES
 
 
 def _fetch_workspace_dir() -> Path:
@@ -212,23 +235,49 @@ async def http_request(
     content: bytes | None = body.encode() if body else None
 
     async with httpx.AsyncClient(timeout=timeout, trust_env=_trust_env()) as client:
-        response = await client.request(
-            method=method_upper,
-            url=url,
-            headers=headers or {},
-            content=content,
+        response = await client.send(
+            client.build_request(
+                method=method_upper,
+                url=url,
+                headers=headers or {},
+                content=content,
+            ),
+            stream=True,
         )
+
+    from agentos.safety.injection_guard import wrap_untrusted_boundary
+
+    try:
+        # Stream the body with a hard byte ceiling so an unbounded response can
+        # never be buffered fully into memory; the display caps
+        # (_BINARY_BODY_LIMIT / _TEXT_BODY_LIMIT) only decide what is returned.
+        # A timeout bounds time, not bytes: on a fast pipe gigabytes arrive
+        # inside the window, so one attacker-influenced URL can OOM the process.
+        download_limit = _resolve_download_limit_bytes()
+        total = 0
+        chunks: list[bytes] = []
+        download_capped = False
+        async for chunk in response.aiter_bytes(_STREAM_CHUNK_BYTES):
+            chunks.append(chunk)
+            total += len(chunk)
+            if total >= download_limit:
+                download_capped = True
+                break
+        raw_body = b"".join(chunks)
+    finally:
+        await response.aclose()
 
     content_type = response.headers.get("content-type", "")
     is_text = _is_text_response_content_type(content_type)
-    raw_body = response.content
     should_save = output_path is not None
-    from agentos.safety.injection_guard import wrap_untrusted_boundary
 
     if should_save:
         saved_path, digest = _save_http_response_body(raw_body, output_path)
         preview = (
-            wrap_untrusted_boundary(response.text[:_TEXT_BODY_LIMIT], str(response.url))
+            wrap_untrusted_boundary(
+                raw_body[:_TEXT_BODY_LIMIT].decode("utf-8", "replace"),
+                str(response.url),
+            )
             if is_text
             else None
         )
@@ -240,21 +289,22 @@ async def http_request(
             "body": None,
             "body_base64": None,
             "body_truncated": False,
-            "body_base64_truncated": False,
+            "body_base64_truncated": download_capped,
             "body_saved": True,
             "body_omitted_reason": "saved_to_file",
             "body_preview": preview,
             "path": str(saved_path),
             "size": len(raw_body),
             "sha256": digest,
+            "download_capped": download_capped,
         }
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     capped = raw_body[:_BINARY_BODY_LIMIT]
     body_base64 = base64.b64encode(capped).decode("ascii")
-    body_base64_truncated = len(raw_body) > _BINARY_BODY_LIMIT
+    body_base64_truncated = download_capped or len(raw_body) > _BINARY_BODY_LIMIT
     if is_text:
-        text_body = response.text
+        text_body = raw_body.decode("utf-8", "replace")
         body = wrap_untrusted_boundary(text_body[:_TEXT_BODY_LIMIT], str(response.url))
         body_truncated = len(text_body) > _TEXT_BODY_LIMIT
     else:
@@ -274,6 +324,7 @@ async def http_request(
         "path": None,
         "size": len(raw_body),
         "sha256": hashlib.sha256(raw_body).hexdigest(),
+        "download_capped": download_capped,
     }
     return json.dumps(result, ensure_ascii=False, indent=2)
 
