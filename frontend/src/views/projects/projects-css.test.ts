@@ -19,6 +19,15 @@ describe('Projects view CSS contract', () => {
     )
   })
 
+  it('keeps dialogs on a fixed, centered overlay layer', () => {
+    // ModalShell portals into document.body: without fixed+inset+flex the
+    // dialog renders in normal flow at the bottom of the page.
+    expect(css).toMatch(
+      /\.proj-modal__overlay \{[\s\S]*?position: fixed;[\s\S]*?inset: 0;[\s\S]*?display: flex;[\s\S]*?align-items: center;[\s\S]*?justify-content: center;/,
+    )
+    expect(css).toMatch(/\.proj-modal \{[\s\S]*?max-height: calc\(100dvh - 3rem\);/)
+  })
+
   it('marks the selected project card and constrains card excerpts', () => {
     expect(css).toMatch(/\.proj-card\.is-selected \{[\s\S]*?border-color: var\(--border\);/)
     expect(css).toMatch(/\.proj-card__excerpt \{[\s\S]*?-webkit-line-clamp: 2;/)
