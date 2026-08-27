@@ -22,6 +22,7 @@ _NAMES = [
     "messaging",
     "patch",
     "plan",
+    "projects",
     "router_control",
     "sessions",
     "session_search",

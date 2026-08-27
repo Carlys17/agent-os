@@ -126,6 +126,33 @@ agentos sessions delete <session-key> --yes
 Deleting a session is for cleanup. Export first if you may need the transcript
 later.
 
+## Projects: Group Sessions and Share Knowledge
+
+```sh
+agentos projects create "Token research" --knowledge-file notes.md
+agentos projects move <session-key> <project-id>   # 'none' detaches
+agentos projects show <project-id>
+agentos projects update <project-id> --knowledge "Revised shared context"
+agentos projects delete <project-id>               # sessions survive, detached
+```
+
+A **project** groups the sessions of one agent and carries a shared
+**knowledge** text. Every session in the project gets that knowledge injected
+into its system prompt as a `Project Knowledge` block on every turn — edit the
+knowledge and the next turn of every member session sees the new version. A
+session joins a project of its own agent only; moving one across agents is
+rejected.
+
+- Create a session directly inside a project from the Web UI Projects page
+  ("New chat in project"), or move existing sessions in and out at any time.
+- Deleting a project **never deletes its sessions** — they detach, keep their
+  history, and simply stop receiving the shared knowledge.
+- The agent can manage projects from prompting via the `projects_create`,
+  `projects_list`, `projects_update`, and `projects_move_session` tools, and
+  can search sibling transcripts with `session_search scope=project`.
+- Existing databases migrate automatically on gateway start: old sessions
+  come up project-less (`project_id` empty) and behave exactly as before.
+
 ## Web UI Workflow
 
 The Web UI uses the same session system. In the control console, use the chat

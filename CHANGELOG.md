@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Projects. Chat sessions can now be grouped into per-agent projects, each
+  carrying a free-form **knowledge** text that is injected into the system
+  prompt of every member session (as an untrusted-wrapped `Project Knowledge`
+  block, re-read each turn so edits land on the next turn). Surfaces: a new
+  Projects page in the Web UI (create/rename/edit knowledge/delete, "New chat
+  in project", session list per project), project badge + filter + "Move to
+  project" on the Sessions page, project tiers in the chat session switcher,
+  an `agentos projects` CLI group (`list`/`create`/`show`/`update`/`delete`/
+  `move`), `projects.*` JSON-RPC methods plus `projectId` on
+  `sessions.create`/`sessions.patch`/`sessions.list`, and agent-facing
+  `projects_*` tools with `session_search scope=project` for searching sibling
+  transcripts. Existing databases migrate automatically (V011); old sessions
+  come up project-less, and deleting a project detaches its sessions instead
+  of deleting them.
+
 ## [2026.8.27] - 2026-08-27
 
 ### Added

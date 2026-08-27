@@ -111,6 +111,9 @@ export const chat = defineNamespace('chat', {
   groupSessions: 'Sessions',
   groupOther: 'Other',
 
+  // Projects integration.
+  projectBadgeTitle: 'This session is in project "{name}" and shares its knowledge.',
+
   // Run status labels (logic.ts).
   runQueued: 'Queued',
   runRunning: 'Running',

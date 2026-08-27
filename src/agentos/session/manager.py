@@ -31,6 +31,7 @@ from agentos.session.compaction_state import (
 from agentos.session.keys import canonicalize_session_key, normalize_agent_id
 from agentos.session.models import (
     MemoryDurableReceipt,
+    ProjectNode,
     SessionContextState,
     SessionIntent,
     SessionNode,
@@ -249,6 +250,8 @@ class SessionManager:
         existing = await self._storage.get_session(session_key)
         if existing is not None:
             raise ValueError(f"Session already exists: {session_key}")
+        if kwargs.get("project_id"):
+            await self._validate_project_membership(str(kwargs["project_id"]), agent_id)
 
         now = _now_ms()
         node = SessionNode(
@@ -317,6 +320,7 @@ class SessionManager:
         limit: int = 100,
         offset: int = 0,
         spawned_by: str | None = None,
+        project_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return JSON-serializable session rows for tool/RPC consumers."""
         if agent_id is not None:
@@ -327,6 +331,7 @@ class SessionManager:
             limit=limit,
             offset=offset,
             spawned_by=spawned_by,
+            project_id=project_id,
         )
         return [row.model_dump(mode="json") for row in rows]
 
@@ -615,6 +620,151 @@ class SessionManager:
         node.updated_at = _now_ms()
         await self._storage.upsert_session(node)
         return node
+
+    # ── Projects ─────────────────────────────────────────────────────────────
+
+    PROJECT_NAME_MAX_CHARS = 200
+    PROJECT_KNOWLEDGE_MAX_CHARS = 32_000
+
+    def _validate_project_fields(
+        self, name: str | None, knowledge: str | None
+    ) -> None:
+        if name is not None:
+            if not name.strip():
+                raise ValueError("Project name cannot be empty")
+            if len(name) > self.PROJECT_NAME_MAX_CHARS:
+                raise ValueError(
+                    f"Project name exceeds {self.PROJECT_NAME_MAX_CHARS} characters"
+                )
+        if knowledge is not None and len(knowledge) > self.PROJECT_KNOWLEDGE_MAX_CHARS:
+            raise ValueError(
+                f"Project knowledge exceeds {self.PROJECT_KNOWLEDGE_MAX_CHARS} characters"
+            )
+
+    async def _validate_project_membership(
+        self, project_id: str, agent_id: str
+    ) -> ProjectNode:
+        """Ensure the project exists and belongs to ``agent_id``."""
+        project = await self._storage.get_project(project_id)
+        if project is None:
+            raise KeyError(f"Project not found: {project_id}")
+        if project.agent_id != normalize_agent_id(agent_id):
+            raise ValueError(
+                "Cannot attach a session to a project of a different agent "
+                f"(project agent: {project.agent_id}, session agent: {agent_id})"
+            )
+        return project
+
+    async def create_project(
+        self,
+        agent_id: str,
+        name: str,
+        knowledge: str = "",
+    ) -> dict[str, Any]:
+        """Create a project for ``agent_id``. Names are unique per agent."""
+        agent_id = normalize_agent_id(agent_id)
+        self._validate_project_fields(name, knowledge)
+        name = name.strip()
+        existing = await self._storage.list_projects(agent_id=agent_id)
+        if any(p.name.casefold() == name.casefold() for p in existing):
+            raise ValueError(f"Project name already exists for agent {agent_id}: {name}")
+        project = ProjectNode(agent_id=agent_id, name=name, knowledge=knowledge)
+        await self._storage.upsert_project(project)
+        return project.model_dump(mode="json")
+
+    async def get_project(self, project_id: str) -> dict[str, Any] | None:
+        project = await self._storage.get_project(project_id)
+        if project is None:
+            return None
+        row = project.model_dump(mode="json")
+        row["session_count"] = await self._storage.count_sessions_in_project(project_id)
+        return row
+
+    async def list_projects(self, agent_id: str | None = None) -> list[dict[str, Any]]:
+        """Return project rows (with per-project session counts)."""
+        projects = await self._storage.list_projects(agent_id=agent_id)
+        counts = await self._storage.count_sessions_by_project()
+        rows = []
+        for project in projects:
+            row = project.model_dump(mode="json")
+            row["session_count"] = counts.get(project.project_id, 0)
+            rows.append(row)
+        return rows
+
+    async def update_project(
+        self,
+        project_id: str,
+        name: str | None = None,
+        knowledge: str | None = None,
+    ) -> dict[str, Any]:
+        """Update name and/or knowledge of an existing project."""
+        project = await self._storage.get_project(project_id)
+        if project is None:
+            raise KeyError(f"Project not found: {project_id}")
+        self._validate_project_fields(name, knowledge)
+        if name is not None:
+            stripped = name.strip()
+            siblings = await self._storage.list_projects(agent_id=project.agent_id)
+            if any(
+                p.project_id != project_id and p.name.casefold() == stripped.casefold()
+                for p in siblings
+            ):
+                raise ValueError(
+                    f"Project name already exists for agent {project.agent_id}: {stripped}"
+                )
+            project.name = stripped
+        if knowledge is not None:
+            project.knowledge = knowledge
+        project.updated_at = _now_ms()
+        await self._storage.upsert_project(project)
+        row = project.model_dump(mode="json")
+        row["session_count"] = await self._storage.count_sessions_in_project(project_id)
+        return row
+
+    async def delete_project(self, project_id: str) -> int:
+        """Delete a project; member sessions survive project-less.
+
+        Returns the number of sessions detached. Raises KeyError when the
+        project does not exist.
+        """
+        project = await self._storage.get_project(project_id)
+        if project is None:
+            raise KeyError(f"Project not found: {project_id}")
+        return await self._storage.delete_project(project_id)
+
+    async def move_session_to_project(
+        self,
+        session_key: str,
+        project_id: str | None,
+    ) -> SessionNode:
+        """Attach a session to a project (or detach with ``project_id=None``).
+
+        Single validation choke point for RPC, builtin tools, and CLI:
+        the project must exist and belong to the session's agent.
+        """
+        session_key = canonicalize_session_key(session_key)
+        node = await self._storage.get_session(session_key)
+        if node is None:
+            raise KeyError(f"Session not found: {session_key}")
+        if project_id is not None:
+            await self._validate_project_membership(project_id, node.agent_id)
+        return await self.update(session_key, project_id=project_id)
+
+    async def get_project_knowledge_for_session(self, session_key: str) -> str | None:
+        """Return the project knowledge text for a session, or None.
+
+        None when the session doesn't exist, has no project, the project row
+        is missing (tolerated silently), or the knowledge is blank.
+        """
+        session_key = canonicalize_session_key(session_key)
+        node = await self._storage.get_session(session_key)
+        if node is None or not node.project_id:
+            return None
+        project = await self._storage.get_project(node.project_id)
+        if project is None:
+            return None
+        knowledge = project.knowledge.strip()
+        return knowledge or None
 
     async def finish(
         self,

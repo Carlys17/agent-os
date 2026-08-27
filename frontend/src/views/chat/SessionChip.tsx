@@ -5,6 +5,7 @@ import { ChevronDown, Copy, FileDown, MoreHorizontal, Pencil, RotateCcw } from '
 import { authenticatedHeaders } from '@/lib/http-auth'
 import {
   classifySessionKey,
+  groupSessionsByProject,
   runStatusChipClass,
   sessionItemKey,
   sessionItemName,
@@ -110,6 +111,12 @@ export interface SessionChipProps {
    * → the popover degrades to manual entry.
    */
   fetchSessions?: () => Promise<SessionListItem[]>
+  /**
+   * Project id → name map. When provided, sessions in a project render under
+   * a per-project tier above the kind groups; omit and the switcher keeps its
+   * legacy kind-only grouping.
+   */
+  projectsById?: Map<string, string>
 }
 
 function defaultCopy(key: string): Promise<void> {
@@ -158,6 +165,7 @@ export function SessionChip({
   onRename,
   onCopy = defaultCopy,
   fetchSessions = defaultFetchSessions,
+  projectsById,
 }: SessionChipProps) {
   const [open, setOpen] = useState(false)
   const [filter, setFilter] = useState('')
@@ -366,9 +374,22 @@ export function SessionChip({
     [dismiss, focusBeforeDismiss, renaming],
   )
 
-  // chat.js:1901-1957 — group the fetched sessions, apply the filter.
-  const groups: Array<{ label: SessionGroup; items: SessionListItem[] }> = []
+  // chat.js:1901-1957 — group the fetched sessions, apply the filter. Project
+  // tiers (named by the project) render above the legacy kind groups.
+  const groups: Array<{ key: string; label: string; items: SessionListItem[] }> = []
   if (sessions) {
+    const f = filter.trim().toLowerCase()
+    const { projectTiers, rest } = groupSessionsByProject(
+      sessions,
+      projectsById ?? new Map<string, string>(),
+    )
+    for (const tier of projectTiers) {
+      const visible = f
+        ? tier.items.filter((it) => sessionItemSearchText(it).includes(f))
+        : tier.items
+      if (visible.length)
+        groups.push({ key: `project:${tier.id}`, label: tier.name, items: visible })
+    }
     const bucket: Record<SessionGroup, SessionListItem[]> = {
       'Web chat': [],
       CLI: [],
@@ -377,16 +398,16 @@ export function SessionChip({
       Sessions: [],
       Other: [],
     }
-    for (const item of sessions) {
+    for (const item of rest) {
       const g = classifySessionKey(item)
       if (g) bucket[g].push(item)
     }
-    const f = filter.trim().toLowerCase()
     for (const label of GROUP_ORDER) {
       const visible = f
         ? bucket[label].filter((it) => sessionItemSearchText(it).includes(f))
         : bucket[label]
-      if (visible.length) groups.push({ label, items: visible })
+      if (visible.length)
+        groups.push({ key: `kind:${label}`, label: groupLabel(label), items: visible })
     }
   }
   const total = groups.reduce((n, g) => n + g.items.length, 0)
@@ -599,10 +620,8 @@ export function SessionChip({
                   </div>
                 ) : (
                   groups.map((group) => (
-                    <div className="chat-session-popover-group" key={group.label}>
-                      <div className="chat-session-popover-group-label">
-                        {groupLabel(group.label)}
-                      </div>
+                    <div className="chat-session-popover-group" key={group.key}>
+                      <div className="chat-session-popover-group-label">{group.label}</div>
                       {group.items.map((item) => {
                         const k = sessionItemKey(item)
                         const name = sessionItemName(item)
