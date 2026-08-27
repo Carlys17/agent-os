@@ -185,6 +185,26 @@ class TestRedaction:
         assert redact.redact_sensitive_text(code, code_file=True) == code
         assert redact.redact_sensitive_text(code, code_file=False) != code
 
+    def test_masks_named_secret_on_unified_diff_added_line(self) -> None:
+        """A named credential on a ``+`` diff line must not escape the assignment pass.
+
+        ``_ASSIGNMENT_RE`` allows a leading unified-diff marker so the name
+        anchor matches on add/remove lines. Without it, the marker is not in
+        the token-start character class and the named secret passes through
+        unmasked. Vendor-prefixed keys (sk-ant-... etc.) are still caught by
+        the separate shape pass but non-vendor named secrets (e.g.
+        DB_PASSWORD=...) leak.
+        """
+        added = "+MY_CUSTOM_SECRET=supersecretvalue123"
+        removed = "-MY_CUSTOM_SECRET=supersecretvalue123"
+        assert redact.redact_sensitive_text(added, force=True) != added
+        assert redact.redact_sensitive_text(removed, force=True) != removed
+        # Label must survive the mask.
+        out = redact.redact_sensitive_text(added, force=True)
+        assert out is not None
+        assert "+MY_CUSTOM_SECRET=" in out
+        assert "supersecretvalue123" not in out
+
 
 class TestTerminalOutput:
     def test_env_dump_output_is_masked(self) -> None:

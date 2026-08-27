@@ -38,6 +38,22 @@ def _reject_foreign_git_path(path: str) -> None:
     reject_foreign_host_path(path, platform=os.name, workspace=workspace)
 
 
+def _redact_git_output(output: str) -> str:
+    """Mask credentials in git output before it reaches the model.
+
+    ``git diff`` / ``log -p`` / ``show`` surface committed and working-tree file
+    content, which routinely includes ``.env`` files and credentials. Like
+    ``execute_code``, this is arbitrary file content, so the assignment pass runs
+    unconditionally (``code_file=False``) — a deliberate divergence from
+    ``redact_terminal_output``, which gates that pass on env-dump /
+    credential-file commands and would leave named secrets in a diff unmasked.
+    """
+    from agentos.redact import redact_sensitive_text
+
+    redacted = redact_sensitive_text(output, force=True, code_file=False)
+    return redacted if redacted is not None else output
+
+
 async def _run_git(*args: str, cwd: str | None = None) -> str:
     runtime = get_runtime()
     if runtime is not None and runtime.effective.sandbox_enabled:
@@ -67,7 +83,7 @@ async def _run_git(*args: str, cwd: str | None = None) -> str:
             build_request_for_git(args, workspace, action_kind, policy),
             runtime=runtime,
         )
-        output = result.stdout + result.stderr
+        output = _redact_git_output(result.stdout + result.stderr)
         if result.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)} failed (exit {result.returncode}):\n{output}")
         return output
@@ -79,7 +95,7 @@ async def _run_git(*args: str, cwd: str | None = None) -> str:
         cwd=cwd,
     )
     stdout, _ = await proc.communicate()
-    output = stdout.decode("utf-8", errors="replace")
+    output = _redact_git_output(stdout.decode("utf-8", errors="replace"))
     if proc.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed (exit {proc.returncode}):\n{output}")
     return output
