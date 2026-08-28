@@ -365,18 +365,21 @@ class _ToolResultHandler:
         failure_summary = _artifact_delivery_failure_summary(event)
         if failure_summary is not None:
             state.artifact_delivery_failures.append(failure_summary)
-        if event.arguments is not None:
+        if event.arguments is not None or getattr(event, "thought_signature", None) is not None:
             for segment in reversed(state.turn_segments):
                 if (
                     segment.get("type") == "tool_use"
                     and segment.get("tool_use_id") == event.tool_use_id
                 ):
-                    segment["name"] = event.tool_name
-                    segment["input"] = _persisted_tool_use_input(
-                        event.tool_name,
-                        event.tool_use_id,
-                        event.arguments,
-                    )
+                    if event.arguments is not None:
+                        segment["name"] = event.tool_name
+                        segment["input"] = _persisted_tool_use_input(
+                            event.tool_name,
+                            event.tool_use_id,
+                            event.arguments,
+                        )
+                    if getattr(event, "thought_signature", None):
+                        segment["thought_signature"] = event.thought_signature
                     break
         state.turn_segments.append(_persisted_tool_result_segment(event))
         return event
