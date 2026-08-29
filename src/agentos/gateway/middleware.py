@@ -250,9 +250,30 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 )
 
         elif auth_mode == "trusted-proxy":
+            # A trusted-proxy deployment means a reverse proxy in front of the
+            # gateway terminates TLS and sets X-Forwarded-For. Admission must
+            # require that the *real transport peer* is one of the trusted
+            # proxies — NOT that some client-supplied header merely *contains*
+            # the proxy name. The old check (``proxy not in forwarded_for``) was
+            # a substring match: any client could send ``X-Forwarded-For: <proxy>``
+            # and pass.
             proxy = self._config.auth.trusted_proxy
-            forwarded_for = request.headers.get("x-forwarded-for", "")
-            if proxy and proxy not in forwarded_for:
+            if not proxy:
+                return JSONResponse(
+                    {"error": "Unauthorized", "code": "UNAUTHORIZED"}, status_code=401
+                )
+            trusted_set = {
+                p.strip().lower().strip("[]") for p in proxy.split(",") if p.strip()
+            }
+            peer_ip = request.client.host if request.client else None
+            peer_ip = (peer_ip or "").strip().lower().strip("[]")
+            if peer_ip not in trusted_set:
+                return JSONResponse(
+                    {"error": "Unauthorized", "code": "UNAUTHORIZED"}, status_code=401
+                )
+            # The trusted proxy owns X-Forwarded-For; a client behind it must
+            # not present its own forged header.
+            if request.headers.get("x-forwarded-for"):
                 return JSONResponse(
                     {"error": "Unauthorized", "code": "UNAUTHORIZED"}, status_code=401
                 )
