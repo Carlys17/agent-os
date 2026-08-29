@@ -8,7 +8,7 @@ from agentos.gateway.config import GatewayConfig
 from agentos.gateway.middleware import RateLimitMiddleware
 
 
-def test_approval_polling_does_not_consume_generic_api_rate_limit() -> None:
+def test_approval_polling_consumes_generic_api_rate_limit() -> None:
     app = Starlette()
 
     async def approvals(_request):
@@ -26,7 +26,10 @@ def test_approval_polling_does_not_consume_generic_api_rate_limit() -> None:
     app.add_middleware(RateLimitMiddleware, config=config)
 
     with TestClient(app) as client:
+        # /api/approvals is now rate-limited like any other /api/* endpoint.
+        # The pending queue can hold every pending command/argv, so an
+        # unauthenticated attacker could otherwise spam it for info
+        # disclosure + SQLite lock DoS.
         assert client.get("/api/approvals").status_code == 200
-        assert client.get("/api/approvals").status_code == 200
-        assert client.get("/api/sessions").status_code == 200
+        assert client.get("/api/approvals").status_code == 429
         assert client.get("/api/sessions").status_code == 429
