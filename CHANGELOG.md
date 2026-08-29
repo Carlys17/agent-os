@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Memory Web UI view and knowledge-base document ingestion. The console gets a
+  browsable `/memory` view (sidebar entry, `g m` chord) with a curated-memory
+  editor, a knowledge-base document table, a raw source-file explorer and a
+  semantic search explorer. Behind it, `memory.ingest` grows multi-format text
+  extraction and directory ingestion (PDF, DOCX, PPTX, Markdown, text, CSV,
+  JSON/YAML and code files) over `<workspace>/knowledge_base/`, exposed as
+  `memory.curated.*` and `memory.knowledge_base.*` JSON-RPC methods and as
+  `agentos memory ingest` / `agentos memory curated` on the CLI (#368).
+
 - Email channel (`type = "email"`). A mailbox is now a first-class channel:
   inbound over IMAP polling, outbound over SMTP with `In-Reply-To`/`References`
   so replies stay in the originating thread. No platform app registration —
@@ -60,6 +69,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `chat.postMessage` or a webhook POST can duplicate a delivery the receiver
   already accepted — the same trade-off Discord has always made; the webhook
   payload's `jobId` is the receiver's dedupe key.
+
+- Security: `execute_code` output is redacted before it reaches the model.
+  `shell.py` already ran `redact_terminal_output` on every output surface, but
+  `execute_code` bypassed redaction entirely, so a script printing `os.environ`
+  or reading a credential file leaked every secret verbatim into the
+  transcript. Redaction now happens at `_execution_result_json`, the single
+  choke point for all eight return paths (#490).
+- Security: the `image` tool no longer buffers an unbounded response body
+  before checking its size limit. `_fetch_image_url` read `resp.content` in
+  full and only then compared against the 20 MB ceiling, so an oversized or
+  chunked body could exhaust process memory. The response is now streamed and
+  the read stops the moment the accumulated size passes the limit; each
+  redirect hop is still SSRF-checked before its body is read (#506).
+- Security: the GitHub skill-hub source caps blob downloads. `GitHubSource.fetch()`
+  buffered every blob of a skill directory with a non-streaming `client.get`,
+  with no per-blob cap and no total budget, so a hostile repo could push the
+  installer into RAM exhaustion. Blobs are now streamed against a per-blob
+  ceiling (8 MiB) and a cumulative budget (32 MiB), the response is closed in a
+  `finally`, and a blob over the cap fails closed rather than installing a
+  truncated bundle (#510).
+- Scheduler: one-shot `AT` schedules in the past are rejected by
+  `SchedulerOps.add()` and `update()` (5s skew tolerance) instead of being
+  stored with a stale `next_run_at` that fires on the very next tick (#486).
+- Scheduler: `next_due_at` now reports the actual runnable time,
+  `MIN(MAX(next_run_at, backoff_until))`. It previously looked only at
+  `next_run_at` while `iter_due` also waits on `backoff_until`, so after a few
+  failures on a frequent cron the timer woke early, yielded nothing and
+  busy-spun SQLite for the whole backoff window (#537).
+- MCP stdio: the live reader uses `readexactly` instead of `read(n)`, which
+  could return a short buffer and truncate a chunked tool result into a
+  `json.loads` failure; EOF now raises a clear truncated-body error (#537).
+- Telegram: entity offsets are sliced on the UTF-16 grid. Offsets and lengths
+  are UTF-16 code units but were applied to a Python `str` by code point, so an
+  emoji before `/help@mybot` in a group made the bot ignore a command aimed at
+  it (#537).
+- Provider failover: an exhausted fallback chain raises the explicit
+  `IndexError("No more provider fallbacks available")`.
+  `next_fallback_after_failure()` advanced the chain index unbounded and
+  surfaced a bare out-of-range `IndexError` from `_build_provider` (#488).
+- Discord: `_dispatch_loop` keeps dispatching after a reconnect. Opcode 7/9 and
+  a dropped socket reconnected and then returned from the loop — heartbeat
+  resumed and health still read connected, but messages and slash commands were
+  never read again (#538).
+- Setup: cancelling xAI sign-in stops the poll loop. Cancel only reset the
+  visible card, so an expiry could paint an error after dismissal and a
+  restarted sign-in could be wiped by the old loop completing; cancel and start
+  now bump a generation counter (#538).
+- Workspace paths: a real nested `workspace/` folder inside the configured root
+  is no longer stripped. Any absolute path containing a `workspace` segment was
+  rewritten from the last such segment, so reads and writes landed on a sibling
+  file; paths already inside the root are left alone and sandbox
+  `/workspace/...` still remaps (#538).
+- Web UI: the projects page header stacks on mobile instead of overflowing.
 
 ## [2026.8.28] - 2026-08-28
 
