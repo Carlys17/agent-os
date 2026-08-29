@@ -391,7 +391,7 @@ reachable. See [`x-search.md`](x-search.md).
 
 Channels:
 
-Built-in channel types are `discord`, `slack`, and `telegram`; `agentos
+Built-in channel types are `discord`, `email`, `slack`, and `telegram`; `agentos
 channels types` is the authoritative catalog. On upgrade, config entries for
 retired built-in channel types are removed only after AgentOS creates the
 normal secure config backup.
@@ -402,6 +402,10 @@ agentos channels describe telegram
 agentos channels native-commands telegram
 agentos channels native-commands slack --request-url https://agent.example/slack/events
 agentos channels add telegram --name personal
+agentos channels add email --name inbox \
+  --field imap_host=imap.example.com --field imap_username=agent@example.com \
+  --field imap_password=<app-password> --field smtp_host=smtp.example.com \
+  --field from_address=agent@example.com --field allowed_senders=you@example.com
 agentos channels list
 agentos channels status
 agentos channels pairing list personal

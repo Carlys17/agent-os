@@ -145,8 +145,8 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `mcp-server` | `run` (MCP bridge) |
 | `replay`, `dist`, `onboard` | replay recorded turns / workspace inventory / setup status |
 
-Built-in channel types are `discord`, `slack`, and `telegram`; use `agentos
-channels types` as the authoritative catalog. Config migration backs up the
+Built-in channel types are `discord`, `email`, `slack`, and `telegram`; use
+`agentos channels types` as the authoritative catalog. Config migration backs up the
 file before removing entries for retired built-in channel types.
 
 Telegram direct messages always require pairing. Use `agentos channels pairing
@@ -154,6 +154,11 @@ list <name>`, `approve <name> <code>`, `deny <name> <sender-id>`, or `revoke
 <name> <sender-id>`. Pairing is binary and has no admin/owner tier. Telegram
 groups are disabled by default; enable them only with explicit
 `group_chat_ids`, paired senders, and the desired mention requirement.
+
+The `email` channel is IMAP polling in, SMTP out, and needs no platform app
+registration. `allowed_senders` is a required fail-closed From-address
+allowlist (exact addresses or `*@domain` patterns); one mail thread is one
+session.
 
 Platform-native interactive tool approvals (Slack block actions, Telegram inline keyboard callbacks, and Discord message components) allow operators to approve or deny gated tool executions directly using interactive buttons. For security, these approvals are restricted to channel DMs (never group chats), access-gated by evaluating the clicker's sender ID against the channel's access policy, and strictly session-bound to their originating chat context.
 

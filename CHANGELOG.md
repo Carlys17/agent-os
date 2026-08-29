@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Email channel (`type = "email"`). A mailbox is now a first-class channel:
+  inbound over IMAP polling, outbound over SMTP with `In-Reply-To`/`References`
+  so replies stay in the originating thread. No platform app registration —
+  just IMAP/SMTP credentials. One mail thread is one session, quoted history is
+  stripped before the text reaches the model, HTML-only mail is flattened to
+  text, and inbound attachments plus generated artifacts ride the shared
+  attachment pipeline under the usual size limits. Access is a required
+  fail-closed `allowed_senders` From-address allowlist (exact addresses or
+  `*@domain` patterns); mail from the agent's own address and anything marked
+  auto-generated (`Auto-Submitted`, `X-Autoreply`, `List-Id`,
+  `Precedence: bulk`) is dropped so an autoresponder cannot start a mail loop
+  (#369).
+
+### Changed
+
+- Channel session keys: a DM-shaped channel whose surface is itself threaded
+  can opt into one session per thread with `metadata['dm_thread_scoped']`.
+  Adapters that do not set it keep one session per peer, so Slack, Discord and
+  Telegram DM keys are unchanged.
+
 ### Fixed
 
 - Security: the git tools (`git_status`, `git_diff`, `git_log`, `git_commit`)
