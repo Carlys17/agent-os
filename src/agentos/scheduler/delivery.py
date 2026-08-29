@@ -499,6 +499,8 @@ class DeliveryChain:
 
         import httpx
 
+        from agentos.channels._util import retry_request
+
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -510,7 +512,10 @@ class DeliveryChain:
         }
         try:
             async with httpx.AsyncClient(timeout=_WEBHOOK_TIMEOUT_SECONDS) as client:
-                response = await client.post(url, json=payload, headers=headers)
+                # retry_request's defaults (3 retries, 1s base) keep the worst
+                # case near 7s plus jitter — inside the job's own timeout
+                # budget, whose slot is held while we back off.
+                response = await retry_request(client.post, url, json=payload, headers=headers)
                 response.raise_for_status()
             log.info("delivery.webhook_sent", job_id=job_id)
             return "delivered"
