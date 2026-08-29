@@ -139,9 +139,31 @@ _AGENTOS_POSTURE_NAMES = (
     "AGENTOS_HTTP_DOWNLOAD_LIMIT",
 )
 
+#: Env var names that steer network egress (proxies). Writing these through an
+#: AgentOS surface lets an agent redirect all outbound traffic (model calls,
+#: web fetches, tool HTTP) to an attacker-controlled proxy and MITM credentials
+#: or tamper with responses. They are denied for the same reason as the shell /
+#: loader / posture names: the surface must not be able to widen its own
+#: network reach or exfiltrate secrets.
+_PROXY_NAMES = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "AGENTOS_LLM_PROXY",
+    "NO_PROXY",
+    "no_proxy",
+)
+
 #: Names that may never be written through an AgentOS surface.
 WRITE_DENYLIST: frozenset[str] = frozenset(
-    _LOADER_NAMES + _INTERPRETER_NAMES + _SHELL_NAMES + _AGENTOS_POSTURE_NAMES
+    _LOADER_NAMES
+    + _INTERPRETER_NAMES
+    + _SHELL_NAMES
+    + _AGENTOS_POSTURE_NAMES
+    + _PROXY_NAMES
 )
 
 _DENY_MESSAGE = (

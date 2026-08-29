@@ -50,6 +50,17 @@ class TestDenylist:
             "AGENTOS_STATE_DIR",
             "AGENTOS_GATEWAY_PORT",
             "AGENTOS_HTTP_DOWNLOAD_LIMIT",
+            # proxy / egress steering — redirect all outbound traffic to an
+            # attacker-controlled proxy to MITM credentials (security bug fix)
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "AGENTOS_LLM_PROXY",
+            "NO_PROXY",
+            "no_proxy",
         ],
     )
     def test_execution_and_posture_names_are_refused(self, name: str) -> None:
