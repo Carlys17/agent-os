@@ -1667,6 +1667,49 @@ class MSTeamsChannelEntry(ConfiguredChannelEntry):
     webhook_path: str = "/msteams/messages"
 
 
+class EmailChannelEntry(ConfiguredChannelEntry):
+    """Gateway config entry for an IMAP/SMTP email channel."""
+
+    type: Literal["email"] = "email"
+    imap_host: str
+    imap_port: int = Field(default=993, ge=1, le=65535)
+    imap_ssl: bool = True
+    imap_username: str
+    imap_password: str = ""
+    imap_folder: str = "INBOX"
+    smtp_host: str
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_ssl: bool = False
+    smtp_starttls: bool = True
+    smtp_username: str = ""
+    smtp_password: str = ""
+    from_address: str
+    from_name: str = ""
+    allowed_senders: list[str] = Field(default_factory=list)
+    poll_interval_s: float = Field(default=30.0, ge=1.0, le=3600.0)
+    max_messages_per_poll: int = Field(default=10, ge=1, le=200)
+    max_message_bytes: int = Field(default=25 * 1024 * 1024, ge=1024)
+    mark_seen: bool = True
+    connect_timeout_s: float = Field(default=30.0, ge=1.0, le=300.0)
+
+    @field_validator("allowed_senders", mode="before")
+    @classmethod
+    def _normalize_allowed_senders(cls, value: Any) -> list[str]:
+        values = value.split(",") if isinstance(value, str) else (value or [])
+        normalized = (str(item).strip().lower() for item in values)
+        return list(dict.fromkeys(item for item in normalized if item))
+
+    @model_validator(mode="after")
+    def _validate_email_entry(self) -> EmailChannelEntry:
+        # Fail closed: an inbox with no allowlist would let any stranger who
+        # can send mail drive the agent.
+        if not self.allowed_senders:
+            raise ValueError("email channels require at least one allowed_senders entry")
+        if "@" not in self.from_address:
+            raise ValueError("email from_address must be a full address")
+        return self
+
+
 class TelegramChannelEntry(ConfiguredChannelEntry):
     """Gateway config entry for a Telegram Bot API channel."""
 

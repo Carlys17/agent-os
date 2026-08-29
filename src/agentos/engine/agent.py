@@ -499,7 +499,15 @@ _MUTATING_TOOL_NAMES = frozenset({"write_file", "edit_file", "apply_patch"})
 _COMMAND_TOOL_NAMES = frozenset({"exec_command", "execute_code", "background_process"})
 # Sessions whose surface is a person in a chat rather than a checkout. There is
 # usually no test command to run there, so the verification nudge is withheld.
-_MESSAGING_SESSION_MARKERS = ("telegram", "slack", "discord", "msteams", "whatsapp", "signal")
+_MESSAGING_SESSION_MARKERS = (
+    "telegram",
+    "slack",
+    "discord",
+    "msteams",
+    "email",
+    "whatsapp",
+    "signal",
+)
 
 
 def _mutated_paths(arguments: dict[str, Any]) -> list[str]:

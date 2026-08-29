@@ -602,6 +602,28 @@ cron_default_mode = "bypass"            # off | bypass | full
 # transcribe_voice = false
 # max_voice_duration_s = 120
 
+# [[channels.channels]]
+# name = "inbox"
+# type = "email"
+# imap_host = "imap.example.com"
+# imap_port = 993
+# imap_username = "agent@example.com"
+# imap_password = "app-password"
+# imap_folder = "INBOX"
+# smtp_host = "smtp.example.com"
+# smtp_port = 587
+# smtp_starttls = true          # set smtp_ssl = true with port 465 for implicit TLS
+# smtp_username = "agent@example.com"
+# smtp_password = "app-password"
+# from_address = "agent@example.com"
+# from_name = "Agent"
+# Required fail-closed From-address allowlist: exact addresses or *@domain
+# patterns. Mail from anyone else is dropped before it reaches the agent.
+# allowed_senders = ["you@example.com", "*@yourteam.example"]
+# poll_interval_s = 30.0
+# max_messages_per_poll = 10
+# mark_seen = true
+
 # MCP (Model Context Protocol) external servers.
 # [[mcp.servers]]
 # name = "fetch"
