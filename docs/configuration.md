@@ -131,6 +131,15 @@ longer matches the file. Configuration data — `.env`, `~/.aws/credentials`,
 `grep_search` judges each matched line by the path it came from, so one search
 can span both kinds of file.
 
+`git_status`, `git_diff`, `git_log` and `git_commit` are scanned too, and always
+with the full name-driven pass. `git_diff` hands back whatever the repository
+happens to contain, a committed `.env` included, so the git arguments say
+nothing useful about what kind of content is coming back. A credential on a
+diff's `+`/`-` line — or on the `++`/`--` columns of the combined diff a
+conflicted merge produces — is masked like any other, and with the same
+non-reusable sentinel the file surfaces use, so a masked diff fed back through
+`git apply` fails loudly instead of writing a dead-looking key.
+
 ### What the outbound guard refuses
 
 `http_request`, `exec_command` and `execute_code` refuse to put credential
