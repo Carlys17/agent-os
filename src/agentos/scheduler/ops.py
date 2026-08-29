@@ -155,6 +155,9 @@ def _normalize_delivery_for_target(
 ) -> DeliveryConfig:
     if delivery is not None and delivery.mode == DeliveryMode.WEBHOOK:
         validate_webhook_url(delivery.webhook_url)
+    fd = delivery.failure_destination if delivery is not None else None
+    if fd is not None and fd.mode == DeliveryMode.WEBHOOK:
+        validate_webhook_url(fd.webhook_url)
     if session_target != SessionTarget.MAIN:
         return delivery
     # Webhook delivery is allowed for any sessionTarget — the heartbeat
@@ -242,11 +245,7 @@ class SchedulerOps:
         # fall back to ISOLATED instead of failing creation. Headless cron
         # callers (no session context) get an isolated run rather than a hard
         # error.
-        if (
-            session_target == SessionTarget.CURRENT
-            and not session_key
-            and not origin_session_key
-        ):
+        if session_target == SessionTarget.CURRENT and not session_key and not origin_session_key:
             session_target = SessionTarget.ISOLATED
 
         origin_session_key = normalize_origin_session_key(session_target, origin_session_key)
