@@ -426,8 +426,8 @@ def _validate_provider_base_url(base_url: str) -> None:
     all provider traffic at an attacker host to exfiltrate API keys, or at the
     cloud metadata endpoint (``169.254.169.254``) to steal instance credentials.
     """
-    from urllib.parse import urlparse
     import ipaddress
+    from urllib.parse import urlparse
 
     if not base_url:
         return  # optional field
