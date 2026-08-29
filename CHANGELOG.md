@@ -47,6 +47,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   keys were still caught by the shape pass, non-vendor named secrets were not.
   The anchor now accepts one or two marker columns, covering the combined diff
   a conflicted merge produces as well as the ordinary unified form.
+- Slack sends and scheduler webhook deliveries now survive a transient network
+  blip. Both routed their HTTP calls straight at `httpx` and failed on the
+  first error; they now go through the same `retry_request` helper Discord
+  already uses (exponential backoff with jitter on 429 — honouring
+  `Retry-After` — 500/502/503/504, connect errors, and read timeouts). Fatal
+  statuses such as 400/401 still fail on the first attempt, and the webhook
+  retry keeps the stock 3-retry/1s-base budget so its worst case stays inside
+  the cron job's own timeout. Note that retrying a read timeout on
+  `chat.postMessage` or a webhook POST can duplicate a delivery the receiver
+  already accepted — the same trade-off Discord has always made; the webhook
+  payload's `jobId` is the receiver's dedupe key.
 
 ## [2026.8.28] - 2026-08-28
 
