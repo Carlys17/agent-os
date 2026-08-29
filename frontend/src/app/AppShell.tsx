@@ -13,9 +13,11 @@ import {
   Activity,
   BarChart3,
   Bot,
+  Brain,
   CalendarClock,
   ChevronLeft,
   ChevronRight,
+  FolderKanban,
   LayoutDashboard,
   Menu,
   MessageSquare,
@@ -67,7 +69,10 @@ function navGroups(): ReadonlyArray<{
   return [
     {
       label: t('shell.navGroupChat'),
-      items: [{ path: 'chat', title: t('shell.viewChat'), icon: MessageSquare }],
+      items: [
+        { path: 'chat', title: t('shell.viewChat'), icon: MessageSquare },
+        { path: 'projects', title: t('shell.viewProjects'), icon: FolderKanban },
+      ],
     },
     {
       label: t('shell.navGroupControl'),
@@ -78,6 +83,7 @@ function navGroups(): ReadonlyArray<{
         { path: 'mcp', title: t('shell.viewMcp'), icon: Network },
         { path: 'skills', title: t('shell.viewSkills'), icon: Puzzle },
         { path: 'sessions', title: t('shell.viewSessions'), icon: History },
+        { path: 'memory', title: t('shell.viewMemory'), icon: Brain },
         { path: 'agents', title: t('shell.viewAgents'), icon: Bot },
         { path: 'usage', title: t('shell.viewUsage'), icon: BarChart3 },
         { path: 'cron', title: t('shell.viewCron'), icon: CalendarClock },
@@ -169,7 +175,9 @@ export const NAV_SHORTCUTS: ReadonlyArray<NavShortcutSpec> = [
   { combo: 'g n', path: 'channels', descriptionKey: 'shell.shortcutNavChannels' },
   { combo: 'g m', path: 'mcp', descriptionKey: 'shell.shortcutNavMcp' },
   { combo: 'g k', path: 'skills', descriptionKey: 'shell.shortcutNavSkills' },
+  { combo: 'g j', path: 'projects', descriptionKey: 'shell.shortcutNavProjects' },
   { combo: 'g s', path: 'sessions', descriptionKey: 'shell.shortcutNavSessions' },
+  { combo: 'g y', path: 'memory', descriptionKey: 'shell.shortcutNavMemory' },
   { combo: 'g a', path: 'agents', descriptionKey: 'shell.shortcutNavAgents' },
   { combo: 'g u', path: 'usage', descriptionKey: 'shell.shortcutNavUsage' },
   { combo: 'g r', path: 'cron', descriptionKey: 'shell.shortcutNavCron' },
