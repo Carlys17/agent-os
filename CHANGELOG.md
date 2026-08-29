@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Security: the git tools (`git_status`, `git_diff`, `git_log`, `git_commit`)
+  now mask credentials in their output before it reaches the model. `git_diff`
+  returns working-tree and staged file content verbatim, so a `.env` that was
+  committed once kept reaching the model in cleartext on every diff, while the
+  sibling file surfaces (`read_file`, `grep_search`) already redacted. Masking
+  happens at the one `_run_git` chokepoint, on the sandboxed and subprocess
+  paths and on success and failure alike. The assignment pass runs
+  unconditionally (`code_file=False`) because a diff is arbitrary repository
+  content and the git argv says nothing about what is coming back, and the
+  non-reusable `«redacted:…»` sentinel is used because an agent may pipe a diff
+  straight back through `git apply`.
+- Security: a named credential on a diff line no longer escapes the assignment
+  redaction pass. The token-start anchor did not admit the diff marker, so
+  `+MY_SECRET=…` went unmasked where `MY_SECRET=…` was masked; vendor-prefixed
+  keys were still caught by the shape pass, non-vendor named secrets were not.
+  The anchor now accepts one or two marker columns, covering the combined diff
+  a conflicted merge produces as well as the ordinary unified form.
+
 ## [2026.8.28] - 2026-08-28
 
 ### Added
