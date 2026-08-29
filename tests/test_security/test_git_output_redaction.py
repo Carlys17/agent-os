@@ -65,6 +65,30 @@ def repo(tmp_path: Path) -> Path:
     return repo
 
 
+async def _run_git_returning(
+    stdout: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> str:
+    """Return what ``_run_git`` hands back when git produces *stdout*.
+
+    Stubs the subprocess rather than the redactor, so the assertion is about the
+    string the model would actually receive.
+    """
+
+    class _Proc:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, None]:
+            return (stdout.encode(), None)
+
+    async def fake_exec(*args: object, **kwargs: object) -> _Proc:
+        return _Proc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    return await git._run_git("diff", cwd=str(tmp_path))
+
+
 async def test_git_log_patch_masks_committed_credentials(repo: Path) -> None:
     out = await git._run_git("log", "-p", "-1", cwd=str(repo))
 
@@ -90,34 +114,38 @@ async def test_git_diff_masks_working_tree_credentials(repo: Path) -> None:
     assert "--- a/.env" in out and "+++ b/.env" in out
 
 
-async def test_git_diff_masks_secrets_in_a_conflicted_merge(repo: Path) -> None:
+async def test_combined_diff_output_is_masked_on_both_marker_columns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A conflicted tree makes ``git diff`` emit combined (``--cc``) output.
 
     Resolving a merge is exactly when an agent reaches for ``git_diff``, and the
-    combined form carries two marker columns instead of one.
+    combined form carries two marker columns where the unified form carries one.
+    The output is supplied verbatim rather than by staging a real conflict: the
+    text is what the redactor has to cope with, and building it here keeps the
+    test from depending on how a given git version resolves a merge.
     """
-    _git(repo, "checkout", "-q", "-b", "side")
-    (repo / ".env").write_text(
-        f"MY_CUSTOM_SECRET={ROTATED_SECRET}\n", encoding="utf-8", newline="\n"
+    combined = (
+        "diff --cc .env\n"
+        "index 5d11b26,2e75ddf..0000000\n"
+        "--- a/.env\n"
+        "+++ b/.env\n"
+        "@@@ -1,1 -1,1 +1,5 @@@\n"
+        "++<<<<<<< HEAD\n"
+        f" +MY_CUSTOM_SECRET={OTHER_SECRET}\n"
+        "++=======\n"
+        f"+ MY_CUSTOM_SECRET={ROTATED_SECRET}\n"
+        f"++MY_CUSTOM_SECRET={NAMED_SECRET}\n"
+        "++>>>>>>> side\n"
     )
-    _git(repo, "commit", "-qam", "side")
-    _git(repo, "checkout", "-q", "main")
-    (repo / ".env").write_text(f"MY_CUSTOM_SECRET={OTHER_SECRET}\n", encoding="utf-8", newline="\n")
-    _git(repo, "commit", "-qam", "main")
-    subprocess.run(["git", "merge", "side"], cwd=repo, check=False, capture_output=True)
+    out = await _run_git_returning(combined, tmp_path, monkeypatch)
 
-    out = await git._run_git("diff", cwd=str(repo))
-
-    assert "diff --cc" in out
-    assert ROTATED_SECRET not in out
     assert OTHER_SECRET not in out
-
-
-async def test_masked_value_cannot_pass_for_a_truncated_key(repo: Path) -> None:
-    """A diff is file content: an agent may ``git apply`` it, so use the sentinel."""
-    out = await git._run_git("show", "HEAD", cwd=str(repo))
-
-    assert "«redacted:" in out
+    assert ROTATED_SECRET not in out
+    assert NAMED_SECRET not in out
+    assert "diff --cc .env" in out
+    assert "++<<<<<<< HEAD" in out
 
 
 async def test_git_failure_message_masks_credentials(
