@@ -34,8 +34,12 @@ def _norm_path(raw: str, *, base_dir: str | Path | None = None) -> str:
     """
     if not raw or raw.startswith(("$", "`")) or raw in {"*", "-"}:
         return raw
+    # Normalize Windows backslash separators so paths like
+    # ``\root\.agentos\workspace\.env`` (produced on Windows runners or by
+    # Windows-style shell commands) resolve correctly on POSIX runners too.
+    normalized = raw.replace("\\", "/")
     try:
-        path = Path(raw).expanduser()
+        path = Path(normalized).expanduser()
         if base_dir is not None and not path.is_absolute():
             path = Path(base_dir).expanduser() / path
         return str(path.resolve(strict=False))
@@ -80,15 +84,24 @@ def _extract_rm_targets(command: str) -> list[str]:
             continue
 
         token_sets: list[list[str]] = []
-        try:
-            token_sets.append(shlex.split(tail))
-        except ValueError:
-            token_sets.append(tail.split())
+        # Use plain whitespace splitting (not shlex) so backslash-separated
+        # Windows-style paths such as ``\root\.agentos\workspace\.env`` keep
+        # their backslashes. ``shlex.split`` (POSIX) treats ``\`` as an escape
+        # and would collapse ``\root\.agentos`` into ``root.agentos``.
+        raw_tokens = tail.split()
+        stripped: list[str] = []
+        for tok in raw_tokens:
+            if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in ("'", '"'):
+                stripped.append(tok[1:-1])
+            else:
+                stripped.append(tok)
+        token_sets.append(stripped)
         if "\\" in tail and (os.name == "nt" or re.search(r"(?:^|\s)\\\\[^\\s]", tail)):
+            # Also try a non-POSIX shlex pass for completeness.
             try:
                 token_sets.append(shlex.split(tail, posix=False))
             except ValueError:
-                token_sets.append(tail.split())
+                pass
 
         for tokens in token_sets:
             for token in tokens:
