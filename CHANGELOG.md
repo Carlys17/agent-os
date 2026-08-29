@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Router metadata no longer reports a model the provider never ran. An explicit
+  model — a durable `config.agents[].model`, a session pin, or a per-call
+  override — beats the Pilot Router's pick when `PromptAssemblerStage` resolves
+  the final model, but the metadata kept advertising the route as applied, so
+  the Web UI router HUD, the `DoneEvent`, per-turn usage and the savings figures
+  all named the routed model and credited savings for a route the turn never
+  took. The decision is now demoted the same way the `observe` rollout phase
+  already does it (`routing_applied=false`, tier and model kept on the record as
+  advice), and per-turn savings are priced from the model that actually ran —
+  which also corrects the cost basis reported during `observe` (#586).
+
 ## [2026.8.29] - 2026-08-29
 
 ### Added

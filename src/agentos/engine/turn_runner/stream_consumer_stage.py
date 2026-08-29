@@ -509,12 +509,18 @@ class _DoneHandler:
             "estimated_output_savings_pct",
             0.03,
         )
+        # Price the turn from the model that actually ran. When routing was
+        # not applied — observe rollout, or an explicit model that beat the
+        # route in PromptAssemblerStage — ``routed_model`` is the router's
+        # advice, not what the provider billed, and pricing against it invents
+        # a cost (and a saving) for a model nobody called.
+        priced_model = routed_model if routing_applied else (event.model or routed_model)
         comprehensive = _compute_comprehensive_turn_savings(
             event,
             metadata,
             agentos_router_tiers,
-            routed_model,
-            routed_tier=str(routed_tier or ""),
+            priced_model,
+            routed_tier=str(routed_tier or "") if routing_applied else "",
             estimated_output_savings_pct=estimated_output_savings_pct,
         )
         provider_cache_hit = (event.cached_tokens or 0) > 0
