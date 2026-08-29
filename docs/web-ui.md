@@ -79,6 +79,7 @@ non-root mounts such as `/console/` work without rebuilding. Root, `/api`, and
 | Area | Use it for |
 | --- | --- |
 | Chat | Run and resume chat sessions, inspect tool activity, publish artifacts, and use manual compact controls. |
+| Projects | Group chat sessions, edit each project's shared knowledge (injected into every member session), and start new chats inside a project. |
 | Overview / Health | See readiness, provider state, memory state, sandbox posture, and recovery hints. |
 | Channels | Inspect configured channel adapter status and jump to Agent Setup for configuration changes. |
 | Skills | Browse installed skills grouped by where they came from, see whether the agent is actually being offered each one, and install more from a hub. |
@@ -112,6 +113,7 @@ The Web UI supports two-step chords (Gmail/GitHub style) to switch between sideb
 - `g` then `n` - Go to Channels
 - `g` then `m` - Go to MCP Servers
 - `g` then `k` - Go to Skills
+- `g` then `j` - Go to Projects
 - `g` then `s` - Go to Sessions
 - `g` then `a` - Go to Agents
 - `g` then `u` - Go to Usage
@@ -189,7 +191,8 @@ configuration.
 in Advanced. The WebSocket config mutation RPCs reject attempts to retarget the
 active config file or replace runtime-owned authentication credentials. Other
 authentication settings, such as `auth.mode`, remain editable and may require a
-gateway restart.
+gateway restart — `auth.mode` accepts only `none`, `token`, or `trusted-proxy`,
+and any other value is rejected by the mutation RPC rather than saved.
 
 Restart reporting is deliberately conservative. Mutation responses expose
 `restartRequired`; subsequent snapshots expose cumulative `pendingRestart` and

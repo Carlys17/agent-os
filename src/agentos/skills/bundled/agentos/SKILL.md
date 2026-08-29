@@ -1,6 +1,6 @@
 ---
 name: agentos
-description: "Operate and configure AgentOS itself: the `agentos` CLI, agentos.toml, gateway/Web UI, providers and models, web search, X (Twitter) search via xAI (`x_search`; SuperGrok login or XAI_API_KEY), skills, channels, sessions, cron, sandbox, and memory. Use when: (1) the user asks to change an AgentOS setting or turn a capability on (model, provider, router tier, auth/login, channels, search), (2) starting, stopping, or debugging the gateway or Web UI, (3) installing, updating, or removing skills and taps, (4) inspecting sessions, usage/cost, cron jobs, or diagnostics, (5) migrating from another agent runtime. NOT for: authoring new skills (see docs/features/skills.md), operating other agent CLIs, or modifying AgentOS source code."
+description: "Operate and configure AgentOS itself: the `agentos` CLI, agentos.toml, gateway/Web UI, providers and models, web search, X (Twitter) search via xAI (`x_search`; SuperGrok login or XAI_API_KEY), skills, channels, sessions, projects (session groups with shared knowledge), cron, sandbox, and memory. Use when: (1) the user asks to change an AgentOS setting or turn a capability on (model, provider, router tier, auth/login, channels, search), (2) starting, stopping, or debugging the gateway or Web UI, (3) installing, updating, or removing skills and taps, (4) inspecting sessions, usage/cost, cron jobs, or diagnostics, (5) migrating from another agent runtime. NOT for: authoring new skills (see docs/features/skills.md), operating other agent CLIs, or modifying AgentOS source code."
 always: false
 triggers:
   - agentos
@@ -130,9 +130,10 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `models` | `list` |
 | `skills` | `init`, `list`, `search`, `view`, `install`, `uninstall`, `update`, `publish`, `tap add/list/remove` |
 | `sessions` | `list`, `show`, `rename`, `resume`, `abort`, `delete`, `export` |
+| `projects` | `list`, `create` (`--knowledge`/`--knowledge-file`), `show`, `update`, `delete`, `move <session> <project\|none>` — group sessions across agents; the knowledge text is injected into every member session's prompt |
 | `cron` | `list`, `status`, `add` (also takes `--session-key`, the chat a job reports into), `update` (both take `--job-kind`, `--script`, `--script-arg`, `--workdir`, `--elevated`, `--elevated-mode`, `--tool-policy`; the policy's `profile` must be one of `coding`/`full`/`memory_only`/`messaging`/`minimal`, or be omitted), `remove`, `run`, `runs` |
 | `channels` | `list`, `status`, `types`, `describe`, `native-commands`, `add`, `remove`, `enable`, `disable`, `edit`, `restart`, `logout`, `pairing …` |
-| `memory` | `status`, `index`, `list`, `search`, `show`, `embedding-download`, `raw-fallbacks …` |
+| `memory` | `status`, `index`, `list`, `search`, `show`, `ingest`, `curated`, `embedding-download`, `raw-fallbacks …` |
 | `sandbox` | `status`, `on`, `bypass`, `full`, `reset` |
 | `search` | `list`, `status`, `query`, `configure` |
 | `auth` | `login xai` (`--no-wait`/`--resume`/`--json` for non-blocking use), `status`, `logout xai` — xAI OAuth (SuperGrok / X Premium+) for `x_search`; tokens in `~/.agentos/auth.json`, never printed |
@@ -144,8 +145,8 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `mcp-server` | `run` (MCP bridge) |
 | `replay`, `dist`, `onboard` | replay recorded turns / workspace inventory / setup status |
 
-Built-in channel types are `discord`, `slack`, and `telegram`; use `agentos
-channels types` as the authoritative catalog. Config migration backs up the
+Built-in channel types are `discord`, `email`, `slack`, and `telegram`; use
+`agentos channels types` as the authoritative catalog. Config migration backs up the
 file before removing entries for retired built-in channel types.
 
 Telegram direct messages always require pairing. Use `agentos channels pairing
@@ -153,6 +154,11 @@ list <name>`, `approve <name> <code>`, `deny <name> <sender-id>`, or `revoke
 <name> <sender-id>`. Pairing is binary and has no admin/owner tier. Telegram
 groups are disabled by default; enable them only with explicit
 `group_chat_ids`, paired senders, and the desired mention requirement.
+
+The `email` channel is IMAP polling in, SMTP out, and needs no platform app
+registration. `allowed_senders` is a required fail-closed From-address
+allowlist (exact addresses or `*@domain` patterns); one mail thread is one
+session.
 
 Platform-native interactive tool approvals (Slack block actions, Telegram inline keyboard callbacks, and Discord message components) allow operators to approve or deny gated tool executions directly using interactive buttons. For security, these approvals are restricted to channel DMs (never group chats), access-gated by evaluating the clicker's sender ID against the channel's access policy, and strictly session-bound to their originating chat context.
 
@@ -216,6 +222,7 @@ Main `agentos.toml` sections (full commented reference:
 | `[observability]` | Prometheus metrics (`metrics_enabled`, `metrics_path`), OTLP trace export (`otlp_enabled`, `otlp_endpoint`, `otlp_headers`, `otlp_service_name`), log retention (`log_retention_days`, `log_retention_max_total_mb`, `log_retention_sweep_interval_s`) |
 | `[prompt_cache]` | Prompt-cache continuity: `mode` = `auto` (default) \| `on` \| `off`. Env override: `AGENTOS_CACHE_MODE` (legacy `prompt_cache.enabled` / `AGENTOS_CACHE_ENABLED` deprecated) |
 | `[safety]` | Prompt-ingress safety: `wrap_untrusted_workspace` (default true), `injection_scan_mode` (`report` default, `enforce` redacts matched workspace-file content, `off`) |
+| `[budgets]` | money spend ceilings (USD): `session_limit`/`session_warn`, `daily_limit`/`daily_warn` (per UTC day, persisted across restarts), and per-key `[budgets.agent_daily_limit]` / `[budgets.channel_daily_limit]` (plus `*_warn`). A turn at or above a hard limit is refused with `budget_exceeded`; a warn threshold raises a one-shot `budget_warning`. Nothing is enforced until a ceiling is set |
 | `[compaction]`, `[agent_token_saving]`, `[task_runtime]` | context compaction, tool-result projection, concurrency |
 
 Slack native commands auto-sync when a Slack channel entry provides `app_id`,
@@ -466,6 +473,11 @@ agentos sessions rename <id> "api-refactor"   # --clear drops the name
 agentos sessions list --search api-refactor
 # In chat, /rename does the same. The `session_rename` tool names the session
 # the agent is running in — use it when the user just asks in prose.
+# Group related sessions into a project; its knowledge text is injected into
+# every member session. Delete keeps the sessions (they just detach).
+agentos projects create "Token research" --knowledge-file notes.md
+agentos projects move <session-id> <project-id>   # 'none' detaches
+agentos projects show <project-id>
 agentos cron list / add / run <id> / runs
 # --job-kind decides what fires. Default 'auto' = reminder: --text is delivered
 # verbatim and NO LLM runs, so a job that should think needs agent_turn.
@@ -516,7 +528,8 @@ agentos migrate hermes --source <dir> [--apply]   # dry-run first, then --apply
 The gateway is also a REST + WebSocket server on port 18791:
 `GET /api/config|sessions|agents|cron|usage|system/status|channels/status`,
 `POST /api/chat`, `GET /api/chat/history`, approvals endpoints under
-`/api/approvals*`, and `WS /ws` (primary RPC transport). On loopback binds
+`/api/approvals*`, and `WS /ws` (primary RPC transport; `projects.*` CRUD
+lives there alongside `sessions.*`). On loopback binds
 auth is optional; on public binds the `[auth]` token gates every request.
 Full reference: `docs/http-api.md` (https://useagentos.dev/docs/http-api).
 

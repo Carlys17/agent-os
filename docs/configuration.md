@@ -110,6 +110,36 @@ headers, JWTs, private keys and DSN passwords are masked. Set
 `AGENTOS_REDACT_SECRETS=0` before starting AgentOS to turn this off; it is read
 once at startup, so a command the agent runs cannot switch it off mid-session.
 
+File content is scanned the same way: `read_file`, `read_spreadsheet`,
+`grep_search` and `edit_file`'s closest-match hint mask credentials on their way
+back to the model, using a `«redacted:sk-…»` sentinel that cannot be mistaken
+for a usable key and written back over the real one. This layer stays on even
+under `/elevated full`, where the sensitive-path denylist is lifted, so an
+elevated read of a secrets file does not put the secrets verbatim into the
+persisted transcript. Reading one through the shell (`cat ~/.aws/credentials`)
+gets the same treatment.
+
+How hard the pass looks depends on the file. Credentials recognisable from their
+own text — vendor-prefixed keys, JWTs, PEM private keys — are masked in every
+file, source code included. The name-driven pass (`NAME=value`, `"name": value`,
+`Authorization:` headers, DSN and URL passwords) is the only one that catches a
+shapeless secret such as `aws_secret_access_key`, and it runs everywhere
+**except** source code, where `api_key=self._api_key` is an identifier and
+`apiKey: NotRequired[str]` a type: masking those would hand back code that no
+longer matches the file. Configuration data — `.env`, `~/.aws/credentials`,
+`~/.kube/config`, `.netrc`, `.ini`, JSON and YAML — gets the full pass.
+`grep_search` judges each matched line by the path it came from, so one search
+can span both kinds of file.
+
+`git_status`, `git_diff`, `git_log` and `git_commit` are scanned too, and always
+with the full name-driven pass. `git_diff` hands back whatever the repository
+happens to contain, a committed `.env` included, so the git arguments say
+nothing useful about what kind of content is coming back. A credential on a
+diff's `+`/`-` line — or on the `++`/`--` columns of the combined diff a
+conflicted merge produces — is masked like any other, and with the same
+non-reusable sentinel the file surfaces use, so a masked diff fed back through
+`git apply` fails loudly instead of writing a dead-looking key.
+
 ### What the outbound guard refuses
 
 `http_request`, `exec_command` and `execute_code` refuse to put credential
@@ -832,6 +862,67 @@ injection_scan_mode = "report"   # "report" | "enforce" | "off"
   - `off`: Disables prompt-injection scanning.
 
 `[safety]` is TOML-only; there is no environment-variable override for these keys.
+
+## Spend Budgets
+
+Money ceilings with a hard stop, so a runaway loop or subagent fan-out cannot
+burn an unbounded amount overnight. Every value is US dollars of estimated
+model spend (or the provider-billed figure, when the provider reports one).
+
+```toml
+[budgets]
+enabled = true          # master switch; keeps the numbers but suspends enforcement when false
+session_limit = 5.0     # hard stop once one session reaches this
+session_warn = 4.0      # one-shot warning for that session
+daily_limit = 50.0      # hard stop for gateway-wide spend on the current UTC day
+daily_warn = 40.0       # one-shot warning for that day
+
+[budgets.agent_daily_limit]
+main = 20.0
+
+[budgets.channel_daily_limit]
+telegram = 10.0
+```
+
+`agent_daily_warn` and `channel_daily_warn` take the same per-key shape as
+their `*_limit` counterparts.
+
+- Nothing is enforced by default: every ceiling is unset on a fresh install,
+  and `enabled = true` only means "apply the ceilings you have configured".
+- A turn that starts at or above a hard limit is refused before any provider
+  call, with a `budget_exceeded` error naming the scope and the number. The
+  refusal is recorded in the session transcript, and the user message that
+  triggered it is rolled back rather than left as a reply-less turn.
+- Ceilings are re-checked between iterations *within* a turn as well, so a
+  single turn with a long tool loop stops at the ceiling instead of running
+  to completion past it.
+- A `*_warn` threshold does not stop the turn. It surfaces a
+  `budget_warning` once per session (session scope) or once per UTC day
+  (daily scopes), so a long session does not repeat the same alert every turn.
+- A warn threshold above its own hard limit is rejected at load time — it
+  could never fire. So are two spellings of one scope key (`default` and
+  `main`, `Telegram` and `telegram`), which would otherwise silently drop one
+  of the two numbers.
+- Spend is tracked in a ledger persisted at
+  `~/.agentos/state/spend_ledger.db` (keyed per UTC day for the daily scopes,
+  per session for the session scope), so a ceiling survives a gateway restart
+  — a runaway overnight loop cannot be reset by a crash-and-respawn.
+- Subagent turns run through the same gate, and their spend is attributed to
+  the parent agent id, so a fan-out is bounded by the agent and daily
+  ceilings rather than multiplying past them.
+- Changing a ceiling requires a gateway restart to take effect. `budgets.*` is
+  not on the live-reload allowlist, so both `agentos config` and the Web UI
+  report `restart_required` when you change one. Restart before relying on a
+  new ceiling — a limit written while the gateway is running is not yet
+  enforcing.
+- Enforcement fails open. If the ledger cannot be read or written, the
+  shortfall is logged (`usage_tracker.ledger_*`) and turns keep running: a
+  budget check is never the reason a gateway stops working. Reads reconcile
+  the persisted row against in-process accounting by taking the larger of the
+  two, so a dropped write cannot quietly retire a ceiling within a run.
+
+`[budgets]` is TOML-only; there is no environment-variable override for these
+keys.
 
 ## Gateway Binding
 

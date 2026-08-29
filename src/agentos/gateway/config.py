@@ -37,6 +37,7 @@ from agentos.router_tiers import (
     normalize_tier_mapping,
 )
 from agentos.sandbox.config import SandboxSettings
+from agentos.session.keys import normalize_agent_id
 from agentos.skills.injector import DEFAULT_MAX_SKILLS_PROMPT_CHARS
 from agentos.skills.outline import DEFAULT_MAX_SKILL_VIEW_CHARS
 
@@ -56,13 +57,53 @@ class ContextOverflowPolicy(StrEnum):
     REFUSE = "refuse"
 
 
+# The auth modes the gateway actually implements. Every entry here has an
+# enforcement branch in ``AuthMiddleware.dispatch``; anything else — the
+# never-implemented ``"password"``, or a typo like ``"tokenn"`` — is rejected at
+# validation time so a mode can never silently no-op into an unauthenticated
+# gateway (#352). Enforced end-to-end is a stricter bar still: see
+# ``_mode_protects_public_bind``, which admits only ``token`` on a public bind.
+SUPPORTED_AUTH_MODES: tuple[str, ...] = ("none", "token", "trusted-proxy")
+
+
 class AuthConfig(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AGENTOS_AUTH_")
+    model_config = SettingsConfigDict(env_prefix="AGENTOS_AUTH_", validate_assignment=True)
 
     token: str | None = None
+    # Reserved: no auth mode consumes this today. ``auth.mode="password"`` is
+    # rejected (see the ``mode`` validator); the field is kept so an existing
+    # config that carries the value still loads.
     password: str | None = None
-    mode: str = "none"  # none | token | password | trusted-proxy
+    mode: str = "none"  # none | token | trusted-proxy
     trusted_proxy: str | None = None
+
+    @field_validator("mode")
+    @classmethod
+    def _validate_mode(cls, value: str) -> str:
+        """Fail closed on any mode the middleware does not enforce.
+
+        ``"password"`` was advertised and env-bound but never implemented: it
+        fell through ``AuthMiddleware.dispatch`` and admitted every non-RPC
+        request unauthenticated. Refusing it (and every typo) at load time is
+        the only posture that cannot be mistaken for "auth is on".
+        """
+        normalized = value.strip().lower()
+        if normalized in SUPPORTED_AUTH_MODES:
+            return normalized
+        supported = ", ".join(repr(mode) for mode in SUPPORTED_AUTH_MODES)
+        extra = (
+            " It was advertised but never implemented: it admitted every request "
+            "unauthenticated instead of asking for a credential."
+            if normalized == "password"
+            else ""
+        )
+        raise ValueError(
+            f"auth.mode={value!r} is not an implemented auth mode; supported modes are "
+            f"{supported}.{extra} Fix it in the [auth] section of your agentos.toml "
+            "(or in AGENTOS_AUTH_MODE / AGENTOS_GATEWAY_AUTH__MODE if the value comes "
+            'from the environment): mode = "token" enforces a credential, mode = "none" '
+            "accepts an unauthenticated loopback-only gateway."
+        )
 
 
 class CorsConfig(BaseSettings):
@@ -1626,6 +1667,49 @@ class MSTeamsChannelEntry(ConfiguredChannelEntry):
     webhook_path: str = "/msteams/messages"
 
 
+class EmailChannelEntry(ConfiguredChannelEntry):
+    """Gateway config entry for an IMAP/SMTP email channel."""
+
+    type: Literal["email"] = "email"
+    imap_host: str
+    imap_port: int = Field(default=993, ge=1, le=65535)
+    imap_ssl: bool = True
+    imap_username: str
+    imap_password: str = ""
+    imap_folder: str = "INBOX"
+    smtp_host: str
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_ssl: bool = False
+    smtp_starttls: bool = True
+    smtp_username: str = ""
+    smtp_password: str = ""
+    from_address: str
+    from_name: str = ""
+    allowed_senders: list[str] = Field(default_factory=list)
+    poll_interval_s: float = Field(default=30.0, ge=1.0, le=3600.0)
+    max_messages_per_poll: int = Field(default=10, ge=1, le=200)
+    max_message_bytes: int = Field(default=25 * 1024 * 1024, ge=1024)
+    mark_seen: bool = True
+    connect_timeout_s: float = Field(default=30.0, ge=1.0, le=300.0)
+
+    @field_validator("allowed_senders", mode="before")
+    @classmethod
+    def _normalize_allowed_senders(cls, value: Any) -> list[str]:
+        values = value.split(",") if isinstance(value, str) else (value or [])
+        normalized = (str(item).strip().lower() for item in values)
+        return list(dict.fromkeys(item for item in normalized if item))
+
+    @model_validator(mode="after")
+    def _validate_email_entry(self) -> EmailChannelEntry:
+        # Fail closed: an inbox with no allowlist would let any stranger who
+        # can send mail drive the agent.
+        if not self.allowed_senders:
+            raise ValueError("email channels require at least one allowed_senders entry")
+        if "@" not in self.from_address:
+            raise ValueError("email from_address must be a full address")
+        return self
+
+
 class TelegramChannelEntry(ConfiguredChannelEntry):
     """Gateway config entry for a Telegram Bot API channel."""
 
@@ -1805,6 +1889,129 @@ class UpdatesConfig(BaseModel):
     notify: bool = True
 
 
+class BudgetsConfig(BaseModel):
+    """Money spend ceilings — hard stop plus warn thresholds.
+
+    Every ceiling is US dollars of estimated (or provider-billed, when the
+    provider reports one) model spend. ``None`` means "no ceiling for this
+    scope", which is the default for all of them: a fresh install enforces
+    nothing until an operator sets a number.
+
+    Session ceilings are measured against the session's own accumulated cost.
+    The ``*_daily_*`` ceilings are measured against a persisted per-UTC-day
+    ledger, so they survive a gateway restart — the point of the feature is
+    that a runaway overnight loop cannot be reset by a crash-and-respawn.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    """Master switch. Left on so setting a ceiling is enough to enforce it;
+    set ``false`` to suspend every ceiling without deleting the numbers."""
+
+    session_limit: float | None = Field(default=None, ge=0.0)
+    """Hard stop once one session's accumulated cost reaches this."""
+
+    session_warn: float | None = Field(default=None, ge=0.0)
+    """Warn (once per session) at this session cost. Must not exceed
+    ``session_limit`` when both are set."""
+
+    daily_limit: float | None = Field(default=None, ge=0.0)
+    """Hard stop once gateway-wide spend for the current UTC day reaches this."""
+
+    daily_warn: float | None = Field(default=None, ge=0.0)
+    """Warn (once per day) at this gateway-wide daily spend."""
+
+    agent_daily_limit: dict[str, float] = Field(default_factory=dict)
+    """Per-agent daily hard stops, keyed by agent id."""
+
+    agent_daily_warn: dict[str, float] = Field(default_factory=dict)
+    """Per-agent daily warn thresholds, keyed by agent id."""
+
+    channel_daily_limit: dict[str, float] = Field(default_factory=dict)
+    """Per-channel daily hard stops, keyed by channel name (``telegram``,
+    ``slack``, ``webchat``, ``system``, ...)."""
+
+    channel_daily_warn: dict[str, float] = Field(default_factory=dict)
+    """Per-channel daily warn thresholds, keyed by channel name."""
+
+    @staticmethod
+    def _normalized_keys(value: Any, normalize: Any) -> Any:
+        """Rewrite scope keys to their canonical form, refusing collisions.
+
+        Two spellings of one scope (``default`` and ``main``, ``Telegram`` and
+        ``telegram``) would otherwise collapse into a single entry and one of
+        the operator's two numbers would vanish with no error.
+        """
+        if not isinstance(value, dict):
+            return value
+        normalized: dict[str, Any] = {}
+        seen: dict[str, str] = {}
+        for key, amount in value.items():
+            canonical = normalize(str(key))
+            if canonical in seen:
+                raise ValueError(
+                    f"budget keys '{seen[canonical]}' and '{key}' both refer to "
+                    f"'{canonical}' — keep only one"
+                )
+            seen[canonical] = str(key)
+            normalized[canonical] = amount
+        return normalized
+
+    @field_validator("agent_daily_limit", "agent_daily_warn", mode="before")
+    @classmethod
+    def _normalize_agent_keys(cls, value: Any) -> Any:
+        return cls._normalized_keys(value, normalize_agent_id)
+
+    @field_validator("channel_daily_limit", "channel_daily_warn", mode="before")
+    @classmethod
+    def _normalize_channel_keys(cls, value: Any) -> Any:
+        return cls._normalized_keys(value, lambda key: key.strip().lower())
+
+    @field_validator(
+        "agent_daily_limit",
+        "agent_daily_warn",
+        "channel_daily_limit",
+        "channel_daily_warn",
+    )
+    @classmethod
+    def _reject_negative_ceilings(cls, value: dict[str, float]) -> dict[str, float]:
+        for key, amount in value.items():
+            if amount < 0:
+                raise ValueError(f"budget ceiling for '{key}' must be >= 0 (got {amount})")
+        return value
+
+    @model_validator(mode="after")
+    def _warn_below_limit(self) -> BudgetsConfig:
+        """A warn threshold above its hard stop can never fire — reject it.
+
+        Silently accepting it would leave the operator believing they have an
+        early-warning signal that the hard stop always pre-empts.
+        """
+        pairs: list[tuple[str, float | None, float | None]] = [
+            ("session", self.session_warn, self.session_limit),
+            ("daily", self.daily_warn, self.daily_limit),
+        ]
+        for scope, warn, limit in pairs:
+            if warn is not None and limit is not None and warn > limit:
+                raise ValueError(
+                    f"budgets.{scope}_warn ({warn}) must not exceed budgets.{scope}_limit ({limit})"
+                )
+        scoped = [
+            ("agent_daily", self.agent_daily_warn, self.agent_daily_limit),
+            ("channel_daily", self.channel_daily_warn, self.channel_daily_limit),
+        ]
+        for scope, warns, limits in scoped:
+            for key, warn_amount in warns.items():
+                limit_amount = limits.get(key)
+                if limit_amount is not None and warn_amount > limit_amount:
+                    raise ValueError(
+                        f"budgets.{scope}_warn['{key}'] ({warn_amount}) must not exceed "
+                        f"budgets.{scope}_limit['{key}'] ({limit_amount})"
+                    )
+        return self
+
+
 class TlsConfig(BaseSettings):
     """Optional TLS termination at the gateway itself.
 
@@ -1888,6 +2095,7 @@ class GatewayConfig(BaseSettings):
     agents_defaults: AgentDefaults = Field(default_factory=AgentDefaults)
     subagents: SubagentsGatewayConfig = Field(default_factory=SubagentsGatewayConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    budgets: BudgetsConfig = Field(default_factory=BudgetsConfig)
 
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
 
@@ -2346,7 +2554,8 @@ def _mode_protects_public_bind(auth: AuthConfig) -> bool:
     has a resolver in ``resolve_auth``. Every other mode is treated as
     unauthenticated for the public-bind guard:
 
-    * ``password`` has no HTTP-surface enforcement yet.
+    * ``password`` is refused outright by ``AuthConfig`` — it was advertised
+      but never implemented (#352).
     * ``trusted-proxy`` only string-matches the client-supplied
       ``X-Forwarded-For`` header (trivially spoofable) and has no resolver in
       ``resolve_auth``, so it is not enforced end-to-end. Re-admit it here

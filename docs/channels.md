@@ -2,7 +2,7 @@
 
 Channels let AgentOS run from messaging platforms while sharing the same
 agent runtime as the CLI and Web UI. Use channels when you want the same agent
-to answer from Slack, Telegram, or Discord.
+to answer from Slack, Telegram, Discord, or plain email.
 
 ## Supported Channel Types
 
@@ -19,6 +19,7 @@ This build exposes the following channel families:
 | Type | Label | Transport | Public URL needed |
 | --- | --- | --- | :---: |
 | `discord` | Discord | websocket | no |
+| `email` | Email (IMAP/SMTP) | polling | no |
 | `slack` | Slack | mixed | depends on mode |
 | `telegram` | Telegram | mixed | depends on mode |
 
@@ -85,6 +86,74 @@ agentos channels remove <name>
 
 Use `gateway restart` after config changes. Use `channels restart <name>` only
 for an already-loaded live adapter.
+
+## Email (IMAP/SMTP)
+
+The email channel needs no platform app registration — only IMAP and SMTP
+credentials for a mailbox the agent owns. Inbound is IMAP polling; outbound is
+SMTP, with `In-Reply-To`/`References` set so replies land in the originating
+thread.
+
+```sh
+agentos channels add email --name inbox \
+  --field imap_host=imap.example.com \
+  --field imap_username=agent@example.com \
+  --field imap_password=<app-password> \
+  --field smtp_host=smtp.example.com \
+  --field from_address=agent@example.com \
+  --field allowed_senders=you@example.com,*@yourteam.example
+```
+
+Providers with two-factor authentication normally require an app password
+rather than the account password. Set `smtp_ssl=true` (and `smtp_port=465`)
+for implicit TLS; the default is STARTTLS on port 587.
+
+### Access Control
+
+`allowed_senders` is a fail-closed From-address allowlist and is **required** —
+a channel with an empty list is rejected at config load, because an open inbox
+would let anyone who can send mail drive the agent. Entries are exact addresses
+(`you@example.com`) or domain patterns (`*@example.com`, equivalently
+`@example.com`). Mail from any other sender is logged and dropped without ever
+being queued.
+
+The adapter also refuses to answer itself and drops machine-generated mail —
+anything carrying `Auto-Submitted`, `X-Autoreply`, `List-Id`,
+`List-Unsubscribe`, or `Precedence: bulk`. Without that guard an autoresponder
+on the far end and the agent would reply to each other indefinitely.
+
+### Threads and Sessions
+
+One mail thread is one session. The thread identity is the first id in
+`References`, falling back to `In-Reply-To` and then the message's own
+`Message-ID`, so a long back-and-forth keeps its context while a fresh email
+from the same person starts a fresh session.
+
+The thread routing table (which address and subject a reply goes back to) is
+rebuilt from each inbound message and kept in memory only, so a gateway
+restart does not affect replying to live conversations.
+
+Quoted history below a reply is stripped before the text reaches the model, and
+HTML-only mail is flattened to text. Replies are sent as plain text: mail
+clients do not render Markdown, so the agent is told to answer without it.
+
+### Attachments
+
+Inbound attachments are decoded and passed through the shared attachment
+pipeline under the same per-type size limits as every other channel; anything
+over the limit is dropped with a warning rather than truncated. Generated
+artifacts are mailed back into the same thread as attachments. Whole messages
+larger than `max_message_bytes` (25 MB by default) are skipped without being
+downloaded.
+
+### Polling
+
+`poll_interval_s` (default 30) sets how often the mailbox is checked, and
+`max_messages_per_poll` (default 10) bounds one cycle. Handled mail is flagged
+`\Seen`; set `mark_seen=false` to leave the mailbox untouched, at the cost of
+re-reading the same messages on the next poll. There is no IMAP IDLE support —
+a failed poll is logged, surfaces in `agentos channels status`, and the loop
+retries on the next interval.
 
 ## Telegram Account Pairing
 
@@ -222,7 +291,7 @@ underlying agent turn.
 ## Webhook Channels
 
 Slack webhook mode requires a public, provider-reachable URL. Telegram may
-require one depending on mode.
+require one depending on mode. Discord and email need none.
 
 For public channels:
 

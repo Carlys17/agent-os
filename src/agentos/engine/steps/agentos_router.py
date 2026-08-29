@@ -537,7 +537,8 @@ def _requires_history(strategy: object) -> bool:
     """History-aware strategies declare ``requires_history = True``.
 
     Gates history load/accumulation and the deterministic guards
-    (confidence gate, complaint upgrade, kv-cache anti-downgrade).
+    (confidence gate, complaint upgrade, kv-cache anti-downgrade, cost-aware
+    override) — every one of them lives in ``_finalize_decision``.
     """
     return bool(getattr(strategy, "requires_history", False))
 
@@ -1228,6 +1229,8 @@ def _finalize_decision(
     if router_cfg is not None:
         cost_aware = getattr(router_cfg, "cost_aware", True)
 
+    pre_cost_aware_tier = final_tier
+    cost_aware_override_applied = False
     if cost_aware:
         cheapest_tier = _get_cheapest_compatible_tier(final_tier, tiers, valid_tiers)
         if cheapest_tier != final_tier:
@@ -1239,6 +1242,21 @@ def _finalize_decision(
                 cheapest_model=tiers[cheapest_tier].get("model"),
             )
             final_tier = cheapest_tier
+            cost_aware_override_applied = True
+
+    # The override is the last step that can move the tier, so the ``final_*``
+    # fields are rewritten from it: ``_reconcile_controller_with_final_tier``
+    # and the routing-history entry must see the tier that actually chose the
+    # model. ``base_tier`` / ``route_class`` deliberately keep the classifier's
+    # own decision — the override is a substitution, not a classification.
+    extra.update(
+        {
+            "final_tier": final_tier,
+            "final_route_class": _route_class_for_tier(final_tier),
+            "cost_aware_override_applied": cost_aware_override_applied,
+            "pre_cost_aware_tier": pre_cost_aware_tier,
+        }
+    )
 
     return RoutingDecision(
         tier=final_tier,
@@ -1519,14 +1537,10 @@ async def apply_agentos_router(ctx: TurnContext) -> TurnContext:
         source = "default"
         probs = synthetic_one_hot(tier_name)
 
-    cost_aware = True
-    if ctx.config and ctx.config.agentos_router:
-        cost_aware = getattr(ctx.config.agentos_router, "cost_aware", True)
-
-    if cost_aware:
-        cheapest_tier = _get_cheapest_compatible_tier(tier_name, tiers, valid_tiers)
-        if cheapest_tier != tier_name:
-            tier_name = cheapest_tier
+    # NOTE: the cost-aware substitution is deliberately NOT applied here. It
+    # runs once, at the end of ``_finalize_decision``, so the complaint
+    # upgrade, the anti-downgrade and the telemetry all start from the tier the
+    # classifier actually returned.
     decision = RoutingDecision(
         tier=tier_name,
         model=tiers[tier_name].get("model", ctx.model),

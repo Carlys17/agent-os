@@ -4,6 +4,9 @@ import { RouterProvider, createMemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getViews, routeChildren } from './routes'
 import { AppProviders } from './providers'
+import '@/views/chat/ChatPage'
+import '@/views/overview/OverviewPage'
+import '@/components/ShortcutOverlay'
 import {
   AppShell,
   SIDEBAR_COLLAPSED_STORAGE_KEY,
@@ -23,7 +26,6 @@ let mockBootstrap: Bootstrap = {
   ws_url: 'ws://localhost/ws',
   auth_mode: '',
   base_path: '/control',
-  config_path: '',
   features: { diagnostics: false },
 }
 
@@ -416,6 +418,11 @@ describe('app shell chrome', () => {
     expect(screen.getByRole('main')).toHaveFocus()
     expect(replaceState).toHaveBeenCalled()
     expect(replaceState.mock.calls.at(-1)?.[2]).not.toContain('/static/dist/')
+    base.remove()
+    const resetBase = document.createElement('base')
+    resetBase.href = 'http://localhost:3000/'
+    document.head.prepend(resetBase)
+    resetBase.remove()
   })
 
   it('resets the persistent route scroller before entering Chat', async () => {
@@ -477,12 +484,14 @@ describe('app shell chrome', () => {
       .map((el) => el.textContent)
     expect(links).toEqual([
       'Chat',
+      'Projects',
       'Overview',
       'Health',
       'Channels',
       'MCP Servers',
       'Skills',
       'Sessions',
+      'Memory',
       'Agents',
       'Usage',
       'Cron',

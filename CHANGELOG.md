@@ -6,6 +6,312 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Email channel (`type = "email"`). A mailbox is now a first-class channel:
+  inbound over IMAP polling, outbound over SMTP with `In-Reply-To`/`References`
+  so replies stay in the originating thread. No platform app registration —
+  just IMAP/SMTP credentials. One mail thread is one session, quoted history is
+  stripped before the text reaches the model, HTML-only mail is flattened to
+  text, and inbound attachments plus generated artifacts ride the shared
+  attachment pipeline under the usual size limits. Access is a required
+  fail-closed `allowed_senders` From-address allowlist (exact addresses or
+  `*@domain` patterns); mail from the agent's own address and anything marked
+  auto-generated (`Auto-Submitted`, `X-Autoreply`, `List-Id`,
+  `Precedence: bulk`) is dropped so an autoresponder cannot start a mail loop
+  (#369).
+
+### Changed
+
+- Channel session keys: a DM-shaped channel whose surface is itself threaded
+  can opt into one session per thread with `metadata['dm_thread_scoped']`.
+  Adapters that do not set it keep one session per peer, so Slack, Discord and
+  Telegram DM keys are unchanged.
+
+### Fixed
+
+- Security: the git tools (`git_status`, `git_diff`, `git_log`, `git_commit`)
+  now mask credentials in their output before it reaches the model. `git_diff`
+  returns working-tree and staged file content verbatim, so a `.env` that was
+  committed once kept reaching the model in cleartext on every diff, while the
+  sibling file surfaces (`read_file`, `grep_search`) already redacted. Masking
+  happens at the one `_run_git` chokepoint, on the sandboxed and subprocess
+  paths and on success and failure alike. The assignment pass runs
+  unconditionally (`code_file=False`) because a diff is arbitrary repository
+  content and the git argv says nothing about what is coming back, and the
+  non-reusable `«redacted:…»` sentinel is used because an agent may pipe a diff
+  straight back through `git apply`.
+- Security: a named credential on a diff line no longer escapes the assignment
+  redaction pass. The token-start anchor did not admit the diff marker, so
+  `+MY_SECRET=…` went unmasked where `MY_SECRET=…` was masked; vendor-prefixed
+  keys were still caught by the shape pass, non-vendor named secrets were not.
+  The anchor now accepts one or two marker columns, covering the combined diff
+  a conflicted merge produces as well as the ordinary unified form.
+- Slack sends and scheduler webhook deliveries now survive a transient network
+  blip. Both routed their HTTP calls straight at `httpx` and failed on the
+  first error; they now go through the same `retry_request` helper Discord
+  already uses (exponential backoff with jitter on 429 — honouring
+  `Retry-After` — 500/502/503/504, connect errors, and read timeouts). Fatal
+  statuses such as 400/401 still fail on the first attempt, and the webhook
+  retry keeps the stock 3-retry/1s-base budget so its worst case stays inside
+  the cron job's own timeout. Note that retrying a read timeout on
+  `chat.postMessage` or a webhook POST can duplicate a delivery the receiver
+  already accepted — the same trade-off Discord has always made; the webhook
+  payload's `jobId` is the receiver's dedupe key.
+
+## [2026.8.28] - 2026-08-28
+
+### Added
+
+- Projects. Chat sessions can now be grouped into projects — cross-agent, so
+  sessions of any agent can join the same project (a project's agent field is
+  only the default for "new chat in project") — each carrying a free-form
+  **knowledge** text that is injected into the system prompt of every member
+  session (as an untrusted-wrapped `Project Knowledge`
+  block, re-read each turn so edits land on the next turn). Surfaces: a new
+  Projects page in the Web UI (create/rename/edit knowledge/delete, "New chat
+  in project", session list per project), project badge + filter + "Move to
+  project" on the Sessions page, project tiers in the chat session switcher,
+  an `agentos projects` CLI group (`list`/`create`/`show`/`update`/`delete`/
+  `move`), `projects.*` JSON-RPC methods plus `projectId` on
+  `sessions.create`/`sessions.patch`/`sessions.list`, and agent-facing
+  `projects_*` tools with `session_search scope=project` for searching sibling
+  transcripts. Existing databases migrate automatically (V011); old sessions
+  come up project-less, and deleting a project detaches its sessions instead
+  of deleting them.
+
+### Fixed
+
+- Cron: day-of-week `7` is Sunday again, so `0 0 * * 7` schedules Sundays
+  instead of being rejected (#478).
+- Cron: a reversed range in a stepped field (`30-20/5`) is refused up front
+  with a clear error instead of parsing into surprise fire times (#480).
+- Cron: month and day-of-week names are case-insensitive — `jan`, `JAN` and
+  `Jan` are the same month, `sun`/`SUN` the same day (#482).
+- Scheduler: the timezone alias on a legacy expression schedule is honored
+  instead of silently falling back (#485).
+
+## [2026.8.27] - 2026-08-27
+
+### Added
+
+- Spend budgets. A new `[budgets]` config section sets money ceilings per
+  session, per UTC day, per agent, and per channel. A turn that starts at or
+  above a hard limit is refused before any provider call with a
+  `budget_exceeded` error naming the scope and the number; a matching
+  `*_warn` threshold raises a one-shot `budget_warning` without stopping the
+  turn. Ceilings are re-checked between iterations within a turn as well, so a
+  single turn with a long tool loop cannot run past one. Spend is persisted to
+  `~/.agentos/state/spend_ledger.db`, so a ceiling survives a gateway restart —
+  a runaway overnight loop cannot be reset by a crash-and-respawn. Nothing is
+  enforced until an operator sets a number.
+
+- `aero-stock-lp` joins the Bankr skill hub. The skill range-LPs Coinbase
+  tokenized equities (NVDA, AAPL, GOOGL, META) and AERO/USDC on Aerodrome
+  Slipstream (Base) — opening, recentering, and exiting concentrated-liquidity
+  positions, reporting pool status, NAV, yields, and P&L, and routing each
+  position to whichever side pays more at this epoch, staked for AERO emissions
+  or unstaked for trading fees. It is published as a directory in
+  `BankrBot/skills`, so it browses and installs through the existing repo half
+  of the Bankr source with no new code path.
+
+### Removed
+
+- Three subsystems that shipped in the wheel while being dead or
+  permanently-failing are gone (#362). The `onboard_agent` wizard — the
+  `wizard.start` / `wizard.next` / `wizard.cancel` / `wizard.status` RPC
+  methods plus their state machine — had no caller in the frontend or the CLI
+  and no side effect: its terminal step returned the collected answers and
+  never created an agent, while its hardcoded model list had gone two
+  generations stale. The Agents view already creates agents through
+  `agents.create`. The `canvas` and `nodes` built-in tools validated their
+  `action` argument and then raised `ToolError` unconditionally; no node
+  runtime exists anywhere in the tree to configure, and only
+  `exposed_by_default=False` kept them from failing in front of a model.
+  `tools/visibility.py` no longer exports `filter_by_profile` (returned its
+  input) or `profile_allows_tool` (returned `True`), nor does the dispatch
+  chain run the `ProfilePolicy` that only called them — profile enforcement
+  now has one home in `tools/policy_config.py`. `ToolProfile` and
+  `resolve_profile` stay; they are the live seam.
+
+- The `agentos dist` install inventory no longer advertises built-in tools that
+  are not in the wheel. `bundled_tools` listed `nodes` (deleted above) and
+  `agent` (no such module for some time), so an inventory diff across releases
+  showed capability that was not there. A new parity test asserts every name in
+  `BUNDLED_TOOLS` resolves to a module under `agentos.tools.builtin`.
+
+### Changed
+
+- `UsageTracker.check_warning()` is removed. It had no callers; the
+  `[budgets]` session ceilings replace it with a configurable, enforced
+  equivalent.
+
+- The Bankr user-skill allowlist — the half that carries skills published from
+  a wallet on bankr.bot — is now empty. `stock-premium-lp-manager` was retired
+  from it in favour of `aero-stock-lp`, which covers the same tokenized-equity
+  LP workflow from the repository. Copies already installed keep working; the
+  slug is no longer offered for browse or install.
+
+### Fixed
+
+- `agentos chat`, `agentos sessions`, `agentos skills`, and `agentos env` now
+  send the resolved gateway token when they open their own WebSocket
+  connection, and honour `AGENTOS_GATEWAY_URL` consistently. `resolve_auth`
+  grants no loopback exemption in token mode, so setting `auth.mode = "token"`
+  previously broke all four commands even on a purely local install — the
+  token resolver existed (`default_gateway_token`) but these call sites never
+  used it. `chat` additionally ignored `AGENTOS_GATEWAY_URL` entirely and
+  always dialled the hardcoded `ws://localhost:18791/ws`.
+
+- Bankr catalog cards all wear the Bankr brand mark again. `aero-stock-lp` is
+  the one entry in `BankrBot/skills` whose `catalog.json` ships a `logo`, so it
+  rendered that artwork while every other card in the partner tab showed the
+  Bankr symbol. The Bankr source now ignores the payload's logo entirely —
+  membership in the catalog is the brand, and a repository-side edit can no
+  longer repaint a partner card's identity.
+
+- The Control UI bootstrap endpoint no longer leaks host details to any website
+  the operator visits. `{control_ui.base_path}/api/bootstrap` sat inside the
+  prefix that is exempt from the loopback Origin guard, so with the default
+  `cors.allowed_origins = ["*"]` any page could `fetch()` it cross-origin and
+  read the absolute config file path (which reveals the OS username) along with
+  the configured `auth_mode`. The bootstrap payload no longer carries
+  `config_path` at all — the console reads it from the authenticated
+  `doctor.status` RPC instead — and the Origin guard's Control UI exemption now
+  stops at `{base_path}/api/`, so the shell and its fingerprinted assets stay
+  exempt while every JSON route under the prefix is fenced on the loopback
+  binds the guard covers. `AuthMiddleware` gets the same narrowing, with a
+  single carve-out for `/api/bootstrap` itself, which the console must read
+  before it holds a token. Fixes #351.
+
+- `auth.mode = "password"` no longer admits the gateway unauthenticated. The
+  mode was advertised and env-bound (`AGENTOS_AUTH_PASSWORD`) but had no branch
+  in `AuthMiddleware.dispatch`, so it fell through to the unauthenticated pass
+  and left the whole non-RPC surface — `/api/system/status`, `/api/config`,
+  `/api/v1/files/upload`, `/api/audio/transcribe` — open on a loopback bind. Any
+  typo'd mode did the same. `auth.mode` now validates against the modes the
+  gateway actually implements (`none`, `token`, `trusted-proxy`) and refuses
+  anything else at load time with a message naming the fix, and the middleware
+  fails closed with `401` on any mode without an enforcement branch — the config
+  object is read live, so a runtime mutation cannot reopen the hole. `auth.mode`
+  is also case- and whitespace-normalized now (`" TOKEN "` loads as `token`), and
+  `agentos.toml.example` plus the setup guide no longer list `password` as a
+  choice. Closes #352.
+
+- Credential masking no longer rewrites ordinary source code. The
+  `Authorization` / `x-api-key` header names matched as substrings
+  (`"requiresApiKey": False`), their value ran past the closing bracket
+  (`{"xi-api-key": api_key}` lost its `}`), a bare number was masked as a
+  credential, a vendor prefix matched mid-base64 (`AKIA…` inside an embedded
+  font blob), and a PEM block spanning two adjacent string literals swallowed
+  the code between them. Header names now match on a segment boundary, values
+  stop at the punctuation that closes them and skip numbers and `<placeholder>`
+  forms, prefixes need a left boundary, and a PEM span must have a base64 body.
+  A PEM block in a `read_file` window is masked line by line, so the line
+  numbers the reader computes its next `offset=` from stay correct.
+
+- The `NAME=value` pass now recognises quoted keys (`"client_secret": "…"`), so
+  credentials in JSON and YAML config are masked as the docstring always said
+  they were.
+
+### Security
+
+- Installing a skill from ClawHub no longer unpacks the downloaded zip
+  unbounded. `ClawHubSource.fetch` read every entry into memory with no cap on
+  entry count or uncompressed size, so a few tens of KB of nested deflate — a
+  classic zip bomb — could exhaust the gateway's memory and take the process
+  down. The download is now streamed against a size ceiling — httpx gunzips a
+  `Content-Encoding` body with no limit of its own, so a buffered read could
+  have been filled before any zip cap got a say — and the archive is refused
+  past an entry count, a per-entry size, and a total uncompressed size. Each
+  entry is decompressed in chunks against a running total, so an archive that
+  understates `ZipInfo.file_size` is caught mid-read rather than trusted. A
+  hostile archive also fails closed rather than raising through the installer:
+  an entry flagged encrypted, an unsupported compression method, or a truncated
+  deflate stream reaches the caller as "no bundle", not as an exception that
+  aborts a whole lockfile sync. Entry paths are also checked against
+  Windows-style escapes (`..\`, `C:\`), which
+  `posixpath.normpath` leaves intact; previously only the installer's resolve
+  check caught those. Closes #357.
+
+- `read_file`, `read_spreadsheet` and `grep_search` now mask credentials in the
+  content they hand back to the model, and so do the two channels that quote
+  file content alongside them: `edit_file`'s closest-match hint, and terminal
+  output from a command that reads a credential file (`cat ~/.aws/credentials`).
+  Previously the sensitive-path denylist was the only thing protecting a secrets
+  file, and that denylist is lifted entirely under elevated-full mode — which
+  cron `agent_turn` jobs run by default — so `read_file ~/.aws/credentials`
+  returned the raw keys into the persisted transcript. Masking uses a
+  non-reusable `«redacted:…»` sentinel, DSN and URL passwords included, so a
+  value read out of a config file cannot be written back over the working one.
+
+  How much of the pass runs depends on the file. Shape-matched credentials
+  (`sk-…`, JWTs, PEM blocks) are masked everywhere; the name-driven pass, the
+  only one that catches a shapeless secret like `aws_secret_access_key`, runs
+  everywhere except source code, where it would mask identifiers and hand back
+  code that no longer matches the file. Closes #355.
+
+## [2026.8.24] - 2026-08-24
+
+### Added
+
+- Channel tool approvals are now native interactive surfaces. Telegram inline
+  keyboards, Slack Block Kit actions, and Discord message components render an
+  Approve/Deny pair for a gated tool call instead of asking the operator to type
+  a reply. Every click is authorized before it is honoured: the clicker must
+  pass the channel's own access policy and be an admitted paired user, the
+  approval is bound to the `sessionKey` that raised it so a click from another
+  session is refused, and the surface is offered only in DMs, where the session
+  key is `PER_CHANNEL_PEER` and the approver is unambiguous. Slack request
+  signatures are verified against the raw request body rather than a parsed
+  form, so verification no longer depends on the ASGI body having survived a
+  read. Closes #364.
+
+- Cost visibility. A usage ledger records the cost of each turn and attributes
+  it per tool and per skill through a `ContextVar` that follows the call into
+  nested execution, and a new `agentos cost` command queries it with filters for
+  session, model, tool, skill, and time range, plus export. The router gains a
+  `cost_aware` flag (on by default) that substitutes the cheapest tier capable
+  of the request; image-only tiers are filtered out before the comparison, so a
+  text request is never routed to an image model. Closes #366.
+
+- Aeon (`aeonfun/aeon`) joins Robinhood, Bankr, and Capminal as a Partner Skills
+  source in the Skills hub, with the partner tabs ordered Robinhood, Bankr,
+  Aeon, Capminal, Community.
+
+### Fixed
+
+- The gateway no longer accepts an auth token from the query string, where it
+  would be captured by proxy and server access logs; the uvicorn access log is
+  gated behind `config.debug` for the same reason. Closes #350.
+
+- Rate limiting reads `X-Forwarded-For` only from a verified trusted proxy, and
+  the per-client dict is bounded, so a spoofed header can neither bypass the
+  limiter nor grow it without limit. Closes #354.
+
+- Unhandled gateway exceptions are redacted before they reach the client; the
+  detail is shown only when `debug` is set. Closes #353.
+
+- The `browser` tool refuses `data:` URLs, which could otherwise carry a page
+  past the SSRF check and the domain allowlist; `about:blank` remains the only
+  permitted hostless target. Closes #356.
+
+- The `usage cost` fallback path declines query filters it cannot honour instead
+  of silently dropping them and returning an empty result set.
+
+### Removed
+
+- Dead configuration keys that no code read: `sandbox.network_default` (#360),
+  the memory daily-note keys (#405), and `subagents.archive_after_minutes`
+  (#407).
+
+### Docs
+
+- `cron_default_mode` — the default elevation posture for unattended cron jobs,
+  shipped in 2026.8.21 — is now documented where it is set and where it is read:
+  `agentos.toml.example`, the bundled `agentos` skill, and the approvals and
+  permissions guide. (#413)
+
 ## [2026.8.23] - 2026-08-23
 
 ### Added

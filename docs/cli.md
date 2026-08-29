@@ -24,6 +24,7 @@ agentos <command> --help
 | `agentos chat` | Start interactive terminal chat. |
 | `agentos agent` | Run a single automation-friendly agent turn. |
 | `agentos sessions` | List, inspect, rename, resume, abort, delete, or export sessions. |
+| `agentos projects` | Group sessions into projects with shared knowledge injected into every member session. |
 | `agentos skills` | List, search, view, install, update, publish, and inspect skills. |
 | `agentos memory` | Inspect and maintain memory. |
 | `agentos channels` | Configure and inspect messaging channels. |
@@ -390,7 +391,7 @@ reachable. See [`x-search.md`](x-search.md).
 
 Channels:
 
-Built-in channel types are `discord`, `slack`, and `telegram`; `agentos
+Built-in channel types are `discord`, `email`, `slack`, and `telegram`; `agentos
 channels types` is the authoritative catalog. On upgrade, config entries for
 retired built-in channel types are removed only after AgentOS creates the
 normal secure config backup.
@@ -401,6 +402,10 @@ agentos channels describe telegram
 agentos channels native-commands telegram
 agentos channels native-commands slack --request-url https://agent.example/slack/events
 agentos channels add telegram --name personal
+agentos channels add email --name inbox \
+  --field imap_host=imap.example.com --field imap_username=agent@example.com \
+  --field imap_password=<app-password> --field smtp_host=smtp.example.com \
+  --field from_address=agent@example.com --field allowed_senders=you@example.com
 agentos channels list
 agentos channels status
 agentos channels pairing list personal
@@ -571,9 +576,9 @@ allowlist and must never be rendered with a logo or read as a trust signal;
 `publisher` is the only field that answers "who vouches for this". It is empty
 only when it would repeat the resolved brand, so a partner skill is credited
 once rather than twice — a *different* credit survives. That is the
-`stock-premium-lp-manager` case: written from a wallet on bankr.bot but named in
-the wheel's user-skill allowlist, so it carries Bankr's `publisher` and
-`@igoryuzo` as its `author`.
+wallet-published case: a skill written from a wallet on bankr.bot but named in
+the wheel's user-skill allowlist carries Bankr's `publisher` and the author's
+handle (e.g. `@igoryuzo`) as its `author`.
 
 There is deliberately **no `availability` key** in CLI output. Whether the
 agent is currently being offered a skill depends on a chat session's tool
@@ -606,6 +611,31 @@ chat, `/rename <name>` does the same for the session you are in (no name
 clears it). Names are trimmed, collapsed to one line, and capped at 120
 characters.
 
+## Projects
+
+```sh
+agentos projects list
+agentos projects create "Token research" --knowledge "Shared context here"
+agentos projects create "Token research" --knowledge-file notes.md
+agentos projects show <project-id>
+agentos projects update <project-id> --name "New name" --knowledge-file notes.md
+agentos projects move <session-key> <project-id>   # 'none' detaches
+agentos projects delete <project-id>               # sessions survive, detached
+```
+
+A project groups chat sessions across agents and carries a free-form
+**knowledge** text (capped at 32,000 characters). Every session in the project
+gets that knowledge injected into its system prompt as a `Project Knowledge`
+block — edit it and the next turn of every member session picks it up.
+Sessions of any agent can join the same project (the `--agent` on `create`
+only sets the default agent for new chats in the project). New sessions can
+start inside a project (`agentos chat` sessions join via `projects move`, the
+Web UI has a "New chat in project" button), and deleting a project never
+deletes sessions: they just detach and stop receiving the knowledge. Agents can manage projects from prompting through the
+`projects_create` / `projects_list` / `projects_update` /
+`projects_move_session` tools, and `session_search scope=project` searches
+only sibling sessions of the calling session's project.
+
 Read: [`sessions.md`](sessions.md)
 
 ## Memory
@@ -613,7 +643,10 @@ Read: [`sessions.md`](sessions.md)
 ```sh
 agentos memory status
 agentos memory index
-agentos memory list
+agentos memory list --source all
+agentos memory ingest /path/to/docs
+agentos memory curated get --target memory
+agentos memory curated add "Important project convention"
 agentos memory search "preference"
 agentos memory show <path>
 agentos memory raw-fallbacks list

@@ -47,6 +47,7 @@ SCHEMA_VERSION = 1
 # are intentionally excluded — they are infra, not channels.
 BUNDLED_CHANNELS: tuple[str, ...] = (
     "discord",
+    "email",
     "slack",
     "telegram",
     "terminal",
@@ -57,7 +58,6 @@ BUNDLED_CHANNELS: tuple[str, ...] = (
 # ``agentos.tools.builtin``. ``shell_policy`` is excluded as a helper
 # consumed by ``shell``.
 BUNDLED_TOOLS: tuple[str, ...] = (
-    "agent",
     "agents",
     "code_exec",
     "control",
@@ -66,7 +66,6 @@ BUNDLED_TOOLS: tuple[str, ...] = (
     "media",
     "memory_tools",
     "messaging",
-    "nodes",
     "patch",
     "session_search",
     "sessions",

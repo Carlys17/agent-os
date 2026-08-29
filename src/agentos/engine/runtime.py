@@ -52,6 +52,7 @@ from agentos.engine.cache_break_monitor import notify_compaction
 from agentos.engine.hooks import (
     CompactionHook,
     DefaultTraceEmitterHook,
+    ToolHook,
     TurnEvent,
     TurnHook,
     TurnHookContext,
@@ -279,6 +280,7 @@ _SAFE_TOOL_NAMES: frozenset[str] = frozenset(
         "memory_get",
         "memory_search",
         "pdf",
+        "projects_list",
         "read_file",
         "read_spreadsheet",
         "session_search",
@@ -610,8 +612,9 @@ def _summarize_memory_write(arguments: Any) -> str:
     target = str(arguments.get("target") or "memory")
     operations = arguments.get("operations")
     if isinstance(operations, list) and operations:
-        actions = ",".join(sorted({str(op.get("action", "?")) for op in operations
-                                   if isinstance(op, dict)}))
+        actions = ",".join(
+            sorted({str(op.get("action", "?")) for op in operations if isinstance(op, dict)})
+        )
         return f"{target}/batch[{len(operations)} ops: {actions or '?'}]"
     action = str(arguments.get("action") or "?")
     content = str(arguments.get("content") or arguments.get("old_text") or "").strip()
@@ -1545,6 +1548,7 @@ class TurnRunner:
         diagnostics_state: Any | None = None,
         turn_hooks: Sequence[TurnHook] | None = None,
         compaction_hooks: Sequence[CompactionHook] | None = None,
+        tool_hooks: Sequence[ToolHook] | None = None,
     ) -> None:
         self._provider_selector = provider_selector
         self._tool_registry = tool_registry
@@ -1576,6 +1580,8 @@ class TurnRunner:
         self._compaction_hooks: tuple[CompactionHook, ...] = (
             tuple(compaction_hooks) if compaction_hooks else ()
         )
+        # ToolHook surface. build_tool_handler uses these to wrap tool execution.
+        self._tool_hooks: tuple[ToolHook, ...] = tuple(tool_hooks) if tool_hooks else ()
         # Per-session lock provider.
         # Gateway path: task_runtime._get_session_lock_for_turn (wired in boot.py).
         # CLI/standalone path: _standalone_lock_provider from build_turn_runner_from_services.
@@ -1878,6 +1884,52 @@ class TurnRunner:
             return extra_context
         merged = dict(extra_context) if extra_context else {}
         merged["Memory Context"] = block
+        return merged
+
+    # Injection ceiling for project knowledge. Writes are already capped at
+    # SessionManager.PROJECT_KNOWLEDGE_MAX_CHARS; this second cap only guards
+    # rows written before that limit existed (or edited out-of-band).
+    PROJECT_KNOWLEDGE_INJECT_MAX_CHARS = 24_000
+
+    async def _augment_extra_context_with_project_knowledge(
+        self,
+        *,
+        session_key: str,
+        extra_context: dict[str, str] | None,
+    ) -> dict[str, str] | None:
+        """Return ``extra_context`` with the session's project knowledge injected.
+
+        Sessions grouped into a project share the project's free-form
+        knowledge text: it is read fresh from storage each turn (an edit is
+        picked up on the next turn, no snapshot freeze) and rendered as a
+        ``## Project Knowledge`` block in the dynamic suffix — the same seam
+        workspace files use, so the cacheable base hash never varies by
+        project. User-authored text is wrapped as untrusted, like workspace
+        file content. Best-effort: any failure injects nothing.
+        """
+        if self._session_manager is None or not session_key:
+            return extra_context
+        getter = getattr(self._session_manager, "get_project_knowledge_for_session", None)
+        if not callable(getter):
+            return extra_context
+        try:
+            knowledge = await getter(session_key)
+        except Exception as exc:  # noqa: BLE001 — knowledge injection is best-effort
+            log.warning(
+                "turn_runner.project_knowledge_load_failed",
+                session_key=session_key,
+                error=str(exc),
+            )
+            return extra_context
+        if not knowledge:
+            return extra_context
+        cap = self.PROJECT_KNOWLEDGE_INJECT_MAX_CHARS
+        if len(knowledge) > cap:
+            knowledge = knowledge[:cap] + "\n... [project knowledge truncated]"
+        merged = dict(extra_context) if extra_context else {}
+        merged["Project Knowledge"] = injection_guard.wrap_untrusted(
+            knowledge, source="project:knowledge"
+        )
         return merged
 
     async def _capture_turn_memory(
@@ -2486,6 +2538,49 @@ class TurnRunner:
                 "attachment_count": len(attachments),
             },
         )
+
+        # ── Spend budget gate ────────────────────────────────────────────
+        # Checked before any provider work so a runaway loop or fan-out stops
+        # costing money at the ceiling rather than one turn past it. Subagent
+        # turns run through this same path, so a fan-out is bounded too.
+        budget_stop, budget_message = self._check_spend_budget(session_key)
+        if budget_stop:
+            # The refusal hinges on the decision, never on the presentation
+            # string: a tracker that reports a stop without a message must
+            # still stop the turn.
+            budget_error = ErrorEvent(
+                message=budget_message or "A configured spend budget limit has been reached.",
+                code="budget_exceeded",
+            )
+            log.warning(
+                "turn_runner.budget_exceeded",
+                session_key=session_key,
+                agent_id=agent_id,
+                message=budget_error.message,
+            )
+            self._emit_turn_event(
+                "turn_error",
+                trace_context,
+                session_key=session_key,
+                agent_id=agent_id,
+                turn_id=turn_id,
+                run_kind=run_kind,
+                input_mode=input_mode,
+                seq=2,
+                payload={
+                    "error_type": "BudgetExceeded",
+                    "error_code": budget_error.code,
+                    "error_chars": len(budget_error.message),
+                },
+            )
+            await self._persist_turn_error(session_key, budget_error)
+            yield budget_error
+            return
+        if budget_message:
+            yield self._handle_runtime_warning(
+                WarningEvent(code="budget_warning", message=budget_message)
+            )
+
         try:
             input_out = await self._input_stage.run(
                 InputStageInput(
@@ -2515,6 +2610,14 @@ class TurnRunner:
                     message=runtime_message,
                     extra_context=extra_prompt_context,
                 )
+
+            # Project knowledge: sessions grouped into a project share the
+            # project's knowledge text as a per-turn prompt block. Read fresh
+            # each turn so a knowledge edit lands on the next turn.
+            extra_prompt_context = await self._augment_extra_context_with_project_knowledge(
+                session_key=session_key,
+                extra_context=extra_prompt_context,
+            )
 
             pt_outcome = await self._provider_and_tools_stage.run(
                 ProviderAndToolsStageInput(
@@ -2898,9 +3001,7 @@ class TurnRunner:
 
             # 11. Observability: best-effort DecisionEntry for this turn.
             #     Must never break turn execution — wrap in try/except.
-            turn.metadata.update(
-                {}
-            )
+            turn.metadata.update({})
             prompt_report_for_decision = build_prompt_report(
                 turn_id=turn_id,
                 session_key=session_key,
@@ -3185,6 +3286,33 @@ class TurnRunner:
             return None, None
         cloned = self._provider_selector.clone()
         return cloned.resolve(), cloned
+
+    def _check_spend_budget(self, session_key: str) -> tuple[bool, str | None]:
+        """Evaluate configured ``[budgets]`` ceilings for this session.
+
+        Returns ``(hard_stop, message)``. A budget check must never be the
+        reason a turn fails, so any unexpected error fails open with a log
+        line rather than blocking work the operator did not ask to block.
+        """
+        tracker = self._usage_tracker
+        if tracker is None:
+            return False, None
+        budgets = getattr(self._config, "budgets", None) if self._config else None
+        if budgets is None:
+            return False, None
+        check = getattr(tracker, "check_budget_limits", None)
+        if not callable(check):
+            return False, None
+        try:
+            hard_stop, message = check(session_key, budgets)
+        except Exception as exc:  # noqa: BLE001 - budget checks must fail open
+            log.warning(
+                "turn_runner.budget_check_failed",
+                session_key=session_key,
+                error=str(exc),
+            )
+            return False, None
+        return bool(hard_stop), message
 
     def _handle_runtime_warning(self, event: WarningEvent) -> WarningEvent:
         return event
@@ -3679,7 +3807,7 @@ class TurnRunner:
             return [], None
         from agentos.tools.dispatch import build_tool_handler
         from agentos.tools.policy import apply_tool_policy_from_config
-        from agentos.tools.registry import filter_by_profile, resolve_profile
+        from agentos.tools.registry import resolve_profile
 
         loaded_skills: list[Any] = []
         if self._skill_loader is not None:
@@ -3719,8 +3847,6 @@ class TurnRunner:
         )
         tool_defs = self._tool_registry.to_tool_definitions(ctx)
         profile = resolve_profile(ctx)
-        tool_defs = filter_by_profile(tool_defs, profile, ctx)
-        # layered intentionally — policy first, profile second.
         log.debug(
             "tool_policy.profile_post",
             allowed_tool_count=len(tool_defs),
@@ -3738,6 +3864,7 @@ class TurnRunner:
             self._tool_registry,
             ctx,
             known_skill_names=known_skill_names,
+            tool_hooks=self._tool_hooks,
         )
         return tool_defs, tool_handler
 
@@ -4128,9 +4255,7 @@ class TurnRunner:
         # heartbeat config are boot-time) or for the session kind
         # (bootstrap_context_mode keys the snapshot), so gating on them does
         # not churn the cacheable base.
-        channels_enabled = bool(
-            getattr(getattr(self._config, "channels", None), "channels", None)
-        )
+        channels_enabled = bool(getattr(getattr(self._config, "channels", None), "channels", None))
         unattended_context = bool(
             getattr(getattr(self._config, "heartbeat", None), "enabled", False)
         ) or bootstrap_context_mode in {"heartbeat_light", "unattended"}
@@ -4589,7 +4714,6 @@ class TurnRunner:
             final_prompt = "\n\n".join(final_prompt)
 
         return final_prompt, cache_breakpoints, request_context_prompt
-
 
     async def _record_checkpoint_before_compaction(
         self,
@@ -5442,8 +5566,6 @@ class TurnRunner:
                 ),
             )
 
-
-
     def _pre_compaction_flush_timeout_seconds(self) -> float:
         memory_cfg = getattr(self._config, "memory", None)
         raw_timeout = getattr(memory_cfg, "flush_timeout_seconds", 15.0)
@@ -5461,7 +5583,6 @@ class TurnRunner:
         except (TypeError, ValueError):
             return 120.0
         return max(timeout, 0.0)
-
 
     def _consume_pre_compaction_flush_task(
         self,
