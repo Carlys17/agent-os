@@ -441,6 +441,14 @@ class PromptAssemblerStage:
             except Exception:  # noqa: BLE001 - defensive
                 selector_model = ""
         resolved_model = inp.model or turn.model or selector_model
+        # An explicit model beats the routed one above. Tell the router
+        # metadata so nothing downstream reports (or prices) a route the
+        # provider call never used. Local import for the same reason as
+        # ``_SelectorFallbackProvider`` above: the stage keeps engine
+        # imports off its module top level.
+        from agentos.engine.router_decision import reconcile_routing_metadata
+
+        reconcile_routing_metadata(turn.metadata, resolved_model)
         provider_name = (
             getattr(provider, "provider_name", "") or type(provider).__name__
         )
