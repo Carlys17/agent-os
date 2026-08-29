@@ -1494,6 +1494,12 @@ async def build_services(
 
     set_session_manager(session_manager)
     _set_sessions_gateway_config(config)
+
+    from agentos.tools.builtin.projects import (
+        set_session_manager as _set_projects_session_manager,
+    )
+
+    _set_projects_session_manager(session_manager)
     session_storage = get_session_storage(session_manager)
 
     # Wire agent registry into the agents_list tool surface.

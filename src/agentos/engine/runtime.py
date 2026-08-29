@@ -280,6 +280,7 @@ _SAFE_TOOL_NAMES: frozenset[str] = frozenset(
         "memory_get",
         "memory_search",
         "pdf",
+        "projects_list",
         "read_file",
         "read_spreadsheet",
         "session_search",
@@ -1885,6 +1886,52 @@ class TurnRunner:
         merged["Memory Context"] = block
         return merged
 
+    # Injection ceiling for project knowledge. Writes are already capped at
+    # SessionManager.PROJECT_KNOWLEDGE_MAX_CHARS; this second cap only guards
+    # rows written before that limit existed (or edited out-of-band).
+    PROJECT_KNOWLEDGE_INJECT_MAX_CHARS = 24_000
+
+    async def _augment_extra_context_with_project_knowledge(
+        self,
+        *,
+        session_key: str,
+        extra_context: dict[str, str] | None,
+    ) -> dict[str, str] | None:
+        """Return ``extra_context`` with the session's project knowledge injected.
+
+        Sessions grouped into a project share the project's free-form
+        knowledge text: it is read fresh from storage each turn (an edit is
+        picked up on the next turn, no snapshot freeze) and rendered as a
+        ``## Project Knowledge`` block in the dynamic suffix — the same seam
+        workspace files use, so the cacheable base hash never varies by
+        project. User-authored text is wrapped as untrusted, like workspace
+        file content. Best-effort: any failure injects nothing.
+        """
+        if self._session_manager is None or not session_key:
+            return extra_context
+        getter = getattr(self._session_manager, "get_project_knowledge_for_session", None)
+        if not callable(getter):
+            return extra_context
+        try:
+            knowledge = await getter(session_key)
+        except Exception as exc:  # noqa: BLE001 — knowledge injection is best-effort
+            log.warning(
+                "turn_runner.project_knowledge_load_failed",
+                session_key=session_key,
+                error=str(exc),
+            )
+            return extra_context
+        if not knowledge:
+            return extra_context
+        cap = self.PROJECT_KNOWLEDGE_INJECT_MAX_CHARS
+        if len(knowledge) > cap:
+            knowledge = knowledge[:cap] + "\n... [project knowledge truncated]"
+        merged = dict(extra_context) if extra_context else {}
+        merged["Project Knowledge"] = injection_guard.wrap_untrusted(
+            knowledge, source="project:knowledge"
+        )
+        return merged
+
     async def _capture_turn_memory(
         self,
         *,
@@ -2563,6 +2610,14 @@ class TurnRunner:
                     message=runtime_message,
                     extra_context=extra_prompt_context,
                 )
+
+            # Project knowledge: sessions grouped into a project share the
+            # project's knowledge text as a per-turn prompt block. Read fresh
+            # each turn so a knowledge edit lands on the next turn.
+            extra_prompt_context = await self._augment_extra_context_with_project_knowledge(
+                session_key=session_key,
+                extra_context=extra_prompt_context,
+            )
 
             pt_outcome = await self._provider_and_tools_stage.run(
                 ProviderAndToolsStageInput(
