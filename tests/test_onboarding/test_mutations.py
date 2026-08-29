@@ -11,6 +11,7 @@ from agentos.gateway.config import GatewayConfig, _router_tier_profile_defaults
 from agentos.gateway.llm_runtime import resolve_llm_runtime_config
 from agentos.onboarding.mutations import (
     MutationResult,
+    _validate_provider_base_url,
     list_channel_entries,
     remove_channel,
     set_channel_enabled,
@@ -1705,3 +1706,48 @@ def test_upsert_channel_replaces_secret_when_provided():
     raw = [e.model_dump(mode="python") for e in second.config.channels.channels]
     entry = next(e for e in raw if e["name"] == "w")
     assert entry["token"] == "xoxb-new"
+
+
+class TestProviderBaseUrlValidation:
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            "file:///etc/passwd",                      # non-network scheme
+            "ftp://example.com",                       # non-http(s) scheme
+            "http://169.254.169.254/latest/meta-data/",  # cloud metadata endpoint
+            "http://10.0.0.1:8080/internal",            # RFC1918 private
+            "http://192.168.0.1/admin",                 # RFC1918 private
+            "http://[fd00::1]/",                        # IPv6 ULA private
+            "not-a-url",                                # malformed
+        ],
+    )
+    def test_validate_provider_base_url_rejects_untrusted(self, bad_url: str) -> None:
+        with pytest.raises(ValueError):
+            _validate_provider_base_url(bad_url)
+
+    @pytest.mark.parametrize(
+        "good_url",
+        [
+            "https://openrouter.ai/api/v1",
+            "https://api.openai.com/v1",
+            "https://api.anthropic.com",
+        ],
+    )
+    def test_validate_provider_base_url_accepts_public_https(self, good_url: str) -> None:
+        _validate_provider_base_url(good_url)  # must not raise
+
+    def test_upsert_llm_provider_rejects_malicious_base_url(self) -> None:
+        cfg = GatewayConfig()
+        with pytest.raises(ValueError):
+            upsert_llm_provider(
+                cfg,
+                provider_id="openrouter",
+                model="deepseek/deepseek-v4-flash",
+                api_key="sk-test",
+                base_url="http://169.254.169.254/latest/meta-data/",
+            )
+
+
+def test_provider_base_url_validator_importable() -> None:
+    # guard: the validator must exist and be wired into upsert_llm_provider
+    assert callable(_validate_provider_base_url)

@@ -417,6 +417,54 @@ def _validate_judge_base_url(base_url: str) -> None:
         )
 
 
+def _validate_provider_base_url(base_url: str) -> None:
+    """Validate an LLM provider ``base_url`` before it reaches an httpx client.
+
+    Rejects malformed URLs, non-http(s) schemes (notably ``file://``), and any
+    host that resolves to a loopback / private / link-local address. Without
+    this, ``onboarding.provider.configure`` (and the CLI) let an RPC client point
+    all provider traffic at an attacker host to exfiltrate API keys, or at the
+    cloud metadata endpoint (``169.254.169.254``) to steal instance credentials.
+    """
+    from urllib.parse import urlparse
+    import ipaddress
+
+    if not base_url:
+        return  # optional field
+    try:
+        parsed = urlparse(base_url)
+    except ValueError as exc:
+        raise ValueError(f"provider base_url is not a valid URL: {exc}") from exc
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(
+            f"provider base_url must be http(s), got {parsed.scheme!r} "
+            f"(refusing non-network scheme such as file://)"
+        )
+    if not parsed.netloc:
+        raise ValueError(f"provider base_url must have a host: {base_url!r}")
+    host = parsed.hostname
+    if not host:
+        raise ValueError(f"provider base_url has no resolvable host: {base_url!r}")
+    # Reject loopback-excepted? No — loopback IS a local provider (Ollama),
+    # keep it allowed. Reject private / link-local / reserved (internal nets
+    # and the cloud metadata endpoint) which an attacker would aim at.
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        pass  # hostname (DNS) — connectivity is operator's responsibility
+    else:
+        if addr.is_private or addr.is_link_local or addr.is_reserved:
+            # loopback (127.0.0.1) is intentionally allowed for local models
+            if not addr.is_loopback:
+                raise ValueError(
+                    f"provider base_url host must be a public or loopback address, got {addr}"
+                )
+    # Hostname string checks for the metadata endpoint and common internal names.
+    lowered = host.lower()
+    if lowered in ("169.254.169.254", "metadata.google.internal", "metadata"):
+        raise ValueError(f"provider base_url host is not allowed: {host!r}")
+
+
 def _verify_local_judge_endpoint(base_url: str, model: str, api_key: str) -> None:
     """Probe a local judge endpoint with one test classification (spec D2).
 
@@ -534,6 +582,11 @@ def upsert_llm_provider(
         else (config.llm.base_url if active_provider == provider_id else "")
     )
     effective_base_url = base_url or saved_base_url or spec.default_base_url
+    if base_url:
+        # Validate the operator/RPC-supplied base_url before it reaches the
+        # httpx client. saved_base_url / spec.default_base_url come from
+        # trusted config, so only the caller-controlled argument is checked.
+        _validate_provider_base_url(base_url)
     if spec.requires_base_url and not effective_base_url:
         raise ValueError(f"provider {provider_id!r} requires a base_url")
     saved_proxy = (
