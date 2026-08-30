@@ -298,6 +298,7 @@ class MemorySyncManager:
             if not abs_path.is_file():
                 continue
             try:
+                source_mtime = self._mtimes.get(rel_path)
                 is_kb = rel_path.startswith("knowledge_base/") or rel_path.startswith(
                     "knowledge_base\\"
                 )
@@ -309,11 +310,11 @@ class MemorySyncManager:
                 else:
                     content = abs_path.read_text(encoding="utf-8", errors="replace")
                     source = MemorySource.memory
-
                 n = await self._store.index_file(
                     path=rel_path,
                     content=content,
                     source=source,
+                    mtime=source_mtime,
                 )
                 if n > 0:
                     logger.info(
