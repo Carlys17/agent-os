@@ -244,30 +244,49 @@ async def http_request(
             ),
             stream=True,
         )
+        try:
+            # Stream the body with a hard byte ceiling so an unbounded response
+            # can never be buffered fully into memory; the display caps
+            # (_BINARY_BODY_LIMIT / _TEXT_BODY_LIMIT) only decide what is
+            # returned. A timeout bounds time, not bytes: on a fast pipe
+            # gigabytes arrive inside the window, so one attacker-influenced
+            # URL can OOM the process.
+            #
+            # The whole read MUST stay inside this ``async with`` block:
+            # ``AsyncClient.__aexit__`` closes the transport pool, and once it
+            # does, ``response.aiter_bytes`` raises ``httpx.ReadError`` because
+            # the underlying socket is gone. Reviewer #509 caught this as a
+            # 100% production failure — every real request raised ReadError
+            # after the previous layout exited the block before iterating.
+            download_limit = _resolve_download_limit_bytes()
+            total = 0
+            chunks: list[bytes] = []
+            download_capped = False
+            stream_truncated = False
+            try:
+                async for chunk in response.aiter_bytes(_STREAM_CHUNK_BYTES):
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total >= download_limit:
+                        download_capped = True
+                        break
+            except httpx.RemoteProtocolError:
+                # Server dropped the connection mid-body (e.g. truncated
+                # chunked response). Return what we got rather than crashing
+                # the whole tool call.
+                stream_truncated = True
+            raw_body = b"".join(chunks)
+            # Snapshot response metadata while the connection is still open so
+            # downstream consumers don't depend on the closed transport.
+            status_code = response.status_code
+            response_url = str(response.url)
+            response_headers = dict(response.headers)
+            content_type = response_headers.get("content-type", "")
+        finally:
+            await response.aclose()
 
     from agentos.safety.injection_guard import wrap_untrusted_boundary
 
-    try:
-        # Stream the body with a hard byte ceiling so an unbounded response can
-        # never be buffered fully into memory; the display caps
-        # (_BINARY_BODY_LIMIT / _TEXT_BODY_LIMIT) only decide what is returned.
-        # A timeout bounds time, not bytes: on a fast pipe gigabytes arrive
-        # inside the window, so one attacker-influenced URL can OOM the process.
-        download_limit = _resolve_download_limit_bytes()
-        total = 0
-        chunks: list[bytes] = []
-        download_capped = False
-        async for chunk in response.aiter_bytes(_STREAM_CHUNK_BYTES):
-            chunks.append(chunk)
-            total += len(chunk)
-            if total >= download_limit:
-                download_capped = True
-                break
-        raw_body = b"".join(chunks)
-    finally:
-        await response.aclose()
-
-    content_type = response.headers.get("content-type", "")
     is_text = _is_text_response_content_type(content_type)
     should_save = output_path is not None
 
@@ -276,20 +295,20 @@ async def http_request(
         preview = (
             wrap_untrusted_boundary(
                 raw_body[:_TEXT_BODY_LIMIT].decode("utf-8", "replace"),
-                str(response.url),
+                response_url,
             )
             if is_text
             else None
         )
         result = {
-            "status": response.status_code,
-            "url": str(response.url),
-            "headers": dict(response.headers),
+            "status": status_code,
+            "url": response_url,
+            "headers": response_headers,
             "content_type": content_type,
             "body": None,
             "body_base64": None,
-            "body_truncated": False,
-            "body_base64_truncated": download_capped,
+            "body_truncated": stream_truncated,
+            "body_base64_truncated": download_capped or stream_truncated,
             "body_saved": True,
             "body_omitted_reason": "saved_to_file",
             "body_preview": preview,
@@ -302,19 +321,21 @@ async def http_request(
 
     capped = raw_body[:_BINARY_BODY_LIMIT]
     body_base64 = base64.b64encode(capped).decode("ascii")
-    body_base64_truncated = download_capped or len(raw_body) > _BINARY_BODY_LIMIT
+    body_base64_truncated = (
+        download_capped or stream_truncated or len(raw_body) > _BINARY_BODY_LIMIT
+    )
     if is_text:
         text_body = raw_body.decode("utf-8", "replace")
-        body = wrap_untrusted_boundary(text_body[:_TEXT_BODY_LIMIT], str(response.url))
+        body = wrap_untrusted_boundary(text_body[:_TEXT_BODY_LIMIT], response_url)
         body_truncated = len(text_body) > _TEXT_BODY_LIMIT
     else:
         body = None
         body_truncated = False
 
     result = {
-        "status": response.status_code,
-        "url": str(response.url),
-        "headers": dict(response.headers),
+        "status": status_code,
+        "url": response_url,
+        "headers": response_headers,
         "content_type": content_type,
         "body": body,
         "body_base64": body_base64,
