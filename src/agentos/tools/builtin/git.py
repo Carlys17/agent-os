@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
+from typing import Any
 
 from agentos.redact import redact_sensitive_text
 from agentos.sandbox.integration import get_runtime, run_under_backend, sandboxed
@@ -133,6 +134,16 @@ async def git_status(workdir: str | None = None) -> str:
     return await _run_git("status", "--short", "--branch", cwd=_effective_workdir(workdir))
 
 
+def _git_diff_argv(a: dict[str, Any]) -> tuple[str, ...]:
+    argv = ["git", "diff"]
+    if a.get("staged"):
+        argv.append("--cached")
+    path = a.get("path")
+    if path:
+        argv += ["--", str(path)]
+    return tuple(argv)
+
+
 @tool(
     name="git_diff",
     description="Show git diff (staged + unstaged changes).",
@@ -145,12 +156,7 @@ async def git_status(workdir: str | None = None) -> str:
 )
 @sandboxed(
     kind="git.read",
-    argv_factory=lambda a: (
-        "git",
-        "diff",
-        "--cached" if a.get("staged") else "--unstaged",
-        str(a.get("path", "")),
-    ),
+    argv_factory=_git_diff_argv,
     record_payload=False,
 )
 async def git_diff(
