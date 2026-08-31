@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.9.1] - 2026-09-01
+
+### Added
+
+- Observability for long-running gateways: a Prometheus `GET /metrics` endpoint
+  backed by thread-safe multi-dimensional `Counter` / `Gauge` / `Histogram`
+  types wired to `TaskRuntime`, an `OtlpTraceSink` that exports `TraceEvent`
+  records to any OpenTelemetry collector over HTTP/JSON (`/v1/traces`), and a
+  log-retention sweeper that prunes `~/.agentos/logs/**` by TTL age and by a
+  maximum total disk budget so a gateway left running for months no longer
+  fills the disk (#367).
+
 ### Changed
 
 - Project knowledge is now capped at 24,000 characters on write — the same
@@ -30,6 +42,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   that project, and `projects_move_session` moves only the calling session;
   cross-project management stays on the Web UI / CLI / RPC surface, which is
   control-plane only.
+- Gateway token authentication now compares secrets in constant time. The four
+  token gates (`resolve_auth` for WebSocket/RPC, the HTTP `AuthMiddleware`, the
+  upload route and the audio-transcription route) used `==`/`!=`, which
+  short-circuits on the first differing byte and leaks the token byte by byte
+  under timing analysis. All four route through a shared `token_matches` helper
+  built on `hmac.compare_digest` that fails closed on a missing or empty
+  configured token; the auth contract is otherwise unchanged (#498).
+- The sensitive-payload egress guard now inspects URL userinfo. It scanned path
+  segments and query values only, but httpx turns `https://user:sk-…@host/` into
+  an `Authorization: Basic` header on the wire, so a vendor-shaped credential
+  parked in userinfo egressed unchecked through `http_request`, `web_fetch`
+  (on every redirect hop) and the media `image` tool. Username and password are
+  now percent-decoded and matched, raising a `sensitive_url_userinfo` marker
+  (#499).
+- `http_request` now caps what it downloads, not just what it returns. The
+  request was issued non-streaming, so httpx buffered the whole body into
+  memory before the 1 MB model-facing limit was applied — a chunked response
+  with no (or a lying) `content-length` read fully into RAM, letting one
+  attacker-influenced URL exhaust process memory. The response is now streamed
+  and accumulation stops at a hard byte ceiling, reporting `download_capped`
+  (#508).
+- Scheduler `timeout_seconds` is bounded on both cron create and update.
+  It was accepted unvalidated: `<= 0` makes `asyncio.wait_for` run the handler
+  with no wait at all, and a huge value holds a model turn open for years — a
+  scheduler denial of service from a single `add`/`update` call. Values below
+  1 second or above 24 hours are now rejected (#570).
 
 ### Fixed
 
@@ -64,6 +102,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   already does it (`routing_applied=false`, tier and model kept on the record as
   advice), and per-turn savings are priced from the model that actually ran —
   which also corrects the cost basis reported during `observe` (#586).
+- Two provider failures that made whole model families unusable. Requests to
+  the `opencap` and `bankr` provider kinds now carry the required `x-api-key`
+  header on chat completions and model listing, instead of failing with
+  `HTTP 401: API key required for remote API access`. And Gemini reasoning
+  models no longer reject tool calls with `HTTP 400: Function call is missing a
+  thought_signature`: the signature is captured from streamed and non-streamed
+  deltas, carried on `ToolUseEndEvent` / `ContentBlockToolUse` / `ToolCall`
+  through the turn loop, session sanitization and history deserialization, and
+  echoed back when messages are rebuilt (#519).
+- `agentos upgrade` no longer leaves orphaned processes on Windows. On a
+  timeout, `_kill_process_group()` called `proc.kill()`, which terminates only
+  the direct child — grandchildren (compilers, downloads, nested Python runs)
+  survived and kept file locks on the virtualenv. Windows now uses
+  `taskkill /T /F /PID` to kill the whole tree, falling back to `proc.kill()`
+  only if that fails; POSIX still uses `os.killpg` SIGTERM→SIGKILL (#536).
 
 ## [2026.8.29] - 2026-08-29
 
