@@ -793,6 +793,12 @@ class SlackChannel:
             return JSONResponse({"challenge": challenge})
 
         if event_type == "event_callback":
+            if self.signing_secret is None:
+                log.warning("slack.webhook_event_callback_requires_signing_secret")
+                return Response(
+                    "Slack signing secret must be configured for event_callback",
+                    status_code=403,
+                )
             self._ingest_event_callback(data)
 
         return Response(status_code=200)

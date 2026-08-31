@@ -21,7 +21,11 @@ class _BodyRequest:
 
 @pytest.mark.asyncio
 async def test_slack_webhook_dedupes_retried_event_callback() -> None:
-    channel = SlackChannel(token="xoxb-test", slack_channel_id="C1")
+    channel = SlackChannel(
+        token="xoxb-test",
+        slack_channel_id="C1",
+        signing_secret="test_secret",
+    )
     payload = {
         "type": "event_callback",
         "event_id": "Ev123",
@@ -35,11 +39,37 @@ async def test_slack_webhook_dedupes_retried_event_callback() -> None:
         },
     }
 
-    await channel._handle_webhook(_BodyRequest(payload))  # noqa: SLF001
-    await channel._handle_webhook(_BodyRequest(payload))  # noqa: SLF001
+    import time
+
+    # Bypass signature verification in test (auth tested separately)
+    channel._verify_signature = lambda *a, **k: True  # type: ignore[method-assign]
+
+    req = _BodyRequest(payload)
+    req.headers["X-Slack-Signature"] = "v0=test"
+    req.headers["X-Slack-Request-Timestamp"] = str(int(time.time()))
+    await channel._handle_webhook(req)  # noqa: SLF001
+    await channel._handle_webhook(req)  # noqa: SLF001
 
     assert channel._queue.qsize() == 1  # noqa: SLF001
     assert (await channel.receive()).content == "draw an image"
+
+
+@pytest.mark.asyncio
+async def test_slack_webhook_rejects_event_callback_when_signing_secret_unset() -> None:
+    """event_callback must be rejected when signing_secret is not configured."""
+    channel = SlackChannel(token="xoxb-test", slack_channel_id="C1")
+    # signing_secret defaults to None
+    assert channel.signing_secret is None
+    payload = {
+        "type": "event_callback",
+        "event_id": "Ev999",
+        "event": {"type": "message", "text": "injected"},
+    }
+    req = _BodyRequest(payload)
+    import time
+    req.headers["X-Slack-Request-Timestamp"] = str(int(time.time()))
+    resp = await channel._handle_webhook(req)  # noqa: SLF001
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio
