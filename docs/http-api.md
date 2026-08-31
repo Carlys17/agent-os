@@ -64,6 +64,7 @@ These require no auth and are safe for load balancers and container probes.
 | `GET` | `/api/agents` | List durable agents. |
 | `GET` | `/api/cron` | List scheduled jobs. |
 | `GET` | `/api/usage` | Token usage and cost breakdown. |
+| `GET` | `/metrics` | Prometheus metrics exposition (`observability.metrics_path`). |
 
 ## Channels
 

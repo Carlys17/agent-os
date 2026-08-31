@@ -1844,6 +1844,37 @@ class SubagentsGatewayConfig(BaseModel):
     """When enabled, subagent bootstrap prompts keep only AGENTS.md and TOOLS.md."""
 
 
+class ObservabilityConfig(BaseSettings):
+    """Observability, Prometheus metrics, OTLP trace export, and log retention configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AGENTOS_OBSERVABILITY_",
+        extra="forbid",
+    )
+
+    metrics_enabled: bool = True
+    metrics_path: str = "/metrics"
+
+    otlp_enabled: bool = False
+    otlp_endpoint: str = ""
+    otlp_headers: dict[str, str] = Field(default_factory=dict)
+    otlp_service_name: str = "agentos"
+
+    log_retention_days: int = Field(default=14, ge=0)
+    log_retention_max_total_mb: int = Field(default=500, ge=0)
+    log_retention_sweep_interval_s: float = Field(default=3600.0, gt=0)
+
+    @field_validator("metrics_path")
+    @classmethod
+    def _validate_metrics_path(cls, value: str) -> str:
+        path = value.strip()
+        if not path:
+            return "/metrics"
+        if not path.startswith("/"):
+            path = "/" + path
+        return path
+
+
 class UpdatesConfig(BaseModel):
     """Update-notice preferences.
 
@@ -2063,6 +2094,7 @@ class GatewayConfig(BaseSettings):
     agents: list[AgentEntryConfig] = Field(default_factory=list)
     agents_defaults: AgentDefaults = Field(default_factory=AgentDefaults)
     subagents: SubagentsGatewayConfig = Field(default_factory=SubagentsGatewayConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     budgets: BudgetsConfig = Field(default_factory=BudgetsConfig)
 
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
@@ -2181,6 +2213,20 @@ class GatewayConfig(BaseSettings):
         payload["judge_model"] = None
         payload["judge_provider"] = None
         self.agentos_router = AgentOSRouterConfig(**payload)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_observability_metrics_path(self) -> GatewayConfig:
+        observability = getattr(self, "observability", None)
+        control_ui = getattr(self, "control_ui", None)
+        if observability is not None and control_ui is not None:
+            ui_base = control_ui.base_path.rstrip("/")
+            metrics_path = observability.metrics_path.rstrip("/")
+            if metrics_path == ui_base or metrics_path.startswith(f"{ui_base}/"):
+                raise ValueError(
+                    f"observability.metrics_path ({observability.metrics_path}) cannot overlap "
+                    f"or be located under control_ui.base_path ({control_ui.base_path})"
+                )
         return self
 
     # --- Context overflow policy -----------------------------------------

@@ -976,9 +976,26 @@ editing the config file directly. The state file
 e.g. `cli`, `webui`) for throttling; delete it to force a re-check. To silence the notices
 for a single run/session without changing config, set `AGENTOS_NO_UPDATE_NOTICE=1`.
 
-Related: `agentos upgrade` (the primary upgrade path), the version-skew policy,
-and the `AGENTOS_ALLOW_VERSION_SKEW=1` escape hatch are documented in the
-[README Upgrade section](../README.md#upgrade).
+## Observability
+
+AgentOS provides Prometheus metrics exposition, OpenTelemetry (OTLP) trace export, and automatic log retention pruning under the `[observability]` table:
+
+```toml
+[observability]
+metrics_enabled = true
+metrics_path = "/metrics"
+otlp_enabled = false
+otlp_endpoint = "http://localhost:4318"
+otlp_headers = {}
+otlp_service_name = "agentos"
+log_retention_days = 14
+log_retention_max_total_mb = 500
+log_retention_sweep_interval_s = 3600.0
+```
+
+- **Prometheus Metrics**: `metrics_enabled` (default `true`) exposes Prometheus metrics at `metrics_path` (default `"/metrics"`). Core metrics (`agentos_queue_depth`, `in_flight_turns_total`, `turn_cancellations_total`, `queue_full_errors_total`) are exported with bounded cardinality.
+- **OTLP Trace Export**: `otlp_enabled` (default `false`) sends trace events as OTLP spans over HTTP to `otlp_endpoint` (e.g. OpenTelemetry Collector).
+- **Log Retention**: `log_retention_days` (TTL) and `log_retention_max_total_mb` (total size cap) bound disk growth in `~/.agentos/logs`. Background sweeps run every `log_retention_sweep_interval_s`.
 
 ## Raw Config Editing
 
