@@ -279,6 +279,12 @@ async def web_fetch(
                 # only caps what is returned to the model, not what is
                 # downloaded.
                 download_limit = _resolve_download_limit_bytes()
+                # Snapshot the charset advertised in Content-Type before we
+                # start streaming — httpx derives response.encoding from
+                # those headers, and we have to honour the server's charset
+                # (e.g. text/plain; charset=iso-8859-1) instead of assuming
+                # UTF-8. Falling back to utf-8 matches httpx's own default.
+                response_encoding = response.encoding or "utf-8"
                 total = 0
                 chunks: list[bytes] = []
                 truncated = False
@@ -290,10 +296,7 @@ async def web_fetch(
                         break
 
                 raw_body = b"".join(chunks)
-                try:
-                    raw_text = raw_body.decode("utf-8")
-                except UnicodeDecodeError:
-                    raw_text = raw_body.decode("utf-8", errors="replace")
+                raw_text = raw_body.decode(response_encoding, errors="replace")
 
                 return (
                     response.status_code,

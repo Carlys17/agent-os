@@ -185,3 +185,34 @@ async def test_web_fetch_redirect_without_location_returns_body(
     assert result["status"] == 302
     assert "closed" not in str(result.get("error", ""))
     assert "moved, but nowhere" in str(result["text"])
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_honors_response_charset(
+    monkeypatch: pytest.MonkeyPatch,
+    sandbox_off: Any,
+) -> None:
+    """Non-UTF-8 (ISO-8859-1) pages must be decoded with the server's charset.
+
+    Mirrors ``test_http_request_honors_response_charset`` from the #509 fix
+    on the sibling ``http_request`` tool: the streaming transport serves an
+    ISO-8859-1 body, the Content-Type advertises ``charset=iso-8859-1``, and
+    the returned text must contain the real ``café`` character — not the
+    U+FFFD replacement character that a hard-coded UTF-8 decode would emit.
+    """
+    body_bytes = b"caf\xe9 na\xefve r\xe9sum\xe9 ..."
+    transport = _StreamingTransport(
+        200,
+        {"content-type": "text/plain; charset=iso-8859-1"},
+        body_bytes,
+    )
+    _install_streaming_transport(monkeypatch, transport)
+    wf._cache.clear()
+
+    result = json.loads(await wf.web_fetch(url="https://example.com/latin1"))
+
+    assert result["status"] == 200
+    assert result["content_type"] == "text/plain; charset=iso-8859-1"
+    inner_text = str(result["text"])
+    assert "café" in inner_text
+    assert "\ufffd" not in inner_text
