@@ -634,7 +634,11 @@ Web UI has a "New chat in project" button), and deleting a project never
 deletes sessions: they just detach and stop receiving the knowledge. Agents can manage projects from prompting through the
 `projects_create` / `projects_list` / `projects_update` /
 `projects_move_session` tools, and `session_search scope=project` searches
-only sibling sessions of the calling session's project.
+only sibling sessions of the calling session's project. The tools are scoped
+to the calling session: `projects_update` edits only the session's own
+project, `projects_list` returns knowledge text only for that project, and
+`projects_move_session` moves only the calling session — everything else
+stays on the CLI/Web UI surface.
 
 Read: [`sessions.md`](sessions.md)
 
