@@ -86,6 +86,7 @@ def _is_context_overflow(text: str) -> bool:
             "prompt is too long",
             "input is too long",
             "input exceeds",
+            "exceeds the maximum number of tokens",
             "provider_request_budget_exhausted",
             "too many tokens",
             # Anthropic-specific markers
