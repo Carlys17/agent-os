@@ -147,6 +147,24 @@ async def test_http_request_uses_body_base64_when_content_type_missing(
 
 
 @pytest.mark.asyncio
+async def test_http_request_honors_response_charset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = "café".encode("iso-8859-1")
+    _patch_response(
+        monkeypatch,
+        httpx.Response(
+            200,
+            content=raw,
+            headers={"content-type": "text/plain; charset=iso-8859-1"},
+            request=httpx.Request("GET", "https://example.test/latin1"),
+        ),
+    )
+    payload = json.loads(await _original_http_request()(url="https://example.test/latin1"))
+    assert "café" in payload["body"]
+
+
+@pytest.mark.asyncio
 async def test_http_request_does_not_implicitly_save_large_binary_response(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

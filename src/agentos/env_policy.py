@@ -136,6 +136,7 @@ _AGENTOS_POSTURE_NAMES = (
     "AGENTOS_GATEWAY_HOST",
     "AGENTOS_GATEWAY_PORT",
     "AGENTOS_LISTEN",
+    "AGENTOS_HTTP_DOWNLOAD_LIMIT",
 )
 
 #: Names that may never be written through an AgentOS surface.

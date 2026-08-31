@@ -121,7 +121,9 @@ def _resolve_download_limit_bytes() -> int:
         value = int(raw)
     except ValueError:
         return _DOWNLOAD_LIMIT_BYTES
-    return value if value >= _STREAM_CHUNK_BYTES else _DOWNLOAD_LIMIT_BYTES
+    return (
+        min(value, _DOWNLOAD_LIMIT_BYTES) if value >= _STREAM_CHUNK_BYTES else _DOWNLOAD_LIMIT_BYTES
+    )
 
 
 def _fetch_workspace_dir() -> Path:
@@ -281,6 +283,7 @@ async def http_request(
             status_code = response.status_code
             response_url = str(response.url)
             response_headers = dict(response.headers)
+            response_encoding = response.encoding or "utf-8"
             content_type = response_headers.get("content-type", "")
         finally:
             await response.aclose()
@@ -294,7 +297,7 @@ async def http_request(
         saved_path, digest = _save_http_response_body(raw_body, output_path)
         preview = (
             wrap_untrusted_boundary(
-                raw_body[:_TEXT_BODY_LIMIT].decode("utf-8", "replace"),
+                raw_body[:_TEXT_BODY_LIMIT].decode(response_encoding, "replace"),
                 response_url,
             )
             if is_text
@@ -325,9 +328,9 @@ async def http_request(
         download_capped or stream_truncated or len(raw_body) > _BINARY_BODY_LIMIT
     )
     if is_text:
-        text_body = raw_body.decode("utf-8", "replace")
+        text_body = raw_body.decode(response_encoding, "replace")
         body = wrap_untrusted_boundary(text_body[:_TEXT_BODY_LIMIT], response_url)
-        body_truncated = len(text_body) > _TEXT_BODY_LIMIT
+        body_truncated = download_capped or stream_truncated or len(text_body) > _TEXT_BODY_LIMIT
     else:
         body = None
         body_truncated = False
