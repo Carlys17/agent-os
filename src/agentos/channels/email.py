@@ -735,9 +735,15 @@ class EmailChannel:
         content: str = "",
     ) -> ChannelSendResult:
         """Mail one file back into ``thread_id`` as an attachment."""
+        max_send_file_bytes = 25 * 1024 * 1024  # 25 MB
 
         path = Path(file_path)
         try:
+            st = path.stat()
+            if st.st_size > max_send_file_bytes:
+                raise ValueError(
+                    f"File exceeds {max_send_file_bytes} byte limit for send_file"
+                )
             payload = path.read_bytes()
             to_address, subject, in_reply_to, references = self._resolve_target(
                 OutgoingMessage(content="", reply_to=thread_id)

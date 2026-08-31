@@ -1022,6 +1022,13 @@ class DiscordChannel:
         file_path: str,
         content: str = "",
     ) -> ChannelSendResult:
+        max_send_file_bytes = 25 * 1024 * 1024  # 25 MB
+        path = Path(file_path)
+        st = path.stat()
+        if st.st_size > max_send_file_bytes:
+            raise ValueError(
+                f"File exceeds {max_send_file_bytes} byte limit for send_file"
+            )
         await self._rate_limiter.acquire()
         client = self._get_client()
         with open(file_path, "rb") as f:

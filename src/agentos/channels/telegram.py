@@ -1412,6 +1412,9 @@ class TelegramChannel:
         if not self.config.token:
             raise ValueError("telegram.send_file requires token")
         path = Path(file_path)
+        st = path.stat()
+        if st.st_size > 25 * 1024 * 1024:
+            raise ValueError("File exceeds 25MB limit for telegram send_file")
         payload = {"chat_id": str(chat_id)}
         if content:
             payload["caption"] = render_telegram_html(content)
