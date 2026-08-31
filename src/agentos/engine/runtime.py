@@ -3834,6 +3834,32 @@ class TurnRunner:
                     available_tools=self._tool_registry.list_names(),
                     hard_denied=hard_denied,
                 )
+            # Enforce plan-mode tool allowlist for all non-background entry
+            # points (mirrors the gateway's behavior in routing.py). The
+            # gateway already restricts the allowlist, but a CLI, cron, or
+            # subagent call that flows through runtime.run() would otherwise
+            # bypass the cap because it never consults the plan-mode store.
+            if (
+                ctx.caller_kind
+                not in {
+                    CallerKind.CRON,
+                    CallerKind.SUBAGENT,
+                }
+                and ctx.session_key
+            ):
+                from agentos.plan_mode import (
+                    PLAN_MODE_TOOL_ALLOW,
+                    get_plan_mode_store,
+                )
+
+                if get_plan_mode_store().is_enabled(ctx.session_key):
+                    existing = set(ctx.allowed_tools) if ctx.allowed_tools is not None else None
+                    if existing is None:
+                        ctx = replace(ctx, allowed_tools=set(PLAN_MODE_TOOL_ALLOW))
+                    else:
+                        ctx = replace(
+                            ctx, allowed_tools=existing & PLAN_MODE_TOOL_ALLOW
+                        )
             ctx = self._apply_runtime_capability_denies(ctx)
             ctx = self._apply_user_route_pin_denies(ctx)
             log.debug(
