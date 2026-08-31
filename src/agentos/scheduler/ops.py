@@ -33,6 +33,11 @@ from .types import (
     SessionTarget,
 )
 
+# Hard cap on job timeout_seconds. A single cron create/update with a huge
+# value would hold a model turn open indefinitely (scheduler DoS); negative
+# values make asyncio.wait_for run the handler with no wait at all.
+_MAX_JOB_TIMEOUT_SECONDS = 24 * 60 * 60  # 24h
+
 
 def _resolve_script_placeholder(job: CronJob) -> None:
     """Replace ``{job_id}`` in the job's script path with the job's own id.
@@ -268,6 +273,20 @@ class SchedulerOps:
             explicit_delivery=delivery is not None,
         )
 
+        # Bound timeout_seconds: a negative or absurdly large value would make
+        # asyncio.wait_for run the handler with no wait at all (<=0) or hold a
+        # model turn open for years (huge), a reliable scheduler DoS via a
+        # single cron create/update call.
+        if timeout_seconds is None or timeout_seconds < 1:
+            raise ValueError(
+                f"timeout_seconds must be >= 1, got {timeout_seconds!r}"
+            )
+        if timeout_seconds > _MAX_JOB_TIMEOUT_SECONDS:
+            raise ValueError(
+                f"timeout_seconds must be <= {_MAX_JOB_TIMEOUT_SECONDS}, "
+                f"got {timeout_seconds!r}"
+            )
+
         job = CronJob(
             name=name,
             schedule_raw=schedule_raw,
@@ -376,6 +395,13 @@ class SchedulerOps:
 
         for field in ("name", "timeout_seconds", "enabled", "origin_session_key"):
             if field in patch:
+                if field == "timeout_seconds":
+                    value = patch[field]
+                    if value is None or value < 1 or value > _MAX_JOB_TIMEOUT_SECONDS:
+                        raise ValueError(
+                            f"timeout_seconds must be 1..{_MAX_JOB_TIMEOUT_SECONDS}, "
+                            f"got {value!r}"
+                        )
                 setattr(job, field, patch.pop(field))
         # Validated after normalize_contract below: a patch that converts the
         # job's kind also moves its handler_key, and the elevation rule is
