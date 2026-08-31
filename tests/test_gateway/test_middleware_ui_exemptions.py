@@ -86,3 +86,19 @@ def test_http_token_auth_without_configured_token_fails_closed(tmp_path) -> None
         response = client.get("/api/config")
 
     assert response.status_code == 401
+
+
+def test_http_token_auth_rejects_wrong_token(tmp_path) -> None:
+    config = GatewayConfig(
+        config_path=str(tmp_path / "config.toml"),
+        auth={"mode": "token", "token": "test-token"},
+    )
+
+    with TestClient(create_gateway_app(config), base_url="http://localhost") as client:
+        response = client.get(
+            "/api/config",
+            headers={"authorization": "Bearer nope"},
+        )
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHORIZED"
