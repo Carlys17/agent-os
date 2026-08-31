@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+
+- The `projects_*` agent tools are now scoped to the calling session.
+  `projects_list` used to hand the model every project's knowledge text and
+  `projects_update` accepted any `project_id`, so one prompt-injected
+  instruction in any member session could read all knowledge and overwrite
+  another project's — text that then runs inside the system prompt of every
+  member session of that project, every turn. `projects_move_session` likewise
+  accepted arbitrary session keys, allowing the same hand-off by moving a
+  victim session into a poisoned project. Now `projects_update` edits only the
+  calling session's own project, `projects_list` includes knowledge only for
+  that project, and `projects_move_session` moves only the calling session;
+  cross-project management stays on the Web UI / CLI / RPC surface, which is
+  control-plane only.
+
 ### Fixed
 
 - Router metadata no longer reports a model the provider never ran. An explicit
