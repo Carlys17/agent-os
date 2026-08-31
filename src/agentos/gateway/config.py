@@ -133,6 +133,21 @@ class RateLimitConfig(BaseSettings):
     enabled: bool = True
     max_requests: int = 100
     window_seconds: int = 60
+    # Optional per-path bucket overrides. Each entry maps a request-path
+    # prefix to its own RateLimitConfig (counts use the same per-IP sliding
+    # window, but a different cap). Use this to give a specific endpoint more
+    # or less headroom than the global default without loosening the cap that
+    # protects the rest of /api/*.
+    #
+    # The gateway additionally applies built-in defaults for a few polled
+    # endpoints (``middleware.DEFAULT_PATH_BUCKETS`` — notably a generous
+    # /api/approvals bucket) beneath whatever is configured here; an explicit
+    # entry in this dict always wins over the built-in default.
+    #
+    # Matching is exact-equality on the configured prefix, or "prefix + '/'"
+    # for anything below it — the same shape as `_is_under` in middleware so
+    # sibling paths can't be swallowed by a too-greedy prefix.
+    path_buckets: dict[str, RateLimitConfig] = Field(default_factory=dict)
 
 
 class ControlUiConfig(BaseSettings):

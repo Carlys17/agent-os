@@ -35,6 +35,23 @@ _API_PREFIX = "/api"
 # like the root ``/api/*`` routes.
 _UI_BOOTSTRAP_SUFFIX = f"{_API_PREFIX}/bootstrap"
 
+# Default per-path rate-limit buckets, applied by RateLimitMiddleware on top of
+# (and beneath) any operator-configured ``rate_limit.path_buckets`` entries.
+#
+# ``/api/approvals`` is the one polled endpoint whose traffic must never trip
+# the shared per-IP bucket: the Control UI approval monitor polls it every
+# 1500 ms (40 req/min per open tab — frontend/src/services/approval-monitor.ts
+# ``POLL_MS``), and the operator may keep several tabs open. With the default
+# ``max_requests=100 / window_seconds=60`` shared bucket, two tabs polling
+# alongside normal REST traffic would 429 the very endpoint the operator needs
+# to approve tool calls. A dedicated 300 req/60 s (5 req/s) bucket keeps ~3
+# polling tabs plus slack under the cap while still bounding the enumeration
+# DoS (the pending queue serializes every pending command/argv, so it must
+# not be sprayable without limit).
+DEFAULT_PATH_BUCKETS: dict[str, dict[str, int]] = {
+    "/api/approvals": {"max_requests": 300, "window_seconds": 60},
+}
+
 
 def _is_under(prefix: str, path: str) -> bool:
     """True for the prefix itself or anything below it — never a bare-prefix match.
@@ -303,6 +320,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return False
         return _is_under(self._ui_prefix, path)
 
+    def _resolve_bucket(self, path: str) -> tuple[int, float] | None:
+        """Return ``(max_requests, window_seconds)`` for ``path``, or None for the default.
+
+        A path-prefix match against ``config.rate_limit.path_buckets`` wins
+        over the global default, followed by ``DEFAULT_PATH_BUCKETS`` (built-in
+        per-endpoint caps). The matched bucket's counts accumulate per-IP
+        independently of the global bucket, so a polled endpoint with its own
+        bucket cannot starve the generic /api/* cap (and vice versa).
+        """
+        for prefix, bucket in self._config.rate_limit.path_buckets.items():
+            if path == prefix or path.startswith(prefix + "/"):
+                return int(bucket.max_requests), float(bucket.window_seconds)
+        for prefix, cap in DEFAULT_PATH_BUCKETS.items():
+            if path == prefix or path.startswith(prefix + "/"):
+                return int(cap["max_requests"]), float(cap["window_seconds"])
+        return None
+
     def _is_trusted_proxy(self, peer_ip: str | None) -> bool:
         if not peer_ip:
             return False
@@ -355,27 +389,38 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         client_ip = self._get_client_ip(request)
         now = time.time()
-        window = float(self._config.rate_limit.window_seconds)
-        max_req = self._config.rate_limit.max_requests
+        # Per-path bucket wins over the global default. The bucket key
+        # (path-prefix) is folded into the in-memory window key so per-prefix
+        # counts do not interfere with each other or with the global bucket.
+        bucket = self._resolve_bucket(path)
+        if bucket is not None:
+            max_req, window = bucket
+            window_key = f"path:{path}:{client_ip}"
+        else:
+            max_req = self._config.rate_limit.max_requests
+            window = float(self._config.rate_limit.window_seconds)
+            window_key = client_ip
         sweep_interval = min(window, 60.0)
 
-        # Periodic sweep of expired windows
+        # Periodic sweep of expired windows (uses the global window — bucket
+        # windows are always <= it by construction, so a sweep keyed to the
+        # global window also cleans per-bucket entries).
         if now - self._last_sweep >= sweep_interval:
             self._sweep_expired(now, window)
 
         # Prune old timestamps
-        timestamps = [t for t in self._windows.get(client_ip, []) if now - t < window]
+        timestamps = [t for t in self._windows.get(window_key, []) if now - t < window]
 
         if len(timestamps) >= max_req:
-            self._windows[client_ip] = timestamps
-            self._windows.move_to_end(client_ip)
+            self._windows[window_key] = timestamps
+            self._windows.move_to_end(window_key)
             return JSONResponse(
                 {"error": "Too Many Requests", "code": "RATE_LIMITED"}, status_code=429
             )
 
         timestamps.append(now)
-        self._windows[client_ip] = timestamps
-        self._windows.move_to_end(client_ip)
+        self._windows[window_key] = timestamps
+        self._windows.move_to_end(window_key)
 
         if len(self._windows) > self._max_tracked_clients:
             self._evict_excess(now, window)
