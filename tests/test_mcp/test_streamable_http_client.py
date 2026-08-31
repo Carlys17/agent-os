@@ -69,6 +69,8 @@ async def test_cancelled_connect_closes_all_partial_transport_contexts(
     from mcp.client import session as session_module
     from mcp.client import streamable_http as transport_module
 
+    monkeypatch.setattr("agentos.mcp.streamable_http.validate_http_url_for_fetch", lambda _u: None)
+
     closed: list[str] = []
 
     @asynccontextmanager
@@ -110,3 +112,69 @@ async def test_cancelled_connect_closes_all_partial_transport_contexts(
         await client.connect()
 
     assert closed == ["session", "transport", "http"]
+
+
+@pytest.mark.asyncio
+async def test_connect_rejects_metadata_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """connect() must validate the server URL against SSRF guards."""
+    from agentos.tools.ssrf import SSRFBlockedError
+
+    def _boom(_url: str) -> None:
+        raise SSRFBlockedError("Blocked")
+
+    monkeypatch.setattr("agentos.mcp.streamable_http.validate_http_url_for_fetch", _boom)
+    client = MCPStreamableHTTPClient(
+        MCPServerConfig(
+            name="evil",
+            transport="streamable_http",
+            url="http://169.254.169.254/latest/meta-data/",
+        )
+    )
+    with pytest.raises(SSRFBlockedError):
+        await client.connect()
+
+
+@pytest.mark.asyncio
+async def test_connect_passes_valid_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """connect() calls validate_http_url_for_fetch and does not raise for valid URLs."""
+    called_with: list[str] = []
+
+    def _check(url: str) -> None:
+        called_with.append(url)
+
+    monkeypatch.setattr("agentos.mcp.streamable_http.validate_http_url_for_fetch", _check)
+    # Mock the downstream imports so connect() does not actually connect
+    from mcp.client import session as session_module
+    from mcp.client import streamable_http as transport_module
+
+    @asynccontextmanager
+    async def fake_http_client(**_kwargs: Any):
+        yield object()
+
+    @asynccontextmanager
+    async def fake_transport(_url: str, **_kwargs: Any):
+        yield object(), object(), None
+
+    class FakeSession:
+        async def __aenter__(self) -> FakeSession:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            pass
+
+        async def initialize(self) -> None:
+            pass
+
+    monkeypatch.setattr("agentos.mcp.streamable_http.httpx.AsyncClient", fake_http_client)
+    monkeypatch.setattr(transport_module, "streamable_http_client", fake_transport)
+    monkeypatch.setattr(session_module, "ClientSession", lambda *_a, **_kw: FakeSession())
+
+    client = MCPStreamableHTTPClient(
+        MCPServerConfig(
+            name="valid",
+            transport="streamable_http",
+            url="https://example.test/mcp",
+        )
+    )
+    await client.connect()
+    assert called_with == ["https://example.test/mcp"]
