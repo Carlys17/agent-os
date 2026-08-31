@@ -1886,9 +1886,11 @@ class TurnRunner:
         merged["Memory Context"] = block
         return merged
 
-    # Injection ceiling for project knowledge. Writes are already capped at
-    # SessionManager.PROJECT_KNOWLEDGE_MAX_CHARS; this second cap only guards
-    # rows written before that limit existed (or edited out-of-band).
+    # Injection ceiling for project knowledge. Kept equal to
+    # SessionManager.PROJECT_KNOWLEDGE_MAX_CHARS (a release-consistency test
+    # asserts this) so nothing that saves is silently cut here; the guard
+    # still truncates rows written under the old, larger write cap or edited
+    # out-of-band.
     PROJECT_KNOWLEDGE_INJECT_MAX_CHARS = 24_000
 
     async def _augment_extra_context_with_project_knowledge(

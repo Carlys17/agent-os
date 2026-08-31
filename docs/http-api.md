@@ -107,6 +107,10 @@ Projects (session groups with shared knowledge) are WebSocket-only:
 `projects.create` / `projects.list` / `projects.get` / `projects.update` /
 `projects.delete` (params use `projectId`, `agentId`, `name`, `knowledge`;
 delete responds with `sessionsCleared` — sessions are detached, not deleted).
+`projects.update` writes only the fields you pass and accepts an optional
+`expectedUpdatedAt` (the `updatedAt` you last read): when the row changed in
+between, the call fails with code `project.conflict` instead of silently
+overwriting the other writer's edit.
 `sessions.create` accepts an optional `projectId`, `sessions.patch` moves a
 session with `projectId` (explicit `null` detaches), and `sessions.list`
 accepts a `projectId` filter and emits `project_id`/`projectId` on every row.

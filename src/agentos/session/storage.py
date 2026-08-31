@@ -113,6 +113,13 @@ _CREATE_IDX_PROJECTS_AGENT = (
     "CREATE INDEX IF NOT EXISTS idx_projects_agent ON projects(agent_id)"
 )
 
+# Backstop for the advisory Python-side name check (closes the concurrent
+# create race). NOCASE folds ASCII only; the casefold check stays primary.
+_CREATE_UNIQUE_IDX_PROJECTS_NAME = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_name_nocase "
+    "ON projects(name COLLATE NOCASE)"
+)
+
 _CREATE_IDX_SESSIONS_PROJECT = (
     "CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id)"
 )
@@ -467,6 +474,7 @@ class SessionStorage:
         await self._conn.execute(_CREATE_IDX_SESSIONS_PROJECT)
         await self._conn.execute(_CREATE_IDX_MEMORY_DURABLE_RECEIPTS_COVERAGE)
         await self._conn.commit()
+        await self._ensure_projects_name_index()
         await self.mark_abandoned_agent_tasks()
 
     async def _migrate_epoch_column(self) -> None:
@@ -602,6 +610,21 @@ class SessionStorage:
         if "project_id" not in columns:
             await self._conn.execute("ALTER TABLE sessions ADD COLUMN project_id TEXT")
             await self._conn.commit()
+
+    async def _ensure_projects_name_index(self) -> None:
+        """Create the unique project-name index; legacy duplicates skip it.
+
+        Mirrors migration V012: a database that already carries
+        case-insensitive duplicate names keeps working with uniqueness
+        enforced only by the Python-side check.
+        """
+        assert self._conn is not None
+        try:
+            await self._conn.execute(_CREATE_UNIQUE_IDX_PROJECTS_NAME)
+            await self._conn.commit()
+        except aiosqlite.IntegrityError:
+            await self._conn.rollback()
+            log.warning("projects name index skipped: duplicate names already exist")
 
     @property
     def conn(self) -> Any:
@@ -776,6 +799,43 @@ class SessionStorage:
         )
         await self.conn.execute(sql, values)
         await self.conn.commit()
+
+    async def update_project_fields(
+        self,
+        project_id: str,
+        *,
+        updated_at: int,
+        name: str | None = None,
+        knowledge: str | None = None,
+        expected_updated_at: int | None = None,
+    ) -> bool:
+        """Partial, optionally compare-and-swap project update.
+
+        Only the provided columns are written, so a concurrent rename can
+        never clobber another writer's knowledge (and vice versa). With
+        ``expected_updated_at`` the UPDATE matches only if the row still
+        carries that timestamp — the caller distinguishes "row gone" from
+        "row changed" on a ``False`` return.
+        """
+        # MAX(..) keeps the timestamp strictly increasing even when two
+        # writes land in the same millisecond — same-ms writes would
+        # otherwise share updated_at and blind the compare-and-swap.
+        sets = ["updated_at = MAX(?, updated_at + 1)"]
+        values: list[Any] = [updated_at]
+        if name is not None:
+            sets.append("name = ?")
+            values.append(name)
+        if knowledge is not None:
+            sets.append("knowledge = ?")
+            values.append(knowledge)
+        sql = f"UPDATE projects SET {', '.join(sets)} WHERE project_id = ?"
+        values.append(project_id)
+        if expected_updated_at is not None:
+            sql += " AND updated_at = ?"
+            values.append(expected_updated_at)
+        cur = await self.conn.execute(sql, values)
+        await self.conn.commit()
+        return int(cur.rowcount or 0) > 0
 
     async def get_project(self, project_id: str) -> ProjectNode | None:
         async with self.conn.execute(
