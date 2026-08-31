@@ -61,6 +61,8 @@ class TestDenylist:
             "AGENTOS_LLM_PROXY",
             "NO_PROXY",
             "no_proxy",
+            "Http_Proxy",
+            "AGENTOS_TRUST_ENV",
         ],
     )
     def test_execution_and_posture_names_are_refused(self, name: str) -> None:

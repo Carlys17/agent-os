@@ -137,6 +137,7 @@ _AGENTOS_POSTURE_NAMES = (
     "AGENTOS_GATEWAY_PORT",
     "AGENTOS_LISTEN",
     "AGENTOS_HTTP_DOWNLOAD_LIMIT",
+    "AGENTOS_TRUST_ENV",
 )
 
 #: Env var names that steer network egress (proxies). Writing these through an
@@ -157,13 +158,11 @@ _PROXY_NAMES = (
     "no_proxy",
 )
 
+_PROXY_NAMES_CI = frozenset(name.upper() for name in _PROXY_NAMES)
+
 #: Names that may never be written through an AgentOS surface.
 WRITE_DENYLIST: frozenset[str] = frozenset(
-    _LOADER_NAMES
-    + _INTERPRETER_NAMES
-    + _SHELL_NAMES
-    + _AGENTOS_POSTURE_NAMES
-    + _PROXY_NAMES
+    _LOADER_NAMES + _INTERPRETER_NAMES + _SHELL_NAMES + _AGENTOS_POSTURE_NAMES + _PROXY_NAMES
 )
 
 _DENY_MESSAGE = (
@@ -190,13 +189,17 @@ def assert_valid_name(key: str) -> None:
 
 def is_writable(key: str) -> bool:
     """Return whether *key* may be written through an AgentOS surface."""
-    return bool(ENV_NAME_RE.match(key)) and key not in WRITE_DENYLIST
+    return (
+        bool(ENV_NAME_RE.match(key))
+        and key not in WRITE_DENYLIST
+        and key.upper() not in _PROXY_NAMES_CI
+    )
 
 
 def assert_writable(key: str) -> None:
     """Raise :class:`EnvPolicyError` unless *key* passes the name and deny gates."""
     assert_valid_name(key)
-    if key in WRITE_DENYLIST:
+    if key in WRITE_DENYLIST or key.upper() in _PROXY_NAMES_CI:
         raise EnvPolicyError(_DENY_MESSAGE.format(key=key))
 
 
