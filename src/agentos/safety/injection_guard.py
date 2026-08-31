@@ -174,6 +174,24 @@ class InjectionFinding:
         return asdict(self)
 
 
+_INVISIBLE_CHARS_RE: Final[re.Pattern[str]] = re.compile(
+    r"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]"
+)
+
+
+def _strip_invisible_chars(text: str) -> str:
+    """Remove invisible/zero-width characters before pattern matching.
+
+    Attackers can split intent phrases (``ignore`` + U+200B + ``all``) so
+    the word-boundary regexes fail to match while the tokenizer still sees
+    the full payload. Each invisible character is replaced with a space so
+    split words still separate correctly (``ignore<U+200B>all`` becomes
+    ``ignore all``); the ``invisible_char`` class still fires on the
+    original text.
+    """
+    return _INVISIBLE_CHARS_RE.sub(" ", text)
+
+
 def classify_injection(text: str) -> list[str]:
     """Return sorted labels of threat classes whose regex matched ``text``.
 
@@ -187,9 +205,17 @@ def classify_injection(text: str) -> list[str]:
     if not text:
         return []
     hits: set[str] = set()
+    normalized = _strip_invisible_chars(text)
     for threat_class, patterns in INJECTION_PATTERNS.items():
+        if threat_class == "invisible_char":
+            # Match invisible chars against the ORIGINAL text.
+            for pattern in patterns:
+                if pattern.search(text):
+                    hits.add(threat_class)
+                    break
+            continue
         for pattern in patterns:
-            if pattern.search(text):
+            if pattern.search(normalized):
                 hits.add(threat_class)
                 break
     return sorted(hits)
