@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
+from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from agentos.gateway.app import create_gateway_app
 from agentos.gateway.config import SUPPORTED_AUTH_MODES, AuthConfig, GatewayConfig
+from agentos.gateway.middleware import RateLimitMiddleware
 
 
 class TestAuthModeValidation:
@@ -170,8 +172,11 @@ class TestTrustedProxyModeEnforcesPeerIP:
     """trusted-proxy must validate the real transport peer, not the header.
 
     The old check did ``proxy not in forwarded_for`` (substring match), so any
-    client could send ``X-Forwarded-For: <proxy>`` and pass. Admission must
-    require the peer IP itself to be a trusted proxy.
+    client could send ``X-Forwarded-For: <proxy>`` and pass. Admission requires
+    the peer IP itself to be a trusted proxy. Once admitted, X-Forwarded-For
+    from that peer is exactly what the mode exists to consume (nginx / Caddy /
+    ALB set it on every forwarded request) — ``RateLimitMiddleware._get_client_ip``
+    trusts it only under the same peer gate, so the spoof stays closed.
     """
 
     def _app(self, trusted_proxy: str = "1.2.3.4") -> TestClient:
@@ -184,9 +189,7 @@ class TestTrustedProxyModeEnforcesPeerIP:
     def test_spoofed_header_is_rejected(self) -> None:
         # Client on 127.0.0.1 (NOT the trusted proxy) spoofs the XFF header.
         client = self._app()
-        response = client.get(
-            "/api/sessions", headers={"X-Forwarded-For": "1.2.3.4"}
-        )
+        response = client.get("/api/sessions", headers={"X-Forwarded-For": "1.2.3.4"})
         assert response.status_code == 401
 
     def test_non_proxy_peer_without_header_is_rejected(self) -> None:
@@ -197,25 +200,47 @@ class TestTrustedProxyModeEnforcesPeerIP:
         assert response.status_code == 401
 
     def test_trusted_proxy_peer_without_header_is_admitted(self) -> None:
-        # When the transport peer IS the trusted proxy (no forged header), the
-        # request passes the auth gate. Starlette's TestClient runs on
-        # 127.0.0.1, so point the trusted proxy at loopback to simulate it.
-        # Note: TestClient does not populate request.client.host for direct
-        # HTTPX calls, so this test cannot fully exercise the peer-IP path.
-        # We verify that a correctly-configured trusted-proxy mode (no XFF)
-        # is NOT rejected for other reasons (e.g. not falling through to
-        # unauthenticated pass).
-        client = self._app(trusted_proxy="127.0.0.1")
-        response = client.get("/health")
-        # Health is always public — this confirms the request reached the app.
+        # Starlette's TestClient sets request.client.host = "testclient" when
+        # used with client=("testclient", port) or as the default.
+        # Configure trusted_proxy="testclient" so the transport peer matches.
+        # Use a protected endpoint (/api/sessions) — not /health — so we
+        # verify the auth branch is reached and admitted, not just that the
+        # public path is accessible.
+        client = self._app(trusted_proxy="testclient")
+        response = client.get("/api/sessions")
         assert response.status_code == 200
 
-    def test_proxy_peer_with_forged_xff_is_rejected(self) -> None:
-        # Even a trusted proxy must not be allowed to present a client-forged
-        # XFF that the real proxy didn't set. Reject any XFF on the trusted
-        # peer (the proxy owns the header).
-        client = self._app(trusted_proxy="127.0.0.1")
-        response = client.get(
-            "/api/sessions", headers={"X-Forwarded-For": "9.9.9.9"}
+    def test_trusted_proxy_with_xff_from_proxy_is_admitted(self) -> None:
+        # When the peer IS the trusted proxy, X-Forwarded-For is exactly what
+        # trusted-proxy mode exists to consume (nginx / Caddy / ALB all set it
+        # on every forwarded request). Both auth and the downstream IP
+        # consumer gate on the same trusted-peer check, so a spoofed XFF from
+        # a non-trusted peer can never be honored (see the negative tests above).
+        client = self._app(trusted_proxy="testclient")
+        response = client.get("/api/sessions", headers={"X-Forwarded-For": "203.0.113.50"})
+        assert response.status_code == 200
+
+    def test_trusted_proxy_consumes_xff_for_rate_limit_identity(self) -> None:
+        # Positive-path companion to the rate-limit suite: the IP the gateway
+        # attributes to a request forwarded by the trusted proxy is the first
+        # X-Forwarded-For entry, extracted by the same
+        # ``RateLimitMiddleware._get_client_ip`` seam the reviewer pointed at.
+        config = GatewayConfig(
+            host="127.0.0.1",
+            auth=AuthConfig(mode="trusted-proxy", trusted_proxy="testclient"),
         )
-        assert response.status_code == 401
+        app = create_gateway_app(config=config)
+        with TestClient(app, base_url="http://localhost") as client:
+            client.get("/api/sessions", headers={"X-Forwarded-For": "203.0.113.50"})
+            # Reconstruct the request the limiter saw and run its extraction.
+            scope = {
+                "type": "http",
+                "headers": [(b"x-forwarded-for", b"203.0.113.50")],
+                "client": ("testclient", 50000),
+                "method": "GET",
+                "path": "/api/sessions",
+                "query_string": b"",
+            }
+            request = Request(scope)
+            limiter = RateLimitMiddleware(app=app, config=config)
+            assert limiter._get_client_ip(request) == "203.0.113.50"

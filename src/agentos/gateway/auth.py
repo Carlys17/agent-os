@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from agentos.gateway.access import ConnectionSurface, is_loopback_address, is_loopback_bind
+from agentos.gateway.access import (
+    ConnectionSurface,
+    is_loopback_address,
+    is_loopback_bind,
+    peer_is_trusted_proxy,
+)
 
 if TYPE_CHECKING:
     from agentos.gateway.config import GatewayConfig
@@ -99,6 +104,26 @@ def resolve_auth(
                 "auth.failed",
                 mode=config.auth.mode,
                 error="no-auth connections require a loopback listener and peer",
+            )
+            return None
+        return AccessContext(
+            surface=surface,
+            admitted=True,
+            credential_verified=False,
+        )
+
+    if config.auth.mode == "trusted-proxy":
+        # Secondary gate at the RPC layer: the transport peer must be a trusted
+        # proxy. This is the same check as AuthMiddleware._is_trusted_proxy --
+        # the middleware admits the request on that basis, and the RPC layer
+        # confirms it. X-Forwarded-For consumption is gated by the middleware
+        # (RateLimitMiddleware._get_client_ip) which uses the same trusted-set
+        # check, so a spoofed XFF from a non-trusted peer is never honored.
+        if not peer_is_trusted_proxy(config.auth.trusted_proxy, peer_ip):
+            log.warning(
+                "auth.failed",
+                mode=config.auth.mode,
+                error="peer is not a trusted proxy",
             )
             return None
         return AccessContext(
