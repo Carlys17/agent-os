@@ -292,7 +292,9 @@ class ServiceContainer:
             self.log_retention_task.cancel()
             try:
                 await self.log_retention_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                pass
+            except Exception:
                 pass
             self.log_retention_task = None
 
@@ -1929,6 +1931,7 @@ async def build_services(
                 service_name=config.observability.otlp_service_name,
                 service_version=__version__,
             )
+            otlp_trace_sink.start()
             register_trace_sink(otlp_trace_sink)
             log.info(
                 "build_services.otlp_trace_sink_registered",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from starlette.testclient import TestClient
 
 from agentos.gateway.app import create_gateway_app
@@ -134,3 +135,29 @@ def test_metrics_cardinality_and_session_key_exclusion() -> None:
     for i in range(10):
         reg.record(f"dynamic_metric_{i}", 1.0)
     assert len(reg._dynamic_metrics) == 5
+
+
+def test_agentos_queue_depth_help_text() -> None:
+    reg = MetricsRegistry()
+    text = reg.format_prometheus()
+    assert "# HELP agentos_queue_depth Pending task queue depth across all sessions" in text
+
+
+def test_gateway_config_rejects_metrics_path_under_control_ui_base_path() -> None:
+    # Exact overlap with control_ui.base_path
+    with pytest.raises(ValueError, match="cannot overlap or be located under control_ui.base_path"):
+        GatewayConfig.model_validate(
+            {
+                "control_ui": {"base_path": "/control"},
+                "observability": {"metrics_path": "/control"},
+            }
+        )
+
+    # Subpath under control_ui.base_path
+    with pytest.raises(ValueError, match="cannot overlap or be located under control_ui.base_path"):
+        GatewayConfig.model_validate(
+            {
+                "control_ui": {"base_path": "/control"},
+                "observability": {"metrics_path": "/control/metrics"},
+            }
+        )

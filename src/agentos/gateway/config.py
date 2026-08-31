@@ -2215,6 +2215,20 @@ class GatewayConfig(BaseSettings):
         self.agentos_router = AgentOSRouterConfig(**payload)
         return self
 
+    @model_validator(mode="after")
+    def _validate_observability_metrics_path(self) -> GatewayConfig:
+        observability = getattr(self, "observability", None)
+        control_ui = getattr(self, "control_ui", None)
+        if observability is not None and control_ui is not None:
+            ui_base = control_ui.base_path.rstrip("/")
+            metrics_path = observability.metrics_path.rstrip("/")
+            if metrics_path == ui_base or metrics_path.startswith(f"{ui_base}/"):
+                raise ValueError(
+                    f"observability.metrics_path ({observability.metrics_path}) cannot overlap "
+                    f"or be located under control_ui.base_path ({control_ui.base_path})"
+                )
+        return self
+
     # --- Context overflow policy -----------------------------------------
     # Budget and policy consulted in gateway/rpc_chat.py before dispatching
     # a turn. ``context_budget_tokens`` is a soft cap: when an estimated

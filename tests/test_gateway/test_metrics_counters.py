@@ -225,3 +225,40 @@ async def test_log_format_regex() -> None:
             f"metric name '{entry['metric']}' does not match locked name pattern"
         )
         assert isinstance(entry["value"], int), f"value must be int, got {type(entry['value'])}"
+
+
+@pytest.mark.asyncio
+async def test_agentos_queue_depth_multi_session_total() -> None:
+    """agentos_queue_depth emits total pending queue depth across all sessions."""
+    gate = asyncio.Event()
+
+    async def _blocking_handler(_run: Any) -> None:
+        await gate.wait()
+
+    rt = _make_runtime(turn_handler=_blocking_handler, max_concurrency=1)
+    env_a = _make_envelope("agent-1::sess-a")
+    env_b = _make_envelope("agent-1::sess-b")
+
+    with _capture_metric_logs() as captured:
+        # Enqueue first task on sess-a (will run and hold max_concurrency=1 slot)
+        h1 = await rt.enqueue(env_a, "task-1")
+        await asyncio.sleep(0.05)
+
+        # Enqueue second task on sess-a (stays pending)
+        h2 = await rt.enqueue(env_a, "task-2")
+        # Enqueue third task on sess-b (stays pending)
+        h3 = await rt.enqueue(env_b, "task-3")
+
+        gate.set()
+        await rt.wait(h1.task_id, timeout=2.0)
+        await rt.wait(h2.task_id, timeout=2.0)
+        await rt.wait(h3.task_id, timeout=2.0)
+
+    qd_events = [e for e in captured if e.get("metric") == "agentos_queue_depth"]
+    assert len(qd_events) == 3
+    # First enqueue: 1 pending on sess-a (total=1)
+    assert qd_events[0]["value"] == 1
+    # Second enqueue: task-1 running, task-2 pending on sess-a (total=1)
+    assert qd_events[1]["value"] == 1
+    # Third enqueue: task-2 pending on sess-a, task-3 pending on sess-b (total=2)
+    assert qd_events[2]["value"] == 2

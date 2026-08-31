@@ -185,3 +185,76 @@ async def test_boot_build_services_otlp_lifecycle() -> None:
         assert len(get_trace_sinks()) == 0
     finally:
         clear_trace_sinks()
+
+
+@pytest.mark.asyncio
+async def test_otlp_interval_flush(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    import httpx
+
+    flushed_events: list[dict[str, Any]] = []
+
+    class _MockClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _MockClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: Any = None, headers: Any = None) -> Any:
+            flushed_events.append(json)
+
+            class _MockResp:
+                status_code = 200
+
+                def raise_for_status(self) -> None:
+                    pass
+
+            return _MockResp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _MockClient)
+
+    sink = OtlpTraceSink(
+        endpoint="http://collector.internal:4318",
+        flush_interval_s=0.05,
+    )
+    sink.start()
+    assert sink._flush_task is not None
+
+    ctx = TraceContext.new(trace_id="test-interval-flush")
+    sink.write(TraceEvent(kind="timed_event", context=ctx))
+
+    # Wait for periodic flush task to trigger
+    for _ in range(20):
+        if flushed_events:
+            break
+        await asyncio.sleep(0.02)
+
+    assert len(flushed_events) == 1
+    assert len(sink._queue) == 0
+
+    await sink.close()
+    assert sink._flush_task is None
+
+
+def test_otlp_multithreaded_writes() -> None:
+    import threading
+
+    sink = OtlpTraceSink(max_queue_size=100)
+    ctx = TraceContext.new(trace_id="thread-test")
+
+    def _worker(thread_idx: int) -> None:
+        for i in range(20):
+            sink.write(TraceEvent(kind=f"t{thread_idx}_e{i}", context=ctx))
+
+    threads = [threading.Thread(target=_worker, args=(t,)) for t in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(sink._queue) == 100

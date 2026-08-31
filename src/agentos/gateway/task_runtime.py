@@ -44,7 +44,7 @@ log = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Core metrics — names are LOCKED. Do not rename without updating
 # README "Observability: Core Metrics" and the corresponding CI grep.
-#   agentos_queue_depth   (gauge)   — pending queue depth per session
+#   agentos_queue_depth   (gauge)   — pending queue depth across all sessions
 #   in_flight_turns_total     (counter) — cumulative turns entering _execute
 #   turn_cancellations_total  (counter) — cumulative cancel/interrupt/timeout
 #   queue_full_errors_total   (counter) — cumulative TaskQueueFullError raises
@@ -465,9 +465,10 @@ class TaskRuntime:
             runtime_task.asyncio_task = asyncio.create_task(self._execute(runtime_task))
             _queue_depth = len(self._pending_by_session.get(envelope.session_key, []))
             _queue_position = _queue_depth
+            _total_queue_depth = sum(len(v) for v in self._pending_by_session.values())
         _emit_metric(
             "agentos_queue_depth",
-            value=_queue_depth,
+            value=_total_queue_depth,
             session_key=envelope.session_key,
         )
         await self._emit(

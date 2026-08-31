@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import threading
 import time
 from datetime import datetime
 from typing import Any
@@ -92,9 +93,36 @@ class OtlpTraceSink(TraceSink):
         self.allow_raw = allow_raw
 
         self._queue: list[TraceEvent] = []
-        self._lock = asyncio.Lock()
+        self._queue_lock = threading.Lock()
+        self._flush_lock = asyncio.Lock()
         self._flush_task: asyncio.Task[None] | None = None
         self._closed = False
+
+    def start(self) -> None:
+        """Start the background periodic flush task if not already running."""
+        if self._closed or self.flush_interval_s <= 0:
+            return
+        if self._flush_task is None or self._flush_task.done():
+            try:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    self._flush_task = loop.create_task(self._periodic_flush())
+            except RuntimeError:
+                pass
+
+    async def _periodic_flush(self) -> None:
+        """Periodic background flush loop."""
+        while not self._closed:
+            try:
+                await asyncio.sleep(self.flush_interval_s)
+                with self._queue_lock:
+                    has_items = bool(self._queue)
+                if has_items:
+                    await self.flush()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                log.warning("otlp.periodic_flush_failed", error=str(exc))
 
     def write(self, event: TraceEvent) -> None:
         """Buffer a trace event for OTLP export with bounded queue capacity."""
@@ -102,11 +130,19 @@ class OtlpTraceSink(TraceSink):
             return
         if self._closed:
             return
-        if len(self._queue) >= self.max_queue_size:
-            # Bound memory growth by evicting the oldest unexported event
-            self._queue.pop(0)
-        self._queue.append(event)
-        if len(self._queue) >= self.batch_size:
+        should_flush = False
+        with self._queue_lock:
+            if len(self._queue) >= self.max_queue_size:
+                # Bound memory growth by evicting the oldest unexported event
+                self._queue.pop(0)
+            self._queue.append(event)
+            if len(self._queue) >= self.batch_size:
+                should_flush = True
+
+        if self._flush_task is None or self._flush_task.done():
+            self.start()
+
+        if should_flush:
             try:
                 loop = asyncio.get_running_loop()
                 if loop.is_running():
@@ -195,10 +231,9 @@ class OtlpTraceSink(TraceSink):
         """Flush all buffered events to the OTLP HTTP collector."""
         import httpx
 
-        if not self._queue:
-            return True
-
-        async with self._lock:
+        with self._queue_lock:
+            if not self._queue:
+                return True
             events_to_send = self._queue[:]
             self._queue.clear()
 
@@ -219,13 +254,22 @@ class OtlpTraceSink(TraceSink):
         except Exception as exc:
             log.warning("otlp.export_failed", endpoint=self.endpoint, error=str(exc))
             # Put unsent events back on failure up to max_queue_size
-            async with self._lock:
+            with self._queue_lock:
                 remaining_space = max(0, self.max_queue_size - len(self._queue))
                 if remaining_space > 0:
                     self._queue = events_to_send[-remaining_space:] + self._queue
             return False
 
     async def close(self) -> None:
-        """Close sink and perform final flush."""
+        """Close sink, cancel background flush task, and perform final flush."""
         self._closed = True
+        if self._flush_task is not None:
+            self._flush_task.cancel()
+            try:
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+            self._flush_task = None
         await self.flush()
