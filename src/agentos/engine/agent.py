@@ -1375,6 +1375,7 @@ class Agent:
                             block.name,
                             block.input,
                         ),
+                        thought_signature=block.thought_signature,
                     )
                     continue
 
@@ -1399,6 +1400,7 @@ class Agent:
                         id=block.id,
                         name=block.name,
                         input=legacy_projected_input,
+                        thought_signature=block.thought_signature,
                     )
 
         if not replacements:
@@ -2350,6 +2352,7 @@ class Agent:
                                         tool_name=raw_ev.tool_name,
                                         arguments=arguments,
                                         synthetic_from_text=synthetic_from_text,
+                                        thought_signature=raw_ev.thought_signature,
                                     )
                                 )
 
@@ -3182,6 +3185,7 @@ class Agent:
                             id=tc.tool_use_id,
                             name=tc.tool_name,
                             input=tc.arguments,
+                            thought_signature=tc.thought_signature,
                         )
                     )
                 if assistant_content:
@@ -3503,6 +3507,7 @@ class Agent:
                         is_error=projected_result.is_error,
                         arguments=tc.arguments,
                         execution_status=projected_result.execution_status,
+                        thought_signature=tc.thought_signature,
                     )
                     replay_event = router_control_replay_event_from_payload(result.content)
                     if replay_event is not None:
@@ -3521,6 +3526,7 @@ class Agent:
                             arguments=retry_arguments,
                             synthetic_from_text=tc.synthetic_from_text,
                             origin_trace=tc.origin_trace,
+                            thought_signature=tc.thought_signature,
                         )
                         result = await _run_one(retry_call)
                         result_tool_call = retry_call
@@ -3537,6 +3543,7 @@ class Agent:
                             is_error=projected_result.is_error,
                             arguments=retry_arguments,
                             execution_status=projected_result.execution_status,
+                            thought_signature=retry_call.thought_signature,
                         )
                         replay_event = router_control_replay_event_from_payload(result.content)
                         if replay_event is not None:
