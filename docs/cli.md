@@ -624,7 +624,9 @@ agentos projects delete <project-id>               # sessions survive, detached
 ```
 
 A project groups chat sessions across agents and carries a free-form
-**knowledge** text (capped at 32,000 characters). Every session in the project
+**knowledge** text (capped at 24,000 characters — the same ceiling the
+per-turn injection applies, so everything that saves reaches the prompt in
+full). Every session in the project
 gets that knowledge injected into its system prompt as a `Project Knowledge`
 block — edit it and the next turn of every member session picks it up.
 Sessions of any agent can join the same project (the `--agent` on `create`

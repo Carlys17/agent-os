@@ -6,7 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Project knowledge is now capped at 24,000 characters on write — the same
+  ceiling the per-turn injection applies — instead of 32,000. Text between the
+  two caps used to save fine, echo back intact from the API, and then be
+  silently truncated out of every turn with only the model able to see the
+  marker. Rows already above the new cap keep working (validated on the next
+  write, truncated at injection until then), and the Web UI knowledge editor
+  now shows a character counter for the real limit.
+
 ### Fixed
+
+- Two clients editing the same project no longer overwrite each other.
+  `projects.update` used to read the whole row, apply the change, and write
+  every column back, so a rename holding a stale row silently reverted a
+  concurrent knowledge save. Updates now write only the fields passed, and the
+  Web UI sends the `updatedAt` it last read so a lost race returns a
+  `project.conflict` error (draft kept, latest version loaded) instead of
+  clobbering. Same-millisecond writes get distinct `updated_at` values, and a
+  unique index on project names (V012) backstops the duplicate-name check
+  under concurrent creates.
+- The Projects page now listens to the gateway's `projects.changed` /
+  `sessions.changed` broadcasts, so another client's create, rename, delete,
+  or session move shows up without pressing Refresh. Moving a session between
+  projects via `sessions.patch` also broadcasts `projects.changed`, keeping
+  other clients' session counts fresh, and the move can no longer be reverted
+  by a simultaneous field patch on storage-only session managers.
+- The Projects page no longer renders its loading and error states as the
+  "No projects yet" empty state (with a create button) — loads show a spinner
+  and failures show the error with a Retry action. Browser back/forward can no
+  longer leak one project's unsaved draft into another project's editor, and
+  a saved knowledge edit no longer flashes the stale pre-save text.
 
 - Router metadata no longer reports a model the provider never ran. An explicit
   model — a durable `config.agents[].model`, a session pin, or a per-call
