@@ -49,6 +49,7 @@ class TestDenylist:
             "AGENTOS_GATEWAY_TOKEN",
             "AGENTOS_STATE_DIR",
             "AGENTOS_GATEWAY_PORT",
+            "AGENTOS_HTTP_DOWNLOAD_LIMIT",
         ],
     )
     def test_execution_and_posture_names_are_refused(self, name: str) -> None:

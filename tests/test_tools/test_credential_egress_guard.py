@@ -54,6 +54,22 @@ def ok_response(monkeypatch: pytest.MonkeyPatch) -> None:
         async def request(self, **kwargs: object) -> httpx.Response:
             return response
 
+        def build_request(self, **kwargs: object) -> httpx.Request:
+            return httpx.Request(
+                kwargs.get("method", "GET"),
+                kwargs.get("url", "https://example.test/"),
+                headers=kwargs.get("headers"),
+                content=kwargs.get("content"),
+            )
+
+        async def send(
+            self, _request: object, **kwargs: object
+        ) -> httpx.Response:
+            # The http_request tool now opens the stream via client.send(
+            # build_request(...), stream=True). Keep this mock compatible with
+            # both call shapes so the egress-guard request path stays tested.
+            return response
+
     monkeypatch.setattr(web.httpx, "AsyncClient", FakeAsyncClient)
 
 
