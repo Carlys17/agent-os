@@ -261,15 +261,13 @@ async def web_fetch(
                 if marker is not None:
                     raise ValueError("Blocked redirect URL containing sensitive data")
 
-                response = await client.send(
-                    client.build_request("GET", current_url), stream=True
-                )
+                response = await client.send(client.build_request("GET", current_url), stream=True)
                 if response.status_code not in {301, 302, 303, 307, 308}:
                     break
                 location = response.headers.get("location")
-                await response.aclose()
                 if not location:
                     break
+                await response.aclose()
                 current_url = urljoin(str(response.url), location)
             else:
                 raise ValueError(f"Too many redirects (>{_MAX_REDIRECTS})")

@@ -46,16 +46,53 @@ def _e2e_resolver(addr: str) -> Any:
     return resolver
 
 
-def _install_transport(
-    monkeypatch: pytest.MonkeyPatch, handler: Any
+def _install_transport(monkeypatch: pytest.MonkeyPatch, handler: Any) -> None:
+    real_async_client = httpx.AsyncClient
+
+    def fake_async_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs.pop("transport", None)
+        return real_async_client(*args, transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr("socket.getaddrinfo", _e2e_resolver("93.184.216.34"))
+    monkeypatch.setattr(wf.httpx, "AsyncClient", fake_async_client)
+
+
+class _StreamingBody(httpx.AsyncByteStream):
+    """A body served as an async iterator, not a pre-buffered blob."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def __aiter__(self) -> Any:
+        yield self._data
+
+
+class _StreamingTransport(httpx.AsyncBaseTransport):
+    """A genuinely streaming transport.
+
+    Unlike ``httpx.MockTransport`` (which hands back a fully-buffered stream),
+    this one streams the body, so reading a closed response actually raises.
+    """
+
+    def __init__(self, status: int, headers: dict[str, str], body: bytes) -> None:
+        self._status = status
+        self._headers = headers
+        self._body = body
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            self._status, headers=self._headers, stream=_StreamingBody(self._body)
+        )
+
+
+def _install_streaming_transport(
+    monkeypatch: pytest.MonkeyPatch, transport: _StreamingTransport
 ) -> None:
     real_async_client = httpx.AsyncClient
 
     def fake_async_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
         kwargs.pop("transport", None)
-        return real_async_client(
-            *args, transport=httpx.MockTransport(handler), **kwargs
-        )
+        return real_async_client(*args, transport=transport, **kwargs)
 
     monkeypatch.setattr("socket.getaddrinfo", _e2e_resolver("93.184.216.34"))
     monkeypatch.setattr(wf.httpx, "AsyncClient", fake_async_client)
@@ -111,9 +148,7 @@ async def test_web_fetch_small_body_not_truncated(
     """A small body passes through without download truncation."""
 
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200, headers={"content-type": "text/plain"}, content=b"hello world"
-        )
+        return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"hello world")
 
     _install_transport(monkeypatch, handler)
     wf._cache.clear()
@@ -124,3 +159,29 @@ async def test_web_fetch_small_body_not_truncated(
     assert result["truncated"] is False
     assert result["length"] == len("hello world")
     assert "hello world" in str(result["text"])
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_redirect_without_location_returns_body(
+    monkeypatch: pytest.MonkeyPatch,
+    sandbox_off: Any,
+) -> None:
+    """A 3xx response with no Location header is the final response.
+
+    The body must be returned, not an error about a closed stream. Uses a
+    genuinely streaming transport: a buffered MockTransport cannot catch the
+    read-after-aclose regression.
+    """
+    transport = _StreamingTransport(
+        302,
+        {"content-type": "text/plain"},
+        b"moved, but nowhere",
+    )
+    _install_streaming_transport(monkeypatch, transport)
+    wf._cache.clear()
+
+    result = json.loads(await wf.web_fetch(url="https://example.com/no-location"))
+
+    assert result["status"] == 302
+    assert "closed" not in str(result.get("error", ""))
+    assert "moved, but nowhere" in str(result["text"])
