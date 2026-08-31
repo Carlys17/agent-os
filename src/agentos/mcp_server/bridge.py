@@ -131,8 +131,8 @@ class AgentOSMCPBridge:
             current_stream_seq = int(
                 subscription.get("current_stream_seq") or since_stream_seq or 0
             )
-            deadline = time.monotonic() + max(0, timeout_ms) / 1000
-            max_events = max(1, max_events)
+            deadline = time.monotonic() + min(max(0, timeout_ms), 300_000) / 1000
+            max_events = max(1, min(max_events, 10_000))
 
             while len(events) < max_events:
                 remaining = deadline - time.monotonic()
@@ -168,7 +168,7 @@ class AgentOSMCPBridge:
             await client.close()
 
     async def transcript_jsonl(self, key: str, limit: int = 1000) -> str:
-        history = await self.messages_read(key, limit=limit)
+        history = await self.messages_read(key, limit=min(max(1, limit), 5_000))
         messages = history.get("messages", []) if isinstance(history, dict) else []
         rows = [_message_to_event(row) for row in messages if isinstance(row, dict)]
         flattened: list[dict[str, Any]] = []
