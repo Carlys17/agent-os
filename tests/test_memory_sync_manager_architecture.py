@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from agentos.memory.sync_manager import MemorySyncManager
@@ -10,13 +12,38 @@ class NoopStore:
         self.indexed: list[str] = []
         self.removed: list[str] = []
 
-    async def index_file(self, *, path: str, content: str, source: object) -> int:
+    async def index_file(
+        self,
+        *,
+        path: str,
+        content: str,
+        source: object,
+        mtime: float | None = None,
+    ) -> int:
         self.indexed.append(path)
         return 1
 
     async def remove_file(self, path: str) -> None:
         self.removed.append(path)
         return None
+
+
+class MtimeStore(NoopStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.mtimes: dict[str, float | None] = {}
+
+    async def index_file(
+        self,
+        *,
+        path: str,
+        content: str,
+        source: object,
+        mtime: float | None = None,
+    ) -> int:
+        self.indexed.append(path)
+        self.mtimes[path] = mtime
+        return 1
 
 
 def test_sync_manager_scans_archive_as_curated_memory_subdir(tmp_path):
@@ -94,3 +121,36 @@ async def test_sync_force_overrides_search_clean_fast_path(tmp_path):
     assert first_count == 1
     assert search_count == first_count
     assert sync_calls == [{"force": True}]
+
+
+@pytest.mark.asyncio
+async def test_sync_passes_source_mtime_for_memory_and_knowledge_base_files(tmp_path):
+    workspace = tmp_path / "workspace"
+    memory = workspace / "memory"
+    memory.mkdir(parents=True)
+    knowledge_base = workspace / "knowledge_base"
+    knowledge_base.mkdir()
+    memory_file = workspace / "MEMORY.md"
+    memory_file.write_text("Durable preference.\n", encoding="utf-8")
+    document = knowledge_base / "guide.md"
+    document.write_text("Deployment runbook.\n", encoding="utf-8")
+    expected_mtimes = {
+        "MEMORY.md": 1_700_000_000.0,
+        "knowledge_base/guide.md": 1_600_000_000.0,
+    }
+    os.utime(memory_file, (expected_mtimes["MEMORY.md"], expected_mtimes["MEMORY.md"]))
+    os.utime(
+        document,
+        (
+            expected_mtimes["knowledge_base/guide.md"],
+            expected_mtimes["knowledge_base/guide.md"],
+        ),
+    )
+
+    store = MtimeStore()
+    manager = MemorySyncManager(store=store, workspace_dir=workspace, memory_dir=memory)
+
+    await manager.sync(reason="manual")
+
+    assert sorted(store.indexed) == ["MEMORY.md", "knowledge_base/guide.md"]
+    assert store.mtimes == expected_mtimes
