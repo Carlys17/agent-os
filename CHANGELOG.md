@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.9.2] - 2026-09-02
+
 ### Added
 
 - **Surplus Intelligence** (`surplus`) as a runtime provider — a two-sided
@@ -42,25 +44,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Upstream's `gmgn-wallet-score` frontmatter is not valid YAML — an unquoted
   `: ` inside `description` — so its description is folded into a block scalar
   here; without that the loader drops the skill silently.
+- New bundled skill `robinhood-chain-stocks`: reads tokenized-stock state
+  directly from Robinhood Chain (chainId 4663) over JSON-RPC — Chainlink USD
+  price, the ERC-8056 `uiMultiplier()` corporate-action ratio, `oraclePaused()`,
+  total supply, and wallet balances with their USD value. Read-only by
+  construction: it issues only `eth_call` and never signs, sends, or holds a
+  key. Feed addresses are resolved from Chainlink's reference-data directory
+  rather than hardcoded, resolved from the ticker the contract reports so an
+  address-only lookup still finds its price. Prices carry `ageSeconds` and a
+  `stale` flag (past the feed's heartbeat, or oracle paused) so a market-closed
+  quote is not read as the current price, and a non-positive feed answer is
+  reported as unusable instead of `$0`. Authenticity is reported three ways —
+  verified, disproven by a revert, or unverified because the node was
+  unreachable — so a network fault is never presented as proof that a genuine
+  listing is fake.
 
-### Security
+- `agentos cost savings` reports what the Pilot Router actually saved. Every
+  turn already wrote `SavingsTelemetry` to `~/.agentos/logs/decisions-*.jsonl`
+  and nothing read it back; the existing reports covered routing quality and
+  feature-extraction latency, not dollars. The command rolls that telemetry up
+  into a summary and a per-route breakdown with `--json`, `--csv`,
+  `--start-date` / `--end-date`, `--log-dir`, and `--pdf` for a branded
+  one-page report. It reads the decision log directly, so it works with the
+  gateway stopped.
 
-- `GET /api/approvals` is no longer exempt from per-IP rate limiting. The
-  endpoint serializes every pending exec/plugin approval — command, argv and
-  params — and takes a SQLite read on each call, so the carve-out let any
-  caller that clears the auth gate poll it at unlimited rate: continuous
-  observation of pending tool-call arguments, and enough SQLite read pressure
-  to stall the approval/chat pipeline. On the default `auth.mode="none"`
-  (loopback-confined) that is any local process; under token auth it is any
-  token holder. `HEAD` is covered too — Starlette serves it from the same
-  route, so it runs the same handler.
-
-  It is now counted in a dedicated per-IP bucket rather than the shared
-  `/api/*` one, because the Web UI polls it every 1.5s (~40 req/min per open
-  tab) and the shared default of 100/min would have 429'd operators out of
-  their own approval queue. The cap is `AGENTOS_RATE_APPROVALS_MAX_REQUESTS`,
-  default 300 per window. Being per-IP, it bounds a single source; it is not a
-  defence against a distributed one (#569).
+  The figure is a floor, and the report says so on the page. Despite its name,
+  `routing_savings_usd_estimated_vs_baseline` is not measured against the
+  sibling `baseline_model` field: it is the input-price delta between the
+  routed model and the most expensive model configured in `[router.tiers]`,
+  times input tokens, clamped at zero. So the column is labelled `Requested`,
+  the comparison is named as the top tier, and only input tokens are priced —
+  tool-result projection, short-reply enforcement, prompt-cache hits and
+  thinking mode are all excluded so the number stays attributable to the
+  router (#788).
 
 ### Changed
 
@@ -82,6 +98,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   carry published context windows, output caps and vendor rack rates, so an
   offline estimate for them no longer falls through to the generic $3/$15
   default. OpenCAP's live catalog remains canonical for its own pricing.
+- The Ollama "model not found" branch of `classify_provider_error` now spells
+  out its grouping as `"model not found" in text or ("pull" in text and "model"
+  in text)`. The behaviour is unchanged — `and` already bound tighter than `or`
+  — but the intent no longer rests on implicit precedence, and the branch is
+  now covered by tests (#582).
 
 ### Fixed
 
@@ -105,44 +126,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The offline vision fallback recognizes `gpt-5.6-*`, `glm-5.3-flash` and
   `muse-spark-*` as image-capable. Previously, if the catalog fetch failed, the
   `c1` default was reported as text-only and image turns had nowhere to route.
-
-### Added
-
-- New bundled skill `robinhood-chain-stocks`: reads tokenized-stock state
-  directly from Robinhood Chain (chainId 4663) over JSON-RPC — Chainlink USD
-  price, the ERC-8056 `uiMultiplier()` corporate-action ratio, `oraclePaused()`,
-  total supply, and wallet balances with their USD value. Read-only by
-  construction: it issues only `eth_call` and never signs, sends, or holds a
-  key. Feed addresses are resolved from Chainlink's reference-data directory
-  rather than hardcoded, resolved from the ticker the contract reports so an
-  address-only lookup still finds its price. Prices carry `ageSeconds` and a
-  `stale` flag (past the feed's heartbeat, or oracle paused) so a market-closed
-  quote is not read as the current price, and a non-positive feed answer is
-  reported as unusable instead of `$0`. Authenticity is reported three ways —
-  verified, disproven by a revert, or unverified because the node was
-  unreachable — so a network fault is never presented as proof that a genuine
-  listing is fake.
-
-### Security
-
-- Proxy names are no longer writable through any AgentOS surface. `set_env_var`
-  (and the Web UI, `agentos env set`, and the gateway RPC) could previously
-  write `AGENTOS_LLM_PROXY`, which `gateway/llm_runtime.py`, `provider/openai.py`
-  and `provider/auxiliary.py` apply to every provider client — letting an agent,
-  or a prompt injection reaching one, route all model traffic through a proxy of
-  its choosing and read the `Authorization` header off it. `AGENTOS_LLM_PROXY`,
-  `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` now join
-  `env_policy.WRITE_DENYLIST`, matched in **any casing** — the proxy readers
-  (`urllib.request.getproxies_environment()`, which httpx goes through)
-  lower-case every name they find, so denying only the two conventional
-  spellings would leave `Http_Proxy` as an equivalent way in. `AGENTOS_TRUST_ENV`,
-  which decides whether the ambient `*_PROXY` names are honoured at all, is
-  denied with the other posture names. Values exported in the shell or
-  hand-written into `~/.agentos/.env` keep working; only writing through
-  AgentOS is refused (#550).
-
-### Fixed
-
 - `upsert_llm_provider` now validates an operator-supplied provider `base_url`
   before it is persisted or handed to the httpx client. The RPC
   (`onboarding.provider.configure`) and `agentos providers configure` accepted
@@ -167,17 +150,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   match with `isStockToken`, and reports a `stock_tokens` count. The skill doc's
   hardcoded "~228 tokens" claim, stale against the 658-entry list, is gone
   (#745).
-
-### Changed
-
-- The Ollama "model not found" branch of `classify_provider_error` now spells
-  out its grouping as `"model not found" in text or ("pull" in text and "model"
-  in text)`. The behaviour is unchanged — `and` already bound tighter than `or`
-  — but the intent no longer rests on implicit precedence, and the branch is
-  now covered by tests (#582).
-
-### Fixed
-
 - Email channel outbound sends no longer fail for every agent-initiated
   message. `EmailChannel._resolve_target` read only `metadata["to"]` and the
   in-memory inbound-thread table, so the built-in `message` tool (which writes
@@ -200,6 +172,102 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `http_request` and `x_search` (metadata-endpoint floor only, so localhost and
   LAN targets keep working) and skill-dependency downloads all fetch through it
   (#516).
+- Gemini context-overflow errors classify as `CONTEXT_OVERFLOW` again. Gemini
+  reports overflow as `the input token count (X) exceeds the maximum number of
+  tokens allowed (Y)`, which no marker matched, so it fell through to the
+  `status_code == 400` branch and surfaced as `BAD_REQUEST` — the turn died
+  instead of taking the `COMPACT_AND_RETRY` path (#657).
+- Anthropic context-overflow errors do the same. `prompt_too_long`,
+  `exceed context limit`, `request_too_large` and `request size exceeds` join
+  the marker list, so an overflowed Anthropic turn compacts and retries rather
+  than surfacing a bad-request error to the user (#613).
+- The `@sandboxed` decorator derives a valid argv for `git_diff`. The
+  `argv_factory` produced a command line the sandbox could not run, so the
+  tool failed under sandboxing rather than being inspected and allowed (#614).
+- `web_fetch` decodes the body with the charset the server advertised
+  (`Content-Type`'s `charset` parameter) instead of a hard-coded UTF-8 decode,
+  so ISO-8859-1, Shift_JIS and GBK pages no longer reach the model as runs of
+  U+FFFD. The encoding is snapshotted inside the client block before any body
+  read, matching what `http_request` already does.
+- `MemorySyncManager` passes the filesystem mtime its watcher already captured
+  to `LongTermMemoryStore.index_file()`, for both watched memory files and
+  knowledge-base documents. Persisted freshness and retrieval recency now
+  track the source file rather than the moment the sync ran, matching the
+  direct ingestion path — and without an extra stat (#649).
+- The scheduler cancels its startup catch-up tasks on shutdown. They were
+  fired and never retained, so a shutdown mid-catch-up left them running
+  against a closing runtime instead of being cancelled and awaited with the
+  regular timer tasks (#655).
+
+### Security
+
+- `GET /api/approvals` is no longer exempt from per-IP rate limiting. The
+  endpoint serializes every pending exec/plugin approval — command, argv and
+  params — and takes a SQLite read on each call, so the carve-out let any
+  caller that clears the auth gate poll it at unlimited rate: continuous
+  observation of pending tool-call arguments, and enough SQLite read pressure
+  to stall the approval/chat pipeline. On the default `auth.mode="none"`
+  (loopback-confined) that is any local process; under token auth it is any
+  token holder. `HEAD` is covered too — Starlette serves it from the same
+  route, so it runs the same handler.
+
+  It is now counted in a dedicated per-IP bucket rather than the shared
+  `/api/*` one, because the Web UI polls it every 1.5s (~40 req/min per open
+  tab) and the shared default of 100/min would have 429'd operators out of
+  their own approval queue. The cap is `AGENTOS_RATE_APPROVALS_MAX_REQUESTS`,
+  default 300 per window. Being per-IP, it bounds a single source; it is not a
+  defence against a distributed one (#569).
+- Proxy names are no longer writable through any AgentOS surface. `set_env_var`
+  (and the Web UI, `agentos env set`, and the gateway RPC) could previously
+  write `AGENTOS_LLM_PROXY`, which `gateway/llm_runtime.py`, `provider/openai.py`
+  and `provider/auxiliary.py` apply to every provider client — letting an agent,
+  or a prompt injection reaching one, route all model traffic through a proxy of
+  its choosing and read the `Authorization` header off it. `AGENTOS_LLM_PROXY`,
+  `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` now join
+  `env_policy.WRITE_DENYLIST`, matched in **any casing** — the proxy readers
+  (`urllib.request.getproxies_environment()`, which httpx goes through)
+  lower-case every name they find, so denying only the two conventional
+  spellings would leave `Http_Proxy` as an equivalent way in. `AGENTOS_TRUST_ENV`,
+  which decides whether the ambient `*_PROXY` names are honoured at all, is
+  denied with the other posture names. Values exported in the shell or
+  hand-written into `~/.agentos/.env` keep working; only writing through
+  AgentOS is refused (#550).
+- **Trusted-proxy auth validates the transport peer, not a header substring.**
+  `auth.mode = "trusted-proxy"` admitted any request whose client-supplied
+  `X-Forwarded-For` merely *contained* the configured proxy string — the real
+  peer was never checked, so any network peer could send
+  `X-Forwarded-For: <proxy>` and get full Control RPC access. The gate now
+  requires `request.client.host` to be in the trusted-proxy set; once that
+  passes, `XFF` is honoured downstream for client identity, which is what the
+  mode exists for (nginx / Caddy / ALB all set it). The trust check is a single
+  shared `peer_is_trusted_proxy` helper used by `AuthMiddleware`,
+  `RateLimitMiddleware` and the RPC `resolve_auth` layer — which previously had
+  no trusted-proxy branch at all — so the two gates cannot drift (#568).
+- **Cron webhooks cannot reach cloud metadata endpoints.**
+  `validate_webhook_url` checked only scheme and hostname, so a cron job could
+  POST its run output — model output and tool results — to AWS IMDS, the GCP or
+  Azure metadata service, or anything else in the link-local range, and the
+  response would come back as the delivery result. The shared metadata floor
+  `http_request` already uses is now applied on create, on update, and at
+  delivery time. Localhost hooks keep working (#574).
+- **`web_fetch` downloads are capped at a hard byte limit.** The whole response
+  body was buffered into memory before `max_chars` was applied — `max_chars`
+  truncates what the model sees, not what is downloaded — so one chunked
+  response with no (or a lying) `content-length` could exhaust process memory
+  and take the agent or gateway down; the 30s timeout bounds time, not bytes.
+  The response is now streamed and reading stops at
+  `AGENTOS_WEB_FETCH_DOWNLOAD_LIMIT` (default 1 MiB), with `truncated=True`
+  when the cap is hit. The response is closed only after the redirect
+  `Location` header is read, so a 3xx with no `Location` no longer fails
+  against a closed stream (#502).
+- **The exec approval cache parses every `rm` in a compound command.** It used
+  `re.search`, which stops at the first match, so `rm A; rm -rf /` had its
+  second invocation skipped entirely — the destructive target never reached the
+  intent scan. Every `rm` is now tokenized independently with `re.finditer`,
+  with capture stopping at shell separators. Regression tests pin both layers:
+  every separator ends an `rm` invocation, and a sensitive *read* in a later
+  segment is still refused at the tool boundary by `exec_command`'s
+  whole-command scan (#512, #676).
 
 ## [2026.9.1] - 2026-09-01
 
