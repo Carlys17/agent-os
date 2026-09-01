@@ -55,47 +55,61 @@ _PY_DELETE_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 # Shell command separators that terminate a single ``rm`` invocation.
-_SHELL_SEPARATORS = (";", "&&", "||", "|", "&")
+# Shell separator tokens that end a single ``rm`` invocation.
+# Split order matters: compound operators (&&, ||, >>) before their single-char
+# variants (&, |, >) so the two-char forms are matched as one separator.
+_SHELL_SEPARATORS = ("&&", "||", "|", ";", "&", ">>", ">", "<")
 
 
 def _extract_rm_targets(command: str) -> list[str]:
     """Pull every non-flag argument out of every ``rm`` invocation.
 
-    Handles ``rm a b c``, ``rm -rf /a /b``, quoted paths, and stops at shell
-    separators. Uses ``finditer`` so ``rm foo; rm -rf /bar`` yields targets
-    from both invocations independently. Does not try to be a full shell
-    parser — falls back to whitespace split on shlex errors (unbalanced quotes).
-    """
-    # Match each ``rm`` invocation, stopping at shell separators.
-    # ``[^;\n&|]*`` captures everything from ``rm`` up to the next separator
-    # or end-of-expression, so each ``rm`` is tokenized independently.
-    pattern = re.compile(r"\brm\b([^;\n&|]*)")
-    matches = list(pattern.finditer(command))
-    if not matches:
-        return []
+    Splits the command into segments at shell separators (``&&``, ``||``, ``|``,
+    ``;``, ``&``, ``>>``, ``>``, ``<``, newline) and only scans segments whose
+    first token is ``rm``. Within each rm segment, arguments are extracted via
+    whitespace split (shlex is not used — quoted paths with embedded spaces are
+    not preserved; callers requiring that fidelity should use a proper shell
+    parser).
 
+    Example: ``rm -rf build && cat ~/.ssh/config`` yields only the targets
+    from the ``rm -rf build`` segment; ``cat ~/.ssh/config`` is ignored.
+    """
+    # Split into top-level segments at shell separators.
+    sep_pattern = re.compile(r"\n|" + r"|".join(re.escape(s) for s in _SHELL_SEPARATORS))
+    segments = sep_pattern.split(command)
     targets: list[str] = []
     seen: set[str] = set()
 
-    for match in matches:
-        tail = match.group(1).strip()
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
+            continue
+        # Split on whitespace to get the first token.
+        first_token = segment.split(maxsplit=1)[0]
+        if first_token != "rm":
+            continue
+
+        # Extract everything after the leading "rm" token.
+        tail = segment[len(first_token):].lstrip()
         if not tail:
             continue
 
-        token_sets: list[list[str]] = []
         try:
-            token_sets.append(shlex.split(tail))
+            token_sets = [shlex.split(tail)]
         except ValueError:
-            token_sets.append(tail.split())
-        if "\\" in tail and (os.name == "nt" or re.search(r"(?:^|\s)\\[^\s]", tail)):
+            token_sets = [tail.split()]
+        # Restore Windows backslash paths that POSIX shlex escapes
+        if "\\" in tail and (
+            os.name == "nt" or re.search(r"(?:^|\s)\\[^\s]", tail)
+        ):
             try:
                 token_sets.append(shlex.split(tail, posix=False))
             except ValueError:
-                token_sets.append(tail.split())
+                pass
 
         for tokens in token_sets:
             for token in tokens:
-                if not token or token.startswith("-") or token in seen:
+                if token.startswith("-") or token in seen:
                     continue
                 seen.add(token)
                 targets.append(token)
