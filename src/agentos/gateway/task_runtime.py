@@ -1122,6 +1122,11 @@ class TaskRuntime:
             task.status = AgentTaskStatus.RUNNING
             self._remove_pending(task)
             self._running_by_session[task.envelope.session_key] = task
+        _emit_metric(
+            "agentos_queue_depth",
+            value=sum(len(v) for v in self._pending_by_session.values()),
+            session_key=task.envelope.session_key,
+        )
         await self._storage.update_agent_task(
             task.task_id,
             status=AgentTaskStatus.RUNNING,
@@ -1157,6 +1162,11 @@ class TaskRuntime:
             task.terminal_emitted = True
             task.status = status
             self._remove_pending(task)
+            _emit_metric(
+                "agentos_queue_depth",
+                value=sum(len(v) for v in self._pending_by_session.values()),
+                session_key=task.envelope.session_key,
+            )
             if self._running_by_session.get(task.envelope.session_key) is task:
                 self._running_by_session.pop(task.envelope.session_key, None)
             self._tasks.pop(task.task_id, None)
