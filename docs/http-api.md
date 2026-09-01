@@ -82,6 +82,13 @@ These require no auth and are safe for load balancers and container probes.
 | `POST` | `/api/approvals/resolve` | Approve or deny a pending item. |
 | `POST` | `/api/elevated-mode` | Set per-session elevated mode (admitted Control connection only). |
 
+`GET /api/approvals` serializes every pending command and its arguments, so it
+is rate limited per client IP like the rest of `/api/*` — just in its own
+bucket, because the Web UI polls it every 1.5s. The cap is
+`AGENTOS_RATE_APPROVALS_MAX_REQUESTS` (default 300 per
+`AGENTOS_RATE_WINDOW_SECONDS`, i.e. 300/min), which clears several open tabs.
+Raise it only if you run more consoles than that against one gateway.
+
 ## Files and Media
 
 | Method | Path | Purpose |

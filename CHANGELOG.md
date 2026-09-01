@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+
+- `GET /api/approvals` is no longer exempt from per-IP rate limiting. The
+  endpoint serializes every pending exec/plugin approval — command, argv and
+  params — and takes a SQLite read on each call, so the carve-out let any
+  caller that clears the auth gate poll it at unlimited rate: continuous
+  observation of pending tool-call arguments, and enough SQLite read pressure
+  to stall the approval/chat pipeline. On the default `auth.mode="none"`
+  (loopback-confined) that is any local process; under token auth it is any
+  token holder. `HEAD` is covered too — Starlette serves it from the same
+  route, so it runs the same handler.
+
+  It is now counted in a dedicated per-IP bucket rather than the shared
+  `/api/*` one, because the Web UI polls it every 1.5s (~40 req/min per open
+  tab) and the shared default of 100/min would have 429'd operators out of
+  their own approval queue. The cap is `AGENTOS_RATE_APPROVALS_MAX_REQUESTS`,
+  default 300 per window. Being per-IP, it bounds a single source; it is not a
+  defence against a distributed one (#569).
+
 ### Changed
 
 - OpenCAP's router tier defaults track OpenCAP's own catalog again. `c2` moves

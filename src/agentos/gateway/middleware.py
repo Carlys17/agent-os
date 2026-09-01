@@ -35,6 +35,11 @@ _API_PREFIX = "/api"
 # like the root ``/api/*`` routes.
 _UI_BOOTSTRAP_SUFFIX = f"{_API_PREFIX}/bootstrap"
 
+# The approval queue the Control UI polls. Rate-limited in its own per-IP
+# bucket (see ``RateLimitMiddleware._bucket_for``) rather than shared with the
+# rest of ``/api/*``.
+_APPROVALS_PATH = f"{_API_PREFIX}/approvals"
+
 
 def _is_under(prefix: str, path: str) -> bool:
     """True for the prefix itself or anything below it — never a bare-prefix match.
@@ -293,7 +298,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Simple sliding-window rate limiter per client IP."""
+    """Simple sliding-window rate limiter per client IP.
+
+    Requests are counted in named buckets. Everything shares the ``"api"``
+    bucket except ``GET /api/approvals``, which gets its own ``"approvals"``
+    bucket with a higher cap (``rate_limit.approvals_max_requests``) so the
+    Control UI's 1.5s poll cannot exhaust the budget the rest of the API
+    depends on — and so that poll cannot be used to enumerate pending tool
+    calls without limit either.
+    """
 
     def __init__(
         self,
@@ -308,8 +321,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             config.control_ui.base_path if control_ui_base_path is None else control_ui_base_path
         )
         self._ui_prefix = _safe_ui_exempt_prefix(base_path)
-        # {ip: [timestamp, ...]} with LRU eviction ordering
-        self._windows: OrderedDict[str, list[float]] = OrderedDict()
+        # {(bucket, ip): [timestamp, ...]} with LRU eviction ordering. An IP
+        # that both polls approvals and calls the rest of the API therefore
+        # holds two entries; ``max_tracked_clients`` bounds entries, not IPs.
+        self._windows: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
         self._max_tracked_clients = max_tracked_clients
         self._last_sweep: float = 0.0
 
@@ -336,17 +351,32 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def _sweep_expired(self, now: float, window: float) -> None:
         self._last_sweep = now
         expired = [
-            ip
-            for ip, timestamps in self._windows.items()
+            key
+            for key, timestamps in self._windows.items()
             if not timestamps or (now - timestamps[-1] >= window)
         ]
-        for ip in expired:
-            self._windows.pop(ip, None)
+        for key in expired:
+            self._windows.pop(key, None)
 
     def _evict_excess(self, now: float, window: float) -> None:
         self._sweep_expired(now, window)
         while len(self._windows) > self._max_tracked_clients:
             self._windows.popitem(last=False)
+
+    def _bucket_for(self, request: Request, path: str) -> tuple[str, int]:
+        """Return the ``(bucket name, max requests)`` this request counts against.
+
+        Only the polled approvals read gets the dedicated bucket. ``HEAD`` is
+        included because Starlette serves it from the same ``methods=["GET"]``
+        route, so a HEAD runs the handler — and therefore the SQLite read — in
+        full; charging it elsewhere would leave the handler reachable
+        ``max_requests`` extra times per window on top of the advertised cap.
+        The mutating approval routes (``/api/approvals/resolve``,
+        ``/api/approvals/settings``) are not polled and stay on the shared cap.
+        """
+        if request.method in ("GET", "HEAD") and path == _APPROVALS_PATH:
+            return "approvals", self._config.rate_limit.approvals_max_requests
+        return "api", self._config.rate_limit.max_requests
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         if not self._config.rate_limit.enabled:
@@ -360,13 +390,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if self._is_ui_path(path):
             return await call_next(request)  # type: ignore[no-any-return]
-        if request.method == "GET" and path == "/api/approvals":
-            return await call_next(request)  # type: ignore[no-any-return]
 
+        bucket, max_req = self._bucket_for(request, path)
         client_ip = self._get_client_ip(request)
+        key = (bucket, client_ip)
         now = time.time()
         window = float(self._config.rate_limit.window_seconds)
-        max_req = self._config.rate_limit.max_requests
         sweep_interval = min(window, 60.0)
 
         # Periodic sweep of expired windows
@@ -374,18 +403,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             self._sweep_expired(now, window)
 
         # Prune old timestamps
-        timestamps = [t for t in self._windows.get(client_ip, []) if now - t < window]
+        timestamps = [t for t in self._windows.get(key, []) if now - t < window]
 
         if len(timestamps) >= max_req:
-            self._windows[client_ip] = timestamps
-            self._windows.move_to_end(client_ip)
+            self._windows[key] = timestamps
+            self._windows.move_to_end(key)
             return JSONResponse(
                 {"error": "Too Many Requests", "code": "RATE_LIMITED"}, status_code=429
             )
 
         timestamps.append(now)
-        self._windows[client_ip] = timestamps
-        self._windows.move_to_end(client_ip)
+        self._windows[key] = timestamps
+        self._windows.move_to_end(key)
 
         if len(self._windows) > self._max_tracked_clients:
             self._evict_excess(now, window)
