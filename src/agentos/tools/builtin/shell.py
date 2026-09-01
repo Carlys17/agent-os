@@ -61,6 +61,7 @@ _DEFAULT_BACKGROUND_TIMEOUT = 1800.0
 _MAX_BACKGROUND_TIMEOUT = 3600.0
 _BACKGROUND_TERMINATE_TIMEOUT = 1.0
 _BACKGROUND_KILL_TIMEOUT = 1.0
+_MAX_BACKGROUND_OUTPUT_CHARS = 1_000_000
 _EXEC_TERMINATE_TIMEOUT = 0.25
 _EXEC_KILL_TIMEOUT = 0.25
 _COMMAND_AUDIT_MAX_CHARS = 4096
@@ -100,6 +101,8 @@ class _BgSession:
     agent_id: str | None = None
     local_urls: list[str] = field(default_factory=list)
     output_lines: list[str] = field(default_factory=list)
+    output_chars: int = 0
+    output_truncated: bool = False
     done: bool = False
     timed_out: bool = False
     killed: bool = False
@@ -475,6 +478,8 @@ def _bg_session_payload(session: _BgSession) -> dict[str, object]:
         "ended_at": session.ended_at,
         "killed": session.killed,
         "timed_out": session.timed_out,
+        "output_chars": session.output_chars,
+        "output_truncated": session.output_truncated,
     }
     if session.local_urls:
         payload["local_urls"] = list(session.local_urls)
@@ -562,7 +567,23 @@ async def _read_bg_output(session: _BgSession) -> None:
     if stdout is None:
         return
     while chunk := await stdout.read(4096):
-        session.output_lines.append(chunk.decode("utf-8", errors="replace"))
+        _append_bg_output(session, chunk.decode("utf-8", errors="replace"))
+
+
+def _append_bg_output(session: _BgSession, output: str) -> None:
+    """Retain bounded output while allowing the collector to keep draining stdout."""
+    remaining = max(0, _MAX_BACKGROUND_OUTPUT_CHARS - session.output_chars)
+    retained = output[:remaining]
+    if retained:
+        session.output_lines.append(retained)
+        session.output_chars += len(retained)
+    if len(retained) < len(output) and not session.output_truncated:
+        session.output_truncated = True
+        log.warning(
+            "shell.bg_output_truncated",
+            session_id=session.session_id,
+            max_chars=_MAX_BACKGROUND_OUTPUT_CHARS,
+        )
 
 
 def _finalize_bg_session(session: _BgSession) -> None:
@@ -937,7 +958,7 @@ async def background_process(
             except TimeoutError:
                 session.timed_out = True
                 await _terminate_bg_session(session)
-                session.output_lines.append(f"[timeout after {effective_timeout}s]\n")
+                _append_bg_output(session, f"[timeout after {effective_timeout}s]\n")
             finally:
                 await _await_bg_output_task(output_task)
                 _finalize_bg_session(session)
@@ -989,7 +1010,7 @@ async def background_process(
         except TimeoutError:
             session.timed_out = True
             await _terminate_bg_session(session)
-            session.output_lines.append(f"[timeout after {effective_timeout}s]\n")
+            _append_bg_output(session, f"[timeout after {effective_timeout}s]\n")
         finally:
             await _await_bg_output_task(output_task)
             _finalize_bg_session(session)
@@ -1143,7 +1164,7 @@ async def process(
                 "output": sliced,
                 "offset": start,
                 "limit": max_chars,
-                "truncated": start > 0 or end < len(output),
+                "truncated": session.output_truncated or start > 0 or end < len(output),
             }
         )
 
