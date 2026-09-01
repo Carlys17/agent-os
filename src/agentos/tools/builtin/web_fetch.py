@@ -20,6 +20,7 @@ from agentos.result_budget import (
 from agentos.sandbox.integration import sandboxed
 from agentos.tools.registry import tool
 from agentos.tools.ssrf import validate_http_url_for_fetch
+from agentos.tools.ssrf_client import ssrf_guarded_client
 from agentos.tools.types import SSRFBlockedError, current_tool_context
 
 log = structlog.get_logger(__name__)
@@ -247,7 +248,10 @@ async def web_fetch(
     async def _do_fetch(user_agent: str) -> tuple[int, str, str, str, bool]:
         headers = dict(_DEFAULT_HEADERS)
         headers["User-Agent"] = user_agent
-        async with httpx.AsyncClient(
+        # The guarded client re-validates at connect time, so the address this
+        # socket dials is the one _check_ssrf approved — a rebinding domain
+        # cannot answer differently for the guard and for the connection.
+        async with ssrf_guarded_client(
             timeout=30.0,
             follow_redirects=False,
             trust_env=_trust_env(),

@@ -107,6 +107,63 @@ def _is_metadata_address(addr: IPAddress) -> bool:
     )
 
 
+def is_metadata_hostname(hostname: str) -> bool:
+    """Return whether *hostname* names a cloud metadata service."""
+    return hostname.strip().lower().rstrip(".") in _METADATA_HOSTNAMES
+
+
+def assert_address_not_metadata(hostname: str, addr: IPAddress) -> None:
+    """Raise :class:`SSRFBlockedError` if *addr* is a cloud metadata endpoint.
+
+    The address-level half of :func:`assert_not_metadata_endpoint`, split out so
+    the connect-time guard in :mod:`agentos.tools.ssrf_client` applies the exact
+    same policy to the address it is about to open a socket to.
+    """
+    if _is_metadata_address(addr):
+        raise SSRFBlockedError(
+            f"Blocked request to {hostname}: it resolves to {addr}, a cloud "
+            "metadata endpoint that serves instance credentials."
+        )
+
+
+def resolve_trusted_fake_ip_networks(
+    trusted_fake_ip_cidrs: Iterable[str] | None = None,
+) -> tuple[IPNetwork, ...]:
+    """Return the fake-IP networks to trust, defaulting to the process-wide set."""
+    if trusted_fake_ip_cidrs is None:
+        return _trusted_fake_ip_cidrs
+    return tuple(
+        ipaddress.ip_network(value)
+        for value in validate_trusted_fake_ip_cidrs(trusted_fake_ip_cidrs)
+    )
+
+
+def assert_address_allowed_for_fetch(
+    hostname: str,
+    addr: IPAddress,
+    trusted_networks: tuple[IPNetwork, ...] = (),
+) -> None:
+    """Raise :class:`SSRFBlockedError` if *addr* is not a valid fetch target.
+
+    The address-level half of :func:`validate_http_url_for_fetch`, split out so
+    the connect-time guard in :mod:`agentos.tools.ssrf_client` applies the exact
+    same policy to the address it is about to open a socket to.
+    """
+    block_reason = _hard_block_reason(addr)
+    if block_reason is not None:
+        raise SSRFBlockedError(_blocked_message(hostname, addr, block_reason))
+    if _is_trusted_fake_ip(addr, trusted_networks):
+        return
+    if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+        reason = (
+            f"reserved/private range; configure [tools].trusted_fake_ip_cidrs "
+            f"with {RFC2544_FAKE_IP_NETWORK} only if this is fake-IP DNS"
+            if addr in RFC2544_FAKE_IP_NETWORK
+            else "private/internal range"
+        )
+        raise SSRFBlockedError(_blocked_message(hostname, addr, reason))
+
+
 def assert_not_metadata_endpoint(url: str) -> None:
     """Raise :class:`SSRFBlockedError` if *url* targets a cloud metadata service.
 
@@ -127,7 +184,7 @@ def assert_not_metadata_endpoint(url: str) -> None:
     hostname = (parsed.hostname or "").strip().lower().rstrip(".")
     if not hostname:
         return
-    if hostname in _METADATA_HOSTNAMES:
+    if is_metadata_hostname(hostname):
         raise SSRFBlockedError(
             f"Blocked request to {hostname}: cloud metadata endpoints serve instance "
             "credentials and are never a valid agent target."
@@ -154,11 +211,7 @@ def assert_not_metadata_endpoint(url: str) -> None:
             addr = ipaddress.ip_address(info[4][0])
         except ValueError:  # pragma: no cover - getaddrinfo returned a non-address
             continue
-        if _is_metadata_address(addr):
-            raise SSRFBlockedError(
-                f"Blocked request to {hostname}: it resolves to {addr}, a cloud "
-                "metadata endpoint that serves instance credentials."
-            )
+        assert_address_not_metadata(hostname, addr)
 
 
 def validate_http_url_for_fetch(
@@ -179,30 +232,11 @@ def validate_http_url_for_fetch(
     except socket.gaierror as exc:
         raise ValueError(f"Cannot resolve hostname: {hostname}") from exc
 
-    trusted_networks = (
-        tuple(
-            ipaddress.ip_network(value)
-            for value in validate_trusted_fake_ip_cidrs(trusted_fake_ip_cidrs)
-        )
-        if trusted_fake_ip_cidrs is not None
-        else _trusted_fake_ip_cidrs
-    )
+    trusted_networks = resolve_trusted_fake_ip_networks(trusted_fake_ip_cidrs)
 
     for info in infos:
         addr = ipaddress.ip_address(info[4][0])
-        block_reason = _hard_block_reason(addr)
-        if block_reason is not None:
-            raise SSRFBlockedError(_blocked_message(hostname, addr, block_reason))
-        if _is_trusted_fake_ip(addr, trusted_networks):
-            continue
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            reason = (
-                f"reserved/private range; configure [tools].trusted_fake_ip_cidrs "
-                f"with {RFC2544_FAKE_IP_NETWORK} only if this is fake-IP DNS"
-                if addr in RFC2544_FAKE_IP_NETWORK
-                else "private/internal range"
-            )
-            raise SSRFBlockedError(_blocked_message(hostname, addr, reason))
+        assert_address_allowed_for_fetch(hostname, addr, trusted_networks)
 
 
 def _hard_block_reason(addr: IPAddress) -> str | None:
