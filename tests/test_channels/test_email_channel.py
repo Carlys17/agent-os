@@ -14,10 +14,12 @@ import pytest
 from agentos.channels import email as email_module
 from agentos.channels.contract import ChannelSendStatus, run_channel_contract
 from agentos.channels.email import (
+    _DEFAULT_OUTBOUND_SUBJECT,
     EmailChannel,
     EmailChannelConfig,
     html_to_text,
     is_automated,
+    is_email_address,
     normalize_address,
     reply_subject,
     sender_allowed,
@@ -326,6 +328,91 @@ async def test_send_resolves_the_recipient_from_the_thread_cache(
 
     assert sent[0]["To"] == "owner@example.com"
     assert sent[0]["Subject"] == "Re: Status?"
+
+
+async def test_send_resolves_the_recipient_from_metadata_recipient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The built-in message tool writes the target as ``metadata["recipient"]``."""
+
+    channel = EmailChannel(config=_config())
+    sent: list[EmailMessage] = []
+    monkeypatch.setattr(channel, "_smtp_send", sent.append)
+
+    await channel.send(
+        OutgoingMessage(
+            content="Daily status update",
+            reply_to="colleague@example.com",
+            metadata={"recipient": "colleague@example.com"},
+        )
+    )
+
+    assert sent[0]["To"] == "colleague@example.com"
+    assert sent[0]["Subject"] == _DEFAULT_OUTBOUND_SUBJECT
+    assert sent[0].get("In-Reply-To") is None
+
+
+async def test_send_resolves_the_recipient_from_reply_to_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scheduler and heartbeat delivery pass the address as ``reply_to`` alone."""
+
+    channel = EmailChannel(config=_config())
+    sent: list[EmailMessage] = []
+    monkeypatch.setattr(channel, "_smtp_send", sent.append)
+
+    await channel.send(OutgoingMessage(content="alert", reply_to="alerts@example.com"))
+
+    assert sent[0]["To"] == "alerts@example.com"
+    assert sent[0].get_content().strip() == "alert"
+
+
+async def test_send_recipient_resolution_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``to`` beats ``recipient`` beats the thread cache beats ``reply_to``."""
+
+    channel = EmailChannel(config=_config())
+    assert channel._to_incoming(_raw()) is not None
+    sent: list[EmailMessage] = []
+    monkeypatch.setattr(channel, "_smtp_send", sent.append)
+
+    await channel.send(
+        OutgoingMessage(
+            content="x",
+            reply_to="m1@example.com",
+            metadata={"to": "first@example.com", "recipient": "second@example.com"},
+        )
+    )
+    await channel.send(
+        OutgoingMessage(
+            content="x",
+            reply_to="m1@example.com",
+            metadata={"recipient": "second@example.com"},
+        )
+    )
+    await channel.send(OutgoingMessage(content="x", reply_to="m1@example.com"))
+    await channel.send(OutgoingMessage(content="x", reply_to="fourth@example.com"))
+
+    assert [m["To"] for m in sent] == [
+        "first@example.com",
+        "second@example.com",
+        "owner@example.com",
+        "fourth@example.com",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("owner@example.com", True),
+        ("Owner Name <owner@example.com>", True),
+        ("unknown", False),
+        ("cron", False),
+        ("", False),
+        ("m1@example.com", True),
+    ],
+)
+def test_is_email_address_accepts_only_addressable_values(value: str, expected: bool) -> None:
+    assert is_email_address(value) is expected
 
 
 async def test_send_without_a_known_thread_is_refused() -> None:

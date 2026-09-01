@@ -14,6 +14,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   — but the intent no longer rests on implicit precedence, and the branch is
   now covered by tests (#582).
 
+### Fixed
+
+- Email channel outbound sends no longer fail for every agent-initiated
+  message. `EmailChannel._resolve_target` read only `metadata["to"]` and the
+  in-memory inbound-thread table, so the built-in `message` tool (which writes
+  the target as `metadata["recipient"]`) and scheduler / heartbeat delivery
+  (which pass the bare address as `reply_to`) both raised
+  `ValueError: email.send has no recipient for reply_to`. Recipients now
+  resolve in order: `metadata["to"]`, `metadata["recipient"]`, the thread
+  cache, then `reply_to` when it parses as an address; a fresh outbound mail
+  with no thread also gets a real subject instead of `Re: (no subject)` (#598).
+
 ## [2026.9.1] - 2026-09-01
 
 ### Added
