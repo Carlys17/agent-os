@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `upsert_llm_provider` now validates an operator-supplied provider `base_url`
+  before it is persisted or handed to the httpx client. The RPC
+  (`onboarding.provider.configure`) and `agentos providers configure` accepted
+  any string, so a caller could point every completion request — carrying the
+  provider `Authorization` header — at a cloud metadata service, an internal
+  host, or an attacker's server, or hand a `file://` URL to httpx. The value
+  must now be an absolute http(s) URL and may not be a cloud metadata endpoint
+  or a private / link-local / reserved IP — including the `inet_aton` spellings
+  (`http://2852039166/`) that reach the metadata service without looking like
+  an address. Loopback stays allowed for local model servers, and a `base_url`
+  that is already persisted (a saved profile, a provider default, or the value
+  the onboarding import path replays) is not re-validated (#551).
+
 ### Changed
 
 - The Ollama "model not found" branch of `classify_provider_error` now spells
