@@ -42,6 +42,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   it was written to keep short. Backslashes are normalised before splitting, so
   Windows and mixed-separator paths trim to their last two segments like POSIX
   ones do.
+- Provider content-moderation blocks are classified as `POLICY_REFUSAL` again
+  instead of falling through to `BAD_REQUEST`/`UNKNOWN`. `_is_policy_refusal()`
+  held only generic phrasing, so the wording providers actually emit went
+  unmatched: Azure OpenAI's canonical *"triggering Azure OpenAI's content
+  management policy"* does not contain the adjacent words "content policy", the
+  OpenAI/Azure `content_filter` code and `finish_reason` matched nothing, and
+  Gemini's "blocked by safety" is not "safety policy". Since a refusal and a
+  malformed request map to different recovery actions, the misclassification
+  sent real policy blocks down the wrong path. Added `content_filter`,
+  `content filter`, `responsible_ai_policy`, `content management policy` and
+  `blocked by safety` (#629).
+
 - Cron schedules that restrict both day-of-month and day-of-week now follow the
   POSIX OR rule instead of ANDing the two fields. `0 0 1,15 * 5` means "the 1st,
   the 15th, or any Friday" — as it does in cron, croniter, and every scheduler
