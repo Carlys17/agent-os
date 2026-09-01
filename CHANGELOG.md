@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Two GMGN wallet skills the earlier vendoring pass left behind:
+  `gmgn-wallet-analysis` (a copy-trade dossier on one wallet — four pass/fail
+  gates, what it holds and buys now, its copy window in seconds, and a size cap)
+  and `gmgn-wallet-score` (track record, copy-tradeability with a
+  latency/slippage/gas backtest, and developer reputation for wallets that
+  mostly launch tokens). Both answer "should I follow this trader", which the
+  bundled set could previously only support with raw `gmgn-portfolio` fields.
+  Upstream's `gmgn-wallet-score` frontmatter is not valid YAML — an unquoted
+  `: ` inside `description` — so its description is folded into a block scalar
+  here; without that the loader drops the skill silently.
+
 ### Security
 
 - `GET /api/approvals` is no longer exempt from per-IP rate limiting. The
@@ -27,6 +40,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- The default skills-prompt budget (`skills.max_skills_prompt_chars`) rises from
+  24,000 to 26,000 characters. The shipped skill set's own descriptions had grown
+  past the old ceiling, which would have dropped full-mode installs to a
+  narrower render; the budget is a cap, so installs that were already under it
+  send no more than before. Configs that set the value themselves are untouched.
 - OpenCAP's router tier defaults track OpenCAP's own catalog again. `c2` moves
   from `glm-5.2` to `glm-5.3` (1.31M context, published by the gateway since the
   last update), and the profile is declared in its own table instead of being

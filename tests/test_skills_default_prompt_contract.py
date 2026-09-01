@@ -29,6 +29,8 @@ GMGN_DEFAULTS = {
     "gmgn-swap",
     "gmgn-token",
     "gmgn-track",
+    "gmgn-wallet-analysis",
+    "gmgn-wallet-score",
 }
 DEFAULTS = (
     {
