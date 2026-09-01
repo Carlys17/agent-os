@@ -40,6 +40,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   resolve in order: `metadata["to"]`, `metadata["recipient"]`, the thread
   cache, then `reply_to` when it parses as an address; a fresh outbound mail
   with no thread also gets a real subject instead of `Re: (no subject)` (#598).
+- **Security (SSRF, DNS rebinding):** the SSRF guard validated a URL by
+  resolving its hostname once, but httpx resolved that hostname *again* when it
+  opened the connection — so a short-TTL (rebinding) domain could answer with a
+  public address for the guard and with `169.254.169.254` for the socket,
+  handing an agent the cloud metadata endpoint and the instance credentials it
+  serves. `agentos.tools.ssrf_client` adds a validating httpcore network backend
+  that resolves and checks the destination itself at connect time and then
+  connects to a validated IP literal, so the address that was checked is the
+  address that is used; TLS is unchanged (SNI and certificate verification still
+  run against the origin hostname). `web_fetch`, the media image fetch,
+  `http_request` and `x_search` (metadata-endpoint floor only, so localhost and
+  LAN targets keep working) and skill-dependency downloads all fetch through it
+  (#516).
 
 ## [2026.9.1] - 2026-09-01
 

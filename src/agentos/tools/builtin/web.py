@@ -19,6 +19,7 @@ from agentos.search.types import SearchProviderError, SearchResult
 from agentos.tools.path_policy import reject_foreign_host_path
 from agentos.tools.registry import tool
 from agentos.tools.ssrf import assert_not_metadata_endpoint
+from agentos.tools.ssrf_client import ssrf_guarded_client, validate_metadata_only_address
 from agentos.tools.types import ToolError, UnsupportedURLSchemeError, current_tool_context
 
 
@@ -245,7 +246,15 @@ async def http_request(
 
     content: bytes | None = body.encode() if body else None
 
-    async with httpx.AsyncClient(timeout=timeout, trust_env=_trust_env()) as client:
+    # Metadata-only policy at connect time: http_request keeps reaching
+    # localhost and LAN services on purpose, but a rebinding domain must not be
+    # able to swap a public answer for the instance-credential endpoint between
+    # the URL check and the socket.
+    async with ssrf_guarded_client(
+        timeout=timeout,
+        trust_env=_trust_env(),
+        validator=validate_metadata_only_address,
+    ) as client:
         response = await client.send(
             client.build_request(
                 method=method_upper,

@@ -279,6 +279,8 @@ def _sensitive_media_url_block(tool_name: str, url: str) -> dict | None:
 async def _fetch_image_url(url: str) -> tuple[bytes, str]:
     import httpx
 
+    from agentos.tools.ssrf_client import ssrf_guarded_client
+
     def _check_image_url(candidate_url: str) -> None:
         marker = _sensitive_media_url_block("image", candidate_url)
         if marker is not None:
@@ -293,7 +295,7 @@ async def _fetch_image_url(url: str) -> tuple[bytes, str]:
             raise ToolError(str(exc)) from exc
 
     try:
-        async with httpx.AsyncClient(
+        async with ssrf_guarded_client(
             timeout=30.0, follow_redirects=False, trust_env=_trust_env()
         ) as client:
             current_url = url
