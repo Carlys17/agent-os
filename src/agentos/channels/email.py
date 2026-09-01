@@ -118,6 +118,7 @@ _QUOTE_MARKERS: tuple[re.Pattern[str], ...] = (
 _HTML_BREAK_RE = re.compile(r"(?i)<\s*(?:br\s*/?|/p|/div|/tr|/li)\s*>")
 _HTML_DROP_RE = re.compile(r"(?is)<\s*(script|style)\b.*?<\s*/\s*\1\s*>")
 _HTML_TAG_RE = re.compile(r"(?s)<[^>]+>")
+_DEFAULT_OUTBOUND_SUBJECT = "Message from AgentOS"
 
 
 class EmailChannelConfig(BaseModel):
@@ -166,6 +167,19 @@ def normalize_address(value: str) -> str:
 
     _, address = email.utils.parseaddr(value or "")
     return address.strip().lower()
+
+
+def is_email_address(value: str) -> bool:
+    """Return True when ``value`` carries a usable mailbox address.
+
+    Outbound callers hand us ``reply_to`` values that are sometimes an address
+    and sometimes an opaque routing token (``cron``, a thread key), so the
+    address fallback has to be able to tell the two apart.
+    """
+
+    address = normalize_address(value)
+    local, at, domain = address.partition("@")
+    return bool(local and at and domain)
 
 
 def sender_allowed(sender: str, allowlist: list[str] | tuple[str, ...]) -> bool:
@@ -634,14 +648,22 @@ class EmailChannel:
     def _resolve_target(self, message: OutgoingMessage) -> tuple[str, str, str, str]:
         """Return ``(to, subject, in_reply_to, references)`` for an outbound send."""
 
-        thread = self._threads.get((message.reply_to or "").strip())
+        reply_to = (message.reply_to or "").strip()
+        thread = self._threads.get(reply_to)
         metadata = message.metadata or {}
-        to_address = str(metadata.get("to") or (thread.to_address if thread else ""))
+        # The message tool writes "recipient", channel replies write "to", and
+        # scheduler/heartbeat delivery sends the bare address as reply_to, so
+        # every producer has to be able to name the mailbox.
+        to_address = str(
+            metadata.get("to") or metadata.get("recipient") or (thread.to_address if thread else "")
+        ).strip()
+        if not to_address and is_email_address(reply_to):
+            to_address = normalize_address(reply_to)
         if not to_address:
             raise ValueError("email.send has no recipient for reply_to")
         subject = str(metadata.get("subject") or "").strip()
         if not subject:
-            subject = reply_subject(thread.subject if thread else "")
+            subject = reply_subject(thread.subject) if thread else _DEFAULT_OUTBOUND_SUBJECT
         in_reply_to = str(metadata.get("in_reply_to") or (thread.last_message_id if thread else ""))
         references = str(metadata.get("references") or (thread.references if thread else ""))
         return to_address, subject, in_reply_to, references
