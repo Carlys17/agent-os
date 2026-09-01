@@ -50,6 +50,28 @@ def test_validate_webhook_url_rejects_empty() -> None:
         validate_webhook_url("")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://169.254.169.254/latest/meta-data/",
+        "http://169.254.169.254/",
+        "https://169.254.169.253/",
+        "http://169.254.170.2/",
+        "http://metadata.google.internal/computeMetadata/v1/",
+        "http://metadata.goog/",
+    ],
+)
+def test_validate_webhook_url_rejects_cloud_metadata(url: str) -> None:
+    """Cron webhooks may target localhost; they may not target IMDS."""
+    with pytest.raises(ValueError, match="metadata"):
+        validate_webhook_url(url)
+
+
+def test_validate_webhook_url_still_allows_localhost() -> None:
+    validate_webhook_url("http://127.0.0.1:5678/webhook")
+    validate_webhook_url("http://localhost:8080/hook")
+
+
 # --- ops.add validates webhook config -------------------------------------
 
 
@@ -99,11 +121,34 @@ async def test_ops_add_rejects_webhook_without_url(tmp_path: Path) -> None:
             await ops.add(
                 name="bad",
                 schedule_kind=ScheduleKind.CRON,
-            schedule_value="*/5 * * * *",
+                schedule_value="*/5 * * * *",
                 handler_key="agent_run",
                 payload=make_agent_turn_payload("x"),
                 session_target=SessionTarget.ISOLATED,
                 delivery=DeliveryConfig(mode=DeliveryMode.WEBHOOK, webhook_url=""),
+            )
+    finally:
+        await store.close()
+
+
+async def test_ops_add_rejects_metadata_webhook_url(tmp_path: Path) -> None:
+    db = tmp_path / "cron.db"
+    store = JobStore(str(db))
+    await store.open()
+    try:
+        ops = SchedulerOps(store)
+        with pytest.raises(ValueError, match="metadata"):
+            await ops.add(
+                name="imds",
+                schedule_kind=ScheduleKind.CRON,
+                schedule_value="*/5 * * * *",
+                handler_key="agent_run",
+                payload=make_agent_turn_payload("x"),
+                session_target=SessionTarget.ISOLATED,
+                delivery=DeliveryConfig(
+                    mode=DeliveryMode.WEBHOOK,
+                    webhook_url="http://169.254.169.254/latest/meta-data/",
+                ),
             )
     finally:
         await store.close()
@@ -119,7 +164,7 @@ async def test_ops_add_rejects_webhook_with_bad_scheme(tmp_path: Path) -> None:
             await ops.add(
                 name="bad",
                 schedule_kind=ScheduleKind.CRON,
-            schedule_value="*/5 * * * *",
+                schedule_value="*/5 * * * *",
                 handler_key="agent_run",
                 payload=make_agent_turn_payload("x"),
                 session_target=SessionTarget.ISOLATED,
