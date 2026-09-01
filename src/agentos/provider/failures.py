@@ -168,7 +168,7 @@ def classify_provider_error(
             return ProviderFailureKind.BAD_REQUEST
 
     if provider == "ollama":
-        if "model not found" in text or "pull" in text and "model" in text:
+        if "model not found" in text or ("pull" in text and "model" in text):
             return ProviderFailureKind.MODEL_NOT_FOUND
         if (
             "connection refused" in text
