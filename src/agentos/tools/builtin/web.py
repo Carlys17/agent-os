@@ -248,11 +248,14 @@ async def http_request(
     async with ssrf_guarded_client(
         timeout=timeout, trust_env=_trust_env(), metadata_only=True
     ) as client:
-        response = await client.request(
-            method=method_upper,
-            url=url,
-            headers=headers or {},
-            content=content,
+        response = await client.send(
+            client.build_request(
+                method=method_upper,
+                url=url,
+                headers=headers or {},
+                content=content,
+            ),
+            stream=True,
         )
         try:
             # Stream the body with a hard byte ceiling so an unbounded response
