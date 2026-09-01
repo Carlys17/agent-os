@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- New bundled skill `robinhood-chain-stocks`: reads tokenized-stock state
+  directly from Robinhood Chain (chainId 4663) over JSON-RPC — Chainlink USD
+  price, the ERC-8056 `uiMultiplier()` corporate-action ratio, `oraclePaused()`,
+  total supply, and wallet balances with their USD value. Read-only by
+  construction: it issues only `eth_call` and never signs, sends, or holds a
+  key. Feed addresses are resolved from Chainlink's reference-data directory
+  rather than hardcoded, resolved from the ticker the contract reports so an
+  address-only lookup still finds its price. Prices carry `ageSeconds` and a
+  `stale` flag (past the feed's heartbeat, or oracle paused) so a market-closed
+  quote is not read as the current price, and a non-positive feed answer is
+  reported as unusable instead of `$0`. Authenticity is reported three ways —
+  verified, disproven by a revert, or unverified because the node was
+  unreachable — so a network fault is never presented as proof that a genuine
+  listing is fake.
+
 ### Security
 
 - Proxy names are no longer writable through any AgentOS surface. `set_env_var`
@@ -38,6 +55,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   an address. Loopback stays allowed for local model servers, and a `base_url`
   that is already persisted (a saved profile, a provider default, or the value
   the onboarding import path replays) is not re-validated (#551).
+
+- `robinhood-rwa-addresses` no longer answers a company question with a
+  community token that impersonates it. Robinhood Chain is permissionless and
+  the public token list carries both kinds: two entries are named "GameStop"
+  with symbol `GME`, and the lookup stripped the `• Robinhood Token` suffix —
+  the only thing telling them apart — before ranking, so which address came
+  back was down to list order. Asking for `NET` returned the "NetNet" community
+  token above Cloudflare. The lookup now matches Stock Tokens only (opt back in
+  with `--include-community`, where real listings still rank first), tags every
+  match with `isStockToken`, and reports a `stock_tokens` count. The skill doc's
+  hardcoded "~228 tokens" claim, stale against the 658-entry list, is gone
+  (#745).
 
 ### Changed
 
@@ -136,6 +165,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   1 second or above 24 hours are now rejected (#570).
 
 ### Fixed
+
+- `robinhood-rwa-addresses` no longer answers a company question with a
+  community token that impersonates it. Robinhood Chain is permissionless and
+  the public token list carries both kinds: two entries are named "GameStop"
+  with symbol `GME`, and the lookup stripped the `• Robinhood Token` suffix —
+  the only thing telling them apart — before ranking, so which address came
+  back was down to list order. Asking for `NET` returned the "NetNet" community
+  token above Cloudflare. The lookup now matches Stock Tokens only (opt back in
+  with `--include-community`, where real listings still rank first), tags every
+  match with `isStockToken`, and reports a `stock_tokens` count. The skill doc's
+  hardcoded "~228 tokens" claim, stale against the 658-entry list, is gone.
 
 - Two clients editing the same project no longer overwrite each other.
   `projects.update` used to read the whole row, apply the change, and write

@@ -36,9 +36,25 @@ Resolve a real-world stock or ETF to its **Robinhood tokenized-asset (RWA)**
 on-chain token: ticker/symbol, contract address, chain id, and decimals.
 
 Data source (public, no key): `https://tokens.coingecko.com/robinhood/all.json`
-— the official CoinGecko token list for Robinhood Chain (chainId `4663`). Names
-in that list carry a "• Robinhood Token" suffix; this skill strips it so plain
-company names match.
+— the official CoinGecko token list for Robinhood Chain (chainId `4663`). Stock
+Token names in that list carry a "• Robinhood Token" suffix; this skill strips
+it for display so plain company names match, and uses it to filter.
+
+## Community tokens are excluded on purpose
+
+Robinhood Chain is permissionless, so the same list also carries community
+tokens — and **some reuse a listed company's name and symbol verbatim**. Two
+entries are called "GameStop" with symbol `GME`:
+
+- `0x1b0e319c6a659f002271b69db8a7df2f911c153e` — the real Stock Token
+- `0x7e86381a763f0ecca2bdf27c54eac403ddd48123` — a community impersonator
+
+The suffix is the only thing separating them, so this lookup returns **Stock
+Tokens only** by default and tags every match with `isStockToken`. Pass
+`--include-community` to widen the search; genuine Stock Tokens still rank
+above impersonators. To confirm an address on-chain, use the
+`robinhood-chain-stocks` skill — a real Stock Token answers `uiMultiplier()`
+and an impersonator's call reverts.
 
 ## When the user asks
 
@@ -63,6 +79,9 @@ python3 {baseDir}/scripts/rwa_lookup.py --query "AAPL"
 
 # Limit matches
 python3 {baseDir}/scripts/rwa_lookup.py --query "Tesla" --limit 1
+
+# Include non-stock community tokens (off by default)
+python3 {baseDir}/scripts/rwa_lookup.py --query "GME" --include-community
 ```
 
 ### Output (JSON)
@@ -71,7 +90,8 @@ python3 {baseDir}/scripts/rwa_lookup.py --query "Tesla" --limit 1
 {
   "query": "Apple",
   "source": "https://tokens.coingecko.com/robinhood/all.json",
-  "total_tokens": 228,
+  "total_tokens": 658,
+  "stock_tokens": 221,
   "matches": [
     {
       "name": "Apple",
@@ -79,11 +99,16 @@ python3 {baseDir}/scripts/rwa_lookup.py --query "Tesla" --limit 1
       "address": "0xaf3d76f1834a1d425780943c99ea8a608f8a93f9",
       "chainId": 4663,
       "decimals": 18,
+      "isStockToken": true,
       "logoURI": "https://assets.coingecko.com/..."
     }
   ]
 }
 ```
+
+`total_tokens` counts the whole list; `stock_tokens` counts the tokenized
+stocks and ETFs within it. Both move as Robinhood lists new assets and the
+community deploys more tokens — read them from the payload, never assume.
 
 ## Matching rules
 
@@ -100,4 +125,5 @@ failure the script still returns JSON with an `error` field (never crashes).
 
 - No API key required; the token list is public and cached by CoinGecko.
 - Addresses are on **Robinhood Chain** (chainId `4663`) — not Ethereum mainnet.
-- The list covers ~228 tokenized stocks/ETFs and a few Robinhood-native tokens.
+- This skill resolves addresses only. For live price, holdings, supply, or an
+  on-chain authenticity check, use **`robinhood-chain-stocks`**.
