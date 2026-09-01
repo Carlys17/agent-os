@@ -14,7 +14,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.types import ASGIApp
 
-from agentos.gateway.access import is_loopback_address
+from agentos.gateway.access import is_loopback_address, peer_is_trusted_proxy
 from agentos.gateway.auth import token_matches
 from agentos.gateway.config import GatewayConfig
 
@@ -250,12 +250,24 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 )
 
         elif auth_mode == "trusted-proxy":
-            proxy = self._config.auth.trusted_proxy
-            forwarded_for = request.headers.get("x-forwarded-for", "")
-            if proxy and proxy not in forwarded_for:
+            # A trusted-proxy deployment means a reverse proxy in front of the
+            # gateway terminates TLS and sets X-Forwarded-For. Admission must
+            # require that the *real transport peer* is one of the trusted
+            # proxies — NOT that some client-supplied header merely *contains*
+            # the proxy name. The old check (``proxy not in forwarded_for``) was
+            # a substring match: any client could send ``X-Forwarded-For: <proxy>``
+            # and pass.
+            peer_ip = request.client.host if request.client else None
+            if not self._is_trusted_proxy(peer_ip):
                 return JSONResponse(
                     {"error": "Unauthorized", "code": "UNAUTHORIZED"}, status_code=401
                 )
+            # Peer IS a trusted proxy — X-Forwarded-For is exactly what
+            # trusted-proxy mode exists to consume (nginx / Caddy / ALB all
+            # set it on every forwarded request). The same ``_is_trusted_proxy``
+            # check gates downstream consumption of the header in
+            # ``RateLimitMiddleware._get_client_ip``, so a spoofed XFF from a
+            # non-trusted peer can never be honored.
 
         else:
             # Fail closed on any mode without an enforcement branch above
@@ -269,6 +281,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"error": "Unauthorized", "code": "UNAUTHORIZED"}, status_code=401)
 
         return await call_next(request)  # type: ignore[no-any-return]
+
+    def _is_trusted_proxy(self, peer_ip: str | None) -> bool:
+        return peer_is_trusted_proxy(self._config.auth.trusted_proxy, peer_ip)
 
     def _extract_token(self, request: Request) -> str | None:
         auth_header = request.headers.get("authorization", "")
@@ -304,14 +319,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return _is_under(self._ui_prefix, path)
 
     def _is_trusted_proxy(self, peer_ip: str | None) -> bool:
-        if not peer_ip:
-            return False
-        trusted = self._config.auth.trusted_proxy
-        if not trusted:
-            return False
-        trusted_set = {p.strip().lower().strip("[]") for p in trusted.split(",") if p.strip()}
-        peer = peer_ip.strip().lower().strip("[]")
-        return peer in trusted_set
+        return peer_is_trusted_proxy(self._config.auth.trusted_proxy, peer_ip)
 
     def _get_client_ip(self, request: Request) -> str:
         peer_ip = request.client.host if request.client else None
