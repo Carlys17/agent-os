@@ -2019,7 +2019,7 @@ def build_turn_runner_from_services(
     def _standalone_lock_provider(session_key: str) -> _asyncio.Lock:
         return _standalone_locks.setdefault(session_key, _asyncio.Lock())
 
-    return TurnRunner(
+    runner = TurnRunner(
         provider_selector=svc.provider_selector,
         tool_registry=svc.tool_registry,
         session_manager=svc.session_manager,
@@ -2039,6 +2039,11 @@ def build_turn_runner_from_services(
         compaction_hooks=getattr(svc, "compaction_hooks", None),
         tool_hooks=getattr(svc, "tool_hooks", None),
     )
+    ref = getattr(svc, "_turn_runner_ref", None)
+    if isinstance(ref, list):
+        ref.clear()
+        ref.append(runner)
+    return runner
 
 
 async def start_gateway_server(
