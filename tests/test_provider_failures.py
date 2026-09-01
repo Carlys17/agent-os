@@ -25,6 +25,7 @@ def test_gemini_input_token_count_message_is_context_overflow() -> None:
                 "the input token count (12345) exceeds the maximum "
                 "number of tokens allowed (8192)."
             ),
+
         )
         is ProviderFailureKind.CONTEXT_OVERFLOW
     )
@@ -52,6 +53,7 @@ def test_gemini_input_token_count_message_is_context_overflow_different_counts()
                 "the input token count (512) exceeds the maximum "
                 "number of tokens allowed (4096)."
             ),
+
         )
         is ProviderFailureKind.CONTEXT_OVERFLOW
     )
