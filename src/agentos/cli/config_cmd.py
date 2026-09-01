@@ -96,13 +96,26 @@ def _parse_config_value(value: str) -> Any:
 
 
 def _set_key(data: dict[str, Any], key: str, value: Any) -> bool:
+    """Set a dotted key on a TOML dict.
+
+    Unknown keys are rejected so typos do not persist. ``skills.config.*`` is
+    the documented free-form skill-settings map; ``to_toml_dict`` omits it when
+    empty, so this path must create missing intermediate dicts.
+    """
     cursor: Any = data
     parts = key.split(".")
+    create = len(parts) >= 3 and parts[0] == "skills" and parts[1] == "config"
     for part in parts[:-1]:
-        if not isinstance(cursor, dict) or part not in cursor:
+        if not isinstance(cursor, dict):
             return False
+        if part not in cursor:
+            if not create:
+                return False
+            cursor[part] = {}
         cursor = cursor[part]
-    if not isinstance(cursor, dict) or parts[-1] not in cursor:
+    if not isinstance(cursor, dict):
+        return False
+    if parts[-1] not in cursor and not create:
         return False
     cursor[parts[-1]] = value
     return True
