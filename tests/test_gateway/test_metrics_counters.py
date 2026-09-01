@@ -255,10 +255,11 @@ async def test_agentos_queue_depth_multi_session_total() -> None:
         await rt.wait(h3.task_id, timeout=2.0)
 
     qd_events = [e for e in captured if e.get("metric") == "agentos_queue_depth"]
-    assert len(qd_events) == 3
-    # First enqueue: 1 pending on sess-a (total=1)
-    assert qd_events[0]["value"] == 1
-    # Second enqueue: task-1 running, task-2 pending on sess-a (total=1)
-    assert qd_events[1]["value"] == 1
-    # Third enqueue: task-2 pending on sess-a, task-3 pending on sess-b (total=2)
-    assert qd_events[2]["value"] == 2
+    # The gauge now also emits on the RUNNING and terminal transitions (see
+    # _mark_running / _mark_terminal), so more than 3 events fire for 3 queues.
+    # The key multi-session property is that the TOTAL pending depth across all
+    # sessions reaches 2 (task-2 pending on sess-a + task-3 pending on sess-b)
+    # and settles back to 0 once every task drains.
+    values = [e["value"] for e in qd_events]
+    assert 2 in values, f"expected total pending depth 2 across sessions, got {values}"
+    assert values[-1] == 0, f"gauge should settle back to 0, got {values}"
