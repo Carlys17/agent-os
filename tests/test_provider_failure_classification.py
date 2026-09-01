@@ -290,3 +290,50 @@ def test_new_transient_status_codes_match_via_text(message: str) -> None:
         classify_provider_error("openrouter", None, message=message)
         is ProviderFailureKind.PROVIDER_OVERLOADED
     )
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "model not found",
+        "model 'llama3' not found, try pulling it first",
+        "pull the model first",
+    ],
+)
+def test_ollama_missing_model_messages_classify_as_model_not_found(message: str) -> None:
+    assert (
+        classify_provider_error("ollama", None, message=message)
+        is ProviderFailureKind.MODEL_NOT_FOUND
+    )
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "pull failed",
+        "model registry unavailable",
+    ],
+)
+def test_ollama_partial_pull_model_matches_do_not_classify_as_model_not_found(
+    message: str,
+) -> None:
+    assert (
+        classify_provider_error("ollama", None, message=message)
+        is not ProviderFailureKind.MODEL_NOT_FOUND
+    )
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "connection refused",
+        "connection error",
+        "request error",
+        "timeout",
+    ],
+)
+def test_ollama_transport_messages_classify_as_transport_transient(message: str) -> None:
+    assert (
+        classify_provider_error("ollama", None, message=message)
+        is ProviderFailureKind.TRANSPORT_TRANSIENT
+    )

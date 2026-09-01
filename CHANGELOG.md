@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The Ollama "model not found" branch of `classify_provider_error` now spells
+  out its grouping as `"model not found" in text or ("pull" in text and "model"
+  in text)`. The behaviour is unchanged — `and` already bound tighter than `or`
+  — but the intent no longer rests on implicit precedence, and the branch is
+  now covered by tests (#582).
+
 ## [2026.9.1] - 2026-09-01
 
 ### Added
