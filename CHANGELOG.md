@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Channel HTTP retries now cover every transient timeout, survive an
+  HTTP-date `Retry-After`, and hand back an exhausted rate limit.
+  `retry_request` caught `(ConnectError, ReadTimeout)`, but `ConnectTimeout`,
+  `WriteTimeout` and `PoolTimeout` descend from `TimeoutException` — a sibling
+  of `ConnectError` under `TransportError` — so a DNS, TLS-handshake, upload or
+  connection-pool timeout on any Slack/Discord/Telegram/webhook call escaped
+  the backoff and crashed the caller on the first stall; the clause is now
+  `(ConnectError, TimeoutException)`. `Retry-After` was parsed with a bare
+  `float()`, so the HTTP-date form RFC 7231 §7.1.3 permits turned a rate limit
+  into a `ValueError` inside the retry loop: the header is now resolved as
+  delay-seconds or HTTP-date, falls back to the computed backoff when it is
+  unparseable, non-finite, negative or already past, and is clamped to 300s so
+  a provider cannot park a send for hours. The 429 branch also gained the
+  `attempt < max_retries` guard the 5xx branch already had, so an exhausted
+  rate limit returns the response — status, headers and provider error body
+  intact — instead of sleeping once more and raising a bare
+  `RuntimeError("retry_request exhausted")` (#642, #599).
 - `SubscriptionManager._message_subs` now removes empty sets on
   unsubscription and connection teardown, preventing a slow memory leak
   on long-running gateways (#609).
