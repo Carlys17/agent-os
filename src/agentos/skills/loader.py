@@ -386,6 +386,24 @@ class SkillLoader:
 
         skills = []
         for s in data.get("skills", []):
+            # Verify skill content against the real on-disk file for workspace-layer
+            # skills. The snapshot is stored in a user-writable directory
+            # (~/.agentos/cache/), so a malicious snapshot could inject fake skills
+            # by spoofing the manifest (same mtime/size of real files on disk).
+            # Guard: for workspace-layer skills, re-read the actual SKILL.md and
+            # confirm its content matches the snapshot entry. Bundled/installed
+            # skills don't have real on-disk SKILL.md files (they come from zip/pypi)
+            # so they are trusted.
+            entry_layer = SkillLayer(s.get("layer", "bundled"))
+            if entry_layer == SkillLayer.WORKSPACE:
+                base_dir_str = s.get("base_dir", "")
+                if base_dir_str:
+                    skill_file = Path(base_dir_str) / "SKILL.md"
+                    if skill_file.exists():
+                        disk_content = skill_file.read_text(encoding="utf-8")
+                        if disk_content != s.get("content", ""):
+                            continue  # poisoned entry — skip, full scan will re-populate
+
             # Restore metadata from snapshot
             meta = None
             raw_meta = s.get("metadata")
