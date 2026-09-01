@@ -24,6 +24,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- The email channel no longer honours an off-allowlist `Reply-To`. The From
+  address was checked against the fail-closed `allowed_senders` list, but the
+  `Reply-To` header — equally attacker-controlled on an admitted message — was
+  taken verbatim as the reply target, so an allowlisted sender could redirect
+  the agent's answer, tool output included, to any mailbox. `Reply-To` is now
+  run through the same allowlist and falls back to the From address when it is
+  off-list, rather than the whole message being rejected. The reply target is
+  re-checked when the outbound reply is built, so a stale or tampered thread
+  cache cannot reintroduce an off-list recipient.
 - A `thinking_level` set on an OpenCAP GLM tier is no longer silently dropped.
   The gateway capability gate reported `supports_reasoning=False` for every
   model except DeepSeek V4, so the `c2` default's declared `thinking_level`
