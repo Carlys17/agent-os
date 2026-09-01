@@ -147,6 +147,13 @@ def is_sensitive_path(path: str) -> str | None:
         return "/ (filesystem root)"
     if path_normalized == "/*" or path_normalized.startswith("//"):
         return "/ (filesystem root)"
+    # A resolved form may be a drive root on Windows (e.g. "D:/" from
+    # Path("/").resolve()) or an empty path; both wipe everything on that
+    # volume, so treat them as filesystem root as well.
+    for expanded in _comparison_path_candidates(path):
+        stripped = expanded.rstrip("/")
+        if stripped == "" or (len(stripped) == 2 and stripped[1] == ":"):
+            return "/ (filesystem root)"
     candidates = _comparison_path_candidates(path)
     for expanded in candidates:
         if (
