@@ -42,11 +42,14 @@ class FakeMCPClient(MCPClient):
 
 @pytest_asyncio.fixture(autouse=True)
 async def _close_mcp_clients():
+    from agentos.mcp import discovery
     from agentos.mcp.discovery import close_active_clients
 
     await close_active_clients()
+    discovery._tool_owners.clear()
     yield
     await close_active_clients()
+    discovery._tool_owners.clear()
 
 
 @pytest.mark.asyncio

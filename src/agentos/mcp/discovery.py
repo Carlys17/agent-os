@@ -34,6 +34,11 @@ class ActiveMCPClient:
 # Module-level registry to keep clients alive for tool handlers.
 _active_clients: list[ActiveMCPClient] = []
 
+# Maps tool name (without mcp_ prefix) to the owner that last registered it.
+# Used by disconnect_and_unregister to avoid removing a tool still owned by
+# another active server that overwrote the registration.
+_tool_owners: dict[str, str] = {}
+
 
 def active_clients_snapshot() -> tuple[ActiveMCPClient, ...]:
     """Return active MCP clients without exposing mutable runtime state."""
@@ -51,6 +56,20 @@ async def close_active_clients(owner: str | None = None) -> int:
             remaining.append(entry)
     _active_clients[:] = remaining
 
+    # Drop tool-owner mappings for owners being closed.
+    if owner is not None:
+        for entry in closing:
+            for name in entry.registered_tools:
+                # The bare tool name (entry.registered_tools stores the
+                # prefixed "mcp_<tool>" string).
+                bare = name[len("mcp_"):] if name.startswith("mcp_") else name
+                # Only drop ownership if the disconnecting owner is still the
+                # current owner — another active server may have taken over.
+                if _tool_owners.get(bare) == entry.owner:
+                    _tool_owners.pop(bare, None)
+    else:
+        _tool_owners.clear()
+
     closed = 0
     for entry in closing:
         try:
@@ -62,7 +81,12 @@ async def close_active_clients(owner: str | None = None) -> int:
 
 
 async def disconnect_and_unregister(owner: str, registry: ToolRegistry) -> int:
-    """Close one MCP server and remove the tools registered by that server."""
+    """Close one MCP server and remove the tools registered by that server.
+
+    Only removes a tool from the registry if the disconnecting server is still
+    its current owner. If another active server has overwritten the same tool
+    name, that other server's registration is preserved.
+    """
     entries = [
         entry
         for entry in active_clients_snapshot()
@@ -70,7 +94,11 @@ async def disconnect_and_unregister(owner: str, registry: ToolRegistry) -> int:
     ]
     for entry in entries:
         for name in entry.registered_tools:
-            registry.unregister(name)
+            bare = name[len("mcp_"):] if name.startswith("mcp_") else name
+            # Only unregister if the disconnecting owner is still the current
+            # owner. If a different owner took over, leave the tool registered.
+            if _tool_owners.get(bare) == entry.owner:
+                registry.unregister(name)
     return await close_active_clients(owner)
 
 
@@ -98,6 +126,7 @@ def _make_tool_handler(
     tool_def: MCPToolDef,
     registry: ToolRegistry,
     timeout_seconds: float,
+    owner: str,
 ) -> None:
     """Register a single MCP tool into the registry with an mcp_ prefix."""
     # The server's schema goes out verbatim in every provider request, so it is
@@ -127,6 +156,9 @@ def _make_tool_handler(
         return result.content
 
     registry.register(spec, handler)
+    # Track that this owner registered this tool name so disconnect knows
+    # whether to remove it.
+    _tool_owners[tool_name] = owner
 
 
 async def discover_and_register(
@@ -144,6 +176,7 @@ async def discover_and_register(
     entry: ActiveMCPClient | None = None
 
     registered: list[str] = []
+    owner_id = owner or config.name
     try:
         await client.connect()
         tools = await client.list_tools()
@@ -154,10 +187,11 @@ async def discover_and_register(
                 t,
                 registry,
                 timeout_seconds=config.tool_timeout_seconds,
+                owner=owner_id,
             )
             registered.append(f"mcp_{t.name}")
         entry = ActiveMCPClient(
-            owner=owner or config.name,
+            owner=owner_id,
             server_name=config.name,
             transport=config.transport,
             client=client,
