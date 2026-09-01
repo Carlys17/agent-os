@@ -117,6 +117,13 @@ would let anyone who can send mail drive the agent. Entries are exact addresses
 `@example.com`). Mail from any other sender is logged and dropped without ever
 being queued.
 
+The allowlist also governs where a reply goes. `Reply-To` is set by the same
+sender the allowlist is meant to constrain, so it is honoured only when the
+address it names is itself on the list; otherwise the reply goes back to the
+`From` address and the off-list header is logged and ignored. The message is
+still processed — an off-list `Reply-To` redirects the answer, it does not make
+the mail untrusted.
+
 The adapter also refuses to answer itself and drops machine-generated mail —
 anything carrying `Auto-Submitted`, `X-Autoreply`, `List-Id`,
 `List-Unsubscribe`, or `Precedence: bulk`. Without that guard an autoresponder

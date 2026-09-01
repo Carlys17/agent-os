@@ -290,6 +290,41 @@ def test_reply_targets_the_thread_and_quotes_the_subject() -> None:
     assert reply.metadata["in_reply_to"] == "m1@example.com"
 
 
+def test_off_allowlist_reply_to_falls_back_to_the_sender() -> None:
+    """An allowlisted sender must not be able to redirect the reply off-list."""
+
+    channel = EmailChannel(config=_config())
+
+    inbound = channel._to_incoming(_raw(extra_headers={"Reply-To": "attacker@elsewhere.com"}))
+
+    assert inbound is not None
+    assert inbound.metadata["email_reply_to"] == "owner@example.com"
+    assert channel._threads["m1@example.com"].to_address == "owner@example.com"
+    assert channel.build_reply_message("done", inbound).metadata["to"] == "owner@example.com"
+
+
+def test_allowlisted_reply_to_is_still_honoured() -> None:
+    channel = EmailChannel(config=_config())
+
+    inbound = channel._to_incoming(_raw(extra_headers={"Reply-To": "Mate <mate@team.example>"}))
+
+    assert inbound is not None
+    assert inbound.metadata["email_reply_to"] == "mate@team.example"
+    assert channel._threads["m1@example.com"].to_address == "mate@team.example"
+    assert channel.build_reply_message("done", inbound).metadata["to"] == "mate@team.example"
+
+
+def test_build_reply_message_re_checks_a_tampered_reply_target() -> None:
+    """Metadata can outlive the parse, so the reply target is validated again."""
+
+    channel = EmailChannel(config=_config())
+    inbound = channel._to_incoming(_raw())
+    assert inbound is not None
+    inbound.metadata["email_reply_to"] = "attacker@elsewhere.com"
+
+    assert channel.build_reply_message("done", inbound).metadata["to"] == "owner@example.com"
+
+
 def test_reply_subject_is_not_double_prefixed() -> None:
     assert reply_subject("Re: Status?") == "Re: Status?"
     assert reply_subject("") == "Re: (no subject)"

@@ -532,6 +532,28 @@ class EmailChannel:
         with contextlib.suppress(Exception):
             client.store(uid, "+FLAGS", "\\Seen")
 
+    def _reply_target(self, sender: str, reply_to_header: str) -> str:
+        """Return the address replies should go to, honouring the allowlist.
+
+        ``Reply-To`` is attacker-controlled even on an admitted message: an
+        allowlisted sender can point it at any mailbox and redirect the agent's
+        answer — tool output included. Honour it only when it clears the same
+        fail-closed allowlist as ``From``, otherwise reply to the sender.
+        """
+
+        reply_to = normalize_address(reply_to_header)
+        if not reply_to or reply_to == sender:
+            return sender
+        if sender_allowed(reply_to, self.config.allowed_senders):
+            return reply_to
+        log.warning(
+            "email.reply_to_not_allowed",
+            name=self.config.name,
+            sender=sender,
+            reply_to=reply_to,
+        )
+        return sender
+
     def _to_incoming(self, parsed: EmailMessage) -> IncomingMessage | None:
         sender = normalize_address(parsed.get("From", ""))
         if not sender:
@@ -552,7 +574,7 @@ class EmailChannel:
         message_id = (parsed.get("Message-ID") or "").strip().strip("<>")
         subject = decode_header_value(parsed.get("Subject"))
         body = strip_quoted_reply(_body_text(parsed))
-        reply_to = normalize_address(parsed.get("Reply-To", "")) or sender
+        reply_to = self._reply_target(sender, parsed.get("Reply-To", ""))
 
         self._remember_thread(
             thread_id,
@@ -638,8 +660,9 @@ class EmailChannel:
     # ------------------------------------------------------------------
 
     def build_reply_message(self, content: str, inbound: IncomingMessage) -> OutgoingMessage:
+        sender = normalize_address(inbound.sender_id) or inbound.sender_id
         metadata: dict[str, Any] = {
-            "to": inbound.metadata.get("email_reply_to") or inbound.sender_id,
+            "to": self._reply_target(sender, str(inbound.metadata.get("email_reply_to") or "")),
             "subject": reply_subject(str(inbound.metadata.get("subject") or "")),
             "in_reply_to": inbound.metadata.get("native_message_id") or "",
         }
