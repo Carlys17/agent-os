@@ -33,6 +33,7 @@ agentos <command> --help
 | `agentos sandbox` | Inspect or change default sandbox posture. |
 | `agentos cron` | Manage scheduled AgentOS runs. |
 | `agentos cost` | Inspect usage and estimated cost. |
+| `agentos cost savings` | Report what the Pilot Router saved against the priciest configured tier. |
 | `agentos context` | Show the fixed per-request context cost and what each tool profile would cost. |
 | `agentos diagnostics` | Enable or disable runtime diagnostics logging. |
 | `agentos replay` | Replay a recorded turn from the decision log. |
@@ -810,6 +811,7 @@ Read:
 agentos context
 agentos context --json
 agentos cost
+agentos cost savings
 agentos diagnostics status
 agentos diagnostics on
 agentos diagnostics off
@@ -845,6 +847,44 @@ agentos cost --export /path/to/export.csv
 | `--tool-name` | Filter by tool name. |
 | `--skill` | Filter by skill name. |
 | `--export` | Path to export results (JSON/CSV). |
+
+### `agentos cost savings`
+
+`agentos cost` answers "what did I spend"; `agentos cost savings` answers "what
+did the [Pilot Router](features/agentos-router.md) save me". It reads the local
+decision log (`~/.agentos/logs/decisions-*.jsonl`) rather than the gateway, so
+it works with the gateway stopped:
+
+```sh
+agentos cost savings                                  # summary + per-route table
+agentos cost savings --json
+agentos cost savings --csv
+agentos cost savings --start-date 2026-08-01 --end-date 2026-08-31
+agentos cost savings --pdf ~/pilot-router-savings.pdf
+```
+
+| Option | Purpose |
+| --- | --- |
+| `--pdf` | Write a branded, shareable PDF report to this path. |
+| `--json` | Emit machine-readable JSON. |
+| `--csv` | Emit machine-readable CSV, one row per route pair. |
+| `--start-date` | Filter by start date (YYYY-MM-DD, UTC, inclusive). |
+| `--end-date` | Filter by end date (YYYY-MM-DD, UTC, inclusive). |
+| `--log-dir` | Read a decision-log directory other than `~/.agentos/logs`. |
+
+**Read the number correctly.** The baseline is *the most expensive model
+configured in `[router.tiers]`* — what every routed turn would have cost had it
+gone to your top tier — and not the model the request arrived with. Only input
+tokens are priced, at list rates, so the figure is a floor rather than a
+full-turn saving. The report covers routing alone: tool-result projection,
+short-reply enforcement, prompt-cache hits and thinking mode are excluded, even
+though the decision log carries them too. The `Requested` column names the
+model the turn asked for, which is *not* the price comparison — a turn can be
+routed back onto the requested model and still show a saving, because the top
+tier is dearer than both.
+
+Turns are logged only when the decision log is being written, so the window
+starts at your oldest retained `decisions-*.jsonl` file.
 
 Use diagnostics and replay when you need to understand why a turn behaved a
 certain way. For Prometheus metrics (`/metrics`), OTLP trace export, and log retention
