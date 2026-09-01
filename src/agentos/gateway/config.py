@@ -133,6 +133,15 @@ class RateLimitConfig(BaseSettings):
     enabled: bool = True
     max_requests: int = 100
     window_seconds: int = 60
+    # Dedicated cap for ``GET /api/approvals``, counted in its own per-IP
+    # window (same ``window_seconds``). The Control UI polls that endpoint
+    # every 1.5s (~40 req/min per open tab, ApprovalMonitor.POLL_MS), so
+    # charging it to the shared ``max_requests`` bucket would 429 the operator
+    # out of the approval queue with two or three tabs open. It is bounded
+    # rather than exempt: the handler serializes every pending command/argv
+    # and takes a SQLite read on each poll, so an unlimited endpoint is an
+    # enumeration + lock-contention lever for anyone who reaches the gateway.
+    approvals_max_requests: int = Field(default=300, ge=1)
 
 
 class ControlUiConfig(BaseSettings):
