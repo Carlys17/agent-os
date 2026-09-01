@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -607,55 +608,66 @@ _LEGACY_PRICING_PREFIXES: list[tuple[str, PriceEntry]] = [
     # roughly 6.975 CNY/USD for AgentOS estimates only.
     ("glm-4.5", PriceEntry(0.115, 0.287)),
     ("minimax-m2.7", PriceEntry(0.118, 0.99)),
-    ("gemini-2.5-flash-lite", PriceEntry(0.10, 0.40)),
-    ("gemini-2.5-flash", PriceEntry(0.15, 0.60)),
+    ("gemini-2.5-flash-lite", PriceEntry(0.10, 0.40, 0.025)),
+    ("gemini-2.5-flash", PriceEntry(0.15, 0.60, 0.0375)),
     ("qwen3.6-plus", PriceEntry(0.115, 0.688)),
     ("qwen3-max", PriceEntry(0.359, 1.434)),
     ("doubao-seed-1-6-flash", PriceEntry(0.15, 0.60)),
     ("doubao-seed-1-6-thinking", PriceEntry(0.60, 2.40)),
     ("doubao-seed-1-6", PriceEntry(0.30, 1.20)),
     # DeepSeek.
-    ("deepseek/deepseek-r1", PriceEntry(0.70, 2.50)),
-    ("deepseek/deepseek-v3", PriceEntry(0.26, 0.38)),
-    ("deepseek/deepseek-chat", PriceEntry(0.14, 0.28)),
-    # OpenAI (OpenRouter prices).
+    ("deepseek/deepseek-r1", PriceEntry(0.70, 2.50, 0.14)),
+    ("deepseek/deepseek-v3", PriceEntry(0.26, 0.38, 0.014)),
+    ("deepseek/deepseek-chat", PriceEntry(0.14, 0.28, 0.014)),
+    ("deepseek-reasoner", PriceEntry(0.70, 2.50, 0.14)),
+    ("deepseek-chat", PriceEntry(0.14, 0.28, 0.014)),
+    ("deepseek-v3", PriceEntry(0.26, 0.38, 0.014)),
+    ("deepseek-r1", PriceEntry(0.70, 2.50, 0.14)),
+    # OpenAI (OpenRouter and direct prices).
     ("openai/gpt-4.1-mini", PriceEntry(0.40, 1.60)),
     ("openai/gpt-4.1", PriceEntry(2.0, 8.0)),
-    ("openai/gpt-4o-mini", PriceEntry(0.15, 0.60)),
-    ("openai/gpt-4o", PriceEntry(2.50, 10.0)),
+    ("openai/gpt-4o-mini", PriceEntry(0.15, 0.60, 0.075)),
+    ("openai/gpt-4o", PriceEntry(2.50, 10.0, 1.25)),
     ("openai/text-embedding-3-small", PriceEntry(0.02, 0.0)),
     ("openai/text-embedding-3-large", PriceEntry(0.13, 0.0)),
-    ("gpt-4o-mini", PriceEntry(0.15, 0.60)),
-    ("gpt-4o", PriceEntry(2.50, 10.0)),
+    ("gpt-4o-mini", PriceEntry(0.15, 0.60, 0.075)),
+    ("gpt-4o", PriceEntry(2.50, 10.0, 1.25)),
     ("text-embedding-3-small", PriceEntry(0.02, 0.0)),
     ("text-embedding-3-large", PriceEntry(0.13, 0.0)),
     ("gpt-4-turbo", PriceEntry(10.0, 30.0)),
     ("gpt-4-", PriceEntry(30.0, 60.0)),
-    ("o3-mini", PriceEntry(1.10, 4.40)),
-    ("o1-mini", PriceEntry(3.0, 12.0)),
-    ("o1", PriceEntry(15.0, 60.0)),
+    ("o3-mini", PriceEntry(1.10, 4.40, 0.55)),
+    ("o1-mini", PriceEntry(3.0, 12.0, 1.50)),
+    ("o1", PriceEntry(15.0, 60.0, 7.50)),
     # Anthropic Claude.
     ("anthropic/claude-opus-4.8", PriceEntry(5.0, 25.0)),
     ("anthropic/claude-opus-4.7", PriceEntry(5.0, 25.0)),
     ("anthropic/claude-opus-4.5", PriceEntry(5.0, 25.0)),
-    ("anthropic/claude-opus-4", PriceEntry(15.0, 75.0)),
-    ("anthropic/claude-sonnet-4", PriceEntry(3.0, 15.0)),
-    ("anthropic/claude-3-5-sonnet", PriceEntry(3.0, 15.0)),
-    ("anthropic/claude-3-5-haiku", PriceEntry(0.80, 4.0)),
-    ("anthropic/claude-3-opus", PriceEntry(15.0, 75.0)),
-    ("anthropic/claude-3-sonnet", PriceEntry(3.0, 15.0)),
-    ("anthropic/claude-3-haiku", PriceEntry(0.25, 1.25)),
-    ("claude-opus-4", PriceEntry(15.0, 75.0)),
-    ("claude-sonnet-4", PriceEntry(3.0, 15.0)),
-    ("claude-3-5-sonnet", PriceEntry(3.0, 15.0)),
-    ("claude-3-5-haiku", PriceEntry(0.80, 4.0)),
-    ("claude-3-opus", PriceEntry(15.0, 75.0)),
-    ("claude-3-sonnet", PriceEntry(3.0, 15.0)),
-    ("claude-3-haiku", PriceEntry(0.25, 1.25)),
+    ("anthropic/claude-opus-4", PriceEntry(15.0, 75.0, 1.50)),
+    ("anthropic/claude-sonnet-4", PriceEntry(3.0, 15.0, 0.30)),
+    ("anthropic/claude-3-7-sonnet", PriceEntry(3.0, 15.0, 0.30)),
+    ("anthropic/claude-3-5-sonnet", PriceEntry(3.0, 15.0, 0.30)),
+    ("anthropic/claude-3-5-haiku", PriceEntry(0.80, 4.0, 0.08)),
+    ("anthropic/claude-3-opus", PriceEntry(15.0, 75.0, 1.50)),
+    ("anthropic/claude-3-sonnet", PriceEntry(3.0, 15.0, 0.30)),
+    ("anthropic/claude-3-haiku", PriceEntry(0.25, 1.25, 0.025)),
+    ("claude-opus-4", PriceEntry(15.0, 75.0, 1.50)),
+    ("claude-sonnet-4", PriceEntry(3.0, 15.0, 0.30)),
+    ("claude-3-7-sonnet", PriceEntry(3.0, 15.0, 0.30)),
+    ("claude-3-5-sonnet", PriceEntry(3.0, 15.0, 0.30)),
+    ("claude-3-5-haiku", PriceEntry(0.80, 4.0, 0.08)),
+    ("claude-3-opus", PriceEntry(15.0, 75.0, 1.50)),
+    ("claude-3-sonnet", PriceEntry(3.0, 15.0, 0.30)),
+    ("claude-3-haiku", PriceEntry(0.25, 1.25, 0.025)),
     # Google Gemini.
-    ("google/gemini-2.5-flash", PriceEntry(0.15, 0.60)),
-    ("google/gemini-2.5-pro", PriceEntry(1.25, 10.0)),
-    ("google/gemini-2.0-flash", PriceEntry(0.10, 0.40)),
+    ("google/gemini-2.5-flash", PriceEntry(0.15, 0.60, 0.0375)),
+    ("google/gemini-2.5-pro", PriceEntry(1.25, 10.0, 0.3125)),
+    ("google/gemini-2.0-flash", PriceEntry(0.10, 0.40, 0.025)),
+    ("google/gemini-1.5-pro", PriceEntry(1.25, 5.0, 0.3125)),
+    ("google/gemini-1.5-flash", PriceEntry(0.075, 0.30, 0.01875)),
+    ("gemini-2.0-flash", PriceEntry(0.10, 0.40, 0.025)),
+    ("gemini-1.5-pro", PriceEntry(1.25, 5.0, 0.3125)),
+    ("gemini-1.5-flash", PriceEntry(0.075, 0.30, 0.01875)),
     # Alibaba Cloud Model Studio / DashScope, Chinese Mainland (Beijing).
     # OpenAI-compatible Chat Completions returns token usage, not billed cost.
     # These prices are used only for AgentOS estimates and must not be
@@ -683,14 +695,70 @@ _PRICING_TABLE: list[tuple[str, PriceEntry]] = [
 _DEFAULT_PRICING = PriceEntry(3.0, 15.0)
 
 
-def _lookup_static_price(model_id: str) -> PriceEntry:
-    override = _lookup_price_override(model_id)
-    if override is not None:
-        return override
-    model_lower = model_id.lower()
-    for prefix, entry in _PRICING_TABLE:
-        if model_lower.startswith(prefix):
-            return entry
+def _normalize_model_candidates(model_id: str, provider_id: str = "") -> list[str]:
+    """Generate ordered candidate keys for static and live price resolution."""
+    raw = str(model_id or "").strip()
+    if not raw:
+        return []
+    candidates: list[str] = [raw]
+    raw_lower = raw.lower()
+
+    # 1. Strip vendor prefix if present (e.g. "anthropic/claude-3-7-sonnet" -> "claude-3-7-sonnet")
+    if "/" in raw:
+        bare = raw.split("/", 1)[1]
+        if bare and bare not in candidates:
+            candidates.append(bare)
+
+    # 2. Add provider-scoped prefix aliases if provider_id is specified
+    provider = str(provider_id or "").strip().lower()
+    if provider:
+        provider_prefixes: dict[str, tuple[str, ...]] = {
+            "anthropic": ("anthropic/",),
+            "deepseek": ("deepseek/",),
+            "gemini": ("google/", "gemini-"),
+            "google": ("google/",),
+            "openai": ("openai/",),
+            "openai_responses": ("openai/",),
+            "dashscope": ("qwen-",),
+            "bailian_coding": ("qwen-",),
+            "minimax": ("minimax/",),
+            "moonshot": ("moonshotai/",),
+        }
+        for pfx in provider_prefixes.get(provider, ()):
+            if pfx.endswith("/"):
+                if not raw_lower.startswith(pfx):
+                    candidate = f"{pfx}{raw}"
+                    if candidate not in candidates:
+                        candidates.append(candidate)
+            elif pfx.endswith("-"):
+                if not raw_lower.startswith(pfx):
+                    candidate = f"{pfx}{raw}"
+                    if candidate not in candidates:
+                        candidates.append(candidate)
+
+    # 3. Strip snapshot date suffixes (e.g. -20241022, -20250219, -2024-08-06, -002)
+    for cand in list(candidates):
+        stripped = re.sub(
+            r"-(?:20\d{6}|20\d{2}-\d{2}-\d{2}|00\d)$",
+            "",
+            cand,
+            flags=re.IGNORECASE,
+        )
+        if stripped != cand and stripped not in candidates:
+            candidates.append(stripped)
+
+    return candidates
+
+
+def _lookup_static_price(model_id: str, provider_id: str = "") -> PriceEntry:
+    for candidate in _normalize_model_candidates(model_id, provider_id):
+        override = _lookup_price_override(candidate)
+        if override is not None:
+            return override
+        cand_lower = candidate.lower()
+        for prefix, entry in _PRICING_TABLE:
+            if cand_lower.startswith(prefix):
+                return entry
     return _DEFAULT_PRICING
 
 
@@ -716,8 +784,10 @@ def lookup_price(model_id: str, provider_id: str = "") -> PriceEntry:
     OpenCAP and Surplus use their own public model catalogs because their bare
     model IDs overlap with other gateways whose rates differ. OpenRouter live
     lookup uses ``prompt``/``completion`` endpoint prices, explicitly not
-    cache-read prices. If either service is unreachable, the static table is a
-    fail-open fallback so cost estimation keeps working offline.
+    cache-read prices. Direct provider endpoints (Anthropic, Gemini, DeepSeek,
+    OpenAI) resolve with prompt-caching discounts and snapshot stripping. If
+    either service is unreachable, the static table is a fail-open fallback so
+    cost estimation keeps working offline.
     """
     model_id = str(model_id or "").strip()
     normalized_provider = str(provider_id or "").strip().lower()
@@ -732,12 +802,12 @@ def lookup_price(model_id: str, provider_id: str = "") -> PriceEntry:
         if gateway_price is not None:
             return gateway_price
         gateway.log_static_fallback(model_id)
-        return _lookup_static_price(model_id)
+        return _lookup_static_price(model_id, provider_id=normalized_provider)
     override = _lookup_price_override(model_id)
     if override is not None:
         return override
     if not _should_fetch_live_price(model_id):
-        return _lookup_static_price(model_id)
+        return _lookup_static_price(model_id, provider_id=normalized_provider)
 
     now = time.monotonic()
     key = model_id.lower()
@@ -748,13 +818,13 @@ def lookup_price(model_id: str, provider_id: str = "") -> PriceEntry:
             return cached
         miss_at = _LIVE_PRICE_MISS_AT.get(key, 0.0)
         if miss_at and now - miss_at <= _LIVE_PRICE_MISS_TTL:
-            return _lookup_static_price(model_id)
+            return _lookup_static_price(model_id, provider_id=normalized_provider)
 
     price = _fetch_live_openrouter_price(model_id)
     with _PRICE_LOCK:
         if price is None:
             _LIVE_PRICE_MISS_AT[key] = time.monotonic()
-            return _lookup_static_price(model_id)
+            return _lookup_static_price(model_id, provider_id=normalized_provider)
         _LIVE_PRICE_CACHE[key] = price
         _LIVE_PRICE_FETCHED_AT[key] = time.monotonic()
         _LIVE_PRICE_MISS_AT.pop(key, None)
