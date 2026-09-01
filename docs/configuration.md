@@ -67,9 +67,18 @@ every AgentOS surface — the Web UI, the CLI, the RPC, and the agent tool:
 - AgentOS posture and state location: `AGENTOS_SENSITIVE_PATHS_DISABLED`,
   `AGENTOS_SENSITIVE_PAYLOAD_DISABLED`, `AGENTOS_REDACT_SECRETS`,
   `AGENTOS_STRIP_PROVIDER_ENV`, `AGENTOS_SHELL_DENYLIST`, `AGENTOS_SAFE_BIN_*`,
-  `AGENTOS_AGENT_PERMISSIONS`, `AGENTOS_HOOKS`, `AGENTOS_GATEWAY_TOKEN`,
-  `AGENTOS_GATEWAY_CONFIG_PATH`, `AGENTOS_STATE_DIR`, `AGENTOS_ROOT`, and the
+  `AGENTOS_AGENT_PERMISSIONS`, `AGENTOS_TRUST_ENV`, `AGENTOS_HOOKS`,
+  `AGENTOS_GATEWAY_TOKEN`, `AGENTOS_GATEWAY_CONFIG_PATH`, `AGENTOS_STATE_DIR`, `AGENTOS_ROOT`, and the
   bind settings
+- Outbound routing: `AGENTOS_LLM_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`,
+  `ALL_PROXY`, `NO_PROXY` — **in any casing**, because the libraries that read
+  these names lower-case them first, so `Http_Proxy` routes traffic exactly as
+  `HTTP_PROXY` does. `AGENTOS_LLM_PROXY` is applied to every provider client,
+  so a writable proxy name would let a surface hand each request — API key
+  header included — to a machine of its choosing. `AGENTOS_TRUST_ENV`, which
+  decides whether the ambient `*_PROXY` names are honoured at all, is refused
+  for the same reason. Configure a proxy through `llm.proxy` in the config
+  file, or export it in the shell that starts the gateway.
 
 Tools AgentOS spawns inherit most of `os.environ`, and several AgentOS guards
 are themselves read from it, so a surface that could write these names could
