@@ -79,6 +79,7 @@ def _is_context_overflow(text: str) -> bool:
     return any(
         marker in text
         for marker in (
+            # OpenAI-compatible providers
             "context length",
             "context window",
             "maximum context",
@@ -87,6 +88,11 @@ def _is_context_overflow(text: str) -> bool:
             "input exceeds",
             "provider_request_budget_exhausted",
             "too many tokens",
+            # Anthropic-specific markers
+            "prompt_too_long",
+            "exceed context limit",
+            "request_too_large",
+            "request size exceeds",
         )
     )
 
