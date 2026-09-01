@@ -1642,6 +1642,29 @@ async def build_services(
                 log.info("build_services.pricing_cache_ready", count=price_count)
             except Exception as e:
                 log.warning("build_services.pricing_cache_failed", error=str(e))
+    elif config.llm.provider == "surplus":
+        # Surplus publishes an unauthenticated marketplace catalog carrying
+        # per-token rates that move with seller competition, so the boot fetch
+        # doubles as the price seed. Failure is non-fatal; static capability
+        # fallbacks remain.
+        try:
+            catalog_data = await asyncio.wait_for(
+                model_catalog.fetch_surplus(proxy),
+                timeout=5.0,
+            )
+            log.info("build_services.model_catalog_ready", count=len(model_catalog))
+        except Exception as e:
+            log.warning("build_services.model_catalog_failed", error=str(e))
+        else:
+            # Reuse the same response for usage estimates so the first completed
+            # turn does not issue a duplicate synchronous catalog request.
+            try:
+                from agentos.engine.pricing import seed_surplus_price_cache
+
+                price_count = seed_surplus_price_cache(catalog_data)
+                log.info("build_services.pricing_cache_ready", count=price_count)
+            except Exception as e:
+                log.warning("build_services.pricing_cache_failed", error=str(e))
 
     # ── Tool registry ───────────────────────────────────────────────
     if tool_registry is None:

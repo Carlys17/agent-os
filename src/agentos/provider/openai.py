@@ -83,6 +83,7 @@ def _provider_display_name(provider_kind: str) -> str:
         "openai": "OpenAI",
         "openrouter": "OpenRouter",
         "opencap": "OpenCAP",
+        "surplus": "Surplus Intelligence",
         "deepseek": "DeepSeek",
         "moonshot": "Moonshot",
         "dashscope": "DashScope",
@@ -819,7 +820,7 @@ class OpenAIProvider:
                     "order": [pinned_provider],
                     "allow_fallbacks": True,
                 }
-            elif self._provider_kind == "opencap":
+            elif self._provider_kind in {"opencap", "surplus"}:
                 payload["provider"] = [pinned_provider]
 
         # Reasoning injection (gated on thinking being enabled)
@@ -924,7 +925,7 @@ class OpenAIProvider:
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
         }
-        if self._provider_kind in {"opencap", "bankr"}:
+        if self._provider_kind in {"opencap", "bankr", "surplus"}:
             headers["x-api-key"] = self._api_key
         headers.update(openrouter_app_headers(self._base_url))
         if self._org_id:
@@ -1376,7 +1377,7 @@ class OpenAIProvider:
 
     async def list_models(self) -> list[ModelInfo]:
         headers = {"Authorization": f"Bearer {self._api_key}"}
-        if self._provider_kind in {"opencap", "bankr"}:
+        if self._provider_kind in {"opencap", "bankr", "surplus"}:
             headers["x-api-key"] = self._api_key
         headers.update(openrouter_app_headers(self._base_url))
         try:

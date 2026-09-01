@@ -131,6 +131,7 @@ base_url = "https://openrouter.ai/api/v1"
 # openrouter       OPENROUTER_API_KEY        https://openrouter.ai/api/v1
 # bankr            BANKR_API_KEY             https://llm.bankr.bot/v1
 # opencap          OPENCAP_API_KEY           https://gw.capminal.ai/api/inference/v1
+# surplus          SURPLUS_API_KEY           https://api.surplusintelligence.ai/v1
 # openai           OPENAI_API_KEY            https://api.openai.com/v1
 # anthropic        ANTHROPIC_API_KEY         https://api.anthropic.com
 # ollama           none                      http://localhost:11434
@@ -165,7 +166,8 @@ base_url = "https://openrouter.ai/api/v1"
 # "z-ai/glm-5.2" = "z-ai"
 # "anthropic/claude-opus-5" = "anthropic"
 #
-# OpenCAP uses bare model IDs and sends values as a provider allow-list. Check
+# OpenCAP and Surplus use bare model IDs and send values as a provider/seller
+# allow-list. Check
 # its live model catalog for current model and upstream provider IDs. Omit this
 # table to keep gateway auto-routing.
 # [llm.provider_routing]

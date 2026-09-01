@@ -8,11 +8,13 @@ from agentos.engine.pricing import (
     PriceEntry,
     PricingCache,
     _parse_opencap_prices,
+    _parse_surplus_prices,
     calculate_cost_usd,
     lookup_price,
     reset_live_price_cache_for_tests,
     seed_live_price_cache_for_tests,
     seed_opencap_price_cache,
+    seed_surplus_price_cache,
 )
 
 
@@ -535,5 +537,159 @@ def test_opencap_static_fallback_is_reported_once_per_model(
 
     events = [
         kwargs["model"] for event, kwargs in warnings if event == "pricing.opencap_static_fallback"
+    ]
+    assert events == ["minimax-m3", "glm-5.2"]
+
+
+def _surplus_catalog_payload() -> dict[str, object]:
+    """Surplus publishes OpenRouter-shaped, USD-per-token rates as strings."""
+    return {
+        "data": [
+            {
+                "id": "claude-opus-5",
+                "pricing": {
+                    "prompt": "0.0000050000",
+                    "completion": "0.0000250000",
+                    "input_cache_read": "0.0000005000",
+                },
+            }
+        ]
+    }
+
+
+def test_surplus_pricing_scales_per_token_catalog_rates_to_per_million() -> None:
+    prices = _parse_surplus_prices(_surplus_catalog_payload())
+
+    assert list(prices) == ["claude-opus-5"]
+    entry = prices["claude-opus-5"]
+    assert entry.input_per_m == pytest.approx(5.0)
+    assert entry.output_per_m == pytest.approx(25.0)
+    assert entry.cached_input_per_m == pytest.approx(0.5)
+
+
+def test_surplus_pricing_rejects_non_finite_and_negative_catalog_rates() -> None:
+    prices = _parse_surplus_prices(
+        {
+            "data": [
+                {"id": "nan", "pricing": {"prompt": float("nan"), "completion": "0.000001"}},
+                {"id": "infinite", "pricing": {"prompt": "0.000001", "completion": float("inf")}},
+                {"id": "negative", "pricing": {"prompt": "-0.000001", "completion": "0.000001"}},
+                {"id": "unpriced", "pricing": {}},
+                {
+                    "id": "valid",
+                    "pricing": {
+                        "prompt": "0.0000002",
+                        "completion": "0.0000008",
+                        "input_cache_read": float("-inf"),
+                    },
+                },
+            ]
+        }
+    )
+
+    assert list(prices) == ["valid"]
+    assert prices["valid"].input_per_m == pytest.approx(0.2)
+    assert prices["valid"].output_per_m == pytest.approx(0.8)
+    assert prices["valid"].cached_input_per_m is None
+
+
+def test_surplus_live_price_is_scoped_away_from_the_other_gateways(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The three gateways resell the same bare id at their own rates, so each
+    cache has to answer only for its own provider."""
+    monkeypatch.setenv("AGENTOS_SURPLUS_LIVE_PRICING", "1")
+    monkeypatch.setattr(
+        pricing,
+        "_fetch_surplus_catalog_sync",
+        lambda: pytest.fail("a fresh boot seed must not trigger a refresh"),
+    )
+    seed_surplus_price_cache(_surplus_catalog_payload())
+    seed_opencap_price_cache(
+        {"data": [{"id": "claude-opus-5", "pricing": {"input": 4.305, "output": 21.525}}]}
+    )
+
+    surplus = lookup_price("claude-opus-5", provider_id="surplus")
+    opencap = lookup_price("claude-opus-5", provider_id="opencap")
+    static = lookup_price("claude-opus-5")
+
+    assert surplus.input_per_m == pytest.approx(5.0)
+    assert opencap.input_per_m == pytest.approx(4.305)
+    assert static.input_per_m == pytest.approx(1.375)
+
+
+def test_surplus_cold_cache_refreshes_instead_of_using_another_gateways_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTOS_SURPLUS_LIVE_PRICING", "1")
+    calls: list[int] = []
+
+    def fake_fetch() -> dict[str, object]:
+        calls.append(1)
+        return _surplus_catalog_payload()
+
+    monkeypatch.setattr(pricing, "_fetch_surplus_catalog_sync", fake_fetch)
+
+    price = lookup_price("claude-opus-5", provider_id="surplus")
+    lookup_price("claude-opus-5", provider_id="surplus")
+
+    assert len(calls) == 1, "the cache must not refetch while still within its TTL"
+    assert price.output_per_m == pytest.approx(25.0)
+
+
+def test_surplus_unreachable_catalog_is_negative_cached_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTOS_SURPLUS_LIVE_PRICING", "1")
+    calls: list[int] = []
+
+    def failing_fetch() -> None:
+        calls.append(1)
+        return None
+
+    monkeypatch.setattr(pricing, "_fetch_surplus_catalog_sync", failing_fetch)
+
+    first = lookup_price("claude-opus-5", provider_id="surplus")
+    second = lookup_price("claude-opus-5", provider_id="surplus")
+
+    assert len(calls) == 1, "a failed fetch must be negative cached, not retried per lookup"
+    assert first == second == PriceEntry(1.375, 6.875)
+
+
+def test_surplus_live_pricing_can_be_disabled_by_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTOS_SURPLUS_LIVE_PRICING", "0")
+    monkeypatch.setattr(
+        pricing,
+        "_fetch_surplus_catalog_sync",
+        lambda: pytest.fail("live pricing is disabled; no fetch may be issued"),
+    )
+
+    assert lookup_price("claude-opus-5", provider_id="surplus") == PriceEntry(1.375, 6.875)
+
+
+def test_surplus_static_fallback_is_reported_once_per_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warnings: list[tuple[str, dict[str, object]]] = []
+
+    class RecordingLog:
+        def warning(self, event: str, **kwargs: object) -> None:
+            warnings.append((event, kwargs))
+
+        def info(self, event: str, **kwargs: object) -> None: ...
+
+        def debug(self, event: str, **kwargs: object) -> None: ...
+
+    monkeypatch.setenv("AGENTOS_SURPLUS_LIVE_PRICING", "0")
+    monkeypatch.setattr(pricing, "log", RecordingLog())
+
+    lookup_price("minimax-m3", provider_id="surplus")
+    lookup_price("minimax-m3", provider_id="surplus")
+    lookup_price("glm-5.2", provider_id="surplus")
+
+    events = [
+        kwargs["model"] for event, kwargs in warnings if event == "pricing.surplus_static_fallback"
     ]
     assert events == ["minimax-m3", "glm-5.2"]

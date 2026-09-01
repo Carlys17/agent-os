@@ -388,6 +388,7 @@ Onboarding-verified providers include:
 - OpenRouter
 - Bankr LLM Gateway
 - OpenCAP
+- Surplus Intelligence
 - OpenAI
 - Anthropic
 - Ollama
@@ -409,6 +410,13 @@ Read: [`providers-and-models.md`](providers-and-models.md)
 
 See [Providers and Models — OpenCAP routing](providers-and-models.md#opencap-routing)
 for the canonical setup, model catalog, routing, and pricing behavior.
+
+### Surplus Intelligence
+
+See [Providers and Models — Surplus Intelligence routing](providers-and-models.md#surplus-intelligence-routing)
+for the canonical setup, model catalog, routing, and pricing behavior. Set
+`AGENTOS_SURPLUS_LIVE_PRICING=0` to use static price estimates instead of its
+live marketplace catalog.
 
 ### Ollama plain-text mode
 

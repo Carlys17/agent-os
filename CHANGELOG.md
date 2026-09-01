@@ -8,6 +8,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Surplus Intelligence** (`surplus`) as a runtime provider — a two-sided
+  marketplace that routes each request to the cheapest healthy seller. It is
+  configured like any other OpenAI-compatible provider with a buyer API key
+  (`SURPLUS_API_KEY`, `inf_…`) against
+  `https://api.surplusintelligence.ai/v1`; the x402/USDC and MPP per-request
+  payment protocols it also offers are deliberately not wired up, so nothing
+  crypto-related enters the dependency tree.
+
+  Its model catalog is public and unauthenticated, and follows OpenRouter's
+  shape rather than the flatter gateway one — rates are USD *per token*, and an
+  extra `supported_features` array names `vision`/`reasoning`/`tools` directly.
+  Because marketplace prices move with seller competition, cost estimates come
+  from that live catalog instead of a static table: the boot fetch doubles as
+  the price seed and refreshes on its own TTL, with a bounded negative cache
+  when it is unreachable. `AGENTOS_SURPLUS_LIVE_PRICING=0` pins estimates to
+  the static table.
+
+  Ships a `surplus` router tier profile (`deepseek-v4-flash`, `gpt-5.6-luna`,
+  `glm-5.3`, `claude-opus-5`, image `glm-5.3-flash`). Without one the router
+  would silently fall back to the OpenRouter tier table, whose namespaced ids
+  (`openai/gpt-5.6-luna`) this marketplace does not serve. The image tier is
+  `glm-5.3-flash` rather than OpenCAP's `minimax-m3`: Surplus publishes
+  `minimax-m3` without vision.
+
 - Two GMGN wallet skills the earlier vendoring pass left behind:
   `gmgn-wallet-analysis` (a copy-trade dossier on one wallet — four pass/fail
   gates, what it holds and buys now, its copy window in seconds, and a size cap)
