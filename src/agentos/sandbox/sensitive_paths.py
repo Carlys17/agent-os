@@ -139,6 +139,14 @@ def is_sensitive_path(path: str) -> str | None:
         return None
     if not path:
         return None
+    # Root filesystem ("/", "/.", "//") and anything under it ("/*") is always
+    # sensitive - `rm -rf /` / `rm -rf /*` must be hard-blocked regardless of
+    # any leading benign target in a compound command. Issue #563.
+    path_normalized = path.replace("\\", "/")
+    if path_normalized in ("/", "/.", "//", ".") or path_normalized.rstrip("/") == "":
+        return "/ (filesystem root)"
+    if path_normalized == "/*" or path_normalized.startswith("//"):
+        return "/ (filesystem root)"
     candidates = _comparison_path_candidates(path)
     for expanded in candidates:
         if (

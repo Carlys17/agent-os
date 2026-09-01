@@ -103,3 +103,26 @@ def test_posix_sensitive_paths_stay_blocked_on_windows_runners() -> None:
         sensitive_path_in_text("cat /root/.ssh/id_rsa", workspace=workspace)
         == "~/.ssh"
     )
+
+def test_bare_root_is_sensitive() -> None:
+    # Issue #563: `rm -rf /` must hit the hard block.
+    assert is_sensitive_path("/") == "/ (filesystem root)"
+    assert is_sensitive_path("/.") == "/ (filesystem root)"
+    assert is_sensitive_path("///") == "/ (filesystem root)"
+    assert is_sensitive_path("/*") == "/ (filesystem root)"
+
+
+def test_root_wipe_in_compound_command_is_blocked() -> None:
+    # Issue #563: a benign leading target must not smuggle a root wipe past
+    # the hard block; every rm segment of a compound command is scanned.
+    assert sensitive_target_in_command("rm /tmp/safe; rm -rf /") == "/ (filesystem root)"
+    assert (
+        sensitive_target_in_command("rm /tmp/safe && rm -rf /*") == "/ (filesystem root)"
+    )
+    assert sensitive_target_in_command("rm -rf /") == "/ (filesystem root)"
+
+
+def test_non_root_compound_targets_still_block() -> None:
+    # The trailing-target scan (upstream #512 parser) still catches sensitive
+    # paths in later rm segments; bare-root handling must not shadow it.
+    assert sensitive_target_in_command("rm /tmp/safe; rm /root/.ssh/id_rsa") is not None
