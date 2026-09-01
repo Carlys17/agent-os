@@ -222,6 +222,7 @@ are released under AgentOS's repository license (Apache-2.0; see `LICENSE`):
 - `poolsdotfun-token-launcher`
 - `pptx`
 - `robinhood-agentic-trading`
+- `robinhood-chain-stocks`
 - `robinhood-rwa-addresses`
 - `senior-unilp-manager`
 - `stack-trace-generic-probe`

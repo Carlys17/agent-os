@@ -45,7 +45,28 @@ _TOKENS = [
         "decimals": 18,
         "logoURI": "",
     },
+    {
+        "chainId": 4663,
+        "address": "0x1b0e319c6a659f002271b69db8a7df2f911c153e",
+        "name": "GameStop • Robinhood Token",
+        "symbol": "GME",
+        "decimals": 18,
+        "logoURI": "",
+    },
+    # Robinhood Chain is permissionless: this community token reuses GameStop's
+    # name and ticker, and only the missing suffix tells the two apart.
+    {
+        "chainId": 4663,
+        "address": "0x7e86381a763f0ecca2bdf27c54eac403ddd48123",
+        "name": "GameStop",
+        "symbol": "GME",
+        "decimals": 18,
+        "logoURI": "",
+    },
 ]
+
+_REAL_GME = "0x1b0e319c6a659f002271b69db8a7df2f911c153e"
+_FAKE_GME = "0x7e86381a763f0ecca2bdf27c54eac403ddd48123"
 
 
 def _symbols(query: str) -> list[str]:
@@ -77,3 +98,30 @@ def test_robinhood_suffix_stripped_from_names() -> None:
     matches = rwa_lookup.lookup("Apple", _TOKENS, limit=1)
     assert matches[0]["name"] == "Apple"
     assert matches[0]["address"] == "0xaf3d76f1834a1d425780943c99ea8a608f8a93f9"
+
+
+def test_community_token_impersonating_a_listing_is_excluded() -> None:
+    """A lookalike must never be offered as the answer to a company question.
+
+    Both entries clean up to the display name "GameStop" with symbol GME, so
+    without the suffix filter the caller cannot tell which address is the equity.
+    """
+    for query in ("GME", "GameStop", "mã cổ phiếu GME là gì"):
+        matches = rwa_lookup.lookup(query, _TOKENS, limit=5)
+        assert [m["address"] for m in matches] == [_REAL_GME], query
+
+
+def test_include_community_widens_the_search_but_keeps_stock_tokens_first() -> None:
+    matches = rwa_lookup.lookup("GME", _TOKENS, limit=5, include_community=True)
+    assert [m["address"] for m in matches] == [_REAL_GME, _FAKE_GME]
+    assert [m["isStockToken"] for m in matches] == [True, False]
+
+
+def test_matches_are_tagged_with_stock_token_status() -> None:
+    assert rwa_lookup.lookup("Apple", _TOKENS, limit=1)[0]["isStockToken"] is True
+
+
+def test_is_stock_token_keys_off_the_suffix() -> None:
+    assert rwa_lookup.is_stock_token({"name": "Apple • Robinhood Token"}) is True
+    assert rwa_lookup.is_stock_token({"name": "GameStop"}) is False
+    assert rwa_lookup.is_stock_token({}) is False
