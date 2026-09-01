@@ -103,3 +103,38 @@ def test_posix_sensitive_paths_stay_blocked_on_windows_runners() -> None:
         sensitive_path_in_text("cat /root/.ssh/id_rsa", workspace=workspace)
         == "~/.ssh"
     )
+
+
+def test_every_rm_in_a_compound_command_is_checked() -> None:
+    """Issue #676: a benign leading ``rm`` must not shadow a later one.
+
+    Each shell separator ends one ``rm`` invocation, so ``rm /tmp/ok; rm -rf
+    /root`` yields both targets and the sensitive one wins.
+    """
+    workspace = Path("/workspace")
+
+    for separator in (";", "&&", "||", "|", "&", "\n"):
+        command = f"rm /tmp/ok {separator} rm -rf /root"
+        assert sensitive_target_in_command(command, workspace=workspace) == "/root", command
+
+    assert (
+        sensitive_target_in_command(
+            "rm /tmp/ok; shutil.rmtree('/etc/ssl')",
+            workspace=workspace,
+        )
+        == "/etc"
+    )
+
+
+def test_sensitive_reads_in_a_later_segment_are_blocked_at_the_tool_boundary() -> None:
+    """Issue #676: the delete-intent scan only sees ``rm`` targets, so a
+    non-destructive second segment (``cat /root/.bash_history``) is caught by
+    the text scan ``exec_command`` runs alongside it, not by this one."""
+    workspace = Path("/workspace")
+
+    assert sensitive_target_in_command("rm /tmp/ok; ls /root", workspace=workspace) is None
+    assert sensitive_path_in_text("rm /tmp/ok; ls /root", workspace=workspace) == "/root"
+    assert (
+        sensitive_path_in_text("rm /tmp/ok; cat /root/.bash_history", workspace=workspace)
+        == "/root"
+    )
