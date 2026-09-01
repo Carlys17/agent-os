@@ -864,6 +864,69 @@ def _opencap_tiers() -> dict:
     }
 
 
+def _surplus_tiers() -> dict:
+    """Surplus Intelligence routing config over the bare ids its market serves.
+
+    Surplus is a marketplace: every tier resolves to whichever seller is
+    cheapest for that id at request time, so the defaults below pin capability
+    tiers rather than a particular vendor's endpoint. Each id was checked
+    against the live public catalog.
+
+    The image tier is ``glm-5.3-flash`` rather than the ``minimax-m3`` the
+    OpenCAP profile uses: Surplus publishes ``minimax-m3`` without vision in
+    its supported features, and ``glm-5.3-flash`` is both vision-capable and
+    the cheapest such route in the catalog.
+    """
+    return {
+        "c0": _tier(
+            provider="surplus",
+            model="deepseek-v4-flash",
+            description=(
+                "fast DeepSeek V4 Flash route for trivial chat, short rewrites, extraction, and "
+                "low-risk simple Q&A"
+            ),
+            thinking_level="high",
+        ),
+        "c1": _tier(
+            provider="surplus",
+            model="gpt-5.6-luna",
+            description=(
+                "default balanced text model for normal agent work, coding assistance, debugging, "
+                "and moderate analysis"
+            ),
+            thinking_level="high",
+        ),
+        "c2": _tier(
+            provider="surplus",
+            model="glm-5.3",
+            description=(
+                "stronger text model for multi-step coding, structured reasoning, larger context "
+                "synthesis, and harder analysis"
+            ),
+            thinking_level="high",
+        ),
+        "c3": _tier(
+            provider="surplus",
+            model="claude-opus-5",
+            description=(
+                "Highest-quality text reasoning model for difficult planning, deep review, complex "
+                "debugging, and high-stakes synthesis"
+            ),
+            thinking_level="high",
+        ),
+        "image_model": _tier(
+            provider="surplus",
+            model="glm-5.3-flash",
+            description=(
+                "Image model: vision-capable route for user-supplied image attachments, "
+                "screenshots, diagrams, and visual question answering"
+            ),
+            thinking_level="medium",
+            image_only=True,
+        ),
+    }
+
+
 def _openrouter_tiers() -> dict:
     """Legacy OpenRouter routing config, kept as an explicit tier profile."""
     return {
@@ -920,6 +983,7 @@ ROUTER_TIER_PROFILE_IDS = frozenset(
     {
         "bankr",
         "opencap",
+        "surplus",
         "openrouter",
         "dashscope",
         "deepseek",
@@ -959,6 +1023,8 @@ def _router_tier_profile_defaults(profile: str | None) -> dict:
         return _bankr_tiers()
     if normalized == "opencap":
         return _opencap_tiers()
+    if normalized == "surplus":
+        return _surplus_tiers()
     if normalized == "openrouter":
         return _openrouter_tiers()
     profiles = {
@@ -2210,6 +2276,7 @@ class GatewayConfig(BaseSettings):
             _openrouter_tiers(),
             _bankr_tiers(),
             _opencap_tiers(),
+            _surplus_tiers(),
         )
         if "tier_profile" in fields_set or has_custom_tiers:
             return self

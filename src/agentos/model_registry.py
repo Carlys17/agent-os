@@ -114,9 +114,9 @@ class SpellingDivergence:
 def _gateway_windows(
     max_output_tokens: int, context_window: int, reason: str
 ) -> ProviderWindowOverride:
-    """Bankr and OpenCAP serve the same catalog, so they override together."""
+    """Bankr, OpenCAP and Surplus resell the same bare ids, so they override together."""
     return ProviderWindowOverride(
-        providers=("bankr", "opencap"),
+        providers=("bankr", "opencap", "surplus"),
         max_output_tokens=max_output_tokens,
         context_window=context_window,
         reason=reason,

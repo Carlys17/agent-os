@@ -33,6 +33,7 @@ class ProviderRecoveryAction(StrEnum):
 
 _OPENAI_COMPAT_PROVIDERS = {
     "opencap",
+    "surplus",
     "openrouter",
     "openai",
     "azure",
