@@ -35,6 +35,7 @@ MAX_SKILLS_PER_SOURCE = 200  # per layer cap
 #    every skill without a publisher, so partner skills would silently lose
 #    their brand grouping until something else invalidated the cache.
 _SNAPSHOT_SCHEMA_VERSION = 11
+_SNAPSHOT_MAX_BYTES = 10 * 1024 * 1024  # 10 MB hard cap on snapshot files
 
 
 def _string_list(value: object) -> list[str]:
@@ -373,6 +374,9 @@ class SkillLoader:
         if not self._snapshot_path.exists():
             return None
         try:
+            snapshot_size = self._snapshot_path.stat().st_size
+            if snapshot_size > _SNAPSHOT_MAX_BYTES:
+                return None
             data = json.loads(self._snapshot_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None

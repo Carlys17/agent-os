@@ -69,6 +69,8 @@ FATAL_ERROR_CLASSES: tuple[str, ...] = (
 )
 
 _CONVERSATION_CACHE_SCHEMA_VERSION = 1
+_MAX_CONVERSATION_CACHE_BYTES = 1_000_000  # 1 MB cap to prevent OOM from malicious cache
+_MAX_STREAM_ACCUMULATED_CHARS = 100_000  # cap per message to prevent unbounded memory growth
 
 
 def _default_workspace_dir() -> Path:
@@ -216,7 +218,7 @@ class MSTeamsChannel:
     # ------------------------------------------------------------------
 
     def _cache_path(self) -> Path:
-        workspace = Path(self.config.workspace_dir or _default_workspace_dir())
+        workspace = Path(self.config.workspace_dir or _default_workspace_dir()).resolve()
         return workspace / "state" / "msteams" / "conversations.json"
 
     def _load_conversation_cache(self) -> None:
@@ -230,7 +232,16 @@ class MSTeamsChannel:
             return
 
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            raw = path.read_bytes()
+            if len(raw) > _MAX_CONVERSATION_CACHE_BYTES:
+                log.warning(
+                    "msteams.cache_too_large",
+                    size=len(raw),
+                    max=_MAX_CONVERSATION_CACHE_BYTES,
+                )
+                self._references = {}
+                return
+            data = json.loads(raw)
         except (OSError, json.JSONDecodeError) as exc:
             log.warning("msteams.cache_load_failed", error=str(exc))
             self._references = {}
@@ -517,7 +528,8 @@ class MSTeamsChannel:
         if ref is None:
             raise RuntimeError("MSTeamsChannel.send_streaming has no conversation reference cached")
 
-        accumulated = ""
+        accumulated: list[str] = []
+        total_len = 0
         message_id: str | None = None
         unsupported = False
         last_edit = 0.0
@@ -526,13 +538,30 @@ class MSTeamsChannel:
         async for chunk in chunks:
             if not chunk:
                 continue
-            accumulated += chunk
+            chunk_len = len(chunk)
+            if total_len + chunk_len > _MAX_STREAM_ACCUMULATED_CHARS:
+                # Cap reached; truncate and stop reading
+                remaining = _MAX_STREAM_ACCUMULATED_CHARS - total_len
+                if remaining > 0:
+                    accumulated.append(chunk[:remaining])
+                break
+            accumulated.append(chunk)
+            total_len += chunk_len
 
             if message_id is None:
+                # Snapshot the current text at callback-definition time.
+                # Each iteration appends to accumulated, so capturing the list
+                # reference directly would let subsequent iterations change what
+                # the already-scheduled callback will send. Join here to freeze.
+                current_text = "".join(accumulated)
                 holder: dict[str, str | None] = {"id": None}
 
-                async def _send(turn_context: Any, _holder: dict[str, str | None] = holder) -> None:
-                    response = await turn_context.send_activity(accumulated)
+                async def _send(
+                    turn_context: Any,
+                    _holder: dict[str, str | None] = holder,
+                    _text: str = current_text,
+                ) -> None:
+                    response = await turn_context.send_activity(_text)
                     if response is not None and getattr(response, "id", None):
                         _holder["id"] = response.id
 
@@ -552,7 +581,7 @@ class MSTeamsChannel:
             current_message_id = message_id
 
             async def _edit(
-                turn_context: Any, _id: str = current_message_id, _text: str = accumulated
+                turn_context: Any, _id: str = current_message_id, _text: str = "".join(accumulated)
             ) -> None:
                 updated = Activity(type="message", id=_id, text=_text)
                 await turn_context.update_activity(updated)
@@ -584,7 +613,7 @@ class MSTeamsChannel:
                 # message so the user gets the full reply (the partial
                 # first chunk stays in place but is no longer the only
                 # thing visible).
-                async def _final_send(turn_context: Any, _text: str = accumulated) -> None:
+                async def _final_send(turn_context: Any, _text: str = "".join(accumulated)) -> None:
                     await turn_context.send_activity(_text)
 
                 final_callback = _final_send
@@ -592,7 +621,9 @@ class MSTeamsChannel:
                 final_message_id = message_id
 
                 async def _final_update(
-                    turn_context: Any, _id: str = final_message_id, _text: str = accumulated
+                    turn_context: Any,
+                    _id: str = final_message_id,
+                    _text: str = "".join(accumulated),
                 ) -> None:
                     updated = Activity(type="message", id=_id, text=_text)
                     await turn_context.update_activity(updated)
@@ -613,7 +644,9 @@ class MSTeamsChannel:
                 # of only the first chunk that shipped at stream start.
                 self._streams_unsupported = True
 
-                async def _retry_send(turn_context: Any, _text: str = accumulated) -> None:
+                async def _retry_send(
+                    turn_context: Any, _text: str = "".join(accumulated)
+                ) -> None:
                     await turn_context.send_activity(_text)
 
                 try:
