@@ -159,6 +159,12 @@ have been removed from the tree entirely (Phase C); a config that still pins it
 is auto-migrated to `pilot-v1` on the next load (see **Upgrading from
 v4_phase3**).
 
+Those reports measure routing *quality* and feature-extraction *latency*. For
+what the router has saved you in dollars on your own traffic, see
+[`agentos cost savings`](../cli.md#agentos-cost-savings) — it rolls the
+per-turn savings telemetry in `~/.agentos/logs/decisions-*.jsonl` up into a
+summary, JSON/CSV, or a shareable PDF.
+
 The default needs no config, but the Pilot safety-net floor is tunable:
 
 ```toml

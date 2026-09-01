@@ -138,7 +138,7 @@ Top-level: `init`, `onboard`, `configure`, `doctor`, `upgrade`, `chat`,
 | `search` | `list`, `status`, `query`, `configure` |
 | `auth` | `login xai` (`--no-wait`/`--resume`/`--json` for non-blocking use), `status`, `logout xai` — xAI OAuth (SuperGrok / X Premium+) for `x_search`; tokens in `~/.agentos/auth.json`, never printed |
 | `configure x-search` | xAI X (Twitter) search: `--api-key-env`, `--x-search-model`, `--x-search-reasoning-effort`, `--no-x-search-enabled`; catalog via `onboard catalog x-search` |
-| `cost` | usage and estimated cost report |
+| `cost` | usage and estimated cost report; `savings` for the Pilot Router savings report (`--pdf`) |
 | `diagnostics` | `status`, `on`, `off` |
 | `migrate` | `openclaw`, `hermes` (`--source`, `--profile`, `--apply`, `--migrate-secrets`; dry-run without `--apply`) |
 | `agents` | `list`, `add`, `delete` (durable agents) |
@@ -521,6 +521,11 @@ agentos cost                   # usage + estimated spend
 # agentos cost --agent-id <agent-id> --channel-type <channel-type>
 # agentos cost --tool-name <tool-name> --skill <skill-name>
 # agentos cost --export /path/to/export.csv
+agentos cost savings           # what the Pilot Router saved, from the local decision log
+# agentos cost savings [--json] [--csv] [--start-date …] [--end-date …] [--log-dir …]
+# agentos cost savings --pdf /path/to/report.pdf   # branded, shareable PDF
+# Baseline = the priciest model in [router.tiers], input tokens only, routing
+# mechanism only. Reads ~/.agentos/logs/decisions-*.jsonl; no gateway needed.
 agentos diagnostics on         # runtime diagnostics logging
 agentos migrate hermes --source <dir> [--apply]   # dry-run first, then --apply
 ```
