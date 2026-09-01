@@ -15,6 +15,22 @@ def test_provider_request_budget_exhausted_is_context_overflow() -> None:
     )
 
 
+def test_gemini_input_token_count_message_is_context_overflow() -> None:
+    """Gemini's real context-overflow error should be classified as CONTEXT_OVERFLOW."""
+    assert (
+        classify_provider_error(
+            provider_name="gemini",
+            status_code=400,
+            message=(
+                "the input token count (12345) exceeds the maximum "
+                "number of tokens allowed (8192)."
+            ),
+
+        )
+        is ProviderFailureKind.CONTEXT_OVERFLOW
+    )
+
+
 def test_anthropic_prompt_too_long_is_context_overflow() -> None:
     assert (
         classify_provider_error(
@@ -22,6 +38,22 @@ def test_anthropic_prompt_too_long_is_context_overflow() -> None:
             status_code=400,
             raw_code="prompt_too_long",
             message="prompt_too_long: prompt is longer than the maximum allowed length",
+        )
+        is ProviderFailureKind.CONTEXT_OVERFLOW
+    )
+
+
+def test_gemini_input_token_count_message_is_context_overflow_different_counts() -> None:
+    """Same message with different token counts must still match."""
+    assert (
+        classify_provider_error(
+            provider_name="gemini",
+            status_code=400,
+            message=(
+                "the input token count (512) exceeds the maximum "
+                "number of tokens allowed (4096)."
+            ),
+
         )
         is ProviderFailureKind.CONTEXT_OVERFLOW
     )
@@ -61,4 +93,3 @@ def test_anthropic_request_size_exceeds_is_context_overflow() -> None:
         )
         is ProviderFailureKind.CONTEXT_OVERFLOW
     )
-
