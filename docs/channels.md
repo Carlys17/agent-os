@@ -108,6 +108,11 @@ Providers with two-factor authentication normally require an app password
 rather than the account password. Set `smtp_ssl=true` (and `smtp_port=465`)
 for implicit TLS; the default is STARTTLS on port 587.
 
+`imap_folder` picks the mailbox to poll and defaults to `INBOX`. Names with
+spaces (`Sent Items`, `Archive 2026`) are quoted per RFC 3501 before they go on
+the wire, so they need no quoting of your own; a name carrying a control
+character is rejected at channel start rather than at poll time.
+
 ### Access Control
 
 `allowed_senders` is a fail-closed From-address allowlist and is **required** —

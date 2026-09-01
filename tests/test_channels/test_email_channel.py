@@ -17,6 +17,7 @@ from agentos.channels.email import (
     _DEFAULT_OUTBOUND_SUBJECT,
     EmailChannel,
     EmailChannelConfig,
+    _quote_imap_mailbox,
     html_to_text,
     is_automated,
     is_email_address,
@@ -504,9 +505,11 @@ class _FakeIMAP:
         self._raw = raw
         self._size = len(raw) if size is None else size
         self.stored: list[tuple[str, str, str]] = []
+        self.selected: list[str] = []
         self.closed = False
 
     def select(self, folder: str) -> tuple[str, list[bytes]]:
+        self.selected.append(folder)
         return "OK", [b"1"]
 
     def search(self, charset: Any, criteria: str) -> tuple[str, list[bytes]]:
@@ -573,6 +576,63 @@ def test_one_unreadable_message_does_not_sink_the_poll(
 
     assert calls == ["7", "8"]
     assert len(messages) == 1
+
+
+@pytest.mark.parametrize(
+    ("folder", "expected"),
+    [
+        ("INBOX", '"INBOX"'),
+        ("Sent Items", '"Sent Items"'),
+        ("INBOX/Archive 2026", '"INBOX/Archive 2026"'),
+        # RFC 3501 4.3: only backslash and double-quote are escaped in a
+        # quoted-string, and the escape is a backslash.
+        ('say "hi"', '"say \\"hi\\""'),
+        ("back\\slash", '"back\\\\slash"'),
+        ('mix "a\\b"', '"mix \\"a\\\\b\\""'),
+    ],
+)
+def test_quote_imap_mailbox_wraps_and_escapes(folder: str, expected: str) -> None:
+    assert _quote_imap_mailbox(folder) == expected
+
+
+@pytest.mark.parametrize("folder", ["", "   ", "In\rbox", "In\nbox", "In\x00box"])
+def test_quote_imap_mailbox_refuses_names_it_cannot_encode(folder: str) -> None:
+    # A bare CR/LF would end the command line and let the rest of the name run
+    # as a second IMAP command, so this has to raise rather than be escaped.
+    with pytest.raises(ValueError, match="imap_folder"):
+        _quote_imap_mailbox(folder)
+
+
+def test_poll_selects_a_folder_with_spaces_as_one_quoted_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel = EmailChannel(config=_config(imap_folder="Sent Items"))
+    fake = _FakeIMAP(_raw().as_bytes())
+    monkeypatch.setattr(channel, "_imap_connect", lambda: fake)
+
+    channel._fetch_unseen()
+
+    assert fake.selected == ['"Sent Items"']
+
+
+def test_poll_selects_the_default_folder_quoted(monkeypatch: pytest.MonkeyPatch) -> None:
+    channel = EmailChannel(config=_config())
+    fake = _FakeIMAP(_raw().as_bytes())
+    monkeypatch.setattr(channel, "_imap_connect", lambda: fake)
+
+    channel._fetch_unseen()
+
+    assert fake.selected == ['"INBOX"']
+
+
+@pytest.mark.parametrize("folder", ["", "Sent\r\nLOGOUT"])
+async def test_start_refuses_an_unusable_imap_folder(folder: str) -> None:
+    # Fail at start() with the offending value rather than as an opaque BAD
+    # once every poll interval.
+    channel = EmailChannel(config=_config(imap_folder=folder))
+
+    with pytest.raises(ValueError, match="imap_folder"):
+        await channel.start()
 
 
 def test_mark_seen_disabled_leaves_the_flag_alone(monkeypatch: pytest.MonkeyPatch) -> None:

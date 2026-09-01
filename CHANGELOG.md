@@ -33,6 +33,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   rate limit returns the response — status, headers and provider error body
   intact — instead of sleeping once more and raising a bare
   `RuntimeError("retry_request exhausted")` (#642, #599).
+- The email channel can poll an IMAP folder whose name contains spaces.
+  `imap_folder` was handed to `imaplib` verbatim, and `imaplib` does not quote
+  mailbox arguments, so a folder such as `Sent Items` — ordinary on
+  Exchange/Outlook — went on the wire as two tokens and every poll failed with
+  an opaque `BAD [CLIENTBUG] Invalid syntax`. The name is now emitted as an
+  RFC 3501 quoted-string, escaping `\` and `"`, and a name carrying a control
+  character (a CR or LF would have ended the command line and run its tail as a
+  second IMAP command) is refused at channel start instead of at poll time.
 - `SubscriptionManager._message_subs` now removes empty sets on
   unsubscription and connection teardown, preventing a slow memory leak
   on long-running gateways (#609).
