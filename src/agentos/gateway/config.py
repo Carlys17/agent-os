@@ -796,13 +796,63 @@ def _bankr_tiers() -> dict:
 def _opencap_tiers() -> dict:
     """OpenCAP routing config using neutral bare model ids served by its gateway.
 
+    Declared separately from ``_bankr_tiers`` rather than copied from it. The two
+    gateways publish overlapping but not identical catalogs, and only OpenCAP
+    exposes a public catalog we can check a default against -- so a model that is
+    current on one is not automatically current on the other, and cloning the
+    table made OpenCAP silently inherit Bankr's release cadence.
+
     Safety-sensitive models such as ``oc-uncensored-1.0`` remain available as
     explicit user overrides, but are never selected by the recommended profile.
     """
-    tiers = _bankr_tiers()
-    for tier in tiers.values():
-        tier["provider"] = "opencap"
-    return tiers
+    return {
+        "c0": _tier(
+            provider="opencap",
+            model="deepseek-v4-flash",
+            description=(
+                "fast DeepSeek V4 Flash route for trivial chat, short rewrites, extraction, and "
+                "low-risk simple Q&A"
+            ),
+            thinking_level="high",
+        ),
+        "c1": _tier(
+            provider="opencap",
+            model="gpt-5.6-luna",
+            description=(
+                "default balanced text model for normal agent work, coding assistance, debugging, "
+                "and moderate analysis"
+            ),
+            thinking_level="high",
+        ),
+        "c2": _tier(
+            provider="opencap",
+            model="glm-5.3",
+            description=(
+                "stronger text model for multi-step coding, structured reasoning, larger context "
+                "synthesis, and harder analysis"
+            ),
+            thinking_level="high",
+        ),
+        "c3": _tier(
+            provider="opencap",
+            model="claude-opus-5",
+            description=(
+                "Highest-quality text reasoning model for difficult planning, deep review, complex "
+                "debugging, and high-stakes synthesis"
+            ),
+            thinking_level="high",
+        ),
+        "image_model": _tier(
+            provider="opencap",
+            model="minimax-m3",
+            description=(
+                "Image model: vision-capable route for user-supplied image attachments, "
+                "screenshots, diagrams, and visual question answering"
+            ),
+            thinking_level="medium",
+            image_only=True,
+        ),
+    }
 
 
 def _openrouter_tiers() -> dict:

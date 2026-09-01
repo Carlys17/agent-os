@@ -218,25 +218,59 @@ class ModelCatalog:
             # configs may still carry the namespaced "virtuals/<id>" form, so
             # strip the prefix before matching. Prefer live catalog modality data
             # when a fetch populated it; otherwise fall back to a prefix heuristic
-            # (gpt-5.5 has image input but gpt-5.4-mini does not).
+            # (gpt-5.5 has image input but gpt-5.4-mini does not). The glm entry
+            # is the flash line only: OpenCAP publishes glm-5.3-flash as natively
+            # multimodal while glm-5.2/glm-5.3 stay text-in, text-out.
             basename = model_l.split("/", 1)[1] if "/" in model_l else model_l
             supports_vision = (
                 info.supports_vision
                 if info is not None
                 else basename.startswith(
-                    ("minimax-m3", "gemini-", "kimi-", "claude-", "grok-", "gpt-5.5")
+                    (
+                        "minimax-m3",
+                        "gemini-",
+                        "kimi-",
+                        "claude-",
+                        "grok-",
+                        "gpt-5.5",
+                        "gpt-5.6",
+                        "glm-5.3-flash",
+                        "muse-spark-",
+                    )
                 )
             )
             # DeepSeek V4 through these gateways honors the DeepSeek-native
             # thinking payload and streams reasoning_content deltas (verified
             # live against OpenCAP). Without this, tier thinking_level settings
             # silently no-op for gateway DeepSeek routes.
-            supports_reasoning = basename.startswith("deepseek-v4")
+            if basename.startswith("deepseek-v4"):
+                return ModelCapabilities(
+                    supports_reasoning=True,
+                    supports_tools=True,
+                    supports_vision=supports_vision,
+                    reasoning_format="deepseek",
+                )
+            # GLM 5.x is OpenCAP's c2 default and reasons by default, emitting
+            # reasoning_content whether or not it is asked to. The gateway
+            # accepts Z.ai's own {"thinking": {"type": ...}} switch for it in
+            # both positions (verified live against OpenCAP), so declaring the
+            # format is what turns a tier's thinking_level from a no-op into a
+            # real control. Scoped to opencap: the Bankr gateway serves an
+            # overlapping catalog on a separate deployment that has not been
+            # verified to accept the same switch, and guessing wrong there sends
+            # a rejected parameter on every turn.
+            if provider_id == "opencap" and basename.startswith("glm-5"):
+                return ModelCapabilities(
+                    supports_reasoning=True,
+                    supports_tools=True,
+                    supports_vision=supports_vision,
+                    reasoning_format="zai",
+                )
             return ModelCapabilities(
-                supports_reasoning=supports_reasoning,
+                supports_reasoning=False,
                 supports_tools=True,
                 supports_vision=supports_vision,
-                reasoning_format="deepseek" if supports_reasoning else "none",
+                reasoning_format="none",
             )
         if provider_id == "dashscope":
             supports_reasoning = model_l.startswith(

@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- OpenCAP's router tier defaults track OpenCAP's own catalog again. `c2` moves
+  from `glm-5.2` to `glm-5.3` (1.31M context, published by the gateway since the
+  last update), and the profile is declared in its own table instead of being
+  cloned from the Bankr profile with the provider string swapped — the two
+  gateways publish overlapping but different catalogs, so cloning made OpenCAP
+  silently inherit Bankr's release cadence. `c0` (`deepseek-v4-flash`), `c1`
+  (`gpt-5.6-luna`), `c3` (`claude-opus-5`) and the image route (`minimax-m3`)
+  are unchanged; each is still the newest of its family the gateway serves.
+- Five models OpenCAP now publishes are declared in the model registry:
+  `glm-5.3`, `glm-5.3-flash`, `grok-4.6`, `kimi-k3` and `muse-spark-1.2`. They
+  carry published context windows, output caps and vendor rack rates, so an
+  offline estimate for them no longer falls through to the generic $3/$15
+  default. OpenCAP's live catalog remains canonical for its own pricing.
+
+### Fixed
+
+- A `thinking_level` set on an OpenCAP GLM tier is no longer silently dropped.
+  The gateway capability gate reported `supports_reasoning=False` for every
+  model except DeepSeek V4, so the `c2` default's declared `thinking_level`
+  never reached the wire even though GLM 5.x reasons by default and streams
+  `reasoning_content`. GLM ids on OpenCAP now resolve Z.ai's
+  `{"thinking": {"type": ...}}` switch, verified live in both positions. Scoped
+  to OpenCAP; the Bankr gateway is a separate deployment and keeps its previous
+  behavior.
+- The offline vision fallback recognizes `gpt-5.6-*`, `glm-5.3-flash` and
+  `muse-spark-*` as image-capable. Previously, if the catalog fetch failed, the
+  `c1` default was reported as text-only and image turns had nowhere to route.
+
 ### Added
 
 - New bundled skill `robinhood-chain-stocks`: reads tokenized-stock state

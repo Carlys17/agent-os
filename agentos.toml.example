@@ -169,7 +169,7 @@ base_url = "https://openrouter.ai/api/v1"
 # its live model catalog for current model and upstream provider IDs. Omit this
 # table to keep gateway auto-routing.
 # [llm.provider_routing]
-# "glm-5.2" = "provider-id-from-live-catalog"
+# "glm-5.3" = "provider-id-from-live-catalog"
 
 # Prompt caching controls. Enables prefix caching for supported providers
 # (Anthropic, OpenAI, DeepSeek, OpenRouter, etc.).
