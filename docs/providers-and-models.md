@@ -88,7 +88,19 @@ OpenCAP defaults to `https://gw.capminal.ai/api/inference/v1` and uses one
 OpenAI-compatible key for inference. Its public model catalog is unauthenticated.
 The default direct/fallback model is the balanced `c1` model, `gpt-5.6-luna`. The `recommended`
 router profile selects bare OpenCAP model IDs across
-[`c0`–`c3`](features/agentos-router.md#model-tiers) and the vision route.
+[`c0`–`c3`](features/agentos-router.md#model-tiers) and the vision route:
+
+| Tier | Model | Role |
+| --- | --- | --- |
+| `c0` | `deepseek-v4-flash` | trivial chat, short rewrites, extraction |
+| `c1` | `gpt-5.6-luna` | default balanced route for normal agent work |
+| `c2` | `glm-5.3` | multi-step coding, structured reasoning, larger synthesis |
+| `c3` | `claude-opus-5` | difficult planning, deep review, high-stakes synthesis |
+| `image_model` | `minimax-m3` | image attachments, screenshots, diagrams |
+
+These are OpenCAP's own defaults, not a copy of the Bankr profile — the two
+gateways publish overlapping but different catalogs. Run `agentos models list`
+against a configured OpenCAP key to see everything the gateway currently serves.
 
 At gateway boot, AgentOS fetches the public catalog asynchronously for model
 choices, capabilities, and provider-scoped cost estimates. If that fetch fails,
@@ -100,7 +112,7 @@ upstream provider ID advertised by the current live catalog:
 
 ```toml
 [llm.provider_routing]
-"glm-5.2" = "provider-id-from-live-catalog"
+"glm-5.3" = "provider-id-from-live-catalog"
 ```
 
 AgentOS sends this as OpenCAP's provider allow-list. OpenRouter uses the same

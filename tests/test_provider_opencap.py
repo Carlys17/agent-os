@@ -97,12 +97,48 @@ def test_opencap_router_profile_contract() -> None:
     assert {tier["provider"] for tier in tiers.values()} == {"opencap"}
     assert tiers["c0"]["model"] == "deepseek-v4-flash"
     assert tiers["c1"]["model"] == "gpt-5.6-luna"
-    assert tiers["c2"]["model"] == "glm-5.2"
+    assert tiers["c2"]["model"] == "glm-5.3"
     assert tiers["c3"]["model"] == "claude-opus-5"
     assert tiers["image_model"]["model"] == "minimax-m3"
     assert tiers["image_model"]["supports_image"] is True
     assert tiers["image_model"]["image_only"] is True
     assert all(tier["model"] != "oc-uncensored-1.0" for tier in tiers.values())
+
+
+def test_opencap_router_profile_is_not_a_clone_of_bankr() -> None:
+    """The two gateways publish different catalogs, so the tables must be free
+    to diverge. OpenCAP's c2 tracks its own live catalog (GLM 5.3); Bankr's
+    stays on what that gateway is known to serve."""
+    from agentos.gateway.config import _bankr_tiers
+
+    opencap = _router_tier_profile_defaults("opencap")
+    bankr = _bankr_tiers()
+
+    assert opencap["c2"]["model"] != bankr["c2"]["model"]
+    assert {tier["provider"] for tier in bankr.values()} == {"bankr"}
+
+
+def test_opencap_tier_models_are_all_served_by_the_live_catalog() -> None:
+    """Every default is a bare id the gateway actually publishes.
+
+    Pinned to the catalog snapshot rather than fetched, so the test stays
+    offline; a default that drifts off this list is a default the gateway can
+    no longer resolve.
+    """
+    published = {
+        "deepseek-v4-flash",
+        "gpt-5.6-luna",
+        "glm-5.3",
+        "glm-5.3-flash",
+        "claude-opus-5",
+        "minimax-m3",
+        "grok-4.6",
+        "kimi-k3",
+        "muse-spark-1.2",
+    }
+
+    for name, tier in _router_tier_profile_defaults("opencap").items():
+        assert tier["model"] in published, f"{name} pins an id OpenCAP no longer publishes"
 
 
 def test_opencap_direct_provider_auto_selects_router_profile() -> None:
@@ -172,6 +208,35 @@ def test_populate_from_opencap_parses_gateway_catalog() -> None:
     assert uncensored.provider == "opencap"
     assert uncensored.max_output_tokens == 0
     assert catalog.get_capabilities("oc-uncensored-1.0", "opencap").supports_vision is False
+
+
+def test_opencap_glm_models_resolve_zai_reasoning() -> None:
+    """The c2 default declares thinking_level="high"; without a reasoning format
+    that setting is silently dropped on the way to the gateway."""
+    catalog = ModelCatalog()
+
+    for model in ("glm-5.3", "glm-5.2", "glm-5.3-flash"):
+        caps = catalog.get_capabilities(model, provider_name="opencap")
+        assert caps.supports_reasoning is True, model
+        assert caps.reasoning_format == "zai", model
+        assert caps.supports_tools is True, model
+
+
+def test_opencap_glm_reasoning_does_not_leak_into_the_bankr_gateway() -> None:
+    """Separate deployment, unverified switch -- Bankr must keep its old shape."""
+    caps = ModelCatalog().get_capabilities("glm-5.2", provider_name="bankr")
+
+    assert caps.supports_reasoning is False
+    assert caps.reasoning_format == "none"
+
+
+def test_opencap_non_reasoning_models_keep_reporting_no_reasoning() -> None:
+    catalog = ModelCatalog()
+
+    for model in ("minimax-m3", "oc-uncensored-1.0", "gpt-5.6-luna"):
+        caps = catalog.get_capabilities(model, provider_name="opencap")
+        assert caps.supports_reasoning is False, model
+        assert caps.reasoning_format == "none", model
 
 
 def test_populate_from_opencap_defaults_missing_or_malformed_pricing_to_zero() -> None:
