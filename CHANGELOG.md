@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+
+- Proxy names are no longer writable through any AgentOS surface. `set_env_var`
+  (and the Web UI, `agentos env set`, and the gateway RPC) could previously
+  write `AGENTOS_LLM_PROXY`, which `gateway/llm_runtime.py`, `provider/openai.py`
+  and `provider/auxiliary.py` apply to every provider client — letting an agent,
+  or a prompt injection reaching one, route all model traffic through a proxy of
+  its choosing and read the `Authorization` header off it. `AGENTOS_LLM_PROXY`,
+  `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` now join
+  `env_policy.WRITE_DENYLIST`, matched in **any casing** — the proxy readers
+  (`urllib.request.getproxies_environment()`, which httpx goes through)
+  lower-case every name they find, so denying only the two conventional
+  spellings would leave `Http_Proxy` as an equivalent way in. `AGENTOS_TRUST_ENV`,
+  which decides whether the ambient `*_PROXY` names are honoured at all, is
+  denied with the other posture names. Values exported in the shell or
+  hand-written into `~/.agentos/.env` keep working; only writing through
+  AgentOS is refused (#550).
+
 ### Fixed
 
 - `upsert_llm_provider` now validates an operator-supplied provider `base_url`

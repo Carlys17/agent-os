@@ -499,9 +499,11 @@ command tells you when that is the case.
 
 Names that steer subprocess execution (`PATH`, `LD_PRELOAD`, `PYTHONPATH`,
 `EDITOR`, …) or AgentOS runtime posture (`AGENTOS_AGENT_PERMISSIONS`,
-`AGENTOS_GATEWAY_TOKEN`, `AGENTOS_STATE_DIR`, …) are refused, so this surface
-cannot be used to widen what the agent is allowed to do. Edit
-`~/.agentos/.env` by hand if you genuinely need one of them. Variables already
+`AGENTOS_GATEWAY_TOKEN`, `AGENTOS_STATE_DIR`, …) or outbound routing
+(`HTTP_PROXY`, `AGENTOS_LLM_PROXY`, `AGENTOS_TRUST_ENV`, … — proxy names in
+any casing) are refused, so this surface cannot be
+used to widen what the agent is allowed to do. Edit `~/.agentos/.env` by hand
+if you genuinely need one of them. Variables already
 set that way keep working; only writing through AgentOS is gated.
 
 If `agentos env list` reports a variable as coming from `process env`, the

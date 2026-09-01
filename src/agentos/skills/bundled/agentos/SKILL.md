@@ -181,8 +181,10 @@ binaries read. `agentos env list` shows every variable AgentOS knows about,
 whether it is set, and which skill or provider needs it — values are masked
 unless you ask for `agentos env get <NAME> --reveal`. Names that steer
 subprocess execution (`PATH`, `LD_PRELOAD`, `EDITOR`, …) or runtime posture
-(`AGENTOS_AGENT_PERMISSIONS`, `AGENTOS_GATEWAY_TOKEN`, …) cannot be written
-through AgentOS; edit the file by hand if one is genuinely needed. When
+(`AGENTOS_AGENT_PERMISSIONS`, `AGENTOS_GATEWAY_TOKEN`, …) or outbound routing
+(`HTTP_PROXY`, `AGENTOS_LLM_PROXY`, `AGENTOS_TRUST_ENV`, … — proxy names in any
+casing) cannot be written through AgentOS; edit
+the file by hand if one is genuinely needed. When
 `agentos env list` reports a variable's source as `process env`, the shell
 that started the gateway exported it and that value wins over the file.
 
