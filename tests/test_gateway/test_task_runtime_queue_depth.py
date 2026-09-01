@@ -12,8 +12,8 @@ import pytest
 import structlog
 import structlog.testing
 
-from agentos.gateway.task_runtime import AgentTaskRecord, TaskRuntime
 from agentos.gateway.routing import RouteEnvelope, SourceKind
+from agentos.gateway.task_runtime import AgentTaskRecord, TaskRuntime
 
 
 @contextmanager
