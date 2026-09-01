@@ -74,9 +74,18 @@ class BreakerSettings:
     max_cooldown_seconds: float = DEFAULT_MAX_COOLDOWN_SECONDS
 
     def __post_init__(self) -> None:
-        threshold = max(1, int(self.failure_threshold))
-        cooldown = max(1.0, float(self.cooldown_seconds))
-        max_cooldown = max(cooldown, float(self.max_cooldown_seconds))
+        try:
+            threshold = max(1, int(self.failure_threshold))
+        except (ValueError, TypeError):
+            threshold = DEFAULT_FAILURE_THRESHOLD
+        try:
+            cooldown = max(1.0, float(self.cooldown_seconds))
+        except (ValueError, TypeError):
+            cooldown = DEFAULT_COOLDOWN_SECONDS
+        try:
+            max_cooldown = max(cooldown, float(self.max_cooldown_seconds))
+        except (ValueError, TypeError):
+            max_cooldown = DEFAULT_MAX_COOLDOWN_SECONDS
         object.__setattr__(self, "failure_threshold", threshold)
         object.__setattr__(self, "cooldown_seconds", cooldown)
         object.__setattr__(self, "max_cooldown_seconds", max_cooldown)
@@ -90,17 +99,29 @@ class BreakerSettings:
         """
         if config is None:
             return cls()
+        try:
+            failure_threshold = int(
+                getattr(config, "failure_threshold", DEFAULT_FAILURE_THRESHOLD)
+            )
+        except (ValueError, TypeError):
+            failure_threshold = DEFAULT_FAILURE_THRESHOLD
+        try:
+            cooldown_seconds = float(
+                getattr(config, "cooldown_seconds", DEFAULT_COOLDOWN_SECONDS)
+            )
+        except (ValueError, TypeError):
+            cooldown_seconds = DEFAULT_COOLDOWN_SECONDS
+        try:
+            max_cooldown_seconds = float(
+                getattr(config, "max_cooldown_seconds", DEFAULT_MAX_COOLDOWN_SECONDS)
+            )
+        except (ValueError, TypeError):
+            max_cooldown_seconds = DEFAULT_MAX_COOLDOWN_SECONDS
         return cls(
             enabled=bool(getattr(config, "enabled", True)),
-            failure_threshold=int(
-                getattr(config, "failure_threshold", DEFAULT_FAILURE_THRESHOLD)
-            ),
-            cooldown_seconds=float(
-                getattr(config, "cooldown_seconds", DEFAULT_COOLDOWN_SECONDS)
-            ),
-            max_cooldown_seconds=float(
-                getattr(config, "max_cooldown_seconds", DEFAULT_MAX_COOLDOWN_SECONDS)
-            ),
+            failure_threshold=failure_threshold,
+            cooldown_seconds=cooldown_seconds,
+            max_cooldown_seconds=max_cooldown_seconds,
         )
 
 
