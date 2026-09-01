@@ -11,6 +11,7 @@ from agentos import __version__
 from agentos.env import trust_env as _trust_env
 from agentos.mcp.client import MCPClient
 from agentos.mcp.types import MCPServerConfig, MCPToolDef, MCPToolResult
+from agentos.tools.ssrf import assert_not_metadata_endpoint
 
 
 class MCPSSEClient(MCPClient):
@@ -70,6 +71,10 @@ class MCPSSEClient(MCPClient):
 
     async def connect(self) -> None:
         """Create the HTTP client session and perform MCP initialization handshake."""
+        assert self.config.url is not None
+        if not self.config.url.startswith(("http://", "https://")):
+            raise ValueError("MCP server URL must use http or https scheme")
+        assert_not_metadata_endpoint(self.config.url)
         self._client = httpx.AsyncClient(trust_env=_trust_env())
 
         # Send initialize request (response is acknowledged server-side;

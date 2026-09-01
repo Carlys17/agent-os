@@ -20,6 +20,7 @@ from agentos.env import trust_env as _trust_env
 from agentos.mcp.client import MCPClient
 from agentos.mcp.types import MCPServerConfig, MCPToolDef, MCPToolResult
 from agentos.paths import state_dir as default_state_dir
+from agentos.tools.ssrf import assert_not_metadata_endpoint
 
 
 class MCPDependencyError(RuntimeError):
@@ -145,6 +146,11 @@ class MCPStreamableHTTPClient(MCPClient):
     async def connect(self) -> None:
         if not self.config.url:
             raise ValueError("Streamable HTTP MCP server requires a URL")
+
+        # Validate URL scheme and block only cloud metadata endpoints
+        if not self.config.url.startswith(("http://", "https://")):
+            raise ValueError("MCP server URL must use http or https scheme")
+        assert_not_metadata_endpoint(self.config.url)
 
         try:
             from mcp.client.auth import OAuthClientProvider
