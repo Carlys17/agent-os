@@ -17,6 +17,7 @@ from agentos.channels.email import (
     _DEFAULT_OUTBOUND_SUBJECT,
     EmailChannel,
     EmailChannelConfig,
+    _merge_references,
     _quote_imap_mailbox,
     html_to_text,
     is_automated,
@@ -348,6 +349,151 @@ async def test_send_composes_threading_headers(monkeypatch: pytest.MonkeyPatch) 
     assert outbound["References"] == "<m1@example.com>"
     assert normalize_address(outbound["From"]) == "agent@example.com"
     assert outbound.get_content().strip() == "the answer"
+
+
+def test_merge_references_falls_back_to_in_reply_to() -> None:
+    """RFC 5322 3.6.4: a parent without ``References`` still names the thread root."""
+
+    parsed = _raw(
+        message_id="reply-102@example.com",
+        extra_headers={"In-Reply-To": "<root-001@example.com>"},
+    )
+
+    merged = _merge_references(parsed, "reply-102@example.com")
+
+    assert merged == "<root-001@example.com> <reply-102@example.com>"
+
+
+def test_merge_references_prefers_the_existing_chain() -> None:
+    parsed = _raw(
+        message_id="reply-103@example.com",
+        extra_headers={
+            "References": "<root-001@example.com> <reply-102@example.com>",
+            "In-Reply-To": "<reply-102@example.com>",
+        },
+    )
+
+    merged = _merge_references(parsed, "reply-103@example.com")
+
+    assert merged == ("<root-001@example.com> <reply-102@example.com> <reply-103@example.com>")
+
+
+def test_merge_references_keeps_a_root_message_alone() -> None:
+    parsed = _raw(message_id="root-001@example.com")
+
+    assert _merge_references(parsed, "root-001@example.com") == "<root-001@example.com>"
+
+
+def test_merge_references_drops_header_comments() -> None:
+    """Some clients decorate the header with comments; only ids belong in the chain."""
+
+    parsed = _raw(
+        message_id="reply-102@example.com",
+        extra_headers={"In-Reply-To": "<root-001@example.com> (from Outlook)"},
+    )
+
+    merged = _merge_references(parsed, "reply-102@example.com")
+
+    assert merged == "<root-001@example.com> <reply-102@example.com>"
+
+
+def test_merge_references_drops_comments_around_bare_ids() -> None:
+    parsed = _raw(
+        message_id="reply-102@example.com",
+        extra_headers={"In-Reply-To": "root-001@example.com (from Outlook)"},
+    )
+
+    merged = _merge_references(parsed, "reply-102@example.com")
+
+    assert merged == "<root-001@example.com> <reply-102@example.com>"
+
+
+def test_merge_references_keeps_ids_a_mixed_header_brackets_unevenly() -> None:
+    """A chain that brackets only some ids must still keep the root."""
+
+    parsed = _raw(
+        message_id="reply-103@example.com",
+        extra_headers={"References": "root-001@example.com <reply-102@example.com>"},
+    )
+
+    merged = _merge_references(parsed, "reply-103@example.com")
+
+    assert merged == ("<root-001@example.com> <reply-102@example.com> <reply-103@example.com>")
+
+
+def test_merge_references_brackets_bare_ids() -> None:
+    parsed = _raw(
+        message_id="reply-102@example.com",
+        extra_headers={"In-Reply-To": "root-001@example.com"},
+    )
+
+    merged = _merge_references(parsed, "reply-102@example.com")
+
+    assert merged == "<root-001@example.com> <reply-102@example.com>"
+
+
+def test_merge_references_deduplicates_repeated_ids() -> None:
+    parsed = _raw(
+        message_id="reply-102@example.com",
+        extra_headers={"References": "<root-001@example.com> <root-001@example.com>"},
+    )
+
+    merged = _merge_references(parsed, "reply-102@example.com")
+
+    assert merged == "<root-001@example.com> <reply-102@example.com>"
+
+
+def test_thread_key_ignores_header_comments() -> None:
+    """The thread cache key and the reference chain must name the same root."""
+
+    parsed = _raw(
+        message_id="m2@example.com",
+        extra_headers={"References": "(from Outlook) <root-001@example.com> <m1@example.com>"},
+    )
+
+    assert thread_key_for(parsed) == "root-001@example.com"
+    assert _merge_references(parsed, "m2@example.com").startswith("<root-001@example.com>")
+
+
+def test_thread_key_reads_the_first_id_of_a_multi_id_in_reply_to() -> None:
+    parsed = _raw(
+        message_id="m2@example.com",
+        extra_headers={"In-Reply-To": "<root-001@example.com> <m1@example.com>"},
+    )
+
+    assert thread_key_for(parsed) == "root-001@example.com"
+
+
+def test_merge_references_without_a_message_id() -> None:
+    parsed = _raw(
+        message_id="reply-102@example.com",
+        extra_headers={"In-Reply-To": "<root-001@example.com>"},
+    )
+
+    assert _merge_references(parsed, "") == "<root-001@example.com>"
+
+
+async def test_send_keeps_the_thread_root_when_inbound_has_no_references(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reply must stay in the thread mail clients built from ``In-Reply-To``."""
+
+    channel = EmailChannel(config=_config())
+    inbound = channel._to_incoming(
+        _raw(
+            message_id="m2@example.com",
+            extra_headers={"In-Reply-To": "<m1@example.com>"},
+        )
+    )
+    assert inbound is not None
+    sent: list[EmailMessage] = []
+    monkeypatch.setattr(channel, "_smtp_send", sent.append)
+
+    await channel.send(channel.build_reply_message("the answer", inbound))
+
+    outbound = sent[0]
+    assert outbound["In-Reply-To"] == "<m2@example.com>"
+    assert outbound["References"] == "<m1@example.com> <m2@example.com>"
 
 
 async def test_send_resolves_the_recipient_from_the_thread_cache(
