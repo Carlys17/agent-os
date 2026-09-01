@@ -36,8 +36,7 @@ class _StaticClient(MCPClient):
         ]
 
     async def call_tool(self, name: str, arguments: dict) -> MCPToolResult:
-        from agentos.mcp.types import MCPToolResult
-        return MCPToolResult(content=f"{name}:{arguments}")
+        return MCPToolResult(content=f"{self.config.name}:{name}:{arguments}")
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -87,10 +86,10 @@ async def test_disconnect_older_server_preserves_newer_handler(
 
 
 @pytest.mark.asyncio
-async def test_disconnect_newer_server_removes_tool(
+async def test_disconnect_newer_server_restores_older_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Disconnecting the newer (current owner) server removes the tool."""
+    """Disconnecting the newer owner restores the older still-active handler."""
     from agentos.mcp import discovery
 
     config_a = MCPServerConfig(name="server_A", transport="stdio", command="mock-mcp")
@@ -107,10 +106,22 @@ async def test_disconnect_newer_server_removes_tool(
 
     await discovery.disconnect_and_unregister("server_B", registry)
 
-    # B was the current owner, so its disconnect should remove the tool.
-    assert "mcp_lookup" not in registry.list_names()
+    # B was the current owner, so its disconnect removes B's handler — but A is
+    # still active and registered the same name first, so A's handler returns.
+    assert "mcp_lookup" in registry.list_names(), (
+        "Disconnecting the newer owner must restore the older server's handler"
+    )
     assert client_b.closed is True
     assert client_a.closed is False
+    assert discovery._tool_owners["lookup"] == "server_A"
+
+    # The restored handler must route to A, not to the disconnected B.
+    registered = registry.get("mcp_lookup")
+    assert registered is not None
+    result = await registered.handler()
+    assert "server_A" in result, (
+        f"restored handler should call A, got: {result!r}"
+    )
 
 
 @pytest.mark.asyncio
@@ -168,7 +179,7 @@ async def test_non_colliding_tools_remain_independent(
             ]
 
         async def call_tool(self, name: str, arguments: dict) -> MCPToolResult:
-            return MCPToolResult(content=f"{name}:{arguments}")
+            return MCPToolResult(content=f"{self.config.name}:{name}:{arguments}")
 
     config_a = MCPServerConfig(name="server_A", transport="stdio", command="mock-mcp")
     config_b = MCPServerConfig(name="server_B", transport="stdio", command="mock-mcp")
