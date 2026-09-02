@@ -2162,9 +2162,6 @@ async def start_gateway_server(
         config=config,
         diagnostics_state=diagnostics_state,
     )
-    # Patch deferred callback so memory writes refresh TurnRunner snapshots
-    if hasattr(svc, "_turn_runner_ref"):
-        svc._turn_runner_ref.append(turn_runner)  # type: ignore[attr-defined]
 
     # Lazy ref for channel_manager — cron handler captures it via closure,
     # populated after channel_manager is constructed below.
