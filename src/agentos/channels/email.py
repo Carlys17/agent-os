@@ -208,6 +208,27 @@ def sender_allowed(sender: str, allowlist: list[str] | tuple[str, ...]) -> bool:
     return False
 
 
+def _quote_imap_mailbox(folder: str) -> str:
+    """Return ``folder`` as an RFC 3501 quoted-string for ``SELECT``.
+
+    ``imaplib`` splices command arguments onto the wire verbatim, so a name
+    with a space in it — ``Sent Items`` and friends are ordinary on
+    Exchange/Outlook — arrives as two tokens and the server answers ``BAD``.
+    RFC 3501 4.3 escapes only ``\\`` and ``"`` inside a quoted-string;
+    control characters cannot appear at all, and a bare CR/LF would end the
+    command line and let the tail of the name run as a second IMAP command, so
+    those are refused rather than escaped.
+    """
+
+    name = folder or ""
+    if not name.strip():
+        raise ValueError("email channel imap_folder must not be empty")
+    if any(char < " " or char == "\x7f" for char in name):
+        raise ValueError(f"email channel imap_folder must not contain control characters: {name!r}")
+    escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def decode_header_value(value: str | None) -> str:
     """Decode an RFC 2047 header into text, degrading to the raw value."""
 
@@ -389,6 +410,9 @@ class EmailChannel:
                 "email channel requires a non-empty allowed_senders allowlist; "
                 "an open inbox would let any stranger drive the agent"
             )
+        # Surface an unusable folder name here instead of as an opaque server
+        # ``BAD`` once every poll interval.
+        _quote_imap_mailbox(self.config.imap_folder)
         if not self.config.imap_ssl:
             log.warning("email.imap_plaintext", name=self.config.name)
         if not (self.config.smtp_ssl or self.config.smtp_starttls):
@@ -465,7 +489,7 @@ class EmailChannel:
 
         client = self._imap_connect()
         try:
-            client.select(self.config.imap_folder)
+            client.select(_quote_imap_mailbox(self.config.imap_folder))
             status, data = client.search(None, "UNSEEN")
             if status != "OK":
                 raise RuntimeError(f"IMAP search failed: {status}")
