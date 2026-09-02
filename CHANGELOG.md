@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `SubscriptionManager._message_subs` now removes empty sets on
   unsubscription and connection teardown, preventing a slow memory leak
   on long-running gateways (#609).
+- The Environment view's path strip shortens Windows paths again. `shortPath`
+  split on `/` only, so a gateway-reported `C:\Users\<name>\.agentos\.env` counted
+  as a single segment and was rendered untrimmed, overflowing the header strip
+  it was written to keep short. Backslashes are normalised before splitting, so
+  Windows and mixed-separator paths trim to their last two segments like POSIX
+  ones do.
 
 ## [2026.9.2] - 2026-09-02
 
