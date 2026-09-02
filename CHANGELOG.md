@@ -42,6 +42,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   it was written to keep short. Backslashes are normalised before splitting, so
   Windows and mixed-separator paths trim to their last two segments like POSIX
   ones do.
+- Cron schedules that restrict both day-of-month and day-of-week now follow the
+  POSIX OR rule instead of ANDing the two fields. `0 0 1,15 * 5` means "the 1st,
+  the 15th, or any Friday" — as it does in cron, croniter, and every scheduler
+  users compare against — where AgentOS previously required a date to be both a
+  1st/15th *and* a Friday, silently killing such schedules for virtually the
+  whole month. `CronField` now records whether the field was written as a bare
+  `*`, since expanding `*` to the full value set made it indistinguishable from
+  an explicit `1-31`/`0-6` at match time and the rule applies only when neither
+  day field is a wildcard. Schedules with a wildcard in either day field are
+  unchanged. This also restores parity with the cron panel in the web UI, whose
+  "next runs" preview (`frontend/src/views/cron/logic.ts`) has always applied
+  the OR rule — so the times it showed disagreed with when the job actually
+  fired. ([#660](https://github.com/use-agent-os/agent-os/issues/660))
 
 ## [2026.9.2] - 2026-09-02
 
