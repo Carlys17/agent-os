@@ -99,6 +99,7 @@ def build_cards(result: dict[str, Any]) -> list[dict[str, Any]]:
         {
             "title": title,
             "subtitle": name if symbol else "",
+            "logo": _text(token.get("logoURI")),
             "badge": label,
             "badgeTone": tone,
             "fields": fields,

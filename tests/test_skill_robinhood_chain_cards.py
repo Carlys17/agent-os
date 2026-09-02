@@ -51,6 +51,16 @@ def test_mime_matches_the_frontend_renderer() -> None:
     assert chain_cards.CARDS_MIME == "application/vnd.agentos.cards+json"
 
 
+def test_card_carries_the_token_logo_when_the_list_had_one() -> None:
+    card = chain_cards.build_cards(_result(token=_token(logoURI="https://a.example/n.png")))[0]
+    assert card["logo"] == "https://a.example/n.png"
+
+
+def test_a_token_without_a_logo_renders_an_empty_one() -> None:
+    """The renderer drops an empty logo rather than leaving a torn frame."""
+    assert chain_cards.build_cards(_result())[0]["logo"] == ""
+
+
 def test_card_carries_price_supply_multiplier_and_address() -> None:
     card = chain_cards.build_cards(_result())[0]
     assert card["title"] == "AAPL"

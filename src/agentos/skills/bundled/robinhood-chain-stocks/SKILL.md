@@ -103,9 +103,14 @@ command, no flag, no `publish_artifact` call. Price, supply, multiplier and a
 So: answer in prose and let the card carry the numbers. Do **not** also
 hand-write a table of the same fields.
 
-stdout stays pure JSON; the publish marker goes to stderr. `--no-cards` turns it
-off, and `--cards FILE` picks the filename. `scripts/chain_cards.py` builds the
-same payload from the JSON on stdin if you need it separately.
+Two things would silently break this, so do neither:
+
+- **Never append `2>/dev/null`** (or any stderr redirect) to the command. The
+  publish marker travels on stderr; discarding it discards the card.
+- **Never pass `--no-cards`.** It exists for humans running the script by hand.
+
+`--cards FILE` picks the filename if you need a specific one.
+`scripts/chain_cards.py` builds the same payload from the JSON on stdin.
 
 The badge is derived from the reading, worst case first — `unverified` (chain
 unreachable) → `not-a-stock-token` → `price stale` → `oracle paused` →

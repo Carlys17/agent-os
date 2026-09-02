@@ -197,17 +197,34 @@ function buildField(field: CardField, onCopy: (value: string) => void): HTMLElem
   return row
 }
 
+/** Up to two leading alphanumerics of the title, for the monogram. */
+export function monogram(title: string): string {
+  const cleaned = title.replace(/[^\p{L}\p{N}]/gu, '')
+  return cleaned.slice(0, 2).toUpperCase()
+}
+
 function buildCard(card: Card, onCopy: (value: string) => void): HTMLElement {
   const host = el('article', 'msg-artifact-cards__card')
 
   const header = el('header', 'msg-artifact-cards__head')
+  // A ticker monogram is the base, not a fallback. The console's CSP allows
+  // images from 'self', data: and raw.githubusercontent.com only, so a logo on
+  // a token-list CDN never loads (skills/hub/bankr.py hit the same wall and made
+  // the same call). Fetching one would also tell that CDN which tickers the user
+  // is researching, from their IP -- a real leak for a finance surface. The img
+  // below still covers a logo the CSP does happen to allow.
+  const mark = el('span', 'msg-artifact-cards__mark', monogram(card.title))
+  mark.setAttribute('aria-hidden', 'true')
+  header.append(mark)
+
   if (card.logo) {
     const img = document.createElement('img')
     img.className = 'msg-artifact-cards__logo'
     img.src = card.logo
     img.alt = ''
     img.loading = 'lazy'
-    // A broken logo must not leave a torn frame in the grid.
+    // Only take over from the monogram once the bytes actually arrived.
+    img.addEventListener('load', () => mark.remove())
     img.addEventListener('error', () => img.remove())
     header.append(img)
   }

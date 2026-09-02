@@ -439,6 +439,12 @@ def main() -> int:
     if listed is not None:
         state["name"] = _clean_name(str(listed.get("name", "")))
         state["symbol"] = symbol
+        # Display-only, and carried purely so the card renderer has a logo. It
+        # comes from the third-party token list, so the renderer restricts it to
+        # http(s) rather than trusting it.
+        logo = str(listed.get("logoURI", "") or "").strip()
+        if logo:
+            state["logoURI"] = logo
     if state.get("isStockToken") is False:
         state.setdefault("notes", []).append(
             "uiMultiplier() reverted: this address is not a Robinhood Stock Token"

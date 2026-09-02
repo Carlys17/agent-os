@@ -135,9 +135,14 @@ So: answer in prose and let the grid carry the addresses. Do **not** also
 hand-write a markdown table of the matches — a 42-character address turns one
 into a horizontal scroll.
 
-stdout stays pure JSON; the publish marker goes to stderr. `--no-cards` turns it
-off, and `--cards FILE` picks the filename. `scripts/rwa_cards.py` builds the
-same payload from the JSON on stdin if you need it separately.
+Two things would silently break this, so do neither:
+
+- **Never append `2>/dev/null`** (or any stderr redirect) to the command. The
+  publish marker travels on stderr; discarding it discards the grid.
+- **Never pass `--no-cards`.** It exists for humans running the script by hand.
+
+`--cards FILE` picks the filename if you need a specific one.
+`scripts/rwa_cards.py` builds the same payload from the JSON on stdin.
 
 Keep `--output` a bare filename as shown. Scripts run with the workspace as
 their working directory, and `publish_artifact` only accepts files inside that

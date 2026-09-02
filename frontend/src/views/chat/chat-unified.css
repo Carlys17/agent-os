@@ -429,13 +429,27 @@
   min-width: 0;
 }
 
-.chat-surface .msg-artifact-cards__logo {
+.chat-surface .msg-artifact-cards__logo,
+.chat-surface .msg-artifact-cards__mark {
   flex-shrink: 0;
   width: 1.75rem;
   height: 1.75rem;
   border-radius: 50%;
   background: var(--card);
   object-fit: contain;
+}
+
+/* Ticker monogram — the default mark. See cards.ts for why a remote logo is
+   not fetched. */
+.chat-surface .msg-artifact-cards__mark {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .chat-surface .msg-artifact-cards__heading {

@@ -5,6 +5,7 @@ import {
   MAX_CARDS,
   createCardsMounter,
   isCardsArtifact,
+  monogram,
   normalizeCardsPayload,
   renderCards,
   safeLogoUrl,
@@ -67,6 +68,20 @@ describe('safeLogoUrl', () => {
   })
 })
 
+describe('monogram', () => {
+  it('takes up to two leading alphanumerics, uppercased', () => {
+    expect(monogram('AAPL')).toBe('AA')
+    expect(monogram('gme')).toBe('GM')
+    expect(monogram('X')).toBe('X')
+  })
+
+  it('skips punctuation and copes with an empty title', () => {
+    expect(monogram('e.l.f. Beauty')).toBe('EL')
+    expect(monogram('...')).toBe('')
+    expect(monogram('')).toBe('')
+  })
+})
+
 describe('normalizeCardsPayload', () => {
   it('normalizes a well-formed payload', () => {
     const payload = normalizeCardsPayload({ title: 'Results', cards: [AAPL] })
@@ -123,6 +138,44 @@ describe('renderCards', () => {
     )
     // The payload title wins over the artifact filename.
     expect(node.querySelector('.msg-artifact-cards__name')!.textContent).toBe('Lookup')
+  })
+
+  it('shows a ticker monogram, because the CSP blocks token-list logo CDNs', () => {
+    const node = host()
+    renderCards(node, normalizeCardsPayload({ cards: [AAPL] })!, () => {})
+
+    const mark = node.querySelector<HTMLElement>('.msg-artifact-cards__mark')!
+    expect(mark.textContent).toBe('AA')
+    expect(mark.getAttribute('aria-hidden')).toBe('true')
+    // The img is still attached; it only replaces the monogram once it loads.
+    expect(node.querySelector('.msg-artifact-cards__logo')).not.toBeNull()
+  })
+
+  it('keeps the monogram when the logo fails to load', () => {
+    const node = host()
+    renderCards(node, normalizeCardsPayload({ cards: [AAPL] })!, () => {})
+
+    const img = node.querySelector<HTMLImageElement>('.msg-artifact-cards__logo')!
+    img.dispatchEvent(new Event('error'))
+    expect(node.querySelector('.msg-artifact-cards__logo')).toBeNull()
+    expect(node.querySelector('.msg-artifact-cards__mark')).not.toBeNull()
+  })
+
+  it('drops the monogram once a logo actually loads', () => {
+    const node = host()
+    renderCards(node, normalizeCardsPayload({ cards: [AAPL] })!, () => {})
+
+    node
+      .querySelector<HTMLImageElement>('.msg-artifact-cards__logo')!
+      .dispatchEvent(new Event('load'))
+    expect(node.querySelector('.msg-artifact-cards__mark')).toBeNull()
+  })
+
+  it('a card with no logo still gets a monogram', () => {
+    const node = host()
+    renderCards(node, normalizeCardsPayload({ cards: [{ title: 'GME' }] })!, () => {})
+    expect(node.querySelector('.msg-artifact-cards__mark')!.textContent).toBe('GM')
+    expect(node.querySelector('.msg-artifact-cards__logo')).toBeNull()
   })
 
   it('never lets a payload string reach the DOM as markup', () => {
