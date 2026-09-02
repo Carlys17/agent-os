@@ -235,6 +235,7 @@ def test_write_cap_matches_injection_cap():
 
 # ── sanitize_fts_query regression tests ─────────────────────────────────
 
+
 def test_sanitize_fts_query_preserves_unicode():
     """Unicode letters (Latin-1 accents, CJK, Cyrillic, Arabic, etc.) must be
     preserved in FTS tokens so searches actually find non-ASCII transcript
@@ -292,3 +293,97 @@ def test_sanitize_fts_query_empty_and_blank():
     assert SessionStorage.sanitize_fts_query("") == '""'
     assert SessionStorage.sanitize_fts_query("   ") == '""'
     assert SessionStorage.sanitize_fts_query("\t\n") == '""'
+
+
+# ── FTS5 end-to-end regression tests (issue #903) ─────────────────────
+# The sanitizer output is an implementation detail; the hit count against a
+# real in-memory FTS5 index is the contract. These tests seed a real
+# transcript_fts via append_transcript_entry and search through
+# search_transcript, covering the four script families from the issue table
+# (Latin-1 accents, CJK, Cyrillic, Vietnamese diacritics) plus the
+# punctuation-only empty-guard path.
+
+
+@pytest.mark.asyncio
+async def test_search_transcript_finds_unicode_content_end_to_end(storage):
+    """A Unicode query must find rows a real FTS5 index actually matched.
+
+    Before the fix the ASCII-only whitelist stripped every non-ASCII char,
+    so '部署' became the empty MATCH literal and search_transcript returned
+    [] even though the row was indexed.
+    """
+    from agentos.session.models import SessionNode, TranscriptEntry
+
+    t0 = 1_700_000_000_000
+    await storage.upsert_session(
+        SessionNode(session_key="sk:fts", session_id="sess-fts", created_at=t0, updated_at=t0)
+    )
+    seed_rows = [
+        ("user", "部署 pipeline 完成", t0),
+        ("assistant", "报告: 中文 content here", t0 + 1),
+        ("user", "café déjeuner was great", t0 + 2),
+        ("assistant", "Привет мир из Москвы", t0 + 3),
+        ("user", "triển khai hệ thống xong", t0 + 4),
+        ("assistant", "plain ascii note", t0 + 5),
+    ]
+    for role, content, created_at in seed_rows:
+        await storage.append_transcript_entry(
+            TranscriptEntry(
+                session_id="sess-fts",
+                session_key="sk:fts",
+                role=role,
+                content=content,
+                created_at=created_at,
+            )
+        )
+
+    # Each Unicode query must return its row — hit count is the contract.
+    expected = {
+        "部署": "部署 pipeline 完成",
+        "中文": "报告: 中文 content here",
+        "café": "café déjeuner was great",
+        "Привет": "Привет мир из Москвы",
+        "triển": "triển khai hệ thống xong",
+    }
+    # Strip snippet() highlight markers (">>>term<<<") before comparing.
+    for query, content in expected.items():
+        hits = await storage.search_transcript(query, session_id="sess-fts")
+        assert len(hits) == 1, f"query {query!r} returned {len(hits)} hits, expected 1"
+        snippet = (hits[0].get("snippet") or "").replace(">>>", "").replace("<<<", "")
+        assert content in snippet, f"query {query!r} hit wrong row: {snippet!r}"
+
+    # Partial-token regression: the old sanitizer turned 'café' into '"caf"',
+    # which can match UNRELATED ascii rows. Exact 'café' must not match the
+    # plain-ascii row either.
+    ascii_only = await storage.search_transcript("plain ascii", session_id="sess-fts")
+    assert len(ascii_only) == 1
+    plain_snippet = (ascii_only[0].get("snippet") or "").replace(">>>", "").replace("<<<", "")
+    assert "plain ascii note" in plain_snippet
+
+
+@pytest.mark.asyncio
+async def test_search_transcript_punctuation_only_query_returns_empty(storage):
+    """A query made only of punctuation must exercise the empty-guard path.
+
+    All FTS5 syntax chars are stripped, so the sanitized query is the empty
+    MATCH literal and search_transcript must return [] (no rows, no crash).
+    """
+    from agentos.session.models import SessionNode, TranscriptEntry
+
+    t0 = 1_700_000_000_000
+    await storage.upsert_session(
+        SessionNode(session_key="sk:punct", session_id="sess-punct", created_at=t0, updated_at=t0)
+    )
+    await storage.append_transcript_entry(
+        TranscriptEntry(
+            session_id="sess-punct",
+            session_key="sk:punct",
+            role="user",
+            content="hello world",
+            created_at=t0,
+        )
+    )
+    for query in ("!!!", "???", '""', "(())", "***", "--", "  .,;  "):
+        assert storage.sanitize_fts_query(query) == '""', f"sanitizer leaked {query!r}"
+        hits = await storage.search_transcript(query, session_id="sess-punct")
+        assert hits == [], f"punctuation-only query {query!r} returned {hits}"
