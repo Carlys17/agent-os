@@ -92,6 +92,12 @@ Questions this skill answers — in any language:
 Answer with the **symbol** and the **contract address**, and mention it lives on
 Robinhood Chain (chainId 4663). Include the address verbatim.
 
+**On the Web chat channel this is a two-command job, not one.** Run the lookup,
+then run `rwa_cards.py` and publish what it prints — see
+[Show the results as cards](#show-the-results-as-cards-in-web-chat). Do **not**
+hand-write a markdown table of the matches: a 42-character address turns one
+into a horizontal scroll. Answer in prose plus the published card grid.
+
 ## Run it
 
 ```bash
@@ -116,9 +122,12 @@ python3 {baseDir}/scripts/rwa_lookup.py --query "Apple" --rpc-url https://…
 
 ## Show the results as cards in Web chat
 
-In the Web UI, render the matches as a card grid instead of a markdown table —
-a contract address is 42 characters and would force the table into a horizontal
-scroll. Pipe the lookup through `rwa_cards.py`, then publish what it prints:
+**Required on the Web chat channel whenever the lookup returned any match.**
+Render the matches as a card grid rather than a markdown table — a contract
+address is 42 characters and would force a table into a horizontal scroll.
+
+Pipe the lookup through `rwa_cards.py`, then publish what it prints. Two
+commands, both of them:
 
 ```bash
 python3 {baseDir}/scripts/rwa_lookup.py --query "Apple" \
