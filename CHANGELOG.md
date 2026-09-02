@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Telegram Bot API calls now retry `ConnectTimeout` and `PoolTimeout` alongside
+  `ConnectError`. All three happen before any request bytes reach Telegram — a
+  DNS/TLS handshake that never completed, or a wait for a pooled connection —
+  but the two timeouts are `TimeoutException` siblings of `ConnectError` rather
+  than subclasses, so `TelegramChannel._api()` dropped them into its generic
+  `RequestError` branch and raised on the very first attempt with zero retries.
+  `ReadTimeout` stays out of the retry path on purpose: by then the request is
+  in flight, and re-sending a `getUpdates` long poll would double-poll it.
+  ([#651](https://github.com/use-agent-os/agent-os/issues/651))
 - **`robinhood-rwa-addresses` now verifies every address against Robinhood
   Chain instead of trusting the token index.** The skill decided what counted
   as a genuine Stock Token from a name suffix in CoinGecko's list, which was
