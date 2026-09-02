@@ -1748,17 +1748,25 @@ class SessionStorage:
     def sanitize_fts_query(raw: str) -> str:
         """Sanitize a user query for safe FTS5 MATCH.
 
-        Strips FTS5 operators and special chars, wraps each token in quotes.
+        Allows Unicode letter/digit/ideograph tokens (covers Latin-1,
+        Vietnamese, CJK, Arabic, Cyrillic, etc.); strips FTS5 operators and
+        quote-breaking characters; wraps each token in double quotes for
+        literal matching. Capped at 20 tokens to bound MATCH expression size.
         """
         import re as _re
 
-        # Whitelist: only allow alphanumeric and whitespace through
-        cleaned = _re.sub(r"[^a-zA-Z0-9\s]", " ", raw)
-        # Collapse whitespace and split into tokens
+        if not raw:
+            return '""'
+        # Reject FTS5 operators and quote-breaking ASCII chars but preserve
+        # Unicode letters/digits/whitespace. Word boundaries still apply
+        # because FTS5 expects space-separated terms.
+        cleaned = _re.sub(r'["\()\*:\^]', " ", raw)
+        # Strip ASCII control chars (incl. NUL/CR/LF) and other FTS5 syntax
+        # punctuation, but keep letters/digits/underscore/Unicode categories.
+        cleaned = _re.sub(r"[\u0000-\u001f\u007f`@~+\-/\\|,.!?;<>{}]", " ", cleaned)
         tokens = cleaned.split()
         if not tokens:
             return '""'
-        # Wrap each token in double-quotes for literal matching
         return " ".join(f'"{t}"' for t in tokens[:20])  # cap at 20 terms
 
     async def search_transcript(

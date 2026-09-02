@@ -229,3 +229,66 @@ def test_write_cap_matches_injection_cap():
     assert (
         SessionManager.PROJECT_KNOWLEDGE_MAX_CHARS == TurnRunner.PROJECT_KNOWLEDGE_INJECT_MAX_CHARS
     )
+
+
+# ── sanitize_fts_query regression tests ─────────────────────────────────
+
+# ── sanitize_fts_query regression tests ─────────────────────────────────
+
+def test_sanitize_fts_query_preserves_unicode():
+    """Unicode letters (Latin-1 accents, CJK, Cyrillic, Arabic, etc.) must be
+    preserved in FTS tokens so searches actually find non-ASCII transcript
+    content. Previously the ASCII-only regex stripped all non-ASCII chars,
+    turning 'résumé' into partial tokens and '中文' into nothing."""
+    # Latin accents — before fix: "café" → '"caf"' (accent stripped, wrong stem)
+    assert SessionStorage.sanitize_fts_query("café") == '"café"'
+    # Multi-word Latin-1
+    assert SessionStorage.sanitize_fts_query("déploiement résumé") == '"déploiement" "résumé"'
+    # CJK — before fix: empty → '""', zero results
+    assert SessionStorage.sanitize_fts_query("中文 报告") == '"中文" "报告"'
+    assert SessionStorage.sanitize_fts_query("部署 pipeline") == '"部署" "pipeline"'
+    # Cyrillic
+    assert SessionStorage.sanitize_fts_query("Привет мир") == '"Привет" "мир"'
+    assert SessionStorage.sanitize_fts_query("отчёт готов") == '"отчёт" "готов"'
+    # Vietnamese diacritics — before fix: "triển khai" → '"tri" "n" "khai"'
+    assert SessionStorage.sanitize_fts_query("triển khai hệ thống") == '"triển" "khai" "hệ" "thống"'
+    # Mixed scripts
+    assert SessionStorage.sanitize_fts_query('café "quoted" 部署') == '"café" "quoted" "部署"'
+
+
+def test_sanitize_fts_query_blocks_injection():
+    """FTS5 operators, quotes, and other syntax-breaking chars must be stripped
+    so a malicious query cannot expand the scope of a FTS MATCH."""
+    # Quoted-string injection: "test" OR 1=1 --
+    assert SessionStorage.sanitize_fts_query('test" OR 1=1 --') == '"test" "OR" "1=1"'
+    # Star wildcard at end of term
+    assert SessionStorage.sanitize_fts_query("star*") == '"star"'
+    # NEAR operator
+    assert SessionStorage.sanitize_fts_query("a NEAR b") == '"a" "NEAR" "b"'
+    # Caret prefix
+    assert SessionStorage.sanitize_fts_query("^prefix") == '"prefix"'
+    # Parentheses group
+    assert SessionStorage.sanitize_fts_query("(grouped)") == '"grouped"'
+    # Column selector
+    assert SessionStorage.sanitize_fts_query("col:term") == '"col" "term"'
+    # Backtick command injection
+    assert SessionStorage.sanitize_fts_query("a`whoami`b") == '"a" "whoami" "b"'
+    # NUL / control chars stripped
+    assert SessionStorage.sanitize_fts_query("a\x00b\x07c") == '"a" "b" "c"'
+
+
+def test_sanitize_fts_query_token_cap():
+    """Queries with more than 20 tokens are silently truncated to prevent
+    oversized MATCH expressions."""
+    many = " ".join([f"word{i}" for i in range(30)])
+    result = SessionStorage.sanitize_fts_query(many)
+    assert result.count('"') == 40  # 20 tokens × 2 quotes each
+    assert "word29" not in result
+    assert "word0" in result
+
+
+def test_sanitize_fts_query_empty_and_blank():
+    """Empty or whitespace-only queries return the empty-string literal."""
+    assert SessionStorage.sanitize_fts_query("") == '""'
+    assert SessionStorage.sanitize_fts_query("   ") == '""'
+    assert SessionStorage.sanitize_fts_query("\t\n") == '""'
