@@ -93,6 +93,28 @@ python3 {baseDir}/scripts/chain_stocks.py --query MSFT --no-price
 python3 {baseDir}/scripts/chain_stocks.py --query SPY --rpc-url https://your-provider/rpc
 ```
 
+## The card renders itself
+
+Every run writes a Web-chat card next to the JSON (`<SYMBOL>.cards.json`) and
+`exec_command` publishes it. **There is nothing for you to do** — no extra
+command, no flag, no `publish_artifact` call. Price, supply, multiplier and a
+42-character address read far better as a card than as a bullet list.
+
+So: answer in prose and let the card carry the numbers. Do **not** also
+hand-write a table of the same fields.
+
+stdout stays pure JSON; the publish marker goes to stderr. `--no-cards` turns it
+off, and `--cards FILE` picks the filename. `scripts/chain_cards.py` builds the
+same payload from the JSON on stdin if you need it separately.
+
+The badge is derived from the reading, worst case first — `unverified` (chain
+unreachable) → `not-a-stock-token` → `price stale` → `oracle paused` →
+`verified`. Still state the caveat in your own words as well; the card
+supplements the answer, it does not replace it.
+
+Answer in prose plus the card. Do not also hand-write a table of the same
+fields.
+
 ### Output (JSON, trimmed)
 
 ```json

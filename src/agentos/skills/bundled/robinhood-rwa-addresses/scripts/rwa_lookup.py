@@ -329,6 +329,20 @@ def main() -> int:
         action="store_true",
         help="Skip the on-chain beacon check (offline; every match is reported unverified)",
     )
+    parser.add_argument(
+        "--cards",
+        metavar="FILE",
+        help=(
+            "Where to write the Web-chat card artifact. Defaults to <query>.cards.json "
+            "in the working directory; the publish marker goes to stderr so stdout stays "
+            "pure JSON."
+        ),
+    )
+    parser.add_argument(
+        "--no-cards",
+        action="store_true",
+        help="Do not write the card artifact (JSON on stdout only).",
+    )
     args = parser.parse_args()
 
     try:
@@ -362,8 +376,52 @@ def main() -> int:
     if warning:
         result["warning"] = warning
     print(json.dumps(result, ensure_ascii=False))
+    if not args.no_cards:
+        _write_cards(result, args.cards or _default_cards_name(result))
     return 0
 
 
+def _default_cards_name(result: dict[str, Any]) -> str:
+    matches = result.get("matches") or []
+    symbol = ""
+    if matches and isinstance(matches[0], dict):
+        symbol = str(matches[0].get("symbol") or "")
+    slug = re.sub(r"[^A-Za-z0-9._-]", "", symbol) or "lookup"
+    return f"{slug}.cards.json"
+
+
+def _write_cards(result: dict[str, Any], output: str) -> None:
+    """Write the card artifact and announce it on **stderr**.
+
+    On by default rather than opt-in. Both were tried first and both failed the
+    same way: told to run a second piped command, or to pass a flag the docs put
+    in every example, the model ran the bare command anyway and answered with a
+    hand-written table. The only arrangement that actually renders is the one
+    that needs no decision from it at all.
+
+    stdout stays pure JSON so the lookup itself is unchanged; ``exec_command``
+    merges stderr into the captured output, so the publish marker still reaches
+    the auto-publisher.
+
+    Never fatal -- a failed render must not cost the caller the lookup it
+    already paid for.
+    """
+    try:
+        from pathlib import Path  # noqa: PLC0415 - only needed on this path
+
+        import rwa_cards  # noqa: PLC0415 - sibling module, resolved at call time
+
+        payload = rwa_cards.build_payload(result)
+        if not payload["cards"]:
+            return
+        Path(output).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        print(f"publish_artifact path={output} mime={rwa_cards.CARDS_MIME}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - lookup already printed; never fail on the card
+        print(f"[card not written: {exc}]", file=sys.stderr)
+
+
 if __name__ == "__main__":
+    import pathlib
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
     sys.exit(main())

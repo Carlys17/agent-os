@@ -55,6 +55,24 @@ inline. Two more mimes render inline:
 There is nothing to register: any skill gets one by publishing a file with that
 mime. Two steps, and both have a failure mode worth knowing.
 
+**`exec_command` publishes these two mimes for you.** When a command's stdout
+contains a line that is exactly
+
+```
+publish_artifact path=<file> mime=application/vnd.agentos.<something>+json
+```
+
+the artifact is published automatically and the marker is replaced with a note
+telling the model not to publish it again. This is deliberate: leaving the call
+to the model meant the file got written and the UI never drew, because the model
+would answer with a hand-written table instead. Only the
+`application/vnd.agentos.` family auto-publishes — a plain file still needs an
+explicit `publish_artifact` call, so ordinary command output cannot push a
+workspace file at the user. Path containment is enforced by `publish_artifact`
+itself, unchanged.
+
+Write the marker on its own line: prose that merely mentions it is ignored.
+
 **1. Write the JSON inside the workspace.** Scripts run with the workspace as
 their working directory, so a bare filename lands in the right place.
 `publish_artifact` rejects anything outside the workspace, so an absolute path

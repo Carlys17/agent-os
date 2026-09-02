@@ -92,11 +92,11 @@ Questions this skill answers — in any language:
 Answer with the **symbol** and the **contract address**, and mention it lives on
 Robinhood Chain (chainId 4663). Include the address verbatim.
 
-**On the Web chat channel this is a two-command job, not one.** Run the lookup,
-then run `rwa_cards.py` and publish what it prints — see
-[Show the results as cards](#show-the-results-as-cards-in-web-chat). Do **not**
-hand-write a markdown table of the matches: a 42-character address turns one
-into a horizontal scroll. Answer in prose plus the published card grid.
+**On the Web chat channel, pipe the lookup through `rwa_cards.py`** — one
+command, see [Show the results as cards](#show-the-results-as-cards-in-web-chat).
+The card grid is published for you; you do not call `publish_artifact`. Do
+**not** hand-write a markdown table of the matches: a 42-character address turns
+one into a horizontal scroll. Answer in prose and let the grid carry the data.
 
 ## Run it
 
@@ -126,17 +126,18 @@ python3 {baseDir}/scripts/rwa_lookup.py --query "Apple" --rpc-url https://…
 Render the matches as a card grid rather than a markdown table — a contract
 address is 42 characters and would force a table into a horizontal scroll.
 
-Pipe the lookup through `rwa_cards.py`, then publish what it prints. Two
-commands, both of them:
+Every run writes a card grid next to the JSON (`<SYMBOL>.cards.json`) and
+`exec_command` publishes it. **There is nothing for you to do** — no extra
+command, no flag, no `publish_artifact` call. The chat draws one card per match
+with the token logo, a status badge, and a copy button on the address.
 
-```bash
-python3 {baseDir}/scripts/rwa_lookup.py --query "Apple" \
-  | python3 {baseDir}/scripts/rwa_cards.py --output apple.cards.json
-```
+So: answer in prose and let the grid carry the addresses. Do **not** also
+hand-write a markdown table of the matches — a 42-character address turns one
+into a horizontal scroll.
 
-It prints a `publish_artifact path=… mime=application/vnd.agentos.cards+json`
-line; publish that artifact and the chat draws one card per match with the
-token logo, a status badge, and a copy button on the address.
+stdout stays pure JSON; the publish marker goes to stderr. `--no-cards` turns it
+off, and `--cards FILE` picks the filename. `scripts/rwa_cards.py` builds the
+same payload from the JSON on stdin if you need it separately.
 
 Keep `--output` a bare filename as shown. Scripts run with the workspace as
 their working directory, and `publish_artifact` only accepts files inside that
