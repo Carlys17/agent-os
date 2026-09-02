@@ -236,7 +236,7 @@ class TestRecursiveForceDimension:
         assert len(result) == 1
         kind, target = result[0]
         assert kind == "delete"
-        # Path normalization is platform-dependent (D:\tmp\a on Windows,
+        # Path normalization is platform-dependent (absolute Windows form vs
         # /tmp/a on POSIX) — assert on the basename, not the absolute form.
         assert Path(target).name == "a"
 
