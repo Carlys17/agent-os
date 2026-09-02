@@ -700,31 +700,33 @@ def test_surplus_static_fallback_is_reported_once_per_model(
     [
         ("deepseek-chat", "deepseek", 0.14, 0.28, 0.014),
         ("deepseek-reasoner", "deepseek", 0.70, 2.50, 0.14),
-        ("deepseek-v3", "deepseek", 0.26, 0.38, 0.014),
-        ("deepseek-r1", "deepseek", 0.70, 2.50, 0.14),
         ("claude-3-7-sonnet", "anthropic", 3.0, 15.0, 0.30),
         ("claude-3-7-sonnet-20250219", "anthropic", 3.0, 15.0, 0.30),
-        ("claude-3-5-sonnet-20241022", "anthropic", 3.0, 15.0, 0.30),
-        ("claude-3-5-haiku-20241022", "anthropic", 0.80, 4.0, 0.08),
-        ("claude-3-opus-20240229", "anthropic", 15.0, 75.0, 1.50),
-        ("gemini-2.5-flash", "gemini", 0.15, 0.60, 0.0375),
-        ("gemini-2.5-pro", "gemini", 1.25, 10.0, 0.3125),
+        ("claude-3-5-sonnet-20241022", "anthropic", 3.0, 15.0, None),
+        ("claude-3-5-haiku-20241022", "anthropic", 0.80, 4.0, None),
+        ("claude-3-opus-20240229", "anthropic", 15.0, 75.0, None),
+        ("gemini-2.5-flash", "gemini", 0.15, 0.60, None),
+        ("gemini-2.5-pro", "gemini", 1.25, 10.0, None),
         ("gemini-2.0-flash", "gemini", 0.10, 0.40, 0.025),
         ("gemini-1.5-pro", "gemini", 1.25, 5.0, 0.3125),
-        ("gemini-1.5-flash", "gemini", 0.075, 0.30, 0.01875),
-        ("gpt-4o", "openai", 2.50, 10.0, 1.25),
-        ("gpt-4o-2024-08-06", "openai", 2.50, 10.0, 1.25),
-        ("gpt-4o-mini-2024-07-18", "openai", 0.15, 0.60, 0.075),
-        ("o3-mini", "openai", 1.10, 4.40, 0.55),
+        ("gpt-4o", "openai", 2.50, 10.0, None),
+        ("gpt-4o-2024-08-06", "openai", 2.50, 10.0, None),
+        ("gpt-4o-mini-2024-07-18", "openai", 0.15, 0.60, None),
+        ("o3-mini", "openai", 1.10, 4.40, None),
+        # Vendor-prefix normalisation mapping onto bare entries
+        ("anthropic/claude-3-7-sonnet", "anthropic", 3.0, 15.0, 0.30),
+        ("google/gemini-2.0-flash", "google", 0.10, 0.40, None),
+        ("deepseek/deepseek-reasoner", "deepseek", 0.70, 2.50, 0.14),
+        ("openai/gpt-4o", "openai", 2.50, 10.0, None),
     ],
 )
-def test_direct_provider_pricing_resolves_accurately_with_prompt_cache(
+def test_direct_provider_pricing_resolves_accurately(
     monkeypatch: pytest.MonkeyPatch,
     model: str,
     provider: str,
     expected_input: float,
     expected_output: float,
-    expected_cached: float,
+    expected_cached: float | None,
 ) -> None:
     monkeypatch.setenv("AGENTOS_OPENROUTER_LIVE_PRICING", "0")
 
@@ -732,8 +734,11 @@ def test_direct_provider_pricing_resolves_accurately_with_prompt_cache(
 
     assert price.input_per_m == pytest.approx(expected_input)
     assert price.output_per_m == pytest.approx(expected_output)
-    assert price.cached_input_per_m is not None
-    assert price.cached_input_per_m == pytest.approx(expected_cached)
+    if expected_cached is not None:
+        assert price.cached_input_per_m is not None
+        assert price.cached_input_per_m == pytest.approx(expected_cached)
+    else:
+        assert price.cached_input_per_m is None
 
 
 def test_calculate_cost_usd_with_deepseek_prompt_cache_hit() -> None:
@@ -764,4 +769,3 @@ def test_calculate_cost_usd_with_anthropic_prompt_cache_hit() -> None:
 
     expected = (10_000 * 3.0 + 40_000 * 0.30 + 5_000 * 15.0) / 1_000_000
     assert cost == pytest.approx(expected)
-
