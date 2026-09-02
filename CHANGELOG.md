@@ -44,6 +44,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   its own wording, and `--rpc-url` points at an alternate node. The name-suffix
   match is retained only as the offline fallback, now tolerant of truncation.
 
+- TaskRuntime queue depth gauge (`agentos_queue_depth`) now decrements when
+  tasks leave the pending queue, instead of staying stuck at the peak enqueue
+  value (#668).
 - The sensitive-path hard block now refuses destructive intents that target
   the filesystem root. `rm -rf /` carries no sensitive *prefix*, so the
   denylist never matched it and a whole-host wipe fell through to the ordinary
