@@ -243,7 +243,10 @@ Request URL. It requires the bot token (`xoxb-...`) plus an app-level token
 (`xapp-...`) saved as `app_token`.
 
 Slack webhook mode uses the Events API Request URL. It requires the bot token
-plus `signing_secret`, and the gateway must be reachable by Slack.
+plus `signing_secret`, and the gateway must be reachable by Slack. The secret
+is mandatory, not advisory: without it the endpoint answers Slack's
+`url_verification` handshake and rejects everything else with `401`, because an
+unsigned POST cannot be attributed to Slack.
 
 Leave `slack_channel_id` empty when the adapter should reply to the incoming
 conversation. Set it only when you want a default fallback channel. Enable
