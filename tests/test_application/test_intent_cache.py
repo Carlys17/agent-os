@@ -16,6 +16,8 @@ See https://github.com/use-agent-os/agent-os/pull/546
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from agentos.application.intent_cache import IntentApprovalCache
 
 
@@ -231,7 +233,12 @@ class TestRecursiveForceDimension:
         """record() return value is unchanged: list[(kind, target)]."""
         cache = IntentApprovalCache()
         result = cache.record("rm -rf /tmp/a")
-        assert result == [("delete", "/tmp/a")]
+        assert len(result) == 1
+        kind, target = result[0]
+        assert kind == "delete"
+        # Path normalization is platform-dependent (D:\tmp\a on Windows,
+        # /tmp/a on POSIX) — assert on the basename, not the absolute form.
+        assert Path(target).name == "a"
 
     def test_record_always_persists_recursive(self) -> None:
         """record_always + clear_scope('once') leaves recursive entry."""
