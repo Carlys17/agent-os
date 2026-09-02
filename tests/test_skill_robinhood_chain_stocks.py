@@ -368,3 +368,105 @@ def test_skill_documents_the_read_only_boundary() -> None:
     assert "read-only" in body.lower()
     assert "uiMultiplier()" in body
     assert "4663" in body
+
+
+# ---------------------------------------------------------------------------
+# #815/#816: --rpc-url validation + non-dict RPC error handling
+# ---------------------------------------------------------------------------
+
+
+def test_validate_http_url_rejects_non_http_schemes() -> None:
+    """file://, ftp://, gopher://, javascript: are all rejected."""
+    for invalid in [
+        "file:///etc/passwd",
+        "file:///c:/windows/system32/drivers/etc/hosts",
+        "ftp://rpc.example.com",
+        "gopher://example.com",
+        "javascript:alert(1)",
+    ]:
+        with pytest.raises(ValueError, match="must be http:// or https://"):
+            chain_stocks._validate_http_url(invalid)
+    for empty in ["", "   "]:
+        with pytest.raises(ValueError, match="empty URL"):
+            chain_stocks._validate_http_url(empty)
+    assert chain_stocks._validate_http_url("http://127.0.0.1:8545") == "http://127.0.0.1:8545"
+    assert (
+        chain_stocks._validate_http_url("https://rpc.mainnet.chain.robinhood.com")
+        == "https://rpc.mainnet.chain.robinhood.com"
+    )
+
+
+def test_validate_http_url_rejects_missing_host() -> None:
+    with pytest.raises(ValueError, match="missing host"):
+        chain_stocks._validate_http_url("http://")
+
+
+def test_validate_http_url_accepts_valid_variants() -> None:
+    assert chain_stocks._validate_http_url("http://example.com") == "http://example.com"
+    assert (
+        chain_stocks._validate_http_url("https://user:pass@host.com:8545")
+        == "https://user:pass@host.com:8545"
+    )
+    assert chain_stocks._validate_http_url("http://[::1]:7545") == "http://[::1]:7545"
+    assert chain_stocks._validate_http_url(chain_stocks.DEFAULT_RPC_URL)
+
+
+def test_http_json_rejects_file_scheme() -> None:
+    with pytest.raises(ValueError, match="must be http:// or https://"):
+        chain_stocks._http_json("file:///etc/passwd", timeout=5.0)
+
+
+def test_http_json_rejects_empty_url() -> None:
+    with pytest.raises(ValueError, match="empty URL"):
+        chain_stocks._http_json("", timeout=5.0)
+
+
+def test_main_rejects_invalid_rpc_url(capsys: pytest.CaptureFixture[str]) -> None:
+    import json
+    code = chain_stocks.main(["--address",
+        "0x0000000000000000000000000000000000000000",
+        "--rpc-url", "file:///etc/passwd"])
+    assert code == 0
+    out, _ = capsys.readouterr()
+    payload = json.loads(out)
+    assert "invalid rpc-url" in payload.get("error", "")
+    assert "must be http:// or https://" in payload.get("error", "")
+
+
+def test_main_rejects_missing_host_url(capsys: pytest.CaptureFixture[str]) -> None:
+    import json
+    code = chain_stocks.main(["--address",
+        "0x0000000000000000000000000000000000000000",
+        "--rpc-url", "http://"])
+    assert code == 0
+    out, _ = capsys.readouterr()
+    payload = json.loads(out)
+    assert "missing host" in payload.get("error", "")
+
+
+def test_eth_call_handle_nondict_error() -> None:
+    """#816: a string RPC error no longer crashes _eth_call."""
+    from unittest.mock import patch
+
+    def mock_http_json(*args, **kwargs):
+        return {"error": "something went wrong"}
+
+    with patch.object(chain_stocks, "_http_json", side_effect=mock_http_json):
+        with pytest.raises(chain_stocks.RpcError) as exc:
+            chain_stocks._eth_call("http://127.0.0.1:8545",
+                "0x0000000000000000000000000000000000000000", "0x", 5.0)
+        assert "something went wrong" in str(exc.value)
+
+
+def test_eth_call_handle_dict_error() -> None:
+    """#816: a dict RPC error is handled the same as before."""
+    from unittest.mock import patch
+
+    def mock_http_json(*args, **kwargs):
+        return {"error": {"message": "execution reverted"}}
+
+    with patch.object(chain_stocks, "_http_json", side_effect=mock_http_json):
+        with pytest.raises(chain_stocks.RpcError) as exc:
+            chain_stocks._eth_call("http://127.0.0.1:8545",
+                "0x0000000000000000000000000000000000000000", "0x", 5.0)
+        assert "execution reverted" in str(exc.value)
