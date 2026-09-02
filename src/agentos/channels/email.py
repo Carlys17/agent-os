@@ -47,7 +47,7 @@ from email.message import EmailMessage
 from email.parser import BytesParser
 from email.policy import default as email_policy
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import structlog
 from pydantic import BaseModel, Field
@@ -60,6 +60,7 @@ from agentos.channels._util import (
     AccessDecision,
     ChannelAccessPolicy,
     EventDedupeCache,
+    check_channel_file_size,
 )
 from agentos.channels.contract import (
     ChannelCapabilities,
@@ -311,6 +312,7 @@ class EmailChannel:
     """
 
     config: EmailChannelConfig
+    MAX_ATTACHMENT_BYTES: ClassVar[int] = 25 * 1024 * 1024
 
     _queue: asyncio.Queue[IncomingMessage] = field(
         default_factory=asyncio.Queue, init=False, repr=False
@@ -786,6 +788,7 @@ class EmailChannel:
 
         path = Path(file_path)
         try:
+            check_channel_file_size(path, self.MAX_ATTACHMENT_BYTES, "Email")
             payload = path.read_bytes()
             to_address, subject, in_reply_to, references = self._resolve_target(
                 OutgoingMessage(content="", reply_to=thread_id)

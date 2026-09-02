@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import httpx
 import structlog
@@ -29,6 +29,7 @@ from agentos.channels._util import (
     EventDedupeCache,
     RateLimiter,
     StreamThrottle,
+    check_channel_file_size,
     retry_request,
 )
 from agentos.channels.contract import (
@@ -1016,12 +1017,15 @@ class DiscordChannel:
             provider_message_id=str(data.get("id", "")),
         )
 
+    MAX_FILE_BYTES: ClassVar[int] = 10 * 1024 * 1024
+
     async def send_file(
         self,
         channel_id: str,
         file_path: str,
         content: str = "",
     ) -> ChannelSendResult:
+        check_channel_file_size(file_path, self.MAX_FILE_BYTES, "Discord")
         await self._rate_limiter.acquire()
         client = self._get_client()
         with open(file_path, "rb") as f:
