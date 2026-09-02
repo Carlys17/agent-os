@@ -132,7 +132,7 @@ async def test_background_output_is_capped_while_stdout_is_fully_drained(
 
     await shell._read_bg_output(session)
 
-    assert "".join(session.output_lines) == "abcdefghij"
+    assert "".join(session.output_lines) == "ghijklmnop"
     assert session.output_chars == 10
     assert session.output_truncated is True
     assert stdout.read_calls == 4

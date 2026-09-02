@@ -571,13 +571,24 @@ async def _read_bg_output(session: _BgSession) -> None:
 
 
 def _append_bg_output(session: _BgSession, output: str) -> None:
-    """Retain bounded output while allowing the collector to keep draining stdout."""
-    remaining = max(0, _MAX_BACKGROUND_OUTPUT_CHARS - session.output_chars)
-    retained = output[:remaining]
-    if retained:
-        session.output_lines.append(retained)
-        session.output_chars += len(retained)
-    if len(retained) < len(output) and not session.output_truncated:
+    """Retain the bounded output tail while continuing to drain stdout."""
+    if not output:
+        return
+
+    session.output_lines.append(output)
+    session.output_chars += len(output)
+    truncated_now = session.output_chars > _MAX_BACKGROUND_OUTPUT_CHARS
+    while session.output_chars > _MAX_BACKGROUND_OUTPUT_CHARS:
+        overflow = session.output_chars - _MAX_BACKGROUND_OUTPUT_CHARS
+        first = session.output_lines[0]
+        if len(first) <= overflow:
+            session.output_lines.pop(0)
+            session.output_chars -= len(first)
+        else:
+            session.output_lines[0] = first[overflow:]
+            session.output_chars -= overflow
+
+    if truncated_now and not session.output_truncated:
         session.output_truncated = True
         log.warning(
             "shell.bg_output_truncated",
