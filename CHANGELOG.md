@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `SubscriptionManager._message_subs` now removes empty sets on
+  unsubscription and connection teardown, preventing a slow memory leak
+  on long-running gateways (#609).
+
 ## [2026.9.2] - 2026-09-02
 
 ### Added
