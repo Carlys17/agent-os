@@ -78,3 +78,24 @@ def test_config_set_unknown_key_still_fails(tmp_path: Path, monkeypatch) -> None
     assert result.exit_code == 1
     assert "Key not found" in result.output
     assert not cfg_path.exists()
+
+
+def test_config_set_env_hint_rejects_unknown_key() -> None:
+    result = runner.invoke(app, ["config", "set", "gateway.port", "18791"])
+    assert result.exit_code == 1
+    assert "Key not found" in result.output
+    assert "export " not in result.output.lower()
+
+
+def test_config_set_env_hint_rejects_skills_config_map() -> None:
+    result = runner.invoke(app, ["config", "set", "skills.config.wiki.path", "/srv/wiki"])
+    assert result.exit_code == 1
+    assert "Key not found" in result.output
+    assert "export " not in result.output.lower()
+
+
+def test_config_set_env_hint_still_prints_for_existing_field() -> None:
+    result = runner.invoke(app, ["config", "set", "skills.max_skills_prompt_chars", "32000"])
+    assert result.exit_code == 0, result.output
+    assert "export AGENTOS_GATEWAY_SKILLS__MAX_SKILLS_PROMPT_CHARS=32000" in result.output
+

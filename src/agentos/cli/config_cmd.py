@@ -83,6 +83,15 @@ def config_set(
         console.print("[yellow]Restart the gateway to apply this setting.[/yellow]")
         return
 
+    from agentos.gateway.config import GatewayConfig
+
+    data = GatewayConfig().to_toml_dict()
+    parts = key.split(".")
+    skill_config_map = len(parts) >= 3 and parts[0] == "skills" and parts[1] == "config"
+    if skill_config_map or _get_key(data, key) is _MISSING:
+        console.print(f"[red]Key not found: {escape(key)}[/red]")
+        raise typer.Exit(1)
+
     env_key = "AGENTOS_GATEWAY_" + key.upper().replace(".", "__")
     console.print("[dim]To persist this setting, export:[/dim]")
     console.print(f"  [bold]export {env_key}={value}[/bold]")
