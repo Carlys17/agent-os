@@ -80,6 +80,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `SubscriptionManager._message_subs` now removes empty sets on
   unsubscription and connection teardown, preventing a slow memory leak
   on long-running gateways (#609).
+- An email reply no longer drops the thread root when the inbound message
+  carries no `References` header. `_merge_references` read only `References`,
+  so for the second message of a thread — where most mail clients send
+  `In-Reply-To` alone — the parent id was discarded and the outgoing reply
+  referenced only itself, breaking the conversation apart in Gmail, Outlook and
+  Thunderbird. The chain now falls back to `In-Reply-To` when `References` is
+  absent, per RFC 5322 3.6.4. Both threading headers are now read by one
+  parser that drops comments and accepts ids with or without angle brackets,
+  and `thread_key_for` shares it, so the thread cache key and the reference
+  chain can no longer disagree about which message is the root (#620).
 - The Environment view's path strip shortens Windows paths again. `shortPath`
   split on `/` only, so a gateway-reported `C:\Users\<name>\.agentos\.env` counted
   as a single segment and was rendered untrimmed, overflowing the header strip
