@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Inline card grids in Web chat** — a second AgentOS-native artifact mime,
+  `application/vnd.agentos.cards+json`, alongside the existing chart one. A
+  skill publishes a JSON payload and the transcript renders a responsive grid of
+  record cards, each with an optional logo, a colour-coded status badge, and
+  per-field copy buttons — instead of a download chip.
+
+  This is the shape a markdown table handles badly: a 42-character contract
+  address forces the table into a horizontal scroll, while a card gives the
+  address its own line next to a copy button. `badgeTone` accepts
+  `positive`/`warning`/`danger`/`neutral` and falls back to `neutral` for
+  anything else, so a skill can introduce a new status without waiting on a
+  frontend release. At most 24 cards render and the remainder are counted and
+  reported under the grid rather than dropped silently.
+
+  Every payload string reaches the DOM through `textContent`, never
+  `innerHTML`, and `logo` is restricted to `http(s)` URLs — card fields carry
+  on-chain metadata, which is attacker-controlled on a permissionless chain.
+
+  `robinhood-rwa-addresses` is the first consumer: `scripts/rwa_cards.py` reads
+  the lookup's JSON on stdin and emits the artifact, so an address answer in the
+  Web UI arrives as a grid with the verification badge attached to each result.
+  `docs/artifacts-and-media.md` documents the payload.
+
 ### Fixed
 
 - **`robinhood-rwa-addresses` now verifies every address against Robinhood

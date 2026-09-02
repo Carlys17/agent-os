@@ -114,6 +114,35 @@ python3 {baseDir}/scripts/rwa_lookup.py --query "Apple" --no-verify
 python3 {baseDir}/scripts/rwa_lookup.py --query "Apple" --rpc-url https://…
 ```
 
+## Show the results as cards in Web chat
+
+In the Web UI, render the matches as a card grid instead of a markdown table —
+a contract address is 42 characters and would force the table into a horizontal
+scroll. Pipe the lookup through `rwa_cards.py`, then publish what it prints:
+
+```bash
+python3 {baseDir}/scripts/rwa_lookup.py --query "Apple" \
+  | python3 {baseDir}/scripts/rwa_cards.py --output apple.cards.json
+```
+
+It prints a `publish_artifact path=… mime=application/vnd.agentos.cards+json`
+line; publish that artifact and the chat draws one card per match with the
+token logo, a status badge, and a copy button on the address.
+
+Keep `--output` a bare filename as shown. Scripts run with the workspace as
+their working directory, and `publish_artifact` only accepts files inside that
+workspace — writing to `/tmp` or any other absolute path outside it makes the
+publish fail.
+
+The badge colour comes from `status`: `verified` reads green, `not-deployed`
+amber, `not-a-stock-token` red, `unverified` grey. The lookup's `warning` is
+carried into the grid subtitle, so the caveat travels with the addresses.
+Still say the caveat in your own answer too — the card grid supplements the
+reply, it does not replace it.
+
+Use the cards only when there is something to show; on an empty result the
+script exits non-zero and you should answer in text instead.
+
 ### Output (JSON)
 
 ```json
