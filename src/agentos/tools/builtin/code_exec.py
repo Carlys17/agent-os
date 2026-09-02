@@ -48,11 +48,114 @@ _DESTRUCTIVE_PY_PATTERNS: list[tuple[str, str]] = [
 
 
 def _check_code_destructive(code: str) -> str | None:
-    """Return a human-readable warning if *code* triggers a destructive pattern, else None."""
+    """Return a human-readable warning if *code* triggers a destructive pattern.
+
+    Layer 1 is the original regex pass (fast, catches the obvious). Layer 2 is
+    an AST scan that catches indirect access the regex cannot see:
+    ``getattr(os, "remove")``, ``__import__("os").remove``,
+    ``importlib.import_module("os").remove``, and ``eval``/``exec`` of a
+    destructive call. The AST layer is deliberately shallow — it flags
+    obvious intent to force the approval prompt, it does not prove safety.
+    """
     for pattern, label in _DESTRUCTIVE_PY_PATTERNS:
         if re.search(pattern, code):
             return f"destructive Python operation detected: {label}"
-    return None
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        # Unparseable code: the regex layer already ran; nothing more to do.
+        return None
+
+    # Dotted call names that are destructive, e.g. "os.remove", "shutil.rmtree".
+    _DESTRUCTIVE_CALLS = {
+        "os.remove", "os.unlink", "os.rmdir", "os.removedirs",
+        "shutil.rmtree", "os.system",
+    }
+    # Attribute names that are destructive when called on any object,
+    # e.g. Path.unlink / Path.rmdir / os.remove reached via getattr.
+    _DESTRUCTIVE_ATTRS = {"remove", "unlink", "rmdir", "removedirs", "rmtree", "system"}
+
+    def _dotted(node: ast.AST) -> str | None:
+        """Return the dotted name of a Name/Attribute chain, else None."""
+        parts: list[str] = []
+        cur: ast.AST = node
+        while isinstance(cur, ast.Attribute):
+            parts.append(cur.attr)
+            cur = cur.value
+        if isinstance(cur, ast.Name):
+            parts.append(cur.id)
+            return ".".join(reversed(parts))
+        return None
+
+    def _string_const(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        return None
+
+    found: str | None = None
+
+    for node in ast.walk(tree):
+        if found is not None:
+            break
+        if isinstance(node, ast.Call):
+            # 1) Direct dotted call on a known module: os.remove(...) /
+            #    shutil.rmtree(...) — but NOT list.remove() / dict.pop() etc.
+            dotted = _dotted(node.func)
+            if dotted in _DESTRUCTIVE_CALLS:
+                found = f"destructive Python operation detected: {dotted}()"
+                break
+            # 1b) Path.unlink() / Path.rmdir(): receiver is a Path() call.
+            if (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in _DESTRUCTIVE_ATTRS
+                and isinstance(node.func.value, ast.Call)
+            ):
+                recv = _dotted(node.func.value.func)
+                if recv in ("Path", "pathlib.Path", "PurePath", "os.PathLike"):
+                    found = f"destructive Python operation detected: {recv}.{node.func.attr}()"
+                    break
+            # 2) getattr(obj, "remove") / getattr(os, "rem" + "ove")
+            if isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) >= 2:
+                attr = _string_const(node.args[1])
+                if attr in _DESTRUCTIVE_ATTRS:
+                    found = f"destructive Python operation detected: getattr(..., {attr!r})"
+                    break
+                # concat-built attr: "rem" + "ove"
+                if isinstance(node.args[1], ast.BinOp):
+                    parts = [
+                        _string_const(v)
+                        for v in ast.walk(node.args[1])
+                        if isinstance(v, ast.Constant)
+                    ]
+                    joined = "".join(p for p in parts if p is not None)
+                    if joined in _DESTRUCTIVE_ATTRS:
+                        found = f"destructive Python operation detected: getattr(..., {joined!r})"
+                        break
+            # 3) __import__("os").remove(...) / importlib.import_module("os").remove(...)
+            if isinstance(node.func, ast.Attribute) and node.func.attr in _DESTRUCTIVE_ATTRS:
+                base = node.func.value
+                if isinstance(base, ast.Call):
+                    base_name = _dotted(base.func) or ""
+                    if base_name in ("__import__", "importlib.import_module", "import_module"):
+                        mod = _string_const(base.args[0]) if base.args else None
+                        if mod in ("os", "shutil", "pathlib") or mod is None:
+                            found = (
+                                f"destructive Python operation detected: "
+                                f"{base_name}({mod!r}).{node.func.attr}()"
+                            )
+                            break
+            # 4) eval/exec of a destructive call string
+            if isinstance(node.func, ast.Name) and node.func.id in ("eval", "exec") and node.args:
+                payload = _string_const(node.args[0])
+                if payload is not None:
+                    for pattern, label in _DESTRUCTIVE_PY_PATTERNS:
+                        if re.search(pattern, payload):
+                            found = f"destructive Python operation detected: {node.func.id}() of {label}"
+                            break
+                    if found is not None:
+                        break
+    return found
 
 
 _CODE_SENSITIVE_READ_TOKENS = (
