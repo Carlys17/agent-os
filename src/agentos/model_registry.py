@@ -423,7 +423,7 @@ MODEL_FACTS: tuple[ModelFacts, ...] = (
         "gemini-2.5-pro",
         max_output_tokens=65_536,
         context_window=1_048_576,
-        price=PriceFacts(1.25, 10.0, cached_input_per_m=0.3125),
+        price=PriceFacts(1.25, 10.0),
     ),
     ModelFacts(
         "grok-4.3",
