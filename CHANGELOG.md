@@ -18,6 +18,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Windows and mixed-separator paths trim to their last two segments like POSIX
   ones do.
 
+### Security
+
+- The MCP SSE and Streamable HTTP transports now connect through the same
+  SSRF guard as the built-in HTTP tools. Both built a bare `httpx.AsyncClient`
+  from `MCPServerConfig.url` with no validation at all, so an MCP server entry
+  pointed at `169.254.169.254` reached the cloud metadata endpoint and its
+  instance credentials.
+
+  The policy is `validate_metadata_only_address` — the floor `http_request`
+  takes — not the full `validate_http_url_for_fetch`: `http://localhost:PORT/mcp`
+  and LAN-hosted MCP servers are the normal, intended configuration, and the
+  stricter policy rejects loopback and private ranges. The guard is installed as
+  a connect-time network backend (`ssrf_guarded_client`) rather than run once
+  against the URL text, so the address that gets validated is the address that
+  gets dialed: checking the URL and then handing it to a plain client leaves
+  httpx to resolve the hostname a second time, which a short-TTL DNS-rebinding
+  name can answer differently. Non-`http(s)` server URLs are now rejected up
+  front. ([#662](https://github.com/use-agent-os/agent-os/issues/662))
+
 ## [2026.9.2] - 2026-09-02
 
 ### Added
