@@ -691,8 +691,14 @@ _DIRECT_PROVIDER_PRICES: list[tuple[str, PriceEntry]] = [
     ("claude-3-opus", PriceEntry(15.0, 75.0, 1.50)),
     ("claude-3-sonnet", PriceEntry(3.0, 15.0, 0.30)),
     ("claude-3-haiku", PriceEntry(0.25, 1.25, 0.025)),
+    ("claude-opus-4.8", PriceEntry(5.0, 25.0, 0.50)),
+    ("claude-opus-4.7", PriceEntry(5.0, 25.0, 0.50)),
+    ("claude-opus-4.5", PriceEntry(5.0, 25.0, 0.50)),
     ("claude-opus-4", PriceEntry(15.0, 75.0, 1.50)),
     ("claude-sonnet-4", PriceEntry(3.0, 15.0, 0.30)),
+    ("anthropic/claude-opus-4.8", PriceEntry(5.0, 25.0, 0.50)),
+    ("anthropic/claude-opus-4.7", PriceEntry(5.0, 25.0, 0.50)),
+    ("anthropic/claude-opus-4.5", PriceEntry(5.0, 25.0, 0.50)),
     ("anthropic/claude-3-7-sonnet", PriceEntry(3.0, 15.0, 0.30)),
     ("anthropic/claude-3-5-sonnet", PriceEntry(3.0, 15.0, 0.30)),
     ("anthropic/claude-3-5-haiku", PriceEntry(0.80, 4.0, 0.08)),
@@ -860,10 +866,6 @@ def lookup_price(model_id: str, provider_id: str = "") -> PriceEntry:
     override = _lookup_price_override(model_id)
     if override is not None:
         return override
-
-    direct_entry = _lookup_direct_provider_price(model_id, provider_id=normalized_provider)
-    if direct_entry is not None and direct_entry.cached_input_per_m is not None:
-        return direct_entry
 
     if not _should_fetch_live_price(model_id):
         for candidate in _normalize_model_candidates(model_id, provider_id=normalized_provider):
