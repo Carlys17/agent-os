@@ -174,6 +174,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Security
 
+- The strict SSRF fetch guard now enforces the cloud-metadata floor directly
+  instead of inferring it from the private/link-local ranges. `ssrf.py` keeps a
+  shared `_METADATA_ADDRESSES` set described as the non-negotiable floor, but
+  only the permissive guard (`assert_not_metadata_endpoint`, used by
+  `http_request`) consulted it. The stricter `assert_address_allowed_for_fetch`
+  — used by `web_fetch`, the media image fetch, browser navigation and
+  skill-dependency downloads — derived its coverage from `is_private` /
+  `is_loopback` / `is_link_local` / `is_reserved` instead.
+
+  That left the two guards inverted for one address. Alibaba Cloud's
+  `100.100.100.200` sits in CGNAT space (`100.64.0.0/10`), which Python
+  classifies as none of those and which no hard-blocked network covers, so the
+  *strict* guard allowed it while the *permissive* one blocked it. On an
+  Alibaba ECS deployment a URL the agent could be steered to fetch — directly,
+  or by prompt injection from page content it reads — returned the instance RAM
+  role credentials into the transcript. The connect-time guard shares the same
+  predicate, so DNS-delivered and redirect-hop variants were equally unguarded.
+
+  The metadata hostname check (`metadata.google.internal` and friends) now runs
+  in `validate_http_url_for_fetch` too, so a resolver answering those names
+  cannot launder the request through a public-looking address. Fetch policy is
+  a strict superset of the metadata-only policy again, and a parametrized test
+  asserts that for every entry in the shared set — the invariant that was
+  missing, rather than the single address that happened to break it.
+
 - The MCP SSE and Streamable HTTP transports now connect through the same
   SSRF guard as the built-in HTTP tools. Both built a bare `httpx.AsyncClient`
   from `MCPServerConfig.url` with no validation at all, so an MCP server entry
