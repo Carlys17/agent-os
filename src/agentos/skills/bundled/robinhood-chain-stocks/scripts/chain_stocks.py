@@ -324,8 +324,10 @@ def inspect_token(
     # credibility to a fake contract. Withhold price and record the reason in
     # readErrors per the reporting rule in SKILL.md.
     if feed is not None:
-        if out["isStockToken"] is False:
-            errors["price"] = "withheld: uiMultiplier() proved this is not a Stock Token"
+        if out.get("isStockToken") is False:
+            msg = "price withheld: contract failed the Stock Token check (isStockToken is false)"
+            errors["price"] = msg
+            out.setdefault("notes", []).append(msg)
         else:
             price = _try(
                 lambda: _read_price(rpc_url, str(feed["proxyAddress"]), timeout, now),
@@ -358,9 +360,10 @@ def inspect_token(
                 "balance": str(balance),
                 "balanceFormatted": tokens_held,
             }
-            usd = (out.get("price") or {}).get("usd")
-            if usd is not None and out["isStockToken"] is not False:
-                holding["valueUsd"] = tokens_held * usd
+            if out.get("isStockToken") is not False:
+                usd = (out.get("price") or {}).get("usd")
+                if usd is not None:
+                    holding["valueUsd"] = tokens_held * usd
             out["holding"] = holding
 
     if errors:
@@ -422,7 +425,12 @@ def main() -> int:
     state = inspect_token(
         args.rpc_url, address, args.timeout, holder=args.holder, feed=feed, feeds=feeds
     )
-    if not args.no_price and "price" not in state:
+    if (
+        not args.no_price
+        and "price" not in state
+        and "price" not in state.get("readErrors", {})
+        and state.get("isStockToken") is not False
+    ):
         # Say which of the two happened. "We could not fetch the feed list" is
         # not the same claim as "this token has no feed", and reporting the
         # first as the second asserts something the run never checked.

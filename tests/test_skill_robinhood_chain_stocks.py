@@ -10,6 +10,8 @@ are both called "GameStop" with symbol GME).
 from __future__ import annotations
 
 import importlib.util
+import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -354,24 +356,36 @@ def test_reverting_contract_is_still_reported_as_not_a_stock_token(
     assert chain_stocks.inspect_token("rpc", FAKE_GME, 5.0)["isStockToken"] is False
 
 
-def test_confirmed_impersonator_withholds_price_and_usd_holding_value(
+def test_impersonator_withholds_price_and_usd_valuation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Issue #866: An impersonator proven to revert on uiMultiplier() must not be
-    decorated with a real company's live Chainlink price feed or holding valueUsd."""
-    proxy = str(_FEEDS[0]["proxyAddress"]).lower()
-    holder = "0x1111111111111111111111111111111111111111"
+    """An impersonator reverting on uiMultiplier() must not receive a live price quote (#866).
+
+    Handing an impersonator a genuine Chainlink price/valuation gives it borrowed credibility.
+    Price and valueUsd must be withheld, and notes/readErrors must explain why.
+    """
+    gme_feed = {
+        "name": "Robinhood GME / USD",
+        "proxyAddress": "0x6b22gme",
+        "heartbeat": 86400,
+        "threshold": 0.5,
+        "docs": {"baseAsset": "GME"},
+    }
+    proxy = str(gme_feed["proxyAddress"]).lower()
+    round_data = "0x" + "".join(_word_hex(v) for v in (1, 2500000000, 1788206000, 1788206389, 1))
+    holder = "0x" + "9" * 40
+
     chain = _FakeChain(
         {
             (FAKE_GME, chain_stocks.SEL_SYMBOL): "0x"
             + _word_hex(32)
-            + _word_hex(4)
-            + b"AAPL".hex().ljust(64, "0"),
+            + _word_hex(3)
+            + b"GME".hex().ljust(64, "0"),
             (FAKE_GME, chain_stocks.SEL_DECIMALS): "0x" + _word_hex(18),
             (FAKE_GME, chain_stocks.SEL_TOTAL_SUPPLY): "0x" + _word_hex(10**24),
-            (FAKE_GME, chain_stocks.SEL_BALANCE_OF): "0x" + _word_hex(5 * 10**18),
-            (proxy, chain_stocks.SEL_LATEST_ROUND_DATA): "0x"
-            + "".join(_word_hex(v) for v in (1, 31747461437, 0, 1788206389, 1)),
+            (FAKE_GME, chain_stocks.SEL_BALANCE_OF): "0x" + _word_hex(10 * 10**18),
+            # SEL_UI_MULTIPLIER is omitted so it reverts (answered=True, multiplier=None)
+            (proxy, chain_stocks.SEL_LATEST_ROUND_DATA): round_data,
             (proxy, chain_stocks.SEL_DECIMALS): "0x" + _word_hex(8),
         }
     )
@@ -382,58 +396,111 @@ def test_confirmed_impersonator_withholds_price_and_usd_holding_value(
         FAKE_GME,
         5.0,
         holder=holder,
-        feeds=_FEEDS,
+        feeds=[gme_feed],
         now=1788206389 + 60,
     )
 
     assert state["isStockToken"] is False
+    assert state["onchainSymbol"] == "GME"
     assert "price" not in state
-    assert (
-        state["readErrors"]["price"] == "withheld: uiMultiplier() proved this is not a Stock Token"
-    )
-    assert "holding" in state
-    assert state["holding"]["balanceFormatted"] == pytest.approx(5.0)
+    assert state["holding"]["balanceFormatted"] == pytest.approx(10.0)
     assert "valueUsd" not in state["holding"]
+    assert "price" in state["readErrors"]
+    assert "failed the Stock Token check" in state["readErrors"]["price"]
+    assert any("failed the Stock Token check" in n for n in state.get("notes", []))
 
 
-def test_unverified_stock_status_does_not_withhold_price(
+def test_impersonator_withholds_price_when_feed_passed_directly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A network fault reading uiMultiplier() leaves isStockToken as None (unverified,
-    not disproven), so price is not withheld on that basis."""
-    proxy = str(_FEEDS[0]["proxyAddress"]).lower()
+    gme_feed = {
+        "name": "Robinhood GME / USD",
+        "proxyAddress": "0x6b22gme",
+        "heartbeat": 86400,
+        "threshold": 0.5,
+        "docs": {"baseAsset": "GME"},
+    }
+    proxy = str(gme_feed["proxyAddress"]).lower()
+    round_data = "0x" + "".join(_word_hex(v) for v in (1, 2500000000, 1788206000, 1788206389, 1))
+
     chain = _FakeChain(
         {
-            (AAPL, chain_stocks.SEL_SYMBOL): "0x"
+            (FAKE_GME, chain_stocks.SEL_SYMBOL): "0x"
             + _word_hex(32)
-            + _word_hex(4)
-            + b"AAPL".hex().ljust(64, "0"),
-            (AAPL, chain_stocks.SEL_DECIMALS): "0x" + _word_hex(18),
-            (AAPL, chain_stocks.SEL_TOTAL_SUPPLY): "0x" + _word_hex(10**24),
-            (proxy, chain_stocks.SEL_LATEST_ROUND_DATA): "0x"
-            + "".join(_word_hex(v) for v in (1, 31747461437, 0, 1788206389, 1)),
+            + _word_hex(3)
+            + b"GME".hex().ljust(64, "0"),
+            (FAKE_GME, chain_stocks.SEL_DECIMALS): "0x" + _word_hex(18),
+            (proxy, chain_stocks.SEL_LATEST_ROUND_DATA): round_data,
             (proxy, chain_stocks.SEL_DECIMALS): "0x" + _word_hex(8),
         }
     )
+    monkeypatch.setattr(chain_stocks, "_eth_call", chain)
 
-    def _call(rpc_url: str, to: str, data: str, timeout: float) -> str:
-        if data[:10] == chain_stocks.SEL_UI_MULTIPLIER:
-            raise TimeoutError("node timed out")
-        return chain(rpc_url, to, data, timeout)
+    state = chain_stocks.inspect_token("rpc", FAKE_GME, 5.0, feed=gme_feed)
+    assert state["isStockToken"] is False
+    assert "price" not in state
+    assert "failed the Stock Token check" in state["readErrors"]["price"]
+
+
+def test_unreachable_node_keeps_current_behaviour_for_feed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When uiMultiplier cannot be reached (None), do not collapse with False."""
+    feed = _FEEDS[0]
+    proxy = str(feed["proxyAddress"]).lower()
+    round_data = "0x" + "".join(_word_hex(v) for v in (1, 31747461437, 1788206000, 1788206389, 1))
+
+    def _call(_rpc: str, to: str, data: str, _timeout: float) -> str:
+        if to.lower() == AAPL.lower() and data[:10] == chain_stocks.SEL_UI_MULTIPLIER:
+            raise OSError("connection timeout")
+        if to.lower() == proxy and data[:10] == chain_stocks.SEL_LATEST_ROUND_DATA:
+            return round_data
+        if to.lower() == proxy and data[:10] == chain_stocks.SEL_DECIMALS:
+            return "0x" + _word_hex(8)
+        raise chain_stocks.RpcError("execution reverted")
 
     monkeypatch.setattr(chain_stocks, "_eth_call", _call)
-
-    state = chain_stocks.inspect_token(
-        "rpc",
-        AAPL,
-        5.0,
-        feeds=_FEEDS,
-        now=1788206389 + 60,
-    )
-
+    state = chain_stocks.inspect_token("rpc", AAPL, 5.0, feed=feed, now=1788206389 + 60)
     assert state["isStockToken"] is None
-    assert "price" in state
+    # Price read was not withheld because it wasn't a confirmed False
     assert state["price"]["usd"] == pytest.approx(317.47461437)
+
+
+def test_main_with_address_impersonator_withholds_price(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gme_feed = {
+        "name": "Robinhood GME / USD",
+        "proxyAddress": "0x6b22gme",
+        "heartbeat": 86400,
+        "threshold": 0.5,
+        "docs": {"baseAsset": "GME"},
+    }
+    chain = _FakeChain(
+        {
+            (FAKE_GME, chain_stocks.SEL_SYMBOL): "0x"
+            + _word_hex(32)
+            + _word_hex(3)
+            + b"GME".hex().ljust(64, "0"),
+            (FAKE_GME, chain_stocks.SEL_DECIMALS): "0x" + _word_hex(18),
+        }
+    )
+    monkeypatch.setattr(chain_stocks, "_eth_call", chain)
+    monkeypatch.setattr(
+        chain_stocks, "_http_json", lambda _url, _timeout, _payload=None: [gme_feed]
+    )
+    monkeypatch.setattr(sys, "argv", ["chain_stocks.py", "--address", FAKE_GME])
+
+    rc = chain_stocks.main()
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    token = out["token"]
+    assert token["isStockToken"] is False
+    assert "price" not in token
+    assert "price" in token["readErrors"]
+    assert "failed the Stock Token check" in token["readErrors"]["price"]
+    assert any("failed the Stock Token check" in n for n in token.get("notes", []))
+    assert not any("no Chainlink feed published" in n for n in token.get("notes", []))
 
 
 # --- skill packaging --------------------------------------------------------
