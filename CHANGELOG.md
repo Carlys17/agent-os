@@ -43,6 +43,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `/*`, `/*/*`, `/**`, `/?*`, `/.*` and `/[a-z]*`. Globs that name a subset
   (`/tmp*`) are untouched, and root counts as sensitive only in the
   delete-intent scan — reading or listing `/` stays ordinary work (#563).
+- The image tool now reports a redirect that carries no `Location` header
+  instead of the confusing failure it caused downstream. `_fetch_image_url`
+  follows redirects itself so every hop is re-validated against the SSRF guard;
+  a 3xx with no `Location` closed the response and fell out of the loop, so the
+  failure surfaced as httpx's generic `Failed to fetch image from URL: Redirect
+  response '302 Found' for url ...` (or a `StreamClosed` from reading the body
+  that had just been closed, depending on the httpx version) rather than the
+  dead-end hop that actually broke. It now raises `Redirect response from <url>
+  missing Location header`, naming the URL that returned it.
 - Channel HTTP retries now cover every transient timeout, survive an
   HTTP-date `Retry-After`, and hand back an exhausted rate limit.
   `retry_request` caught `(ConnectError, ReadTimeout)`, but `ConnectTimeout`,
