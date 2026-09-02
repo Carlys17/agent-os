@@ -94,6 +94,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   "next runs" preview (`frontend/src/views/cron/logic.ts`) has always applied
   the OR rule — so the times it showed disagreed with when the job actually
   fired. ([#660](https://github.com/use-agent-os/agent-os/issues/660))
+- `MemorySyncManager` retries a file whose indexing failed instead of losing it
+  until the next edit. `_do_file_sync()` replaced `_mtimes` with the fresh scan
+  *before* the index loop ran, so by the time `store.index_file()` raised, the
+  failing path was already recorded as seen — the next watcher tick compared
+  equal, the path never entered `changes`, and the retry its docstring promised
+  never happened. A transient store error (SQLite lock, provider timeout) on
+  `MEMORY.md` therefore left searches running against a stale or missing index
+  for that file until it was modified again or the process restarted. Index
+  failures now come back from `_do_file_sync()` alongside the existing delete
+  failures and are re-enqueued into `_pending_changes`, keeping the manager
+  dirty until a retry succeeds. The initial `start()` pass re-enqueues too,
+  where `_mtimes` is empty and the watcher diff could never have recovered the
+  path (#638).
 
 ## [2026.9.2] - 2026-09-02
 
