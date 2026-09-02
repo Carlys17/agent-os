@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.9.3] - 2026-09-03
+
 ### Added
 
 - **Inline card grids in Web chat** — a second AgentOS-native artifact mime,
@@ -30,6 +32,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the lookup's JSON on stdin and emits the artifact, so an address answer in the
   Web UI arrives as a grid with the verification badge attached to each result.
   `docs/artifacts-and-media.md` documents the payload.
+
+- **Skills publish their own artifacts.** `exec_command` now honours a
+  `publish_artifact path=<file> mime=application/vnd.agentos.<x>+json` marker on
+  a command's own output, so a skill that writes a chart or card payload gets it
+  rendered without the model deciding to publish it. Live-testing the card
+  renderer produced the same outcome seven times across two models: the script
+  ran, the payload was written, and the answer came back as a hand-written
+  markdown table with the artifact stranded in the workspace — a render that
+  only happens when the model feels like it is not a contract.
+
+  Only the `application/vnd.agentos.` family auto-publishes, so ordinary command
+  output cannot push a workspace file at the user; a plain file still needs a
+  deliberate `publish_artifact` call. The marker must own its line, so prose
+  mentioning it is inert; at most four publish per command, with the overflow
+  reported rather than dropped; and `publish_artifact`'s workspace containment
+  is unchanged. The whole path is best-effort — a shell command never fails, and
+  never loses its output, because a publish did not work out. This also fixes
+  the existing `gmgn-token` and `gmgn-market` chart artifacts, which had the
+  same failure mode. Both Robinhood skills now write their card payload on every
+  run (`<SYMBOL>.cards.json`, marker on stderr so stdout stays pure JSON,
+  `--no-cards` to opt out), and `robinhood-chain-stocks` gains
+  `scripts/chain_cards.py`.
+
+- Cards identify their subject with a locally drawn ticker monogram. The card
+  grid has a logo slot, but the console's CSP is
+  `img-src 'self' data: https://raw.githubusercontent.com`, so a token-list CDN
+  image is blocked outright and the card was quietly dropping the broken `img`
+  and showing nothing. Widening the CSP would also tell that CDN which tickers a
+  user is researching, from their IP — a real leak on a finance surface, for
+  decoration. The monogram needs no request and no trademarked artwork; the
+  `logo` img is still attached and still takes over, but only on a real `load`,
+  so an `error` now leaves the monogram standing instead of an empty slot.
 
 ### Fixed
 
@@ -172,6 +206,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   where `_mtimes` is empty and the watcher diff could never have recovered the
   path (#638).
 
+- `OtlpTraceSink.flush()` is serialized by the `_flush_lock` it always
+  declared but never acquired. Concurrent flushes — a `write()` batch trigger
+  racing the periodic flush task — could post to the OTLP collector
+  simultaneously, delivering spans out of order and, when a post failed,
+  re-queueing the same events twice so they were duplicated in the queue. The
+  lock is now held across the drain-post-requeue cycle, with an empty-queue
+  fast path before it so the uncontended case stays allocation-free
+  ([#672](https://github.com/use-agent-os/agent-os/issues/672)).
+- `agentos sessions export` derives its default filename through
+  `_safe_archive_part` instead of only replacing `:`. A session id is
+  gateway-supplied text, and every character outside `[A-Za-z0-9_.-]` — a `/`
+  or a `..` segment among them — reached `Path()` untouched, so the export
+  could be written outside the directory the command was run in. The shared
+  helper also now strips leading and trailing dots, so an id that sanitizes to
+  `..` can no longer name the parent directory
+  ([#678](https://github.com/use-agent-os/agent-os/issues/678)).
+- HTTP chat errors name the provider that actually failed.
+  `_provider_display_name` mapped only a handful of kinds, so Azure, Bailian,
+  Mistral, Groq, SiliconFlow, AIHubMix, MiniMax, BytePlus, Bankr, vLLM,
+  LM Studio and OVMS all surfaced as a generic "Provider" in the message the
+  user reads.
+
 ### Security
 
 - The strict SSRF fetch guard now enforces the cloud-metadata floor directly
@@ -215,6 +271,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   httpx to resolve the hostname a second time, which a short-TTL DNS-rebinding
   name can answer differently. Non-`http(s)` server URLs are now rejected up
   front. ([#662](https://github.com/use-agent-os/agent-os/issues/662))
+
+- Slack webhooks are rejected when no signing secret is configured, instead of
+  being ingested. `_handle_webhook` logged a warning and carried on:
+  `event_callback` payloads were ingested and slash commands were enqueued, so
+  any unauthenticated POST to the Events API endpoint could inject messages and
+  commands into a session — only interactive form payloads were turned away.
+  The handler now fails closed. Without a signing secret it still answers the
+  `url_verification` handshake — that only echoes a challenge and has no side
+  effects, so an operator can pass Slack's endpoint check while wiring the
+  secret up — and returns 401 for everything else
+  ([#674](https://github.com/use-agent-os/agent-os/issues/674)).
+- Slack request signatures are verified against the raw request bytes. The
+  base string was assembled as text (`f"v0:{timestamp}:{body.decode()}"`) and
+  re-encoded, so any body whose bytes do not survive a UTF-8 decode/encode
+  round-trip — and any body that fails to decode at all, which raises inside
+  the verifier — was checked against a different byte sequence than the one
+  Slack signed. The HMAC is now computed over `b"v0:" + timestamp + b":" +
+  body` with the body never decoded
+  ([#680](https://github.com/use-agent-os/agent-os/issues/680)).
 
 ## [2026.9.2] - 2026-09-02
 
