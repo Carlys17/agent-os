@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- The sensitive-path hard block now refuses destructive intents that target
+  the filesystem root. `rm -rf /` carries no sensitive *prefix*, so the
+  denylist never matched it and a whole-host wipe fell through to the ordinary
+  approval flow — which `/elevated bypass` skips outright. Every spelling that
+  resolves to or sweeps the top level is covered: `/`, `//`, `/.`, `/..`,
+  `/*`, `/*/*`, `/**`, `/?*`, `/.*` and `/[a-z]*`. Globs that name a subset
+  (`/tmp*`) are untouched, and root counts as sensitive only in the
+  delete-intent scan — reading or listing `/` stays ordinary work (#563).
 - Channel HTTP retries now cover every transient timeout, survive an
   HTTP-date `Retry-After`, and hand back an exhausted rate limit.
   `retry_request` caught `(ConnectError, ReadTimeout)`, but `ConnectTimeout`,
