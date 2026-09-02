@@ -269,6 +269,7 @@ def _price_chain(answer: int, updated_at: int, paused: int = 0) -> _FakeChain:
     proxy = str(_FEEDS[0]["proxyAddress"]).lower()
     return _FakeChain(
         {
+            (AAPL, chain_stocks.SEL_UI_MULTIPLIER): "0x" + _word_hex(10**18),
             (AAPL, chain_stocks.SEL_ORACLE_PAUSED): "0x" + _word_hex(paused),
             (proxy, chain_stocks.SEL_LATEST_ROUND_DATA): "0x"
             + "".join(_word_hex(v) for v in (1, answer, 0, updated_at, 1)),
@@ -351,6 +352,88 @@ def test_reverting_contract_is_still_reported_as_not_a_stock_token(
 ) -> None:
     monkeypatch.setattr(chain_stocks, "_eth_call", _FakeChain({}))
     assert chain_stocks.inspect_token("rpc", FAKE_GME, 5.0)["isStockToken"] is False
+
+
+def test_confirmed_impersonator_withholds_price_and_usd_holding_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #866: An impersonator proven to revert on uiMultiplier() must not be
+    decorated with a real company's live Chainlink price feed or holding valueUsd."""
+    proxy = str(_FEEDS[0]["proxyAddress"]).lower()
+    holder = "0x1111111111111111111111111111111111111111"
+    chain = _FakeChain(
+        {
+            (FAKE_GME, chain_stocks.SEL_SYMBOL): "0x"
+            + _word_hex(32)
+            + _word_hex(4)
+            + b"AAPL".hex().ljust(64, "0"),
+            (FAKE_GME, chain_stocks.SEL_DECIMALS): "0x" + _word_hex(18),
+            (FAKE_GME, chain_stocks.SEL_TOTAL_SUPPLY): "0x" + _word_hex(10**24),
+            (FAKE_GME, chain_stocks.SEL_BALANCE_OF): "0x" + _word_hex(5 * 10**18),
+            (proxy, chain_stocks.SEL_LATEST_ROUND_DATA): "0x"
+            + "".join(_word_hex(v) for v in (1, 31747461437, 0, 1788206389, 1)),
+            (proxy, chain_stocks.SEL_DECIMALS): "0x" + _word_hex(8),
+        }
+    )
+    monkeypatch.setattr(chain_stocks, "_eth_call", chain)
+
+    state = chain_stocks.inspect_token(
+        "rpc",
+        FAKE_GME,
+        5.0,
+        holder=holder,
+        feeds=_FEEDS,
+        now=1788206389 + 60,
+    )
+
+    assert state["isStockToken"] is False
+    assert "price" not in state
+    assert (
+        state["readErrors"]["price"] == "withheld: uiMultiplier() proved this is not a Stock Token"
+    )
+    assert "holding" in state
+    assert state["holding"]["balanceFormatted"] == pytest.approx(5.0)
+    assert "valueUsd" not in state["holding"]
+
+
+def test_unverified_stock_status_does_not_withhold_price(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A network fault reading uiMultiplier() leaves isStockToken as None (unverified,
+    not disproven), so price is not withheld on that basis."""
+    proxy = str(_FEEDS[0]["proxyAddress"]).lower()
+    chain = _FakeChain(
+        {
+            (AAPL, chain_stocks.SEL_SYMBOL): "0x"
+            + _word_hex(32)
+            + _word_hex(4)
+            + b"AAPL".hex().ljust(64, "0"),
+            (AAPL, chain_stocks.SEL_DECIMALS): "0x" + _word_hex(18),
+            (AAPL, chain_stocks.SEL_TOTAL_SUPPLY): "0x" + _word_hex(10**24),
+            (proxy, chain_stocks.SEL_LATEST_ROUND_DATA): "0x"
+            + "".join(_word_hex(v) for v in (1, 31747461437, 0, 1788206389, 1)),
+            (proxy, chain_stocks.SEL_DECIMALS): "0x" + _word_hex(8),
+        }
+    )
+
+    def _call(rpc_url: str, to: str, data: str, timeout: float) -> str:
+        if data[:10] == chain_stocks.SEL_UI_MULTIPLIER:
+            raise TimeoutError("node timed out")
+        return chain(rpc_url, to, data, timeout)
+
+    monkeypatch.setattr(chain_stocks, "_eth_call", _call)
+
+    state = chain_stocks.inspect_token(
+        "rpc",
+        AAPL,
+        5.0,
+        feeds=_FEEDS,
+        now=1788206389 + 60,
+    )
+
+    assert state["isStockToken"] is None
+    assert "price" in state
+    assert state["price"]["usd"] == pytest.approx(317.47461437)
 
 
 # --- skill packaging --------------------------------------------------------

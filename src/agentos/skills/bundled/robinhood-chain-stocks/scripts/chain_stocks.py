@@ -318,20 +318,30 @@ def inspect_token(
         if isinstance(onchain_symbol, str) and onchain_symbol:
             feed = find_feed(onchain_symbol, feeds)
 
+    # `isStockToken: False` is authoritative on-chain proof that the contract
+    # is not a Stock Token (uiMultiplier reverted). Decorating a confirmed
+    # impersonator with a real company's live Chainlink price lends borrowed
+    # credibility to a fake contract. Withhold price and record the reason in
+    # readErrors per the reporting rule in SKILL.md.
     if feed is not None:
-        price = _try(
-            lambda: _read_price(rpc_url, str(feed["proxyAddress"]), timeout, now), errors, "price"
-        )
-        if price is not None:
-            heartbeat = feed.get("heartbeat")
-            price["heartbeatSeconds"] = heartbeat
-            price["deviationThresholdPercent"] = feed.get("threshold")
-            # Mark staleness in the payload instead of leaving the reader to
-            # compare a unix timestamp against the heartbeat by eye.
-            age = price.get("ageSeconds")
-            beyond = isinstance(age, int) and isinstance(heartbeat, int) and age > heartbeat
-            price["stale"] = bool(beyond or out.get("oraclePaused"))
-            out["price"] = price
+        if out["isStockToken"] is False:
+            errors["price"] = "withheld: uiMultiplier() proved this is not a Stock Token"
+        else:
+            price = _try(
+                lambda: _read_price(rpc_url, str(feed["proxyAddress"]), timeout, now),
+                errors,
+                "price",
+            )
+            if price is not None:
+                heartbeat = feed.get("heartbeat")
+                price["heartbeatSeconds"] = heartbeat
+                price["deviationThresholdPercent"] = feed.get("threshold")
+                # Mark staleness in the payload instead of leaving the reader to
+                # compare a unix timestamp against the heartbeat by eye.
+                age = price.get("ageSeconds")
+                beyond = isinstance(age, int) and isinstance(heartbeat, int) and age > heartbeat
+                price["stale"] = bool(beyond or out.get("oraclePaused"))
+                out["price"] = price
 
     if holder:
         balance = _try(
@@ -349,7 +359,7 @@ def inspect_token(
                 "balanceFormatted": tokens_held,
             }
             usd = (out.get("price") or {}).get("usd")
-            if usd is not None:
+            if usd is not None and out["isStockToken"] is not False:
                 holding["valueUsd"] = tokens_held * usd
             out["holding"] = holding
 
