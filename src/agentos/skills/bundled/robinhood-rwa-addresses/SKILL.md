@@ -92,6 +92,12 @@ Questions this skill answers — in any language:
 Answer with the **symbol** and the **contract address**, and mention it lives on
 Robinhood Chain (chainId 4663). Include the address verbatim.
 
+**On the Web chat channel, pipe the lookup through `rwa_cards.py`** — one
+command, see [Show the results as cards](#show-the-results-as-cards-in-web-chat).
+The card grid is published for you; you do not call `publish_artifact`. Do
+**not** hand-write a markdown table of the matches: a 42-character address turns
+one into a horizontal scroll. Answer in prose and let the grid carry the data.
+
 ## Run it
 
 ```bash
@@ -113,6 +119,44 @@ python3 {baseDir}/scripts/rwa_lookup.py --query "Apple" --no-verify
 # Point at a different Robinhood Chain node
 python3 {baseDir}/scripts/rwa_lookup.py --query "Apple" --rpc-url https://…
 ```
+
+## Show the results as cards in Web chat
+
+**Required on the Web chat channel whenever the lookup returned any match.**
+Render the matches as a card grid rather than a markdown table — a contract
+address is 42 characters and would force a table into a horizontal scroll.
+
+Every run writes a card grid next to the JSON (`<SYMBOL>.cards.json`) and
+`exec_command` publishes it. **There is nothing for you to do** — no extra
+command, no flag, no `publish_artifact` call. The chat draws one card per match
+with the token logo, a status badge, and a copy button on the address.
+
+So: answer in prose and let the grid carry the addresses. Do **not** also
+hand-write a markdown table of the matches — a 42-character address turns one
+into a horizontal scroll.
+
+Two things would silently break this, so do neither:
+
+- **Never append `2>/dev/null`** (or any stderr redirect) to the command. The
+  publish marker travels on stderr; discarding it discards the grid.
+- **Never pass `--no-cards`.** It exists for humans running the script by hand.
+
+`--cards FILE` picks the filename if you need a specific one.
+`scripts/rwa_cards.py` builds the same payload from the JSON on stdin.
+
+Keep `--output` a bare filename as shown. Scripts run with the workspace as
+their working directory, and `publish_artifact` only accepts files inside that
+workspace — writing to `/tmp` or any other absolute path outside it makes the
+publish fail.
+
+The badge colour comes from `status`: `verified` reads green, `not-deployed`
+amber, `not-a-stock-token` red, `unverified` grey. The lookup's `warning` is
+carried into the grid subtitle, so the caveat travels with the addresses.
+Still say the caveat in your own answer too — the card grid supplements the
+reply, it does not replace it.
+
+Use the cards only when there is something to show; on an empty result the
+script exits non-zero and you should answer in text instead.
 
 ### Output (JSON)
 
