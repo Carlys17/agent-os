@@ -10,6 +10,7 @@ The tests cover:
 - Indirect calls that must be flagged (getattr, __import__, eval/exec, …)
 - Non‑destructive calls that must NOT be flagged (list.remove, eval(1+1), …)
 """
+
 from __future__ import annotations
 
 from agentos.tools.builtin import code_exec
@@ -51,9 +52,7 @@ def test_direct_os_system_with_rm() -> None:
 
 
 def test_direct_subprocess_rm() -> None:
-    assert code_exec._check_code_destructive(
-        'subprocess.run(["rm", "-rf", "/tmp/x"])'
-    ) is not None
+    assert code_exec._check_code_destructive('subprocess.run(["rm", "-rf", "/tmp/x"])') is not None
 
 
 # ---------------------------------------------------------------------------
@@ -61,76 +60,55 @@ def test_direct_subprocess_rm() -> None:
 # ---------------------------------------------------------------------------
 def test_getattr_concat_bypass() -> None:
     """getattr(os, "rem" + "ove") — the original regex misses this."""
-    assert code_exec._check_code_destructive(
-        'getattr(os, "rem" + "ove")("/tmp/x")'
-    ) is not None
+    assert code_exec._check_code_destructive('getattr(os, "rem" + "ove")("/tmp/x")') is not None
 
 
 def test_getattr_plain() -> None:
-    assert code_exec._check_code_destructive(
-        'getattr(os, "remove")("/tmp/x")'
-    ) is not None
+    assert code_exec._check_code_destructive('getattr(os, "remove")("/tmp/x")') is not None
 
 
 def test_getattr_unlink() -> None:
-    assert code_exec._check_code_destructive(
-        'getattr(os, "unlink")("/tmp/x")'
-    ) is not None
+    assert code_exec._check_code_destructive('getattr(os, "unlink")("/tmp/x")') is not None
 
 
 def test_getattr_rmdir() -> None:
-    assert code_exec._check_code_destructive(
-        'getattr(os, "rmdir")("/tmp/x")'
-    ) is not None
+    assert code_exec._check_code_destructive('getattr(os, "rmdir")("/tmp/x")') is not None
 
 
 def test_getattr_rmtree() -> None:
-    assert code_exec._check_code_destructive(
-        'getattr(shutil, "rmtree")("/tmp/x")'
-    ) is not None
+    assert code_exec._check_code_destructive('getattr(shutil, "rmtree")("/tmp/x")') is not None
 
 
 def test_dunder_import_remove() -> None:
-    assert code_exec._check_code_destructive(
-        '__import__("os").remove("/tmp/x")'
-    ) is not None
+    assert code_exec._check_code_destructive('__import__("os").remove("/tmp/x")') is not None
 
 
 def test_dunder_import_system_rm() -> None:
-    assert code_exec._check_code_destructive(
-        '__import__("os").system("rm -rf /tmp/x")'
-    ) is not None
+    assert code_exec._check_code_destructive('__import__("os").system("rm -rf /tmp/x")') is not None
 
 
 def test_importlib_remove() -> None:
-    assert code_exec._check_code_destructive(
-        'importlib.import_module("os").remove("/tmp/x")'
-    ) is not None
+    assert (
+        code_exec._check_code_destructive('importlib.import_module("os").remove("/tmp/x")')
+        is not None
+    )
 
 
 def test_eval_of_destructive_string() -> None:
-    assert code_exec._check_code_destructive(
-        "eval(\"os.remove('/tmp/x')\")"
-    ) is not None
+    assert code_exec._check_code_destructive("eval(\"os.remove('/tmp/x')\")") is not None
 
 
 def test_exec_of_destructive_string() -> None:
-    assert code_exec._check_code_destructive(
-        "exec(\"os.remove('/tmp/x')\")"
-    ) is not None
+    assert code_exec._check_code_destructive("exec(\"os.remove('/tmp/x')\")") is not None
 
 
 def test_eval_of_destructive_concat() -> None:
     """eval of a string built via concatenation."""
-    assert code_exec._check_code_destructive(
-        "eval(\"os.\" + \"remove\" + \"('/tmp/x')\")"
-    ) is not None
+    assert code_exec._check_code_destructive('eval("os." + "remove" + "(\'/tmp/x\')")') is not None
 
 
 def test_exec_of_destructive_concat() -> None:
-    assert code_exec._check_code_destructive(
-        "exec(\"os.\" + \"remove\" + \"('/tmp/x')\")"
-    ) is not None
+    assert code_exec._check_code_destructive('exec("os." + "remove" + "(\'/tmp/x\')")') is not None
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +120,7 @@ def test_print_is_clean() -> None:
 
 def test_list_remove_is_clean() -> None:
     """x.remove(1) is list.remove, NOT os.remove — must not flag."""
-    assert code_exec._check_code_destructive('x = [1,2,3]; x.remove(1)') is None
+    assert code_exec._check_code_destructive("x = [1,2,3]; x.remove(1)") is None
 
 
 def test_dict_pop_is_clean() -> None:
@@ -150,7 +128,7 @@ def test_dict_pop_is_clean() -> None:
 
 
 def test_os_getcwd_is_clean() -> None:
-    assert code_exec._check_code_destructive('import os; os.getcwd()') is None
+    assert code_exec._check_code_destructive("import os; os.getcwd()") is None
 
 
 def test_shutil_copy_is_clean() -> None:
@@ -167,16 +145,17 @@ def test_exec_arithmetic_is_clean() -> None:
 
 def test_string_with_remove_in_comment() -> None:
     """A comment mentioning os.remove must not trigger."""
-    assert code_exec._check_code_destructive(
-        '# This code does NOT call os.remove, it is safe\nprint("ok")'
-    ) is None
+    assert (
+        code_exec._check_code_destructive(
+            '# This code does NOT call os.remove, it is safe\nprint("ok")'
+        )
+        is None
+    )
 
 
 def test_multiline_destructive() -> None:
     """Multi‑line code with a destructive call on the second line."""
-    assert code_exec._check_code_destructive(
-        'import os\nos.remove("/tmp/x")'
-    ) is not None
+    assert code_exec._check_code_destructive('import os\nos.remove("/tmp/x")') is not None
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +169,9 @@ def test_sabotage_run_fails_without_fix(monkeypatch) -> None:
     """
     import re
 
+    # Capture the fixed implementation before monkeypatching it out.
+    fixed_check = code_exec._check_code_destructive
+
     def old_check(code: str) -> str | None:
         for pattern, label in code_exec._DESTRUCTIVE_PY_PATTERNS:
             if re.search(pattern, code):
@@ -197,7 +179,15 @@ def test_sabotage_run_fails_without_fix(monkeypatch) -> None:
         return None
 
     monkeypatch.setattr(code_exec, "_check_code_destructive", old_check)
-    # The bypass payloads must NOT be caught by the old regex.
+
+    # The bypass payloads must NOT be caught by the old regex. A plain
+    # eval("os.remove(...)") string IS caught by the regex layer, so the
+    # eval case uses the concat-built form — the actual regex blind spot.
     assert old_check('getattr(os, "rem" + "ove")("/tmp/x")') is None
     assert old_check('__import__("os").remove("/tmp/x")') is None
-    assert old_check('eval("os.remove(\'/tmp/x\')")') is None
+    assert old_check('eval("os." + "remove" + "(\'/tmp/x\')")') is None
+
+    # The AST-based implementation catches all of them.
+    assert fixed_check('getattr(os, "rem" + "ove")("/tmp/x")') is not None
+    assert fixed_check('__import__("os").remove("/tmp/x")') is not None
+    assert fixed_check('eval("os." + "remove" + "(\'/tmp/x\')")') is not None

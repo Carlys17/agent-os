@@ -25,8 +25,10 @@ from agentos.tools.types import ToolError, current_tool_context
 
 # Destructive Python patterns that must go through the same approval flow as
 # shell warnlist hits. Catches the "agent pivots from `rm` to `os.remove()`"
-# bypass. Matching is intentionally shallow (regex, not AST) — goal is to
-# force approval on obvious intent, not to prove safety.
+# bypass. This is layer 1 (regex); the AST scan in _check_code_destructive
+# adds layer 2 for indirect access the regex cannot see. Both layers are
+# intentionally shallow — the goal is to force approval on obvious intent,
+# not to prove safety.
 _DESTRUCTIVE_PY_PATTERNS: list[tuple[str, str]] = [
     (r"\bos\.remove\s*\(", "os.remove()"),
     (r"\bos\.unlink\s*\(", "os.unlink()"),
@@ -45,6 +47,17 @@ _DESTRUCTIVE_PY_PATTERNS: list[tuple[str, str]] = [
         "subprocess invoking rmdir",
     ),
 ]
+
+# Dotted call names that are destructive (module‑prefixed), e.g. "os.remove",
+# "shutil.rmtree". Used by the AST layer to catch indirect access.
+_DESTRUCTIVE_CALLS: frozenset[str] = frozenset(
+    {"os.remove", "os.unlink", "os.rmdir", "os.removedirs", "shutil.rmtree", "os.system"}
+)
+# Attribute names that are destructive when reached via getattr or on a
+# Path() receiver: Path.unlink / Path.rmdir / os.remove via getattr.
+_DESTRUCTIVE_ATTRS: frozenset[str] = frozenset(
+    {"remove", "unlink", "rmdir", "removedirs", "rmtree", "system"}
+)
 
 
 def _check_code_destructive(code: str) -> str | None:
@@ -66,15 +79,6 @@ def _check_code_destructive(code: str) -> str | None:
     except SyntaxError:
         # Unparseable code: the regex layer already ran; nothing more to do.
         return None
-
-    # Dotted call names that are destructive, e.g. "os.remove", "shutil.rmtree".
-    _DESTRUCTIVE_CALLS = {
-        "os.remove", "os.unlink", "os.rmdir", "os.removedirs",
-        "shutil.rmtree", "os.system",
-    }
-    # Attribute names that are destructive when called on any object,
-    # e.g. Path.unlink / Path.rmdir / os.remove reached via getattr.
-    _DESTRUCTIVE_ATTRS = {"remove", "unlink", "rmdir", "removedirs", "rmtree", "system"}
 
     def _dotted(node: ast.AST) -> str | None:
         """Return the dotted name of a Name/Attribute chain, else None."""
@@ -116,19 +120,22 @@ def _check_code_destructive(code: str) -> str | None:
                     found = f"destructive Python operation detected: {recv}.{node.func.attr}()"
                     break
             # 2) getattr(obj, "remove") / getattr(os, "rem" + "ove")
-            if isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) >= 2:
+            if (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
+            ):
                 attr = _string_const(node.args[1])
                 if attr in _DESTRUCTIVE_ATTRS:
                     found = f"destructive Python operation detected: getattr(..., {attr!r})"
                     break
                 # concat-built attr: "rem" + "ove"
                 if isinstance(node.args[1], ast.BinOp):
-                    parts = [
-                        _string_const(v)
+                    joined = "".join(
+                        v.value
                         for v in ast.walk(node.args[1])
-                        if isinstance(v, ast.Constant)
-                    ]
-                    joined = "".join(p for p in parts if p is not None)
+                        if isinstance(v, ast.Constant) and isinstance(v.value, str)
+                    )
                     if joined in _DESTRUCTIVE_ATTRS:
                         found = f"destructive Python operation detected: getattr(..., {joined!r})"
                         break
@@ -145,16 +152,44 @@ def _check_code_destructive(code: str) -> str | None:
                                 f"{base_name}({mod!r}).{node.func.attr}()"
                             )
                             break
-            # 4) eval/exec of a destructive call string
+            # 4) eval/exec of a destructive call string. Constant-fold the
+            #    argument first so concat-built payloads ("os." + "remove" +
+            #    "(...)") are checked as the string they evaluate to.
             if isinstance(node.func, ast.Name) and node.func.id in ("eval", "exec") and node.args:
-                payload = _string_const(node.args[0])
-                if payload is not None:
+                arg = node.args[0]
+                try:
+                    folded = ast.literal_eval(arg)
+                except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+                    folded = None
+                if not isinstance(folded, str) and isinstance(arg, ast.BinOp):
+                    # literal_eval rejects BinOp nodes; fold nested string
+                    # concatenations manually so "os." + "remove" + "..." is
+                    # checked as the string it evaluates to.
+                    parts: list[str] = []
+
+                    def _fold(n: ast.AST) -> None:
+                        if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Add):
+                            _fold(n.left)
+                            _fold(n.right)
+                        elif isinstance(n, ast.Constant) and isinstance(n.value, str):
+                            parts.append(n.value)
+                        else:
+                            parts.clear()
+                            parts.append("\x00__unsupported__")
+
+                    _fold(arg)
+                    if parts and parts[0] != "\x00__unsupported__":
+                        folded = "".join(parts)
+                if isinstance(folded, str):
                     for pattern, label in _DESTRUCTIVE_PY_PATTERNS:
-                        if re.search(pattern, payload):
-                            found = f"destructive Python operation detected: {node.func.id}() of {label}"
+                        if re.search(pattern, folded):
+                            found = (
+                                f"destructive Python operation detected: "
+                                f"{node.func.id}() of {label}"
+                            )
                             break
-                    if found is not None:
-                        break
+                if found is not None:
+                    break
     return found
 
 
