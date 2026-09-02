@@ -8,6 +8,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **`robinhood-rwa-addresses` now verifies every address against Robinhood
+  Chain instead of trusting the token index.** The skill decided what counted
+  as a genuine Stock Token from a name suffix in CoinGecko's list, which was
+  wrong in both directions. CoinGecko caps `name` at 60 characters, so long
+  listings lost the "• Robinhood Token" marker mid-word and were dropped
+  entirely — `--query IBM` returned no matches at all, as did VTI, XLK, CTSH
+  and CRDO. In the other direction, 47 of the 238 entries the skill reported as
+  verified Stock Tokens (JPM, MCD, DIS, UBER, ABNB, PYPL and others) have **no
+  contract deployed at the advertised address**; the skill handed them out as
+  usable addresses, and funds sent to one would be unrecoverable.
+
+  Discovery still ranks candidates from the token list, but the answer is now
+  settled on chain: every genuine Stock Token is a proxy pointing at Robinhood's
+  shared EIP-1967 beacon `0xe10b6f6b275de231345c20d14ab812db62151b00`, which a
+  permissionless impersonator cannot forge. One batched JSON-RPC round-trip
+  (`https://rpc.mainnet.chain.robinhood.com`, no key, ~0.5s) classifies each
+  match as `verified`, `not-deployed`, `not-a-stock-token`, or `unverified`,
+  and a top-level `warning` carries the caveat. Undeployed listings are still
+  returned — silently dropping them reads as "the skill is broken" — but are
+  flagged and never presented as usable addresses.
+
+  Following `robinhood-chain-stocks`, an unreachable node yields `unverified`
+  rather than a negative verdict: a network fault is never reported as evidence
+  that a token is fake. `--no-verify` skips the check explicitly and says so in
+  its own wording, and `--rpc-url` points at an alternate node. The name-suffix
+  match is retained only as the offline fallback, now tolerant of truncation.
+
 - The sensitive-path hard block now refuses destructive intents that target
   the filesystem root. `rm -rf /` carries no sensitive *prefix*, so the
   denylist never matched it and a whole-host wipe fell through to the ordinary
