@@ -30,6 +30,12 @@ class _DefaultDebounceCoordinator:
     def __init__(self) -> None:
         self._pending: dict[str, Any] = {}
         self._lock = asyncio.Lock()
+        # Strong references to in-flight cap-triggered deliveries. The event
+        # loop holds only weak references to tasks, so a fire-and-forget
+        # create_task can be GC'd mid-execution and the batch is silently
+        # lost; retaining the task until completion prevents that and lets
+        # cancel_all() drain in-flight flushes at shutdown.
+        self._deliveries: set[asyncio.Task[None]] = set()
 
     async def schedule(self, session_key: str, message: IncomingMessage, *, window_s: float, on_fire: Any) -> None:
         async with self._lock:
@@ -47,7 +53,12 @@ class _DefaultDebounceCoordinator:
                         session_key=session_key,
                         coalesced_count=len(state.buffer),
                     )
-                    asyncio.create_task(self._deliver(session_key, state.buffer, state.on_fire))
+                    # Retain the delivery task: the loop only holds weak
+                    # references, so an unreferenced task can be GC'd before
+                    # it runs and the whole batch is silently lost.
+                    delivery = asyncio.create_task(self._deliver(session_key, state.buffer, state.on_fire))
+                    self._deliveries.add(delivery)
+                    delivery.add_done_callback(self._deliveries.discard)
                 return
             task = asyncio.create_task(self._fire(session_key, window_s), name=f"channel-debounce:{session_key}")
             self._pending[session_key] = SimpleNamespace(buffer=[message], on_fire=on_fire, task=task)
@@ -64,6 +75,10 @@ class _DefaultDebounceCoordinator:
 
     async def cancel_all(self) -> None:
         await asyncio.gather(*(self.cancel(k) for k in list(self._pending)), return_exceptions=True)
+        # Drain in-flight cap-triggered deliveries so no batch is dropped on
+        # gateway shutdown.
+        if self._deliveries:
+            await asyncio.gather(*self._deliveries, return_exceptions=True)
 
     async def _fire(self, session_key: str, window_s: float) -> None:
         try:
