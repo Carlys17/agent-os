@@ -503,6 +503,8 @@ class EmailChannel:
                     if parsed is None:
                         continue
                     message = self._to_incoming(parsed)
+                    # Acknowledge only after parsing and conversion return normally.
+                    self._mark_seen(client, uid)
                 except Exception as exc:  # noqa: BLE001 — one bad mail, not the batch
                     log.warning("email.message_read_failed", name=self.config.name, error=str(exc))
                     continue
@@ -547,7 +549,6 @@ class EmailChannel:
             self._mark_seen(client, uid)
             return None
 
-        self._mark_seen(client, uid)
         parsed = BytesParser(policy=email_policy).parsebytes(raw)
         return parsed if isinstance(parsed, EmailMessage) else None
 
