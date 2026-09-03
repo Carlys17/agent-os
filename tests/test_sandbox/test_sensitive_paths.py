@@ -252,7 +252,12 @@ def test_env_var_references_expand_to_sensitive_prefix() -> None:
     at real-execution time.  HOME is mocked so the test is platform-independent
     (Windows CI does not set HOME).
     """
-    with patch.dict(os.environ, {"HOME": "/home/testuser", "USER": "testuser"}):
+    env = {
+        "HOME": "/home/testuser",
+        "USERPROFILE": "/home/testuser",
+        "USER": "testuser",
+    }
+    with patch.dict(os.environ, env):
         sensitive_paths = [
             "$HOME/.ssh/config",
             "${HOME}/.ssh/id_rsa",
