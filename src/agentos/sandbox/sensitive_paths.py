@@ -128,6 +128,28 @@ def _comparison_path_candidates(path: str) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
+_ENV_TOKEN_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _shell_style_expand(text: str) -> str:
+    """Expand ``$VAR``/``${VAR}`` tokens against ``os.environ``.
+
+    ``os.path.expandvars`` only understands ``%VAR%`` on Windows, which makes
+    denylist matching miss ``$HOME/...`` literals written for POSIX shells.
+    Expanding manually keeps the scanner platform-independent.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        name = match.group(1) or match.group(2)
+        return os.environ.get(name, match.group(0))
+
+    return _ENV_TOKEN_RE.sub(_replace, text)
+
+
+def _looks_like_envvar_reference(text: str) -> bool:
+    return "$" in text or "`" in text
+
+
 def _looks_like_rooted_path_text(path: str) -> bool:
     normalized = str(path).strip().replace("\\", "/")
     return normalized.startswith(("/", "~/")) and not normalized.startswith("//")
@@ -290,7 +312,7 @@ def sensitive_path_marker(
     # token containing a `$` (or backtick command substitution) to the full
     # prefix matcher after expansion so the denylist still applies.
     if "$" in text or "`" in text:
-        expanded = os.path.expandvars(text)
+        expanded = _shell_style_expand(text)
         if expanded != text:
             marker = is_sensitive_path(expanded)
             if marker is not None:
