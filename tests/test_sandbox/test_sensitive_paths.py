@@ -239,3 +239,57 @@ def test_root_target_detection_covers_windows_drive_roots() -> None:
         "relative/path",
     ):
         assert _is_root_target(target) is False, target
+
+
+def test_env_var_references_expand_to_sensitive_prefix(monkeypatch) -> None:
+    """``$HOME/.ssh/config`` must trigger the same block as ``~/.ssh/config``.
+
+    The static text scanner cannot rely on ``Path.is_absolute()`` to gate the
+    full prefix matcher because ``$HOME`` is plain text to pathlib. Expand the
+    environment first so the denylist applies, mirroring what the shell does
+    at real-execution time.
+    """
+    monkeypatch.setenv("HOME", "/home/testuser")
+    sensitive_paths = [
+        "$HOME/.ssh/config",
+        "${HOME}/.ssh/id_rsa",
+        "$HOME/.aws/credentials",
+        "$HOME/.kube/config",
+        "$HOME/.gnupg/secring.gpg",
+        "$HOME/.config/gcloud/application_default_credentials.json",
+        "$HOME/.password-store/secrets.gpg-id",
+    ]
+    for path in sensitive_paths:
+        # structured caller (the shell-command path through
+        # sensitive_path_marker) must catch every prefix entry.
+        assert sensitive_path_marker(path) is not None, path
+
+    sensitive_commands = [
+        "cat $HOME/.ssh/config",
+        "cp $HOME/.aws/credentials /tmp/leak.txt",
+        "rm -rf $HOME/.ssh",
+        "rm $HOME/.aws",
+        "ls ${HOME}/.ssh",
+    ]
+    for cmd in sensitive_commands:
+        # text scanner (the regex/token path) must also catch the same
+        # commands after os.path.expandvars runs on the whole text.
+        assert sensitive_path_in_text(cmd) is not None, cmd
+
+    # Sanity: a non-sensitive env-var path stays clean (no false-positive).
+    assert sensitive_path_marker("$HOME/projects/notes.md") is None
+    assert sensitive_path_in_text("$HOME/.local/share/applications/x.desktop") is None
+
+
+def test_env_var_with_unknown_variable_falls_through_safely(monkeypatch) -> None:
+    """An env-var token that cannot be expanded must not break the gate.
+
+    ``os.path.expandvars`` leaves ``$UNDEFINED_VAR/...`` unchanged. The denylist
+    then runs on the literal text, which is a pure-fail (no marker) — better
+    than a crash.
+    """
+    monkeypatch.delenv("NOPE", raising=False)
+    # Marker and text scanner both fall through to the same path the un-tilde
+    # case already used to take; we only assert that no exception escapes.
+    assert sensitive_path_marker("$NOPE/.ssh/config") is None
+    assert sensitive_path_in_text("cat $NOPE/.ssh/config") is None

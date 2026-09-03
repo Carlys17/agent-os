@@ -285,6 +285,16 @@ def sensitive_path_marker(
     """
 
     text = str(path).strip()
+    # Environment-variable references ($HOME/..., ${HOME}/...) defeat the
+    # tilde check below because pathlib does not expand them. Redirect any
+    # token containing a `$` (or backtick command substitution) to the full
+    # prefix matcher after expansion so the denylist still applies.
+    if "$" in text or "`" in text:
+        expanded = os.path.expandvars(text)
+        if expanded != text:
+            marker = is_sensitive_path(expanded)
+            if marker is not None:
+                return marker
     raw = Path(text).expanduser()
     if (
         text
@@ -323,20 +333,29 @@ def sensitive_path_in_text(
     if not text:
         return None
 
+    # Environment-variable references ($HOME/..., ${HOME}/...) reach this
+    # scanner as literal text while the shell would expand them at execution
+    # time. Scan the env-expanded variant too so the denylist sees the same
+    # paths the child process will actually touch.
+    expanded_text = os.path.expandvars(text)
+    scan_texts = [text] if expanded_text == text else [text, expanded_text]
+
     candidates: list[str] = []
+    for scan in scan_texts:
+        try:
+            candidates.extend(shlex.split(scan))
+        except ValueError:
+            candidates.extend(scan.split())
+        candidates.extend(scan.split())
     with_context: list[tuple[str, int]] = []
-    try:
-        candidates.extend(shlex.split(text))
-    except ValueError:
-        candidates.extend(text.split())
-    candidates.extend(text.split())
-    with_context.extend(
-        (match.group(0), match.start()) for match in _ABSOLUTE_OR_TILDE_PATH_RE.finditer(text)
-    )
-    with_context.extend(
-        (match.group("path"), match.start("path"))
-        for match in _DOTENV_LITERAL_RE.finditer(text)
-    )
+    for scan in scan_texts:
+        with_context.extend(
+            (match.group(0), match.start()) for match in _ABSOLUTE_OR_TILDE_PATH_RE.finditer(scan)
+        )
+        with_context.extend(
+            (match.group("path"), match.start("path"))
+            for match in _DOTENV_LITERAL_RE.finditer(scan)
+        )
 
     for raw in candidates:
         if "://" in raw:
