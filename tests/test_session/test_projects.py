@@ -233,8 +233,6 @@ def test_write_cap_matches_injection_cap():
 
 # ── sanitize_fts_query regression tests ─────────────────────────────────
 
-# ── sanitize_fts_query regression tests ─────────────────────────────────
-
 
 def test_sanitize_fts_query_preserves_unicode():
     """Unicode letters (Latin-1 accents, CJK, Cyrillic, Arabic, etc.) must be
