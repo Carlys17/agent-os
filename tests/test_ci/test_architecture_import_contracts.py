@@ -107,6 +107,9 @@ APPROVED_PACKAGE_IMPORTS: frozenset[tuple[str, str]] = frozenset({
     ("onboarding", "provider"),
     ("onboarding", "search"),
     ("persistence", "skills"),
+    # portfolio_store.py uses the shared aiosqlite shim, same as the other
+    # SQLite-backed stores (memory, scheduler) that already import from compat.
+    ("portfolio_store.py", "compat"),
     ("provider", "engine"),
     ("router_control.py", "engine"),
     # The router strategy registry's asset probes lazily reach into the Pilot
