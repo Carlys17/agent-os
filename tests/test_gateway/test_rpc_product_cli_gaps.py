@@ -475,8 +475,6 @@ async def test_doctor_memory_status_unavailable_includes_split_health_fields():
     }
 
 
-
-
 @pytest.mark.asyncio
 async def test_doctor_memory_status_health_is_agent_scoped(tmp_path):
     storage = await SessionStorage.open(tmp_path / "sessions.db")
@@ -560,7 +558,6 @@ async def test_doctor_memory_status_includes_curated_section(tmp_path):
         "memory": {"entries": 2, "usage": "48/4,000"},
         "user": {"entries": 1, "usage": "11/2,000"},
     }
-
 
 
 @pytest.mark.asyncio
@@ -722,14 +719,6 @@ class FakeRepairFlushService:
                 "obligation_missing_ids": [],
             },
         )
-
-
-
-
-
-
-
-
 
 
 @pytest.mark.asyncio
