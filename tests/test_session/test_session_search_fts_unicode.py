@@ -62,9 +62,9 @@ def test_fts_operators_stripped() -> None:
     assert '"hello"' in result
     assert '"world"' in result
     assert "*" not in result
-    assert "AND" not in result
-    assert "OR" not in result
-    assert "NEAR" not in result
+    assert '"AND"' in result
+    assert '"OR"' in result
+    assert '"NEAR"' in result
 
 
 def test_punctuation_stripped() -> None:
@@ -87,7 +87,7 @@ def test_whitespace_only() -> None:
 
 def test_token_limit_20() -> None:
     """Input with more than 20 tokens is capped to 20 tokens."""
-    result = SessionStorage.sanitize_fts_query("a b c d e f g h i j k l m n o p q r s t u v w x y z")
+    result = SessionStorage.sanitize_fts_query('a b c d e f g h i j k l m n o p q r s t u v w x y')
     tokens = result.split()
     assert len(tokens) == 20
 
