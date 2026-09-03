@@ -1024,7 +1024,12 @@ class DiscordChannel:
     ) -> ChannelSendResult:
         max_send_file_bytes = 25 * 1024 * 1024  # 25 MB
         path = Path(file_path)
-        st = path.stat()
+        try:
+            st = path.stat()
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"send_file: file not found: {file_path}"
+            ) from exc
         if st.st_size > max_send_file_bytes:
             raise ValueError(
                 f"File exceeds {max_send_file_bytes} byte limit for send_file"

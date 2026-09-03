@@ -757,6 +757,13 @@ class EmailChannel:
             )
             _attach(outbound, path.name, None, payload)
             await asyncio.to_thread(self._smtp_send, outbound)
+        except FileNotFoundError:
+            return ChannelSendResult.failed(
+                capability=ChannelCapabilities.NATIVE_FILE_UPLOAD,
+                target_id=thread_id,
+                reason=f"send_file: file not found: {file_path}",
+                retryable=False,
+            )
         except (OSError, ValueError, smtplib.SMTPException) as exc:
             return ChannelSendResult.failed(
                 capability=ChannelCapabilities.NATIVE_FILE_UPLOAD,
