@@ -1753,7 +1753,7 @@ class SessionStorage:
         import re as _re
 
         # Whitelist: only allow alphanumeric and whitespace through
-        cleaned = _re.sub(r"[^a-zA-Z0-9\s]", " ", raw)
+        cleaned = _re.sub(r"[^\w\s]", " ", raw)
         # Collapse whitespace and split into tokens
         tokens = cleaned.split()
         if not tokens:
