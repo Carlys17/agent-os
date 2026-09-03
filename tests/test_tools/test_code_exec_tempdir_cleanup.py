@@ -18,6 +18,14 @@ from agentos.tools.builtin import code_exec
 from agentos.tools.types import current_tool_context
 
 
+@pytest.fixture(autouse=True)
+def _reset_tool_context() -> None:
+    """Reset global tool context before and after each test to prevent pollution."""
+    current_tool_context.set(None)
+    yield
+    current_tool_context.set(None)
+
+
 def _cleanup_agentos_tempdirs() -> list[str]:
     """Remove any pre-existing agentos_exec tempdirs and return what was there."""
     existing = glob.glob("/tmp/agentos_exec_*")
