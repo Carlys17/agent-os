@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `TaskRuntime` retains the cached routing envelope while a session has queued
+  or running tasks, evicting it only after the final task for the session reaches
+  a terminal state. This prevents proactive or follow-up sends from losing
+  channel, account, recipient, and thread routing during multi-turn workflows
+  ([#930](https://github.com/use-agent-os/agent-os/issues/930)).
+
 ## [2026.9.4] - 2026-09-04
 
 ### Fixed
