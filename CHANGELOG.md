@@ -6,6 +6,132 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.9.4] - 2026-09-04
+
+### Fixed
+
+- `agentos config set skills.config.<skill>.<key>` persists again. `_set_key`
+  only overwrote keys already present in `to_toml_dict()`, and an empty
+  `skills.config` is omitted there for rollback compatibility, so the documented
+  command could never create the map. Missing intermediate dicts are now created
+  under `skills.config` only, and unknown keys outside that map stay rejected.
+  The no-`--config` path stopped lying too: it printed a fabricated
+  `AGENTOS_GATEWAY_` export and exited 0 for keys that do not bind — including
+  `gateway.port` and every `skills.config.*` key — so a user followed the hint
+  and set an environment variable that nothing reads. Keys are validated against
+  the model first, and the free-form `skills.config` map, which has no env
+  binding, is refused outright
+  ([#834](https://github.com/use-agent-os/agent-os/issues/834)).
+- `load_entries` skips malformed lines in the decisions JSONL instead of raising
+  on the first one. The file is append-only and written once per turn, so a
+  SIGKILL mid-turn, an OOM or a disk-full error can leave a truncated line
+  behind — and `load_entries` is the shared reader for cost-savings reports,
+  session export and pipeline replay, all of which died together. The realistic
+  corruption is not a bad string but a wrong-shape payload, which surfaces as
+  `ValueError`/`TypeError` out of `_filter_payload` rather than
+  `JSONDecodeError`, so all of them are caught. Skips are accounted for: one
+  debug event per line with path, line number and error class, and one warning
+  with the totals at the end, so a partial report announces itself instead of
+  quietly under-reporting. This matches the tolerance
+  `decision_log_aggregate.parse_log_line` already had, so the two readers of the
+  same file now agree on what is fatal
+  ([#812](https://github.com/use-agent-os/agent-os/issues/812)).
+- An MCP client disconnecting no longer takes another client's tool with it.
+  When two servers registered the same tool name, disconnect unregistered the
+  name unconditionally, so the surviving client's tool vanished from the
+  registry. Each active client's exact registry spec and handler are tracked; a
+  colliding tool is unregistered only when the disconnecting client owns the
+  active handler, and otherwise the most recently registered handler from a
+  still-active client is restored
+  ([#801](https://github.com/use-agent-os/agent-os/issues/801)).
+- `background_process` output is capped at 1,000,000 retained characters per
+  session, evicting older chunks so the most recent tail survives. Draining
+  continues past the cap, so a noisy subprocess cannot block on a full pipe, and
+  the retained character count and truncation state are exposed in the process
+  session and log payloads
+  ([#803](https://github.com/use-agent-os/agent-os/issues/803)).
+- Provider credit exhaustion is classified as `INSUFFICIENT_CREDITS` rather than
+  a transient fault. OpenAI returns `insufficient_quota` with HTTP 429, which
+  read as `RATE_LIMITED` and tripped the circuit breaker for a billing fault no
+  cooldown can heal; Anthropic returns `billing_error` with HTTP 402, which read
+  as `UNKNOWN` and carried no recovery hint. A cross-provider
+  `_is_insufficient_credits()` check runs before the status-code branch, so the
+  raw code and message win over the ambiguous 429
+  ([#777](https://github.com/use-agent-os/agent-os/issues/777)).
+- CLI JSON output survives a non-UTF-8 terminal encoding.
+  `json.dumps(..., ensure_ascii=False)` emits raw non-ASCII, and on a Windows
+  code page (cp1252, cp437) `sys.stdout.write` raised `UnicodeEncodeError`.
+  `_write_json_text` writes UTF-8 bytes to the underlying binary buffer when one
+  exists — lossless, so the JSON contract holds for pipes and files — and falls
+  back to the text layer with `errors="backslashreplace"`, which keeps the data
+  as round-trippable `\uXXXX` escapes instead of destroying an em dash into `?`
+  ([#764](https://github.com/use-agent-os/agent-os/issues/764)).
+- Memory-write refresh callbacks reach the running turn.
+  `build_turn_runner_from_services` never populated `svc._turn_runner_ref`, so
+  `_on_memory_write` had nothing to call and `refresh_memory_snapshot(agent_id)`
+  never ran on the active `TurnRunner`
+  ([#761](https://github.com/use-agent-os/agent-os/issues/761)).
+- `apply_patch` records `UpdateFile` in `ctx.workspace_file_writes`. Only
+  `AddFile` was recorded, so a patch that edited an existing file left the
+  engine's auto-publish path with nothing to publish, even though `UpdateFile`
+  is a peer of `AddFile` everywhere else in the module. The parser also accepts
+  the optional line counts in a standard `@@ -a,b +c,d @@` hunk header
+  ([#753](https://github.com/use-agent-os/agent-os/issues/753)).
+- `parse_version()` understands a bare `.dev` suffix and sorts dev
+  pre-releases per PEP 440. There was a fallback defaulting a bare `.post` to
+  `0` but none for `.dev`, so `2026.7.18.dev` parsed with `dev = None`, fell
+  through to the final-release phase and compared equal to `2026.7.18` —
+  suppressing the `is_newer()` update notice for every development install
+  ([#740](https://github.com/use-agent-os/agent-os/issues/740)).
+- Email is marked seen after the message is converted, not before, so a failure
+  mid-conversion leaves the message unread and eligible for the next poll
+  ([#719](https://github.com/use-agent-os/agent-os/issues/719)).
+- `robinhood-chain-stocks` handles a non-dict RPC error payload. `_eth_call`
+  assumed `error` was a mapping and crashed when a node returned a plain string
+  ([#815](https://github.com/use-agent-os/agent-os/issues/815)).
+- `gmgn-wallet-score` prints usage instead of crashing. `score.py` indexed
+  `sys.argv[1]` and `sys.argv[2]` unguarded, so running it with too few
+  arguments raised an unhandled `IndexError`; it now validates argument count,
+  exits 2 with usage on stderr, and answers `-h`/`--help` with exit 0
+  ([#819](https://github.com/use-agent-os/agent-os/issues/819)).
+- Frontend line endings are normalised so Prettier stops failing on Windows
+  checkouts. `.gitattributes` marks frontend sources `text=auto` — not a blanket
+  `eol=lf`, which would have flagged PNG, webp and woff2 assets as text and
+  corrupted them — and Prettier is configured with `endOfLine: "auto"`
+  ([#825](https://github.com/use-agent-os/agent-os/issues/825)).
+
+### Security
+
+- Invisible Unicode characters are normalised before intent-phrase matching. A
+  soft hyphen, word joiner, zero-width space or bidi isolator placed between two
+  words split the intent-phrase regexes, so a prompt-injection payload evaded
+  the guard entirely in both report and enforce mode. `classify_injection` now
+  normalises invisible codepoints to a space before matching the non-invisible
+  patterns, while `invisible_char` is still matched against the original text so
+  the smuggling technique itself is reported rather than erased
+  ([#690](https://github.com/use-agent-os/agent-os/issues/690)).
+- Search results carry their provider origin, so text returned by a search
+  backend is attributable when the injection guard inspects it
+  ([#688](https://github.com/use-agent-os/agent-os/issues/688)).
+- Per-IP rate limiting covers the Control UI API subtree.
+  `RateLimitMiddleware._is_ui_path()` exempted the entire Control UI prefix,
+  including everything mounted under `{base_path}/api/*`, so
+  `/control/api/sessions`, `/control/api/chat` and `/control/api/config` took
+  unlimited unauthenticated requests. It now mirrors the check
+  `AuthMiddleware._is_ui_path()` already had
+  ([#748](https://github.com/use-agent-os/agent-os/issues/748)).
+- `send_file` checks file size before reading. Every channel adapter opened or
+  read the file first, so a large attachment meant memory exhaustion — the
+  email adapter base64-expands the whole payload in memory — or a long upload
+  that ended in an API rejection. `check_channel_file_size` stats the file up
+  front against each service's real ceiling (Discord 10 MB, Telegram 50 MB,
+  email 25 MB) and raises with the limit named
+  ([#683](https://github.com/use-agent-os/agent-os/issues/683)).
+- `robinhood-chain-stocks` rejects a non-`http(s)` `--rpc-url`. The URL reached
+  the HTTP layer unvalidated, so a `file://` URL turned an RPC call into a local
+  file read; empty URLs and a bare `http://` are refused as well
+  ([#816](https://github.com/use-agent-os/agent-os/issues/816)).
+
 ## [2026.9.3] - 2026-09-03
 
 ### Added
