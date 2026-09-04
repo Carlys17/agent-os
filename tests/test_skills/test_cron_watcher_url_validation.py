@@ -13,9 +13,9 @@ import socket
 import subprocess
 import sys
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from collections.abc import Generator
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -36,7 +36,9 @@ RSS_FEED = b"""<?xml version="1.0"?><rss><channel>
 <item><title>Test item</title><link>https://example.com/1</link><guid>1</guid></item>
 </channel></rss>"""
 
-JSON_FEED = json.dumps({"data": {"events": [{"event_id": "a1", "title": "Deploy finished"}]}}).encode()
+JSON_FEED = json.dumps({
+    "data": {"events": [{"event_id": "a1", "title": "Deploy finished"}]}
+}).encode()
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -108,7 +110,12 @@ def _run(script: str, *args: str):
 # ── Valid http(s) URLs work ─────────────────────────────────────────────────
 
 def test_rss_accepts_http_url(http_server, state_dir):
-    result = _run("watch_rss.py", "--url", f"{http_server}/rss", "--name", "t", "--first-run-reports")
+    result = _run(
+        "watch_rss.py",
+        "--url", f"{http_server}/rss",
+        "--name", "t",
+        "--first-run-reports",
+    )
 
     assert result.returncode == 0, result.stderr
     assert "Test item" in result.stdout
@@ -131,7 +138,8 @@ def test_json_accepts_http_url(http_server, state_dir):
 # ── file:// is rejected ─────────────────────────────────────────────────────
 
 def test_rss_rejects_file_scheme(http_server, state_dir):
-    result = _run("watch_rss.py", "--url", f"{http_server}/rss".replace("http://", "file://"), "--name", "f")
+    file_url = f"{http_server}/rss".replace("http://", "file://")
+    result = _run("watch_rss.py", "--url", file_url, "--name", "f")
 
     assert result.returncode == 1
     assert "file://" in result.stderr or "scheme" in result.stderr.lower()
@@ -174,7 +182,12 @@ def test_json_rejects_ftp_scheme():
 
 def test_rss_accepts_localhost(http_server):
     # 127.0.0.1 is a legitimate loopback address for local dev — not a file read.
-    result = _run("watch_rss.py", "--url", f"{http_server}/rss", "--name", "l", "--first-run-reports")
+    result = _run(
+        "watch_rss.py",
+        "--url", f"{http_server}/rss",
+        "--name", "l",
+        "--first-run-reports",
+    )
 
     assert result.returncode == 0, result.stderr
 

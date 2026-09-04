@@ -18,9 +18,9 @@ import socket
 import subprocess
 import sys
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from collections.abc import Generator
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -140,7 +140,11 @@ def test_rss_first_run_can_report_everything(state_dir, http_server):
     path = _feed(content, "feed.xml", RSS)
 
     result = _run(
-        "watch_rss.py", "--url", _url(base, path), "--name", "t", "--first-run-reports", env_home=state_dir
+        "watch_rss.py",
+        "--url", _url(base, path),
+        "--name", "t",
+        "--first-run-reports",
+        env_home=state_dir,
     )
 
     assert result.returncode == 0
@@ -166,7 +170,12 @@ def test_rss_reports_only_what_is_new(state_dir, http_server):
 
     assert result.returncode == 0
     assert "Third post" in result.stdout
-    control = _run("watch_rss.py", "--url", _url(base, path), "--name", "t", env_home=state_dir)  # negative control: rerun is silent
+    control = _run(
+        "watch_rss.py",
+        "--url", _url(base, path),
+        "--name", "t",
+        env_home=state_dir,
+    )  # negative control: rerun is silent
     assert control.stdout == ""
 
 
@@ -186,7 +195,11 @@ def test_rss_reads_atom_entries(state_dir, http_server):
     path = _feed(content, "atom.xml", ATOM)
 
     result = _run(
-        "watch_rss.py", "--url", _url(base, path), "--name", "a", "--first-run-reports", env_home=state_dir
+        "watch_rss.py",
+        "--url", _url(base, path),
+        "--name", "a",
+        "--first-run-reports",
+        env_home=state_dir,
     )
 
     assert result.returncode == 0
@@ -209,7 +222,11 @@ def test_watermarks_are_per_name(state_dir, http_server):
     _run("watch_rss.py", "--url", _url(base, path), "--name", "one", env_home=state_dir)
 
     result = _run(
-        "watch_rss.py", "--url", _url(base, path), "--name", "two", "--first-run-reports", env_home=state_dir
+        "watch_rss.py",
+        "--url", _url(base, path),
+        "--name", "two",
+        "--first-run-reports",
+        env_home=state_dir,
     )
 
     assert "First post" in result.stdout
@@ -225,7 +242,12 @@ def _events(content: dict[str, bytes], items: list[dict]) -> str:
 def test_json_reports_only_new_items(state_dir, http_server):
     base, content = http_server
     path = _events(content, [{"event_id": "a1", "title": "Deploy finished"}])
-    args = ("--url", _url(base, path), "--name", "j", "--id-field", "event_id", "--items-path", "data.events")
+    args = (
+        "--url", _url(base, path),
+        "--name", "j",
+        "--id-field", "event_id",
+        "--items-path", "data.events",
+    )
     _run("watch_http_json.py", *args, env_home=state_dir)
 
     _events(content, [{"event_id": "a2", "title": "Alert cleared"}])

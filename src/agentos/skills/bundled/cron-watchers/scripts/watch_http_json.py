@@ -22,6 +22,14 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from _watermark import select_new  # noqa: E402
+
+USER_AGENT = "AgentOS-cron-watcher/1.0"
 
 
 def validate_http_url(url: str) -> str:
@@ -45,14 +53,6 @@ def validate_http_url(url: str) -> str:
     if not parsed.netloc:
         raise ValueError(f"URL missing host {url!r}: must be http:// or https://")
     return cleaned
-from pathlib import Path
-from typing import Any
-
-sys.path.insert(0, str(Path(__file__).parent))
-
-from _watermark import select_new  # noqa: E402
-
-USER_AGENT = "AgentOS-cron-watcher/1.0"
 
 
 def _dig(payload: Any, dotted: str) -> Any:
