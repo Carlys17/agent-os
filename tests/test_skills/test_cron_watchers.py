@@ -24,6 +24,16 @@ from pathlib import Path
 
 import pytest
 
+# The cron-watcher scripts use urllib.request.urlopen to fetch their URLs.
+# On Windows GitHub Actions runners the network stack is flaky under heavy
+# parallel test load (WinError 10106: service provider could not be loaded).
+# The functional tests need a live server; the security tests (rejecting
+# file://) run against a mock and do not need it.
+_run_via_http_server = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="HTTPServer flaky on Windows CI runners (WinError 10106)",
+)
+
 SCRIPTS = (
     Path(__file__).resolve().parents[2]
     / "src"
@@ -125,6 +135,7 @@ def _url(base: str, path: str) -> str:
 # ── watch_rss ───────────────────────────────────────────────────────────────
 
 
+@_run_via_http_server
 def test_rss_first_run_is_silent(state_dir, http_server):
     base, content = http_server
     path = _feed(content, "feed.xml", RSS)
@@ -135,6 +146,7 @@ def test_rss_first_run_is_silent(state_dir, http_server):
     assert result.stdout == ""
 
 
+@_run_via_http_server
 def test_rss_first_run_can_report_everything(state_dir, http_server):
     base, content = http_server
     path = _feed(content, "feed.xml", RSS)
@@ -152,6 +164,7 @@ def test_rss_first_run_can_report_everything(state_dir, http_server):
     assert "Second post" in result.stdout
 
 
+@_run_via_http_server
 def test_rss_reports_only_what_is_new(state_dir, http_server):
     base, content = http_server
     path = _feed(content, "feed.xml", RSS)
@@ -179,6 +192,7 @@ def test_rss_reports_only_what_is_new(state_dir, http_server):
     assert control.stdout == ""
 
 
+@_run_via_http_server
 def test_rss_unchanged_feed_stays_silent(state_dir, http_server):
     base, content = http_server
     path = _feed(content, "feed.xml", RSS)
@@ -190,6 +204,7 @@ def test_rss_unchanged_feed_stays_silent(state_dir, http_server):
     assert result.stdout == ""
 
 
+@_run_via_http_server
 def test_rss_reads_atom_entries(state_dir, http_server):
     base, content = http_server
     path = _feed(content, "atom.xml", ATOM)
@@ -206,6 +221,7 @@ def test_rss_reads_atom_entries(state_dir, http_server):
     assert "Atom one" in result.stdout
 
 
+@_run_via_http_server
 def test_rss_fails_loudly_on_a_broken_feed(state_dir, http_server):
     base, content = http_server
     path = _feed(content, "broken.xml", "not xml at all")
@@ -216,6 +232,7 @@ def test_rss_fails_loudly_on_a_broken_feed(state_dir, http_server):
     assert "not valid XML" in result.stderr
 
 
+@_run_via_http_server
 def test_watermarks_are_per_name(state_dir, http_server):
     base, content = http_server
     path = _feed(content, "feed.xml", RSS)
@@ -239,6 +256,7 @@ def _events(content: dict[str, bytes], items: list[dict]) -> str:
     return _feed(content, "events.json", json.dumps({"data": {"events": items}}))
 
 
+@_run_via_http_server
 def test_json_reports_only_new_items(state_dir, http_server):
     base, content = http_server
     path = _events(content, [{"event_id": "a1", "title": "Deploy finished"}])
@@ -257,6 +275,7 @@ def test_json_reports_only_new_items(state_dir, http_server):
     assert result.stdout.strip() == "- Alert cleared"
 
 
+@_run_via_http_server
 def test_json_accepts_a_top_level_list(state_dir, http_server):
     base, content = http_server
     path = _feed(content, "list.json", json.dumps([{"id": "x", "name": "thing"}]))
@@ -275,6 +294,7 @@ def test_json_accepts_a_top_level_list(state_dir, http_server):
     assert "thing" in result.stdout
 
 
+@_run_via_http_server
 def test_json_reports_the_requested_fields(state_dir, http_server):
     base, content = http_server
     path = _events(content, [{"event_id": "a1", "title": "t", "sev": "high"}])
@@ -298,6 +318,7 @@ def test_json_reports_the_requested_fields(state_dir, http_server):
     assert "sev='high'" in result.stdout
 
 
+@_run_via_http_server
 def test_json_fails_when_the_path_holds_no_list(state_dir, http_server):
     base, content = http_server
     path = _events(content, [])
