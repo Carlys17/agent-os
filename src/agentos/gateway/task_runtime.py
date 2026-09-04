@@ -910,6 +910,47 @@ class TaskRuntime:
                 error_class=str(getattr(exc, "code", None) or type(exc).__name__),
                 error_message=str(exc),
             )
+        finally:
+            # Keep both per-session lock registries bounded on long-lived
+            # gateways with many sessions (gh-1040), without opening the
+            # split-brain window an unconditional ``pop`` creates.
+            #
+            # A task queued behind this one captured BOTH lock objects at the
+            # top of its own ``_execute`` call, so the entries may only be
+            # dropped while the pair is completely idle.  Evicting under a
+            # waiter would let the next ``setdefault`` mint fresh locks for a
+            # session that still has a turn in flight, running two turns of
+            # one session in parallel.
+            self._evict_session_locks_if_quiescent(session_key)
+
+    @staticmethod
+    def _session_lock_busy(lock: asyncio.Lock | None) -> bool:
+        """True when *lock* has a holder or a queued waiter.
+
+        ``locked()`` alone is not enough: ``release()`` wakes the first waiter
+        but that waiter only sets ``_locked`` once it is scheduled, so there is
+        a window where the lock looks free while a task is already committed
+        to it.
+        """
+        if lock is None:
+            return False
+        waiters = getattr(lock, "_waiters", None)
+        return lock.locked() or bool(waiters)
+
+    def _evict_session_locks_if_quiescent(self, session_key: str) -> None:
+        """Drop the session's lock entries only when both locks are idle.
+
+        Retention is the safe default: keeping an entry one turn too long
+        merely delays reclamation, while dropping one under a waiter breaks
+        per-session mutual exclusion.  The two registries are evicted as a
+        pair so a queued task never sees one stale and one fresh lock.
+        """
+        execution_lock = self._session_execution_locks.get(session_key)
+        write_lock = self._session_locks.get(session_key)
+        if self._session_lock_busy(execution_lock) or self._session_lock_busy(write_lock):
+            return
+        self._session_execution_locks.pop(session_key, None)
+        self._session_locks.pop(session_key, None)
 
     async def _run_turn_handler_with_write_lock_bypass(
         self,
