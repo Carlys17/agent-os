@@ -695,7 +695,7 @@ class TelegramChannel:
         if not secret:
             return Response(status_code=503)
         header_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if not hmac.compare_digest(secret, header_token):
+        if not hmac.compare_digest(secret.encode("utf-8"), header_token.encode("utf-8")):
             return Response(status_code=401)
         try:
             update = await request.json()

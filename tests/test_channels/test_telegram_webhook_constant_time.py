@@ -82,9 +82,7 @@ async def test_matching_secret_returns_200(monkeypatch: pytest.MonkeyPatch) -> N
         b'"chat": {"id": 42, "type": "private"}, "from": {"id": 42}, '
         b'"text": "hello"}}'
     )
-    request = _build_request(
-        {"X-Telegram-Bot-Api-Secret-Token": SECRET}, body=body
-    )
+    request = _build_request({"X-Telegram-Bot-Api-Secret-Token": SECRET}, body=body)
     response = await channel._handle_webhook(request)
     assert response.status_code == 200
 
@@ -121,15 +119,28 @@ async def test_missing_header_returns_401(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.asyncio
+async def test_non_ascii_header_returns_401(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-ASCII bytes in header must not raise TypeError — must return 401."""
+    channel = _make_channel()
+    _patch_handle(monkeypatch, channel)
+
+    # Starlette decodes >=0x80 as latin-1, producing a non-ASCII str.
+    # hmac.compare_digest(str, str) raises TypeError on non-ASCII.
+    request = _build_request({"X-Telegram-Bot-Api-Secret-Token": "\xc3\xa9" + "x" * 18})
+    response = await channel._handle_webhook(request)
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_compare_digest_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sabotage check: reverting to plain ``!=`` must fail this test."""
     channel = _make_channel()
     _patch_handle(monkeypatch, channel)
 
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[bytes, bytes]] = []
     real_compare_digest = hmac.compare_digest
 
-    def spy(a: str, b: str) -> bool:
+    def spy(a: bytes, b: bytes) -> bool:
         calls.append((a, b))
         return real_compare_digest(a, b)
 
