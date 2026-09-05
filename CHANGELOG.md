@@ -25,6 +25,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   iterations inside a turn still weighs recorded spend only, so no turn is
   stopped by its own reservation
   ([#823](https://github.com/use-agent-os/agent-os/issues/823)).
+- Every session removal path drops the in-memory runtime state keyed by that
+  session, not just `SessionManager.finish()`. `sessions.delete` (the Web UI
+  "Delete Chat"), `SessionManager.cap_entries()`, `prune_stale()` and the cron
+  `SessionReaper` all went straight to `storage.delete_session()`, leaving
+  orphaned entries in three process-global stores — `SpawnGroupTracker`'s
+  closed/woken sets, the Pilot router's per-session routing history, and the
+  per-parent spawn locks. On a gateway that stays up for weeks, every deleted
+  or pruned session leaked another entry with nothing to bound the growth.
+  Eviction now lives in `agentos.session.runtime_state`, is idempotent, and
+  runs on all of them. `sessions.delete` also cancels and drains the session's
+  active and queued tasks first, so an in-flight turn handler can no longer
+  write to a session whose rows are about to disappear or repopulate the state
+  just evicted; `prune_stale` collects the stale keys via the new
+  `SessionStorage.list_stale_session_keys()` before deleting, since the
+  storage-level prune returned only a count
+  ([#750](https://github.com/use-agent-os/agent-os/issues/750)).
 
 ## [2026.9.5] - 2026-09-05
 
