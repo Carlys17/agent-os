@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Turn admission reserves spend headroom instead of only checking it, so a
+  concurrent subagent fan-out can no longer overshoot a `[budgets]` ceiling by
+  the width of the fan-out. Spend is recorded by `UsageTracker.add()` only as a
+  turn burns tokens, so children dispatched at once by `SubagentManager.spawn`
+  all read the same pre-fan-out snapshot and all cleared the same limit — with
+  `max_concurrent=5`, five full turns past a ceiling the code documented as
+  bounded by one. `UsageTracker.reserve_turn_budget()` now checks and reserves
+  in a single synchronous call and books the hold against every ledger scope
+  the session bills to (session, gateway daily, agent daily, channel daily);
+  `TurnRunner._run_turn` releases it in a `finally`, so success, error,
+  cancellation, and an abandoned turn all hand the headroom straight back. The
+  hold is sized by the new `budgets.turn_reservation` key (default `$0.25`,
+  `0` to opt out), and because it lives only for its own turn it never shrinks
+  a ceiling for turns that run one after another. The re-check between
+  iterations inside a turn still weighs recorded spend only, so no turn is
+  stopped by its own reservation
+  ([#823](https://github.com/use-agent-os/agent-os/issues/823)).
+
 ## [2026.9.5] - 2026-09-05
 
 ### Added
