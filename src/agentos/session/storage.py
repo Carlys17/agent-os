@@ -765,14 +765,27 @@ class SessionStorage:
             await self.conn.rollback()
             raise
 
-    async def prune_stale_sessions(self, before_ms: int) -> int:
-        """Delete sessions not updated since before_ms epoch ms. Returns count deleted."""
+    async def list_stale_session_keys(self, before_ms: int) -> list[str]:
+        """Return keys of sessions not updated since ``before_ms`` epoch ms.
+
+        Split out of :meth:`prune_stale_sessions` so callers that need to drop
+        per-session state outside storage (in-memory runtime bookkeeping, live
+        tasks) can see the keys before the rows are gone.
+        """
         async with self.conn.execute(
             "SELECT session_key FROM sessions WHERE updated_at < ?",
             (before_ms,),
         ) as cur:
             rows = await cur.fetchall()
-        session_keys = [row[0] for row in rows]
+        return [row[0] for row in rows]
+
+    async def prune_stale_sessions(self, before_ms: int) -> int:
+        """Delete sessions not updated since before_ms epoch ms. Returns count deleted.
+
+        Storage-only: it does not evict the process-global runtime state keyed
+        by session. Prefer ``SessionManager.prune_stale``, which does.
+        """
+        session_keys = await self.list_stale_session_keys(before_ms)
         for session_key in session_keys:
             await self.delete_session(session_key)
         return len(session_keys)
