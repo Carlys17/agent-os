@@ -644,3 +644,22 @@ async def test_a_failed_turn_releases_its_reservation() -> None:
 
     second = await _collect(runner)
     assert not any(isinstance(e, ErrorEvent) and e.code == "budget_exceeded" for e in second)
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_turn_releases_its_reservation() -> None:
+    """Cancellation is the third exit path, and it must free headroom too."""
+    import asyncio
+
+    tracker = UsageTracker()
+    _spend(tracker, SESSION, 9.9)
+    runner = _runner(tracker, BudgetsConfig(session_limit=10.0, turn_reservation=0.25), None)
+
+    turn = runner._run_turn("hi", SESSION, "main", None, [])
+    await turn.__anext__()
+    assert tracker.held_headroom("session", SESSION) == pytest.approx(0.25)
+
+    with pytest.raises(asyncio.CancelledError):
+        await turn.athrow(asyncio.CancelledError())
+
+    assert tracker.held_headroom("session", SESSION) == 0.0
