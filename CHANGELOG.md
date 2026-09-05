@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The MCP bridge clamps the arguments an MCP client supplies instead of
+  forwarding them to the gateway verbatim. `events_wait` caps `timeout_ms` at
+  5 minutes — applied before the deadline is computed, so the cap reaches
+  `recv_event` — and `max_events` at 10,000; `conversations_list` and
+  `messages_read` (and therefore the `transcript_export` tool) clamp `limit`
+  into `1..5000`. These arguments were unclamped, or lower-clamped only, and
+  they are chosen by a model on every call: a `timeout_ms=3_600_000` held the
+  tool call for an hour, indistinguishable from a stuck gateway, and a negative
+  `conversations_list` limit reached SQLite as `LIMIT -1`, which means *no*
+  limit and loaded every session row. The `messages_read` ceiling is defence in
+  depth — the gateway already normalises `chat.history` into `1..200`. Clamping
+  is silent, so a badly chosen argument degrades instead of surfacing a tool
+  error ([#685](https://github.com/use-agent-os/agent-os/issues/685)).
+
 ## [2026.9.5] - 2026-09-05
 
 ### Added
