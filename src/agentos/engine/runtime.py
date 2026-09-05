@@ -2666,7 +2666,14 @@ class TurnRunner:
         # Checked before any provider work so a runaway loop or fan-out stops
         # costing money at the ceiling rather than one turn past it. Subagent
         # turns run through this same path, so a fan-out is bounded too.
-        budget_stop, budget_message = self._check_spend_budget(session_key)
+        #
+        # Admission both checks and *reserves*: spend is recorded only as a
+        # turn burns tokens, so checking alone would let every child of a
+        # concurrent fan-out clear the same ceiling against the same
+        # pre-fan-out snapshot. The reservation is released in the `finally`
+        # below, on every exit path, so a failed or cancelled turn does not
+        # hold headroom it never spent.
+        budget_stop, budget_message, budget_reservation = self._reserve_spend_budget(session_key)
         if budget_stop:
             # The refusal hinges on the decision, never on the presentation
             # string: a tracker that reports a stop without a message must
@@ -2699,12 +2706,12 @@ class TurnRunner:
             await self._persist_turn_error(session_key, budget_error)
             yield budget_error
             return
-        if budget_message:
-            yield self._handle_runtime_warning(
-                WarningEvent(code="budget_warning", message=budget_message)
-            )
 
         try:
+            if budget_message:
+                yield self._handle_runtime_warning(
+                    WarningEvent(code="budget_warning", message=budget_message)
+                )
             input_out = await self._input_stage.run(
                 InputStageInput(
                     message=message,
@@ -3274,6 +3281,12 @@ class TurnRunner:
                 )
             yield ErrorEvent(message=error_message, code=event_code)
 
+        finally:
+            # Success, error, cancellation, and an abandoned generator all land
+            # here. A reservation that outlived its turn would permanently
+            # shrink the ceiling for everyone else.
+            self._release_spend_budget(budget_reservation)
+
     @staticmethod
     def _write_trace_event(
         kind: str,
@@ -3436,6 +3449,49 @@ class TurnRunner:
             )
             return False, None
         return bool(hard_stop), message
+
+    def _reserve_spend_budget(self, session_key: str) -> tuple[bool, str | None, str | None]:
+        """Admit this turn against ``[budgets]`` and hold headroom for it.
+
+        Returns ``(hard_stop, message, reservation_id)``. Like the plain check,
+        this fails open: a tracker that cannot reserve must not be the reason a
+        turn is refused. A tracker without the reservation API (older builds,
+        and the stub trackers tests use) falls back to the check-only gate,
+        which is the pre-reservation behaviour rather than an error.
+        """
+        tracker = self._usage_tracker
+        if tracker is None:
+            return False, None, None
+        budgets = getattr(self._config, "budgets", None) if self._config else None
+        if budgets is None:
+            return False, None, None
+        reserve = getattr(tracker, "reserve_turn_budget", None)
+        if not callable(reserve):
+            hard_stop, message = self._check_spend_budget(session_key)
+            return hard_stop, message, None
+        try:
+            hard_stop, message, reservation_id = reserve(session_key, budgets)
+        except Exception as exc:  # noqa: BLE001 - budget checks must fail open
+            log.warning(
+                "turn_runner.budget_reserve_failed",
+                session_key=session_key,
+                error=str(exc),
+            )
+            return False, None, None
+        return bool(hard_stop), message, reservation_id
+
+    def _release_spend_budget(self, reservation_id: str | None) -> None:
+        """Give back the headroom held by :py:meth:`_reserve_spend_budget`."""
+        if not reservation_id:
+            return
+        tracker = self._usage_tracker
+        release = getattr(tracker, "release_turn_budget", None) if tracker is not None else None
+        if not callable(release):
+            return
+        try:
+            release(reservation_id)
+        except Exception as exc:  # noqa: BLE001 - a stuck release must not fail the turn
+            log.warning("turn_runner.budget_release_failed", error=str(exc))
 
     def _handle_runtime_warning(self, event: WarningEvent) -> WarningEvent:
         return event
