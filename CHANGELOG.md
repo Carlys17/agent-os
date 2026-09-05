@@ -25,6 +25,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   iterations inside a turn still weighs recorded spend only, so no turn is
   stopped by its own reservation
   ([#823](https://github.com/use-agent-os/agent-os/issues/823)).
+- The MCP bridge clamps the arguments an MCP client supplies instead of
+  forwarding them to the gateway verbatim. `events_wait` caps `timeout_ms` at
+  5 minutes — applied before the deadline is computed, so the cap reaches
+  `recv_event` — and `max_events` at 10,000; `conversations_list` and
+  `messages_read` (and therefore the `transcript_export` tool) clamp `limit`
+  into `1..5000`. These arguments were unclamped, or lower-clamped only, and
+  they are chosen by a model on every call: a `timeout_ms=3_600_000` held the
+  tool call for an hour, indistinguishable from a stuck gateway, and a negative
+  `conversations_list` limit reached SQLite as `LIMIT -1`, which means *no*
+  limit and loaded every session row. The `messages_read` ceiling is defence in
+  depth — the gateway already normalises `chat.history` into `1..200`. Clamping
+  is silent, so a badly chosen argument degrades instead of surfacing a tool
+  error ([#685](https://github.com/use-agent-os/agent-os/issues/685)).
 - Every session removal path drops the in-memory runtime state keyed by that
   session, not just `SessionManager.finish()`. `sessions.delete` (the Web UI
   "Delete Chat"), `SessionManager.cap_entries()`, `prune_stale()` and the cron
@@ -41,6 +54,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `SessionStorage.list_stale_session_keys()` before deleting, since the
   storage-level prune returned only a count
   ([#750](https://github.com/use-agent-os/agent-os/issues/750)).
+
+### Security
+
+- Cron webhook delivery POSTs through the connect-time SSRF guard, closing the
+  DNS-rebinding TOCTOU window the fetch-tool conversion left open on this path.
+  `validate_webhook_url` resolves the hostname once and clears it;
+  the plain `httpx.AsyncClient` that followed resolved the same name again when
+  it dialled, so a short-TTL domain could answer with a public address for the
+  check and with `169.254.169.254` for the socket — handing the job id, job name
+  and run summary to the cloud metadata service. Delivery now uses
+  `ssrf_guarded_client(validator=validate_metadata_only_address)`, which dials
+  the address it validated, on the first attempt and on every `retry_request`
+  retry. The URL check stays in front of it for the legible `invalid webhook
+  URL` message at add time, and the metadata-only floor keeps localhost and LAN
+  hooks (n8n and friends) working. As with the fetch tools, the guard covers the
+  default connection pool only: a request routed through a configured `HTTP_PROXY`
+  is resolved by the proxy rather than in-process, so there is no local rebinding
+  window there to close
+  ([#725](https://github.com/use-agent-os/agent-os/issues/725)).
 
 ## [2026.9.5] - 2026-09-05
 
