@@ -38,6 +38,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   storage-level prune returned only a count
   ([#750](https://github.com/use-agent-os/agent-os/issues/750)).
 
+### Security
+
+- Cron webhook delivery POSTs through the connect-time SSRF guard, closing the
+  DNS-rebinding TOCTOU window the fetch-tool conversion left open on this path.
+  `validate_webhook_url` resolves the hostname once and clears it;
+  the plain `httpx.AsyncClient` that followed resolved the same name again when
+  it dialled, so a short-TTL domain could answer with a public address for the
+  check and with `169.254.169.254` for the socket — handing the job id, job name
+  and run summary to the cloud metadata service. Delivery now uses
+  `ssrf_guarded_client(validator=validate_metadata_only_address)`, which dials
+  the address it validated, on the first attempt and on every `retry_request`
+  retry. The URL check stays in front of it for the legible `invalid webhook
+  URL` message at add time, and the metadata-only floor keeps localhost and LAN
+  hooks (n8n and friends) working. As with the fetch tools, the guard covers the
+  default connection pool only: a request routed through a configured `HTTP_PROXY`
+  is resolved by the proxy rather than in-process, so there is no local rebinding
+  window there to close
+  ([#725](https://github.com/use-agent-os/agent-os/issues/725)).
+
 ## [2026.9.5] - 2026-09-05
 
 ### Added
