@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.9.5] - 2026-09-05
+
+### Added
+
+- Direct provider endpoints price from native vendor rates instead of falling
+  through to the `_DEFAULT_PRICING` placeholder. Bare model ids without a vendor
+  prefix (`deepseek-chat`, `deepseek-reasoner`, `gemini-2.0-flash`) and
+  date-stamped snapshots (`claude-3-7-sonnet-20250219`, `gpt-4o-2024-08-06`)
+  failed the `startswith` prefix scan and were billed at $3.00/$15.00 per 1M
+  tokens — up to a 21x error in usage tracking and spend rollup for a cheap
+  model. Direct rates for DeepSeek, Anthropic, Google Gemini and OpenAI are now
+  registered alongside their prompt-cache read discounts
+  (`cached_input_per_m`), snapshot suffixes are stripped before lookup, and
+  candidate normalisation is provider-aware. Resolution is scoped to direct
+  endpoints, so aggregator routing and the existing static table baseline are
+  unchanged, and Opus keeps its tiered rates
+  ([#842](https://github.com/use-agent-os/agent-os/issues/842)).
+
 ### Fixed
 
 - `TaskRuntime` retains the cached routing envelope while a session has queued
@@ -13,6 +31,99 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   a terminal state. This prevents proactive or follow-up sends from losing
   channel, account, recipient, and thread routing during multi-turn workflows
   ([#930](https://github.com/use-agent-os/agent-os/issues/930)).
+- `SessionStorage` serializes every runtime method that can commit on the shared
+  SQLite connection. Two coroutines writing concurrently could interleave inside
+  a multi-statement transaction — one committing another's half-written state —
+  and a mutating method that raised or was cancelled left the transaction open
+  for whoever committed next. Write ownership is now held across a complete
+  transaction and an open transaction is rolled back when the method exits with
+  an exception, cancellation included. Migration writes stay outside the lock:
+  they run sequentially during connect, before the storage instance is exposed
+  ([#891](https://github.com/use-agent-os/agent-os/issues/891)).
+- `JobStore.transaction()` rolls back on any `BaseException` instead of leaving
+  uncommitted writes in the shared connection's buffer for a later caller to
+  commit, and a task-bound reentrant write lock serializes `save`, `delete`,
+  `save_execution`, `prune_runs` and `_reserve_job_for_run` so a concurrent
+  writer can no longer commit incomplete batch state out from under an open
+  transaction. Intermediate commits are deferred while a transaction is active
+  ([#964](https://github.com/use-agent-os/agent-os/issues/964)).
+- `SessionWriteLock` evicts a session's entry on `release()` when no acquirer is
+  queued behind it. `_locks` never removed anything, so a long-running gateway
+  retained one `asyncio.Lock` per unique session key for the life of the
+  process; the dict is now bounded by currently active keys rather than every
+  key ever seen. Entries with queued waiters are kept so lock handoff is
+  unaffected ([#966](https://github.com/use-agent-os/agent-os/issues/966)).
+- Auto Pilot falls back across the configured router tiers when a model times
+  out or returns a pre-content error, instead of retrying the same dead endpoint
+  three times and freezing the turn for roughly six minutes. Transport timeouts
+  are classified apart from transient blips, the timeout retry is capped at one,
+  a `provider_timeout_retry` warning is emitted, the fallback chain is derived
+  from the active router tiers, and the terminal error now names the `/c0`,
+  `/c2` and `/auto` escapes
+  ([#860](https://github.com/use-agent-os/agent-os/issues/860)).
+- The session FTS query sanitizer keeps non-ASCII letters. `[^a-zA-Z0-9\s]`
+  stripped every accented Latin, CJK, Cyrillic, Vietnamese and Arabic character
+  before the query reached FTS5, so `café déploiement` searched for
+  `"caf" "d" "ploiement"` and `中文 报告` searched for nothing at all — while the
+  transcripts themselves were indexed correctly. The pattern is now the
+  Unicode-aware `[^\w\s]`, which still strips FTS5 operators
+  ([#903](https://github.com/use-agent-os/agent-os/issues/903)).
+- The Discord adapter no longer cancels itself while reconnecting. When
+  `_heartbeat_loop()` detected a missed ACK and drove a reconnect,
+  `_do_reconnect()` unconditionally cancelled `self._heartbeat_task` — the very
+  task it was running inside — so the coroutine died at the next `await` during
+  socket cleanup, before a new WebSocket or a replacement heartbeat task
+  existed. The cancel is now skipped when the heartbeat task is
+  `asyncio.current_task()`; externally initiated reconnects and adapter
+  shutdown still cancel it
+  ([#882](https://github.com/use-agent-os/agent-os/issues/882)).
+- `list_dir` survives a broken symlink. A dangling link is not a directory, so
+  the size lookup fell through to `entry.stat()`, which follows the link and
+  raised an unhandled `FileNotFoundError` that took down the whole listing. The
+  size query now falls back to `entry.lstat().st_size`, or `0`, on `OSError`
+  ([#844](https://github.com/use-agent-os/agent-os/issues/844)).
+- `agentos cost --export <path>` creates missing parent directories instead of
+  raising `FileNotFoundError`, matching what `render_savings_pdf` already did.
+  Both the JSON and CSV branches are covered
+  ([#846](https://github.com/use-agent-os/agent-os/issues/846)).
+- The gateway debounce buffer is capped at 50 coalesced messages per
+  `session_key` and flushes immediately on reaching the cap, rather than
+  accumulating without bound. The cap-triggered flush retains its delivery task
+  and drains it on shutdown
+  ([#796](https://github.com/use-agent-os/agent-os/issues/796)).
+- Named artifact delivery falls back to a valid filename leaf. When an
+  artifact's metadata carried an empty, whitespace, root or dot-relative target
+  (`""`, `"   "`, `"/"`, `"."`, `".."`), `Path(filename).name` resolved to `""`
+  and the delivery target became the temporary directory itself — the hardlink
+  failed with `FileExistsError` and the `shutil.copy2` fallback handed
+  `send_file` a directory path. The leaf is now sanitized, falling back to the
+  source name or `artifact`
+  ([#742](https://github.com/use-agent-os/agent-os/issues/742)).
+- `robinhood-chain-stocks` withholds price and holding value for a contract it
+  has already disproven. When `uiMultiplier()` reverted — `isStockToken: false`,
+  which `SKILL.md` documents as "not a Stock Token, do not hand over the
+  address" — an impersonator reusing a listed ticker still had the real
+  company's live Chainlink feed attached to it, and `holding.valueUsd`
+  calculated from it, lending a proven fake the credibility of a real price.
+  Price and USD holding value are now withheld with a `readErrors` explanation;
+  `isStockToken: null` still resolves a price, because an unreachable RPC node
+  is not proof of fakery
+  ([#866](https://github.com/use-agent-os/agent-os/issues/866)).
+
+### Security
+
+- `code_exec` detects destructive calls through the AST, not just the regex
+  fast path. `_check_code_destructive` matched shallow patterns only, so
+  reflection and dynamic-import constructs reached the host filesystem without
+  passing the approval gate: `getattr(os, "rem" + "ove")(path)`,
+  `__import__("os").remove(path)`, `importlib.import_module("os").remove(path)`,
+  `exec`/`eval` of a destructive string, `from os import *`, aliased imports and
+  aliased functions. A visitor now runs whenever the regex does not match,
+  resolving statically computable strings (constants, concatenations, f-string
+  values), tracking imports and aliases for `os`, `shutil`, `pathlib`,
+  `subprocess` and `importlib`, and flagging dynamic `getattr` and `__import__`
+  targets. The layer is additive — existing pattern coverage is unchanged
+  ([#848](https://github.com/use-agent-os/agent-os/issues/848)).
 
 ## [2026.9.4] - 2026-09-04
 
