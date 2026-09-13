@@ -154,7 +154,13 @@ def test_hardened_path_preserves_windows_path_key(monkeypatch: pytest.MonkeyPatc
     # Asserted with startswith rather than a pathsep split: os.pathsep is ":"
     # when this runs on POSIX, which would cut the drive letter off.
     assert out["Path"].startswith(r"C:\Program Files\uv\bin")
-    assert "/opt/homebrew/bin" in out["Path"]  # fallback dirs still appended
+    if sys.platform == "win32":
+        # #1969: Windows gets Windows tool dirs, never POSIX roots.
+        assert "/opt/homebrew/bin" not in out["Path"]
+        assert r"C:\Program Files\uv\bin" in out["Path"]
+    else:
+        # POSIX keeps appending the login dirs to the (case-folded) key.
+        assert "/opt/homebrew/bin" in out["Path"]  # fallback dirs still appended
 
 
 def test_hardened_path_windows_prefers_exact_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -197,9 +203,12 @@ def test_resolve_tool_uses_windows_path_key(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_hardened_path_no_duplicates() -> None:
-    env = {"PATH": "/opt/homebrew/bin:/x", "HOME": "/home/u"}
+    # Platform-neutral: the fix under test is de-duplication. .local/bin is
+    # appended on both POSIX and Windows (#1969), unlike the POSIX login dirs.
+    keep = str(Path("/home/u") / ".local" / "bin")
+    env = {"PATH": keep + os.pathsep + "/x", "HOME": "/home/u"}
     parts = im.hardened_path_env(env)["PATH"].split(os.pathsep)
-    assert parts.count("/opt/homebrew/bin") == 1
+    assert parts.count(keep) == 1
 
 
 @pytest.mark.skipif(
