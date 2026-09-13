@@ -285,6 +285,12 @@ def hardened_path_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
     preserved; only genuinely-missing login locations are added. The existing
     key is reused verbatim, so a Windows environment spelling it ``Path`` keeps
     its real entries instead of being shadowed by an empty ``PATH``.
+
+    On Windows the POSIX login directories are meaningless (nothing installs
+    there) and the standard Windows tool locations are not on a
+    daemon-inherited PATH by default, so the appended set is
+    platform-appropriate: the per-user uv/cargo/pipx install directories
+    instead of ``/usr/bin`` and friends.
     """
 
     env = dict(base_env if base_env is not None else os.environ)
@@ -293,7 +299,22 @@ def hardened_path_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
     entries = [p for p in current.split(os.pathsep) if p]
     seen = set(entries)
     home = env.get(_env_key(env, "HOME")) or str(Path.home())
-    login_dirs = list(_LOGIN_PATH_DIRS) + [str(Path(home) / ".local" / "bin")]
+    if os.name == "nt":
+        # Windows tool installers (uv, cargo, pipx) put binaries under the
+        # user profile; LOCALAPPDATA / APPDATA may be missing in a stripped
+        # daemon env, so degrade to profile-relative paths.
+        local_app_data = env.get(_env_key(env, "LOCALAPPDATA"))
+        app_data = env.get(_env_key(env, "APPDATA"))
+        login_dirs = [
+            str(Path(home) / ".cargo" / "bin"),
+            str(Path(home) / ".local" / "bin"),
+        ]
+        if local_app_data:
+            login_dirs.insert(0, str(Path(local_app_data) / "Programs" / "uv"))
+        if app_data:
+            login_dirs.insert(1, str(Path(app_data) / "uv" / "bin"))
+    else:
+        login_dirs = list(_LOGIN_PATH_DIRS) + [str(Path(home) / ".local" / "bin")]
     for extra in login_dirs:
         if extra not in seen:
             entries.append(extra)

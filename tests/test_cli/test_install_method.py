@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -223,6 +224,60 @@ def test_resolve_tool_uses_hardened_path(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
 def test_resolve_tool_missing_returns_none() -> None:
     assert im.resolve_tool("definitely-not-a-real-tool-xyz", {"PATH": "/nonexistent"}) is None
+
+
+def _nt_os() -> types.SimpleNamespace:
+    """A stub ``os`` reporting Windows without touching the real module.
+
+    The real ``pathlib`` shares the global ``os``; patching ``os.name``
+    globally would switch ``Path`` to ``WindowsPath`` and raise on POSIX.
+    Enough of ``os`` for ``hardened_path_env``: the platform flag, the
+    Windows path separator, and an empty environ (tests always pass an env).
+    """
+
+    return types.SimpleNamespace(name="nt", pathsep=";", environ={})
+
+
+def test_hardened_path_windows_uses_windows_tool_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On Windows the appended dirs are the Windows tool locations (#1969)."""
+
+    monkeypatch.setattr(im, "os", _nt_os())
+    home = r"C:\Users\u"
+    local = r"C:\Users\u\AppData\Local"
+    roaming = r"C:\Users\u\AppData\Roaming"
+    env = {
+        "PATH": r"C:\custom\bin",
+        "HOME": home,
+        "LOCALAPPDATA": local,
+        "APPDATA": roaming,
+    }
+    out = im.hardened_path_env(env)
+    parts = out["PATH"].split(";")
+    assert parts[0] == r"C:\custom\bin"  # operator ordering preserved
+    # ``Path(x)`` renders with the host's separators, so compute the expected
+    # forms the same way the code does instead of hard-coding backslashes.
+    assert str(Path(local) / "Programs" / "uv") in parts
+    assert str(Path(roaming) / "uv" / "bin") in parts
+    assert str(Path(home) / ".cargo" / "bin") in parts
+    # POSIX root directories are meaningless on Windows and must not leak in.
+    assert "/usr/bin" not in parts
+    assert "/usr/local/bin" not in parts
+    assert "/opt/homebrew/bin" not in parts
+
+
+def test_hardened_path_windows_degrades_without_appdata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stripped daemon env without LOCALAPPDATA/APPDATA still hardens."""
+
+    monkeypatch.setattr(im, "os", _nt_os())
+    home = r"C:\Users\u"
+    env = {"PATH": r"C:\custom\bin", "HOME": home}
+    out = im.hardened_path_env(env)
+    parts = out["PATH"].split(";")
+    assert str(Path(home) / ".cargo" / "bin") in parts
+    assert str(Path(home) / ".local" / "bin") in parts
+    assert "/usr/bin" not in parts
 
 
 def test_resolve_tool_falls_back_to_which(monkeypatch: pytest.MonkeyPatch) -> None:
