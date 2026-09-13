@@ -293,6 +293,19 @@ def _restart_and_verify(
         if observed == expected_version:
             console.print(f"Gateway: {action}ed and verified ({expected_version}).")
             return True
+        if expected_version == "unknown" and observed is not None:
+            # The post-upgrade version probe failed (subprocess timeout or a
+            # metadata hiccup), so the expected version is literally the
+            # string "unknown" — which no gateway will ever report. The
+            # restart itself succeeded the moment the gateway answers its
+            # handshake with any version: verifying against the literal
+            # "unknown" would burn the full 30s poll window and then fail an
+            # upgrade that worked. Trust the handshake and name the gap.
+            console.print(
+                f"Gateway: {action}ed and running version {observed} "
+                "(installed version could not be read to confirm the match)."
+            )
+            return True
         time.sleep(_VERIFY_POLL_S)
 
     console.print(
@@ -483,8 +496,7 @@ def upgrade_command(
     new_version = _installed_version_via(sys.executable, env=env) or "unknown"
     console.print(f"Upgraded: {__version__} → {new_version}")
     console.print(
-        "[dim]Config migrations (with an automatic timestamped backup) run at "
-        "gateway start.[/dim]"
+        "[dim]Config migrations (with an automatic timestamped backup) run at gateway start.[/dim]"
     )
 
     if no_restart:
