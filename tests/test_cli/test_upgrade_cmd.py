@@ -644,6 +644,66 @@ def test_start_only_starts_instead_of_restarting(monkeypatch: pytest.MonkeyPatch
     assert calls == ["start"]
 
 
+def test_unknown_expected_version_trusts_any_gateway_handshake(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed version probe must not fail a successful restart (#1967).
+
+    When `_installed_version_via` returns None the upgrade flow passes the
+    literal string "unknown" as expected_version, which no gateway will ever
+    report. The gateway answering its handshake at all is the verification.
+    """
+
+    calls: list[str] = []
+    _install_fake_lifecycle(monkeypatch, _FakeLifecycleManager(calls))
+    monkeypatch.setattr(upgrade_cmd, "_query_gateway_version", lambda _: "2026.9.13")
+
+    verified = upgrade_cmd._restart_and_verify(
+        config_path=None,
+        expected_version="unknown",
+        json_output=False,
+    )
+
+    assert verified is True
+    assert calls == ["status", "restart"]
+
+
+def test_unknown_expected_version_still_fails_when_gateway_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No handshake answer at all: the failure path stays a failure."""
+
+    calls: list[str] = []
+    _install_fake_lifecycle(monkeypatch, _FakeLifecycleManager(calls))
+    monkeypatch.setattr(upgrade_cmd, "_query_gateway_version", lambda _: None)
+
+    verified = upgrade_cmd._restart_and_verify(
+        config_path=None,
+        expected_version="unknown",
+        json_output=False,
+    )
+
+    assert verified is False
+
+
+def test_known_expected_version_mismatch_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unknown-probe leniency must not loosen a real version match."""
+
+    calls: list[str] = []
+    _install_fake_lifecycle(monkeypatch, _FakeLifecycleManager(calls))
+    monkeypatch.setattr(upgrade_cmd, "_query_gateway_version", lambda _: "2026.9.13")
+
+    verified = upgrade_cmd._restart_and_verify(
+        config_path=None,
+        expected_version="99999.2.0",
+        json_output=False,
+    )
+
+    assert verified is False
+
+
 def test_stop_failure_falls_back_to_the_restart_path(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
     manager = _FakeLifecycleManager(calls)
