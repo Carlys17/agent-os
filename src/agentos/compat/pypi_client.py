@@ -10,7 +10,9 @@ crashing a command whose real job is something else.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from typing import Any
 
 from agentos.paths import state_dir
 
@@ -27,9 +29,12 @@ def latest_version(
 ) -> str | None:
     """Return the latest released version string of ``dist`` on PyPI.
 
-    Returns ``None`` on any failure (offline, timeout, HTTP error, malformed
-    body). Yanked-only / pre-release-only edge cases fall back to the
-    ``info.version`` field PyPI reports as canonical.
+    Yanked releases and pre/dev releases (``rcN`` / ``aN`` / ``bN`` /
+    ``.devN``) are skipped: stable users must never be pointed at a pulled
+    build or a release candidate they did not opt into. Falls back to the
+    ``info.version`` field PyPI reports as canonical when the release list
+    cannot answer (or everything in it is filtered out). Returns ``None`` on
+    any failure (offline, timeout, HTTP error, malformed body).
     """
 
     try:
@@ -59,11 +64,41 @@ def latest_version(
     if not isinstance(body, dict):
         return None
     info = body.get("info")
+    canonical: str | None = None
     if isinstance(info, dict):
         version = info.get("version")
         if isinstance(version, str) and version.strip():
-            return version.strip()
-    return None
+            canonical = version.strip()
+
+    from agentos.compat.version_utils import parse_version
+
+    releases = body.get("releases")
+    if isinstance(releases, dict):
+        best: tuple[tuple[Any, ...], str] | None = None
+        for raw_version, files in releases.items():
+            if not isinstance(raw_version, str) or not raw_version.strip():
+                continue
+            # ``releases`` keys carry the full version list; the per-version
+            # file list is what flags a yank, but a yanked upload also removes
+            # its files, so treat "no files" the same as "yanked".
+            if not isinstance(files, list) or not files:
+                continue
+            yanked = any(isinstance(f, dict) and f.get("yanked") is True for f in files)
+            if yanked:
+                continue
+            parsed = parse_version(raw_version)
+            # Pre/dev tails are opt-in channels; never recommend them to a
+            # stable install. Unparsable strings sort below every real
+            # release, so they lose the max() below naturally.
+            if parsed.pre is not None or parsed.dev is not None or not parsed.parsed:
+                continue
+            key = parsed.sort_key(width=len(parsed.release))
+            if best is None or key > best[0]:
+                best = (key, raw_version.strip())
+        if best is not None:
+            return best[1]
+
+    return canonical
 
 
 def notice_state_path() -> Path:
@@ -92,7 +127,14 @@ def write_state(path: Path, last_checked: float, latest: str | None, surface: st
         if latest:
             state["latest"] = latest
 
-        path.write_text(json.dumps(state), encoding="utf-8")
+        # Atomic replace: a concurrent read (Web UI updates.check vs a CLI
+        # notice) must never observe a truncated / half-written file, and on
+        # Windows a direct overwrite of a file another handle holds open
+        # raises PermissionError. Write-then-replace in the same directory
+        # keeps both readers safe.
+        tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        tmp_path.write_text(json.dumps(state), encoding="utf-8")
+        os.replace(tmp_path, path)
     except OSError:
         pass  # best-effort; a read-only home just means we re-check next time
 
