@@ -65,6 +65,7 @@ PATH_POLICY_FIXTURE_FILES = {
     "tests/test_tools/test_shell_sensitive.py",
     "tests/test_tools/test_web_http_request.py",
     "tests/test_observability/test_decision_log_contract.py",
+    "tests/test_cli/test_install_method.py",
 }
 
 
